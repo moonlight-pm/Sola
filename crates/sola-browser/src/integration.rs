@@ -76,6 +76,10 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::NotificationActivate,
     // Which window each page is, and whether it is on screen (Next).
     TopicKind::TabWindow,
+    // Which workspace shows and where each window is: a page runs its
+    // workspace's profile (Next slice 5).
+    TopicKind::Workspaces,
+    TopicKind::WindowWorkspace,
 ];
 
 /// The "Browser" app-menu published to the shell at startup. Each entry is
@@ -143,9 +147,10 @@ fn menu_from_items(label: &str, items: &[(&str, &str, KeyChord)]) -> MenuDefinit
     }
 }
 
-/// Profiles menubar: list (checked **registry** active) + New / Rename / Delete.
+/// Profiles menubar: every profile, the showing workspace's checked
+/// (picking one sets it for this workspace), then New / Rename / Delete.
 pub fn profiles_menu() -> MenuDefinition {
-    let active_id = profiles::registry_active_id();
+    let active_id = profiles::showing_profile();
     let entries = profiles::list();
     let only_one = entries.len() <= 1;
 

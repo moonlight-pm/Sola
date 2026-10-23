@@ -88,6 +88,36 @@ impl<E: Engine> PageWindows<E> {
         window::close(page.window)
     }
 
+    /// Page `old` reopened as `new` (another profile) in the same window:
+    /// the window keeps its key and place and paints the new page.
+    pub fn retarget(&mut self, old: TabId, new: TabId) {
+        let Some(page) = self.pages.remove(&old) else {
+            return;
+        };
+        let slot = Arc::new(FrameSlot::for_page(
+            self.template.cmd_tx.clone(),
+            self.template.cursor.clone(),
+            self.template.ime.clone(),
+            new,
+        ));
+        {
+            let mut slots = self.slots.lock().unwrap();
+            slots.retain(|s| !Arc::ptr_eq(s, &page.slot));
+            slots.push(slot.clone());
+        }
+        crate::cef::frame::retire_slot(page.slot.key);
+        self.by_window.insert(page.window, new);
+        // `shown_sent: None`: the engine hears where the new page is.
+        self.pages.insert(
+            new,
+            Page {
+                window: page.window,
+                slot,
+                shown_sent: None,
+            },
+        );
+    }
+
     /// The window closed under us: forget it.
     pub fn closed(&mut self, window: window::Id) -> Option<TabId> {
         let tab = self.by_window.get(&window).copied()?;

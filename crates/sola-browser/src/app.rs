@@ -3,6 +3,9 @@
 //! `Msg` and the consts were stubbed out in Task 1 and are kept here. Task 2
 //! adds `App<E>`, its constructor, and all update/view/subscription methods.
 
+mod pages;
+
+pub use pages::{boot_pages, count_by_profile};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
@@ -72,6 +75,9 @@ const COPY_URL_FLASH: Duration = Duration::from_millis(1200);
 #[derive(Debug, Clone)]
 pub enum Msg {
     NewFrame,
+    /// The shell's workspace word settled: rebind pages to their workspace's
+    /// profile (if no newer word since).
+    RebindPages(u64),
     NavBack,
     NavForward,
     /// Press on back/forward — starts a hold timer for the history menu.
@@ -453,10 +459,9 @@ pub struct App<E: Engine> {
     /// Live tab snapshot, owned by the engine. We re-read on
     /// every Tick; `cached_tabs` is the value at last read.
     pub tabs_handle: TabsHandle,
-    /// Helper currently filling `tabs_handle`. Ignore live tabs until this
-    /// matches the active profile (otherwise a switch copies the previous
-    /// profile's strip into the next).
-    front_profile: crate::engine::FrontProfileHandle,
+    /// The workspace each page window is on (sola-river id → workspace id,
+    /// from the shell's `WindowWorkspace`).
+    window_ws: HashMap<u32, String>,
     /// Active-tab id (worker is the sole writer after startup).
     /// Chrome keeps `cached_active` for optimistic paint.
     pub active_handle: Arc<AtomicU64>,
@@ -468,6 +473,12 @@ pub struct App<E: Engine> {
     /// Tabs chrome has already dropped. Tick merge must not resurrect them
     /// from a lagging engine snapshot (close would flash gone → back → gone).
     pub(crate) closed_tabs: HashSet<TabId>,
+    /// Pages reopened under another profile: their old ids never come back
+    /// from a helper's lagging tab list.
+    retired_tabs: HashSet<TabId>,
+    /// Bumped on every workspace message; a settle timer acts only if it
+    /// still matches.
+    rebind_gen: u64,
     /// True after the helper has reported a non-empty tab list this run.
     /// When it later goes empty (helper death), chrome re-opens `cached_tabs`.
     engine_tabs_seen: bool,
@@ -513,10 +524,12 @@ pub struct App<E: Engine> {
     find_count: i32,
     find_ordinal: i32,
     find_field_focused: bool,
-    /// Last written session fingerprint — skip disk when unchanged.
-    session_fp: String,
-    /// Tabs to open after the iced Wayland window exists (session restore).
-    pending_session: Option<(Vec<SessionTab>, usize)>,
+    /// Last written session fingerprint per profile — skip disk when
+    /// unchanged.
+    session_fp: HashMap<String, String>,
+    /// Pages (with their profiles) to open after the iced Wayland window
+    /// exists (session restore).
+    pending_session: Option<(Vec<(String, SessionTab)>, usize)>,
     /// Bitwarden vault worker + login panel state.
     #[cfg(feature = "bitwarden")]
     vault: VaultHandle,
@@ -607,8 +620,6 @@ pub struct App<E: Engine> {
     pub profile_name_field: String,
     /// Inline error under the profile dialog (empty name, last profile, …).
     pub profile_dialog_error: Option<String>,
-    /// Parked chrome snapshots per profile (mirrors CEF parks; same eviction).
-    workspace_cache: std::collections::HashMap<String, crate::tab_cache::WorkspaceSnapshot>,
     /// Sidebar profile name is a select; true while the menu is open.
     profile_picker_open: bool,
     /// Cached registry rows — `profiles::list()` used to re-read the JSON
@@ -652,12 +663,11 @@ impl<E: Engine> App<E> {
         tabs_handle: TabsHandle,
         active_handle: Arc<AtomicU64>,
         app_id: &'static str,
-        tabs: Vec<SessionTab>,
+        tabs: Vec<(String, SessionTab)>,
         active_index: usize,
         recently_closed: Vec<crate::session::ClosedTab>,
     ) -> Self {
         let page_menus = engine.page_menus_handle();
-        let front_profile = engine.front_profile_handle();
         let mut app = Self {
             engine,
             windows: crate::page_windows::PageWindows::new(app_id, slot.clone()),
@@ -666,11 +676,13 @@ impl<E: Engine> App<E> {
             slot,
             cmd_tx,
             tabs_handle,
-            front_profile,
+            window_ws: HashMap::new(),
             active_handle,
             cached_tabs: Vec::new(),
             cached_active: TabId(u64::MAX),
             closed_tabs: HashSet::new(),
+            retired_tabs: HashSet::new(),
+            rebind_gen: 0,
             engine_tabs_seen: false,
             recently_closed,
             page_ids: HashMap::new(),
@@ -695,7 +707,7 @@ impl<E: Engine> App<E> {
             find_count: 0,
             find_ordinal: 0,
             find_field_focused: false,
-            session_fp: String::new(),
+            session_fp: HashMap::new(),
             pending_session: Some((tabs, active_index)),
             #[cfg(feature = "bitwarden")]
             vault: VaultHandle::spawn(),
@@ -773,7 +785,6 @@ impl<E: Engine> App<E> {
             profile_dialog: None,
             profile_name_field: String::new(),
             profile_dialog_error: None,
-            workspace_cache: std::collections::HashMap::new(),
             profile_picker_open: false,
             profile_options: crate::profiles::list(),
             downloads: crate::downloads::DownloadList::load(),
@@ -805,7 +816,7 @@ impl<E: Engine> App<E> {
             .as_ref()
             .map(|(tabs, _)| {
                 let mut v = Vec::new();
-                for tab in tabs {
+                for (_, tab) in tabs {
                     for h in tab.history.iter().rev() {
                         v.push((h.url.clone(), h.title.clone()));
                     }
@@ -1274,11 +1285,11 @@ impl<E: Engine> App<E> {
     /// Clear compositor env so WebKit child processes cannot open a Wayland
     /// window. Safe after iced has already connected (WindowReady).
     /// Open restored tabs in order and focus `active_index`.
-    fn bootstrap_tabs(&mut self, tabs: Vec<SessionTab>, active_index: usize) {
+    fn bootstrap_tabs(&mut self, tabs: Vec<(String, SessionTab)>, active_index: usize) {
         debug_assert!(!tabs.is_empty(), "bootstrap always has ≥1 tab");
         let session_tabs = tabs;
         let mut ids = Vec::with_capacity(session_tabs.len());
-        for tab in &session_tabs {
+        for (profile, tab) in &session_tabs {
             let id = self.engine.alloc_tab_id();
             self.page_ids.insert(id, tab.id.clone());
             let url = crate::util::normalize_url(&tab.url);
@@ -1299,11 +1310,12 @@ impl<E: Engine> App<E> {
                 is_loading: url != BLANK_URL && !url.is_empty(),
                 history,
                 history_index,
+                profile: profile.clone(),
                 ..TabInfo::chrome(id, url.clone(), title.clone())
             });
             // One background frame may be imported to seed park cache.
             self.slot().need_park_prime.lock().unwrap().insert(id.0);
-            let _ = self.cmd_tx.send(Cmd::OpenTab { id, url, title });
+            self.open_in(profile, id, url, title);
             ids.push(id);
         }
         let active = ids
@@ -1338,7 +1350,9 @@ impl<E: Engine> App<E> {
                 self.profile_dialog = Some(ProfileDialog::New);
             }
             ProfileDialog::Rename => {
-                self.profile_name_field = crate::profiles::active().name.clone();
+                self.profile_name_field =
+                    crate::profiles::name_of(&crate::profiles::showing_profile())
+                        .unwrap_or_default();
                 self.profile_dialog = Some(ProfileDialog::Rename);
             }
             ProfileDialog::DeleteConfirm => {
@@ -1358,214 +1372,41 @@ impl<E: Engine> App<E> {
         self.profile_dialog_error = None;
     }
 
-    /// Instant switch: park this window's tab chrome, activate `id`,
-    /// point the engine router at that profile's helper (spawn if needed).
+    /// The Profiles menu: this workspace runs `id` from now on; its pages
+    /// reopen under it.
     pub fn switch_profile(&mut self, id: &str) -> Task<Msg> {
         self.profile_picker_open = false;
-        let from = crate::profiles::active().id;
-        if id == from {
+        if id == crate::profiles::showing_profile() {
             return Task::none();
         }
-        self.persist_session();
-        match crate::profiles::activate(id) {
-            Ok(_) => {
-                tracing::info!(from = %from, to = %id, "switching profile (same window)");
-                self.enter_profile_workspace(from, false);
-                // Wake the shader so it drops the previous profile's texture
-                // this frame, not whenever the new helper happens to paint.
-                return Task::done(Msg::NewFrame);
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, id, "switch profile failed");
-            }
+        let set = match crate::profiles::showing_workspace() {
+            Some(ws) => crate::profiles::set_workspace_profile(&ws, id),
+            None => crate::profiles::set_registry_active(id),
+        };
+        if let Err(e) = set {
+            tracing::warn!(error = %e, id, "set this workspace's profile failed");
+            return Task::none();
         }
-        Task::none()
-    }
-
-    /// Park current chrome snapshot, then resume park or create from session.
-    /// `force_cold` skips resume (e.g. brand-new profile with empty session).
-    fn enter_profile_workspace(&mut self, park_as_profile_id: String, force_cold: bool) {
-        use crate::tab_cache::WorkspaceSnapshot;
-        use std::time::Instant;
-
-        if !park_as_profile_id.is_empty() && !self.cached_tabs.is_empty() {
-            self.workspace_cache.insert(
-                park_as_profile_id.clone(),
-                WorkspaceSnapshot {
-                    tabs: self.cached_tabs.clone(),
-                    active: self.cached_active,
-                    last_used: Instant::now(),
-                    recently_closed: self.recently_closed.clone(),
-                },
-            );
-        }
-
-        self.engine_tabs_seen = false;
-        self.devtools = None;
-        self.slot().devtools_tab.store(u64::MAX, Ordering::Relaxed);
-        self.slot().devtools_pending.lock().unwrap().take();
-        self.slot().input_devtools.store(false, Ordering::Relaxed);
-
-        let profile = crate::profiles::active();
-        let resume_id = profile.id.clone();
-        let cef_path = profile.cef_user_data_dir().to_string_lossy().into_owned();
-
-        if !force_cold {
-            if let Some(snap) = self.workspace_cache.remove(&resume_id) {
-                let active = snap.active;
-                self.cached_tabs = snap.tabs;
-                self.cached_active = active;
-                self.recently_closed = snap.recently_closed;
-                self.apply_workspace_chrome_focus();
-                // Helper already has these browsers. Pass the parked list
-                // only as a fallback if the helper was evicted/died.
-                let create_tabs: Vec<(TabId, String, String)> = self
-                    .cached_tabs
-                    .iter()
-                    .map(|t| (t.id, t.url.clone(), t.title.clone()))
-                    .collect();
-                tracing::info!(
-                    profile = %resume_id,
-                    tabs = create_tabs.len(),
-                    "resuming parked profile workspace"
-                );
-                let _ = self.cmd_tx.send(Cmd::SwitchProfileWorkspace {
-                    park_as_profile_id,
-                    resume_profile_id: resume_id,
-                    cef_cache_path: cef_path,
-                    create_tabs: Some(create_tabs),
-                    active,
-                });
-                self.evict_workspace_parks();
-                crate::integration::republish_menus(self.app_id);
-                self.session_fp.clear();
-                self.profile_options = crate::profiles::list();
-                self.persist_session();
-                return;
-            }
-        }
-
-        let (create_tabs, active) = self.cold_workspace_from_session();
-        let _ = self.cmd_tx.send(Cmd::SwitchProfileWorkspace {
-            park_as_profile_id,
-            resume_profile_id: resume_id,
-            cef_cache_path: cef_path,
-            create_tabs: Some(create_tabs),
-            active,
-        });
-        self.evict_workspace_parks();
+        tracing::info!(profile = %id, "this workspace's profile");
         crate::integration::republish_menus(self.app_id);
-        self.session_fp.clear();
         self.profile_options = crate::profiles::list();
-        self.persist_session();
-    }
-
-    fn cold_workspace_from_session(&mut self) -> (Vec<(TabId, String, String)>, TabId) {
-        let session = crate::session::BrowserSession::load();
-        self.recently_closed = session.closed.clone();
-        let (tabs, active_index) = session.bootstrap(None, BLANK_URL);
-
-        let mut new_cached = Vec::with_capacity(tabs.len().max(1));
-        let mut open_list = Vec::with_capacity(tabs.len().max(1));
-        for tab in &tabs {
-            let id = self.engine.alloc_tab_id();
-            self.page_ids.insert(id, tab.id.clone());
-            let url = crate::util::normalize_url(&tab.url);
-            let url = if url.is_empty() {
-                BLANK_URL.to_string()
-            } else {
-                url
-            };
-            let title = if url == BLANK_URL {
-                "New Tab".to_string()
-            } else {
-                tab.title.clone()
-            };
-            let (history, history_index) = session::history_from_session(tab);
-            new_cached.push(TabInfo {
-                is_loading: url != BLANK_URL && !url.is_empty(),
-                history,
-                history_index,
-                ..TabInfo::chrome(id, url.clone(), title.clone())
-            });
-            open_list.push((id, url, title));
-        }
-        if open_list.is_empty() {
-            let id = self.engine.alloc_tab_id();
-            new_cached.push(TabInfo::chrome(id, BLANK_URL, "New Tab"));
-            open_list.push((id, BLANK_URL.to_string(), "New Tab".into()));
-        }
-        let active = open_list
-            .get(active_index.min(open_list.len() - 1))
-            .map(|(id, _, _)| *id)
-            .unwrap_or(open_list[0].0);
-
-        self.cached_tabs = new_cached;
-        self.cached_active = active;
-        self.apply_workspace_chrome_focus();
-        (open_list, active)
-    }
-
-    fn apply_workspace_chrome_focus(&mut self) {
-        let active = self.cached_active;
-        self.active_handle
-            .store(active.0, std::sync::atomic::Ordering::Relaxed);
-        // Present *before* zeroing last_size so a same-size park hits.
-        self.slot().present_tab(active);
-        // Force the next shader prepare to re-send Resize. The router
-        // would otherwise leave a newly-front helper at 1280×800 because
-        // chrome last_size already matches the widget.
-        *self.slot().last_size.lock().unwrap() = (0, 0);
-        self.slot().need_park_prime.lock().unwrap().clear();
-        self.slot().drop_paint_tabs.lock().unwrap().clear();
-        if let Some(info) = self.cached_tabs.iter().find(|t| t.id == active) {
-            self.url_field = if info.url == BLANK_URL {
-                String::new()
-            } else {
-                info.url.clone()
-            };
-            self.last_seen_url = info.url.clone();
-        }
-    }
-
-    fn evict_workspace_parks(&mut self) {
-        use crate::tab_cache::eviction_victims;
-        use std::time::Instant;
-
-        let live = self.cached_tabs.len();
-        let victims = eviction_victims(&self.workspace_cache, live, Instant::now());
-        for id in victims {
-            if let Some(snap) = self.workspace_cache.remove(&id) {
-                for t in snap.tabs {
-                    self.slot().forget_tab(t.id);
-                }
-            }
-            let _ = self.cmd_tx.send(Cmd::DropParkedProfile {
-                profile_id: id.clone(),
-            });
-            tracing::info!(profile = %id, "evicted parked profile workspace");
-        }
+        self.rebind_pages();
+        Task::done(Msg::NewFrame)
     }
 
     fn submit_profile_dialog(&mut self) -> Task<Msg> {
         match self.profile_dialog.clone() {
-            Some(ProfileDialog::New) => {
-                self.persist_session();
-                let from = crate::profiles::active().id.clone();
-                match crate::profiles::create_and_activate(&self.profile_name_field) {
-                    Ok(profile) => {
-                        tracing::info!(id = %profile.id, name = %profile.name, "new profile");
-                        self.close_profile_dialog();
-                        self.enter_profile_workspace(from, true);
-                        return Task::done(Msg::NewFrame);
-                    }
-                    Err(e) => {
-                        self.profile_dialog_error = Some(e);
-                    }
+            Some(ProfileDialog::New) => match crate::profiles::create(&self.profile_name_field) {
+                Ok(profile) => {
+                    self.close_profile_dialog();
+                    return self.switch_profile(&profile.id);
                 }
-            }
+                Err(e) => {
+                    self.profile_dialog_error = Some(e);
+                }
+            },
             Some(ProfileDialog::Rename) => {
-                let id = crate::profiles::active().id.clone();
+                let id = crate::profiles::showing_profile();
                 match crate::profiles::rename(&id, &self.profile_name_field) {
                     Ok(()) => {
                         self.close_profile_dialog();
@@ -1577,23 +1418,19 @@ impl<E: Engine> App<E> {
                 }
             }
             Some(ProfileDialog::DeleteConfirm) => {
-                let id = crate::profiles::active().id.clone();
-                for t in &self.cached_tabs {
-                    self.slot().forget_tab(t.id);
-                }
-                self.workspace_cache.remove(&id);
+                let id = crate::profiles::showing_profile();
                 match crate::profiles::delete(&id) {
-                    Ok(Some(_new_active)) => {
+                    Ok(_) => {
                         self.close_profile_dialog();
+                        // Its workspaces moved to the first profile: their
+                        // pages reopen there before its helper stops.
+                        crate::integration::republish_menus(self.app_id);
+                        self.profile_options = crate::profiles::list();
+                        self.rebind_pages();
                         let _ = self.cmd_tx.send(Cmd::DropParkedProfile {
                             profile_id: id.clone(),
                         });
-                        self.enter_profile_workspace(id, false);
                         return Task::done(Msg::NewFrame);
-                    }
-                    Ok(None) => {
-                        self.close_profile_dialog();
-                        crate::integration::republish_menus(self.app_id);
                     }
                     Err(e) => {
                         self.profile_dialog_error = Some(e);
@@ -1603,58 +1440,6 @@ impl<E: Engine> App<E> {
             None => {}
         }
         Task::none()
-    }
-
-    fn front_helper_is_active(&self) -> bool {
-        let front = self.front_profile.lock().unwrap().clone();
-        let active = crate::profiles::active_if_bound()
-            .map(|p| p.id)
-            .unwrap_or_default();
-        front_matches_active(&front, &active)
-    }
-
-    /// Live helper tabs, or empty while the router is still on another profile.
-    fn live_tabs_for_active_profile(&self) -> Vec<TabInfo> {
-        if !self.front_helper_is_active() {
-            return Vec::new();
-        }
-        self.tabs_handle.lock().unwrap().clone()
-    }
-
-    /// Write session to disk if the tab list / active / sidebar changed.
-    pub fn persist_session(&mut self) {
-        // Merge so a mid-navigation engine `about:blank` does not persist
-        // over the URL we just committed. Skip live merge while the helper
-        // is still the *previous* profile (switch is async).
-        let live = self.live_tabs_for_active_profile();
-        let tabs = if live.is_empty() {
-            self.cached_tabs.clone()
-        } else {
-            merge_tab_snapshot(&self.cached_tabs, &live, &self.closed_tabs)
-        };
-        if tabs.is_empty() {
-            return;
-        }
-        let active = if tabs.iter().any(|t| t.id == self.cached_active) {
-            self.cached_active
-        } else {
-            tabs[0].id
-        };
-        for t in &tabs {
-            self.page_id(t.id);
-        }
-        let session = session::session_from_tabs(
-            &tabs,
-            active,
-            &self.recently_closed,
-            &self.page_ids,
-        );
-        let fp = session::fingerprint(&session);
-        if fp == self.session_fp {
-            return;
-        }
-        session.save();
-        self.session_fp = fp;
     }
 
     pub fn active_tab_info(&self) -> Option<&TabInfo> {
@@ -2563,7 +2348,14 @@ impl<E: Engine> App<E> {
                 // empty title until the page finishes loading (esp. inactive
                 // restored tabs). Keep the last known title so the strip does
                 // not blank out after session restore.
-                let live = self.live_tabs_for_active_profile();
+                let live: Vec<TabInfo> = self
+                    .tabs_handle
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|t| !self.retired_tabs.contains(&t.id))
+                    .cloned()
+                    .collect();
                 if !live.is_empty() {
                     self.engine_tabs_seen = true;
                     let prev_ids: HashSet<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
@@ -2583,26 +2375,6 @@ impl<E: Engine> App<E> {
                             .unwrap_or(*new_popups.last().unwrap());
                         self.switch_active_tab(focus);
                     }
-                } else if self.front_helper_is_active()
-                    && self.engine_tabs_seen
-                    && !self.cached_tabs.is_empty()
-                {
-                    // Helper died and came back empty. Reopen chrome's list
-                    // (not the helper's last snapshot — that resurrected
-                    // tabs the user had already closed).
-                    self.engine_tabs_seen = false;
-                    tracing::warn!(
-                        tabs = self.cached_tabs.len(),
-                        "engine tab list empty — reopening chrome tabs"
-                    );
-                    for t in &self.cached_tabs {
-                        let _ = self.cmd_tx.send(Cmd::OpenTab {
-                            id: t.id,
-                            url: t.url.clone(),
-                            title: t.title.clone(),
-                        });
-                    }
-                    let _ = self.cmd_tx.send(Cmd::SetActiveTab(self.cached_active));
                 }
                 // Chrome `paint_tab` is the strip/omnibox authority. The
                 // worker `active_handle` can lag a pump tick behind and was
@@ -2691,10 +2463,10 @@ impl<E: Engine> App<E> {
                         tracing::info!(url = %req.url, "ignoring DevTools as a strip tab");
                     } else if req.activate {
                         tracing::info!(url = %req.url, "popup / target=_blank → tab");
-                        self.open_tab_beside(req.url, true);
+                        self.open_tab_beside(req.url, true, &req.profile);
                     } else {
                         tracing::info!(url = %req.url, "cmd-click → background tab");
-                        self.open_tab_beside(req.url, false);
+                        self.open_tab_beside(req.url, false, &req.profile);
                     }
                 }
                 // Drain any page-selection / in-page copy the engine extracted.
@@ -2725,7 +2497,14 @@ impl<E: Engine> App<E> {
             }
             Msg::Bus(message) => {
                 self.windows.update(&message);
-                return crate::integration::handle_bus(self, message, self.app_id);
+                let rebind = self.on_workspace_message(&message);
+                return Task::batch([
+                    rebind,
+                    crate::integration::handle_bus(self, message, self.app_id),
+                ]);
+            }
+            Msg::RebindPages(generation) => {
+                self.on_rebind_timer(generation);
             }
             Msg::CursorMoved(_x, y) => {
                 if self.devtools_dragging {
@@ -3042,15 +2821,18 @@ impl<E: Engine> App<E> {
         };
         self.page_ids.insert(id, session_tab.id.clone());
         let (history, history_index) = session::history_from_session(&session_tab);
+        // ⌘⇧T reopens under the showing workspace's profile.
+        let profile = crate::profiles::showing_profile();
         let info = TabInfo {
             is_loading: url != BLANK_URL && !url.is_empty(),
             history,
             history_index,
+            profile: profile.clone(),
             ..TabInfo::chrome(id, url.clone(), title.clone())
         };
         let idx = closed.index.min(self.cached_tabs.len());
         self.cached_tabs.insert(idx, info);
-        let _ = self.cmd_tx.send(Cmd::OpenTab { id, url, title });
+        self.open_in(&profile, id, url, title);
         self.switch_active_tab(id);
         self.persist_session();
         tracing::info!(id = id.0, "reopened closed tab");
@@ -3059,16 +2841,19 @@ impl<E: Engine> App<E> {
     /// Open a new tab loading `url`, focusing it when `activate`. Called from
     /// app-menu intents (e.g., ⌘T for new tab) and bus-driven OpenUrl via
     /// `integration::run_intent`. Last in the page list.
+    /// A new page under the showing workspace's profile.
     pub fn open_tab(&mut self, url: String, activate: bool) -> TabId {
-        self.mint_tab(url, activate, false)
+        let profile = crate::profiles::showing_profile();
+        self.mint_tab(url, activate, false, &profile)
     }
 
-    /// ⌘-click or `target=_blank`: next to the current tab in the page list.
-    pub fn open_tab_beside(&mut self, url: String, activate: bool) -> TabId {
-        self.mint_tab(url, activate, true)
+    /// ⌘-click or `target=_blank`: next to the current tab in the page
+    /// list, under its opener's profile.
+    pub fn open_tab_beside(&mut self, url: String, activate: bool, profile: &str) -> TabId {
+        self.mint_tab(url, activate, true, profile)
     }
 
-    fn mint_tab(&mut self, url: String, activate: bool, beside: bool) -> TabId {
+    fn mint_tab(&mut self, url: String, activate: bool, beside: bool, profile: &str) -> TabId {
         let url = crate::util::normalize_url(&url);
         let id = self.engine.alloc_tab_id();
         let title = if url == BLANK_URL {
@@ -3078,6 +2863,7 @@ impl<E: Engine> App<E> {
         };
         let info = TabInfo {
             is_loading: url != BLANK_URL && !url.is_empty(),
+            profile: profile.to_string(),
             ..TabInfo::chrome(id, url.clone(), title.clone())
         };
         if beside {
@@ -3089,7 +2875,7 @@ impl<E: Engine> App<E> {
             // Background open (e.g. cmd-click): allow one park prime frame.
             self.slot().need_park_prime.lock().unwrap().insert(id.0);
         }
-        let _ = self.cmd_tx.send(Cmd::OpenTab { id, url, title });
+        self.open_in(profile, id, url, title);
         if activate {
             self.switch_active_tab(id);
         }
@@ -3253,11 +3039,13 @@ impl<E: Engine> App<E> {
 
     /// The window title: the page's title and address.
     pub fn title(&self, window: iced::window::Id) -> String {
-        let profile = crate::profiles::active().name;
         let info = self
             .windows
             .tab_of(window)
             .and_then(|tab| self.cached_tabs.iter().find(|t| t.id == tab));
+        let profile = info
+            .and_then(|t| crate::profiles::name_of(&self.profile_of(t.id)))
+            .unwrap_or_default();
         match info {
             Some(t) => crate::util::browser_window_title(&profile, &t.title, &t.url),
             None => crate::util::browser_window_title(&profile, "", ""),
@@ -4465,8 +4253,10 @@ impl<E: Engine> App<E> {
         for ev in evs {
             match ev {
                 crate::notify::Ipc::Show(show) => {
-                    let perm =
-                        crate::notify::permission_for(&crate::profiles::active().id, &show.origin);
+                    let perm = crate::notify::permission_for(
+                        &self.profile_of(TabId(show.tab_id)),
+                        &show.origin,
+                    );
                     if perm != "granted" {
                         tracing::info!(
                             origin = %show.origin,
@@ -4492,15 +4282,20 @@ impl<E: Engine> App<E> {
                         prompt_id = perm.req_id,
                         "notification permission request"
                     );
-                    let known =
-                        crate::notify::permission_for(&crate::profiles::active().id, &perm.origin);
+                    let known = crate::notify::permission_for(
+                        &self.profile_of(TabId(perm.tab_id)),
+                        &perm.origin,
+                    );
                     if known != "default" {
-                        let _ = self
-                            .cmd_tx
-                            .send(Cmd::EvaluateJs(crate::notify::resolve_script(
+                        // The asking page's helper (pages of several
+                        // profiles live at once).
+                        let _ = self.cmd_tx.send(Cmd::Target {
+                            tab: TabId(perm.tab_id),
+                            cmd: Box::new(Cmd::EvaluateJs(crate::notify::resolve_script(
                                 perm.req_id,
                                 &known,
-                            )));
+                            ))),
+                        });
                         continue;
                     }
                     if self.pending_notify.is_none() {
@@ -4847,7 +4642,7 @@ impl<E: Engine> App<E> {
     }
 
     fn on_media_ipc(&mut self, m: crate::media::IpcMedia) {
-        let profile = crate::profiles::active().id;
+        let profile = self.profile_of(TabId(m.tab_id));
         let known = crate::media::permission_for(&profile, &m.origin);
         if known != "default" {
             crate::media::send_resolve(&self.cmd_tx, &m, known == "granted");
@@ -4876,7 +4671,7 @@ impl<E: Engine> App<E> {
         let Some(perm) = self.pending_media.take() else {
             return;
         };
-        let profile = crate::profiles::active().id;
+        let profile = self.profile_of(TabId(perm.tab_id));
         if let Err(e) = crate::media::set_permission(&profile, &perm.origin, result) {
             tracing::warn!(error = %e, "media: persist permission failed");
         }
@@ -4934,7 +4729,7 @@ impl<E: Engine> App<E> {
         let Some(perm) = self.pending_notify.take() else {
             return;
         };
-        let profile = crate::profiles::active().id;
+        let profile = self.profile_of(TabId(perm.tab_id));
         if let Err(e) = crate::notify::set_permission(&profile, &perm.origin, result) {
             tracing::warn!(error = %e, "notify: persist permission failed");
         }
@@ -4943,12 +4738,13 @@ impl<E: Engine> App<E> {
             prompt_id: perm.req_id,
             granted,
         });
-        let _ = self
-            .cmd_tx
-            .send(Cmd::EvaluateJs(crate::notify::resolve_script(
+        let _ = self.cmd_tx.send(Cmd::Target {
+            tab: TabId(perm.tab_id),
+            cmd: Box::new(Cmd::EvaluateJs(crate::notify::resolve_script(
                 perm.req_id,
                 result,
-            )));
+            ))),
+        });
     }
 
     fn view_notify_permission(&self) -> Element<'_, Msg> {
@@ -5073,11 +4869,18 @@ impl<E: Engine> App<E> {
                 col.push(actions).into()
             }
             ProfileDialog::DeleteConfirm => {
-                let name = crate::profiles::active().name.clone();
+                let showing = crate::profiles::showing_profile();
+                let name = crate::profiles::name_of(&showing).unwrap_or_default();
+                // Its workspaces move to the first profile left.
+                let heir = crate::profiles::list()
+                    .into_iter()
+                    .find(|p| p.id != showing)
+                    .map(|p| p.name)
+                    .unwrap_or_default();
                 let mut col = column![
                     title_el,
                     text(format!(
-                        "Delete “{name}”? Open tabs and site data for this profile will be removed."
+                        "Delete “{name}”? Its site data is removed; its pages reopen under “{heir}”."
                     ))
                     .size(12)
                     .style(|theme: &iced::Theme| {
@@ -7098,10 +6901,6 @@ impl<E: Engine> Drop for App<E> {
 
 /// Empty / `about:blank` mid-navigation — do not flash these in the omnibar
 /// over a URL the user just committed.
-fn front_matches_active(front: &str, active: &str) -> bool {
-    !front.is_empty() && front == active
-}
-
 fn is_transient_nav_url(url: &str) -> bool {
     url.is_empty() || url == BLANK_URL
 }
@@ -7321,6 +7120,11 @@ fn merge_tab_fields(prior: &TabInfo, live: &TabInfo) -> TabInfo {
         load_progress,
         history,
         history_index,
+        profile: if live.profile.is_empty() {
+            prior.profile.clone()
+        } else {
+            live.profile.clone()
+        },
     }
 }
 
@@ -7330,13 +7134,6 @@ mod tests {
 
     fn tab(id: u64, url: &str, title: &str) -> TabInfo {
         TabInfo::chrome(TabId(id), url, title)
-    }
-
-    #[test]
-    fn live_tabs_ignored_until_front_helper_matches() {
-        assert!(!front_matches_active("", "tertius"));
-        assert!(!front_matches_active("primary", "tertius"));
-        assert!(front_matches_active("tertius", "tertius"));
     }
 
     #[test]

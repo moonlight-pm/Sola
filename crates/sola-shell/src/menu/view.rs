@@ -49,6 +49,12 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         Some(crate::app::Panel::NotifyPile) => return crate::notify::view::pile_panel(shell),
         Some(crate::app::Panel::Bluetooth) => return crate::bluetooth::view::panel(shell),
         Some(crate::app::Panel::Audio) => return crate::audio::view::panel(shell),
+        Some(crate::app::Panel::Workspace(i)) => {
+            return crate::menu::host_card(super::workspace::menu(shell, i));
+        }
+        Some(crate::app::Panel::RenameWorkspace) => {
+            return crate::menu::host_card(super::workspace::rename(shell));
+        }
         None => {}
     }
 
@@ -79,10 +85,15 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         (app_id_str.to_string(), items)
     };
 
-    let items_el: Element<'_, Msg> = if items.is_empty() {
+    crate::menu::host_card(items_card(items, app_id))
+}
+
+/// A dropdown card of menu rows; a row sends `MenuAction { app_id, id }`.
+pub fn items_card(items: Vec<MenuItem>, app_id: String) -> Element<'static, Msg> {
+    let items_el: Element<'static, Msg> = if items.is_empty() {
         text("").into()
     } else {
-        let rows: Vec<Element<'_, Msg>> = items
+        let rows: Vec<Element<'static, Msg>> = items
             .into_iter()
             .map(|item| menu_item_view_owned(item, app_id.clone()))
             .collect();
@@ -90,11 +101,9 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         // and the shortcut sits flush against the right padding (macOS feel).
         column(rows).width(Length::Fill).spacing(0).into()
     };
-
     // Dropdown card — kit popover chrome (raised bg, calm shadow, MD radius).
     // Default popover pad is already SPACE_SM (4); keep explicit for clarity.
-    let card: Element<'_, Msg> = popover(items_el).width(Length::Fill).into();
-    crate::menu::host_card(card)
+    popover(items_el).width(Length::Fill).into()
 }
 
 // ---------------------------------------------------------------------------

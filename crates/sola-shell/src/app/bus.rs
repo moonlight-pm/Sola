@@ -390,16 +390,7 @@ impl Shell {
             let next = focused_zone
                 .filter(|z| *z != Zone::Float)
                 .and_then(|z| self.tabs.visible_shown(z, &hidden))
-                .or_else(|| {
-                    let app = self
-                        .mru_apps
-                        .iter()
-                        .find(|a| !self.is_app_hidden(a))?;
-                    self.mru_window_by_app
-                        .get(app)
-                        .copied()
-                        .or_else(|| self.lookup_any_window_id(app))
-                });
+                .or_else(|| self.mru_window_on_showing(None));
             let next_app = next.and_then(|w| self.app_id_for_window(w));
             match (next, next_app) {
                 (Some(wid), Some(app_id)) => self.focus_window(wid, &app_id),
@@ -734,7 +725,7 @@ impl Shell {
     }
 
     /// Resolve a non-shell window_id → app_id, if known.
-    fn app_id_for_window(&self, window_id: u32) -> Option<String> {
+    pub(crate) fn app_id_for_window(&self, window_id: u32) -> Option<String> {
         self.known_windows
             .iter()
             .find(|w| w.window_id == window_id && w.app_id != Self::APP_ID)
@@ -742,7 +733,7 @@ impl Shell {
     }
 
     /// Emit `Topic::Focus` so sola-river routes keyboard/pointer to `window_id`.
-    fn emit_focus(&self, window_id: u32, prev_focused: Option<u32>) {
+    pub(crate) fn emit_focus(&self, window_id: u32, prev_focused: Option<u32>) {
         tracing::debug!(window_id, ?prev_focused, "emit Focus");
         super::with_bus(|bus| {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
@@ -845,6 +836,9 @@ impl Shell {
         let Some(app_id) = self.app_id_for_window(window_id) else {
             return;
         };
+        // Showing a window shows its workspace; remember where focus was
+        // on the one being left.
+        self.remember_workspace_focus();
         self.tabs.show(window_id);
         self.tabs.focus(window_id);
         // Cancel any dwell timer — click is authoritative for focus.
@@ -1250,6 +1244,25 @@ impl Shell {
             return Task::done(Msg::CycleTabs { back: chord.shift });
         }
 
+        // Workspaces: Meta+1…9 shows one, Meta+Ctrl+1…9 sends the focused
+        // window there, Meta+Ctrl+(Shift+)Tab steps.
+        if chord.meta && !chord.alt {
+            if let Some(index) = crate::keys::workspace_index(chord.keycode) {
+                if chord.ctrl && !chord.shift {
+                    self.send_focused_to_workspace(index);
+                    return Task::none();
+                }
+                if !chord.ctrl && !chord.shift {
+                    self.show_workspace(index);
+                    return Task::none();
+                }
+            }
+            if chord.ctrl && chord.keycode == sola_core::KeyCode::TAB {
+                self.step_workspace(chord.shift);
+                return Task::none();
+            }
+        }
+
         // Meta+Tab: activate or cycle switcher.
         if chord.meta && chord.keycode == sola_core::KeyCode::TAB {
             if self.launcher.active {
@@ -1514,7 +1527,6 @@ impl Shell {
     /// changed (tiled, Cinema, compositor rim), and retract departed ones.
     /// Runs with every frame emission and when an app publishes menus.
     pub(super) fn sync_window_chrome(&mut self) {
-        let present = self.tabs.present();
         let next: Vec<WindowChrome> = self
             .known_windows
             .iter()
@@ -1523,7 +1535,11 @@ impl Shell {
                 window_id: w.window_id,
                 tiled: matches!(self.tabs.zone_of(w.window_id), Some(Zone::Left | Zone::Right))
                     && !self.zoning.is_floating(w.window_id),
-                cinema: present == Some((w.window_id, crate::stacks::Present::Cinema)),
+                cinema: self
+                    .tabs
+                    .desk_of(w.window_id)
+                    .and_then(|d| self.tabs.present_on(d))
+                    == Some((w.window_id, crate::stacks::Present::Cinema)),
                 rim: self.menus.get_menu(&w.app_id).is_none(),
             })
             .collect();

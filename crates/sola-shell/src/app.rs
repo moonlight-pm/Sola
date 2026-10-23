@@ -25,6 +25,7 @@ use crate::switcher::state::SwitcherState;
 use crate::zoning::ZoningState;
 
 pub mod bus;
+pub mod workspaces;
 
 /// Set by flower **Quit Sola** so `main` can exit 0. Compositor death
 /// and **Restart Shell** leave this false so the supervisor restarts us
@@ -201,6 +202,14 @@ pub enum Msg {
     CycleTabs { back: bool },
     /// A tab bar row was clicked: show that window in its zone.
     ShowTab(u32),
+    /// A workspace pill was clicked: show that workspace.
+    ShowWorkspace(usize),
+    /// Open (or close) a workspace pill's menu.
+    WorkspaceMenu(usize),
+    /// The rename field changed.
+    WorkspaceRenameInput(String),
+    /// Return in the rename field.
+    WorkspaceRenameCommit,
     /// Tab bar pointer / drag gesture.
     TabBar(sola_kit::components::SidebarMsg),
     /// Super+Shift+4: freeze the output, then open the selection marquee.
@@ -261,6 +270,10 @@ pub enum Panel {
     NotifyPile,
     Bluetooth,
     Audio,
+    /// A workspace pill's menu.
+    Workspace(usize),
+    /// Renaming a workspace (`workspace.renaming`).
+    RenameWorkspace,
 }
 
 /// In-flight launcher spawn waiting for a first matching window (or timeout).
@@ -313,6 +326,8 @@ pub struct Shell {
     pub tabbar: crate::tabbar::TabBarState,
     /// Each window's last published `Topic::WindowChrome`.
     pub window_chrome: crate::chrome::ChromeState,
+    /// Workspace focus memory, what was published, a rename in progress.
+    pub workspace: workspaces::WorkspaceState,
     /// The saved `TabLayout` was taken (later replays are our own echo).
     tab_layout_loaded: bool,
     /// Safe to save the layout: the saved one was read, or there is none.
@@ -480,6 +495,7 @@ impl Shell {
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
+            workspace: workspaces::WorkspaceState::default(),
             tab_layout_loaded: tab_layout_ready,
             tab_layout_ready,
             last_tab_layout: None,
@@ -830,6 +846,18 @@ impl Shell {
                 iced::Task::none()
             }
             ShortcutAction::Cycle => iced::Task::done(Msg::CycleTabs { back: false }),
+            ShortcutAction::ShowWorkspace(index) => {
+                self.show_workspace(index);
+                iced::Task::none()
+            }
+            ShortcutAction::SendToWorkspace(index) => {
+                self.send_focused_to_workspace(index);
+                iced::Task::none()
+            }
+            ShortcutAction::StepWorkspace { back } => {
+                self.step_workspace(back);
+                iced::Task::none()
+            }
             ShortcutAction::ScreenshotFull => {
                 self.arm_screenshot_handoff();
                 crate::screenshot::full()
@@ -887,13 +915,9 @@ impl Shell {
         }) {
             self.pointer_window_id = None;
         }
-        let next = self
-            .mru_apps
-            .iter()
-            .find(|id| id.as_str() != Self::APP_ID && !self.is_app_hidden(id))
-            .cloned();
-        if let Some(next) = next {
-            self.raise_app(&next);
+        // The next window on this workspace; never another workspace's.
+        if let Some(next) = self.mru_window_on_showing(Some(&app_id)) {
+            self.raise_window_from_click(next);
         } else {
             self.focused_app_id = None;
             self.focused_window_id = None;
@@ -1045,6 +1069,13 @@ impl Shell {
         self.menu_open = false;
         self.current_open_index = None;
         self.current_open_is_system = false;
+        if self.open_panel == Some(Panel::RenameWorkspace) {
+            // The rename field had the keyboard: hand it back.
+            self.workspace.renaming = None;
+            if let Some(wid) = self.focused_window_id {
+                self.emit_focus(wid, None);
+            }
+        }
         self.set_open_panel(None);
         true
     }
@@ -1453,6 +1484,7 @@ impl Shell {
     pub fn emit_composition(&mut self) {
         let entries = self.build_composition_entries();
         let order: Vec<u32> = entries.iter().map(|e| e.window_id).collect();
+        self.sync_workspaces();
         if order == self.last_composition {
             tracing::debug!(count = order.len(), "skip Composition (unchanged)");
             return;
@@ -1595,6 +1627,14 @@ impl Shell {
         bindings.push(KeyCode::K.meta()); // Meta+K → keyboard shortcuts (Omarchy)
         bindings.push(KeyCode::Q.meta()); // Meta+Q → close focused app
         bindings.push(KeyCode::H.meta()); // Meta+H → hide focused app
+        // Workspaces: Meta+1…9 show, Meta+Ctrl+1…9 send the focused window,
+        // Meta+Ctrl+(Shift+)Tab step.
+        for key in crate::keys::WORKSPACE_KEYS {
+            bindings.push(key.meta());
+            bindings.push(key.meta().ctrl());
+        }
+        bindings.push(KeyCode::TAB.meta().ctrl());
+        bindings.push(KeyCode::TAB.meta().ctrl().shift());
         // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
         bindings.push(KeyCode::KEY_3.meta_shift());
         bindings.push(KeyCode::KEY_4.meta_shift());
@@ -1649,20 +1689,26 @@ impl Shell {
             return Vec::new();
         };
         let hidden = |app: &str| self.is_app_hidden(app);
-        let occupied = self.tabs.occupied(&hidden);
-        let mut frames: Vec<FrameUpdate> = crate::stacks::TILED
-            .iter()
-            .flat_map(|(zone, _)| {
-                self.tabs
-                    .tabs(*zone)
-                    .iter()
-                    .map(|t| crate::zoning::tile_frame(t.window_id, *zone, &occupied, w, h))
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        if let Some((wid, present)) = self.tabs.present() {
-            frames.retain(|f| f.window_id != wid);
-            frames.push(crate::zoning::present_frame(wid, present, w, h));
+        let mut frames = Vec::new();
+        // Every workspace, so showing one needs no resize either.
+        for ws in 0..self.tabs.workspace_count() {
+            let occupied = self.tabs.occupied_on(ws, &hidden);
+            let present = self.tabs.present_on(ws);
+            for (zone, _) in crate::stacks::TILED {
+                for t in self.tabs.tabs_on(ws, zone) {
+                    frames.push(match present {
+                        Some((wid, p)) if wid == t.window_id => {
+                            crate::zoning::present_frame(wid, p, w, h)
+                        }
+                        _ => crate::zoning::tile_frame(t.window_id, zone, &occupied, w, h),
+                    });
+                }
+            }
+            if let Some((wid, p)) = present.filter(|(wid, _)| {
+                self.tabs.zone_of(*wid) == Some(sola_bus::topics::Zone::Float)
+            }) {
+                frames.push(crate::zoning::present_frame(wid, p, w, h));
+            }
         }
         frames
     }
@@ -1971,6 +2017,23 @@ impl Shell {
                     clamp_x(self.estimate_audio_x(), w),
                     w,
                     crate::audio::view::CARD_HEIGHT,
+                )
+            }
+            Some(Panel::Workspace(i)) => {
+                let w = crate::menu::view::MENU_WIDTH;
+                (
+                    clamp_x(crate::menubar::pills::x_of(self, i), w),
+                    w,
+                    crate::menu::workspace::MENU_HEIGHT,
+                )
+            }
+            Some(Panel::RenameWorkspace) => {
+                let w = crate::menu::workspace::RENAME_WIDTH;
+                let i = self.workspace.renaming.as_ref().map_or(0, |(i, _)| *i);
+                (
+                    clamp_x(crate::menubar::pills::x_of(self, i), w),
+                    w,
+                    crate::menu::workspace::RENAME_HEIGHT,
                 )
             }
             None => {
@@ -2379,6 +2442,11 @@ impl Shell {
                     self.emit_composition();
                     self.emit_registered_chords();
                     return iced::Task::done(Msg::OpenShortcuts);
+                }
+                if app_id == Self::APP_ID {
+                    if let Some(action) = crate::menu::workspace::parse(&action_id) {
+                        return self.on_workspace_menu(action);
+                    }
                 }
                 if let Some(action) = sola_kit::parse_window_action(&action_id) {
                     let _ = self.dismiss_open_menu();
@@ -2829,6 +2897,41 @@ impl Shell {
                 }
                 iced::Task::none()
             }
+            Msg::ShowWorkspace(index) => {
+                if self.dismiss_open_menu() {
+                    self.emit_overlay_frames();
+                    self.emit_registered_chords();
+                }
+                self.show_workspace(index);
+                iced::Task::none()
+            }
+            Msg::WorkspaceMenu(index) => {
+                if self.menu_open && self.open_panel == Some(Panel::Workspace(index)) {
+                    let _ = self.dismiss_open_menu();
+                } else {
+                    let _ = self.dismiss_open_menu();
+                    self.menu_open = true;
+                    self.set_open_panel(Some(Panel::Workspace(index)));
+                }
+                self.emit_overlay_frames();
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::WorkspaceRenameInput(name) => {
+                if let Some((_, typed)) = self.workspace.renaming.as_mut() {
+                    *typed = name;
+                }
+                iced::Task::none()
+            }
+            Msg::WorkspaceRenameCommit => {
+                self.commit_workspace_rename();
+                let _ = self.dismiss_open_menu();
+                self.emit_overlay_frames();
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
             Msg::ShowTab(wid) => {
                 self.activate_window(wid);
                 iced::Task::none()
@@ -2912,6 +3015,7 @@ mod pending_launch_tests {
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
+            workspace: workspaces::WorkspaceState::default(),
             tab_layout_loaded: false,
             tab_layout_ready: false,
             last_tab_layout: None,
@@ -3039,6 +3143,7 @@ mod hide_tests {
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
+            workspace: workspaces::WorkspaceState::default(),
             tab_layout_loaded: false,
             tab_layout_ready: false,
             last_tab_layout: None,

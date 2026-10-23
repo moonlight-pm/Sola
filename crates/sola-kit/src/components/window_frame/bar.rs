@@ -3,10 +3,7 @@
 //! hits, and how the row draws. Positions are relative to the frame's
 //! top-left corner.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-
-use iced::advanced::text::{self, Paragraph as _, Renderer as _};
+use iced::advanced::text::{self, Renderer as _};
 use iced::alignment::Vertical;
 use iced::border::Radius;
 use iced::{Font, Pixels, Point, Rectangle, Size};
@@ -238,39 +235,9 @@ pub(super) fn line(
     );
 }
 
-type Para = <iced::Renderer as text::Renderer>::Paragraph;
-
-thread_local! {
-    /// Measured widths, so a relayout does not shape the same words again.
-    static WIDTHS: RefCell<HashMap<(String, u32, Font), f32>> = RefCell::new(HashMap::new());
-}
-
 /// Width of one line of `content`.
 pub(super) fn measure(content: &str, size: f32, font: Font) -> f32 {
-    let key = (content.to_string(), size.to_bits(), font);
-    if let Some(w) = WIDTHS.with(|m| m.borrow().get(&key).copied()) {
-        return w;
-    }
-    let w = Para::with_text(text::Text {
-        content,
-        bounds: Size::INFINITE,
-        size: Pixels(size),
-        line_height: text::LineHeight::default(),
-        font,
-        align_x: text::Alignment::Default,
-        align_y: Vertical::Top,
-        shaping: text::Shaping::Advanced,
-        wrapping: text::Wrapping::None,
-    })
-    .min_width();
-    WIDTHS.with(|m| {
-        let mut m = m.borrow_mut();
-        if m.len() > 1024 {
-            m.clear();
-        }
-        m.insert(key, w);
-    });
-    w
+    fonts::line_width(content, size, font)
 }
 
 /// `title`, shortened with an ellipsis until it fits in `room`.

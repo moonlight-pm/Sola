@@ -237,6 +237,23 @@ beats a tab working). `Topic::Zones` is no
 longer read or written on `next`. Super+KP_4 / KP_6 move a tab, KP_0 /
 KP_Enter show it Fullscreen (content area) / Cinema (output).
 
+**On `next`, workspaces (slice 5):** the shell keeps a desk of zones per
+desktop workspace (`stacks/`; readers without a window answer for the
+showing one) and composes only the showing workspace; windows elsewhere
+are hidden by River and keep running. The workspaces (id, name, order) and
+which one shows persist inside `TabLayout` and go out as sticky
+`Topic::Workspaces`; each window's workspace as sticky
+`Topic::WindowWorkspace`. The switcher is pills in the menubar
+(`menubar/pills.rs`); Super+1…9 / Super+Ctrl+1…9 / Super+Ctrl+Tab. The
+browser runs one CEF helper per profile, all live: its router keeps a page
+→ profile map and routes commands by page (the rest to the active page's
+helper), merges every helper's pages, and makes a helper front only while
+it has a page on screen or the active one; helper-minted page ids sit in a
+per-profile range above chrome's. Each workspace picks a profile
+(`profiles.json` `workspaces`); a page runs its workspace's profile and
+reopens in place when that differs (`app/pages.rs`); sessions are saved
+per profile.
+
 **On `next`, window frames (slice 6):** one 10 px gap (`zoning::GAP`)
 around the output under the menubar, between the bar and the tiles, and
 between tiles. Every kit window draws its own frame (`sola-kit`

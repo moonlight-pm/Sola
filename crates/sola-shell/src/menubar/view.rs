@@ -1,8 +1,8 @@
 //! Menubar window view.
 //!
 //! Layout (left-to-right):
-//!   [≡] ──────────────────────────── [mail?] [stats] [clock]
-//!    ^system-menu
+//!   [≡] [1 Main] [2 Mail ◆] ─────────── [mail?] [stats] [clock]
+//!    ^system-menu  ^workspace pills
 //!
 //! App menus are not here: each app carries its own in its window's
 //! titlebar (kit `window_frame`, Next slice 6).
@@ -42,7 +42,7 @@ const CHROME_SIZE: f32 = 13.0;
 /// Full window height — every interactive label uses this so the hit box
 /// reaches the top edge of the screen (y=0), not a short centred chip.
 const BAR_H: f32 = WINDOW_HEIGHT as f32;
-fn menu_pad() -> Padding {
+pub(super) fn menu_pad() -> Padding {
     Padding {
         top: 0.0,
         right: MENU_PAD_H,
@@ -77,7 +77,7 @@ const CHROME_NUDGE_UP: f32 = 2.0;
 /// Iced buttons pin their child at the top of the padded area — wrap the
 /// label in a Fill-height container so the text is vertically centred while
 /// the hit box stays full-height.
-fn bar_button<'a>(
+pub(super) fn bar_button<'a>(
     content: impl Into<Element<'a, Msg>>,
     active: bool,
     on_press: Msg,
@@ -208,7 +208,8 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     .into();
 
     // ── Assemble ──────────────────────────────────────────────────────
-    let left = vec![system_btn];
+    let mut left = vec![system_btn];
+    left.extend(super::pills::view(shell));
 
     let mut extras: Vec<Element<'_, Msg>> = Vec::new();
     if let Some(unread) = shell.mail_unread_badge() {

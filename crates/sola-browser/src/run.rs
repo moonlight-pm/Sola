@@ -278,12 +278,12 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     #[cfg(feature = "bitwarden")]
     crate::vault::passkey_bridge::install();
 
-    let boot_session = crate::session::BrowserSession::load();
-    let boot_closed = boot_session.closed.clone();
-    let (boot_tabs, boot_active) = boot_session.bootstrap(argv, DEFAULT_URL);
+    // Every profile a workspace runs opens its saved pages (Next slice 5).
+    let (boot_tabs, boot_active, boot_closed) = crate::app::boot_pages(argv, DEFAULT_URL);
     tracing::info!(
         tabs = boot_tabs.len(),
         active_index = boot_active,
+        profiles = ?crate::app::count_by_profile(&boot_tabs),
         "bootstrapping session"
     );
 

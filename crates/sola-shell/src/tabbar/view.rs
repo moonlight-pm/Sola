@@ -1,11 +1,12 @@
-//! The tab bar's view: a head with the tab count, then a section per zone
+//! The tab bar's view: a head with the showing workspace's name and its
+//! tab count, then a section per zone
 //! (name, count) with a row per window (app icon, title). A tiled zone's
 //! shown tab is the active row; the focused float is too. A tab that is
 //! working or waiting on a decision (`Topic::TabActivity`) shows that mark
 //! in the icon's place, so the title does not move.
 
-use iced::widget::{container, text};
-use iced::{Element, Padding};
+use iced::widget::{Space, container, row, text};
+use iced::{Element, Length, Padding};
 use sola_bus::topics::{Activity, Zone};
 use sola_kit::components::style::SPACE_MD;
 use sola_kit::components::{
@@ -66,9 +67,35 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         );
     }
 
+    // The head names the showing workspace (board 06), its tab count right.
     let noun = if count == 1 { "tab" } else { "tabs" };
-    let head = container(text(format!("{count} {noun}")).font(fonts::chrome()).size(12))
-        .padding(Padding::from([SPACE_MD, SPACE_MD]));
+    let name = shell
+        .tabs
+        .workspaces()
+        .get(shell.tabs.showing())
+        .map(|w| w.name.clone())
+        .unwrap_or_default();
+    let muted = iced::Color {
+        a: 0.55,
+        ..shell.theme.palette().text
+    };
+    let head = container(
+        row![
+            text(name)
+                .font(iced::Font {
+                    weight: iced::font::Weight::Semibold,
+                    ..fonts::chrome()
+                })
+                .size(13),
+            Space::new().width(Length::Fill),
+            text(format!("{count} {noun}"))
+                .font(fonts::chrome())
+                .size(11)
+                .color(muted),
+        ]
+        .align_y(iced::Alignment::Center),
+    )
+    .padding(Padding::from([SPACE_MD, SPACE_MD]));
     let panel = SidebarPanel::new(sections)
         .controller(&shell.tabbar.gestures, Msg::TabBar)
         .reorderable()

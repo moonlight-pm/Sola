@@ -3735,23 +3735,8 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
         Cmd::CloseDevTools => {
             close_devtools_session(state);
         }
-        Cmd::SwitchProfileWorkspace {
-            park_as_profile_id,
-            resume_profile_id,
-            cef_cache_path,
-            create_tabs,
-            active,
-        } => {
-            // Profile switch is exec_self (see App::switch_profile). This
-            // cmd is unused; keep the arm so the enum stays compilable.
-            let _ = (
-                park_as_profile_id,
-                resume_profile_id,
-                cef_cache_path,
-                create_tabs,
-                active,
-            );
-        }
+        // The router unwraps these; run the inner command if one arrives.
+        Cmd::InProfile { cmd, .. } => return process_cmd(state, *cmd),
         Cmd::DropParkedProfile { profile_id } => {
             drop_parked_profile(state, &profile_id);
         }
@@ -5667,6 +5652,8 @@ fn rebuild_snapshot(state: &CefThreadState) {
                 load_progress: t.load_progress.get(),
                 history,
                 history_index,
+                // The router tags each page with its helper's profile.
+                profile: String::new(),
             }
         })
         .collect();

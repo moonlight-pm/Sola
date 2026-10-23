@@ -247,15 +247,52 @@ pub struct TabLayoutZone {
     pub zone: Zone,
     pub apps: Vec<String>,
     pub shown: Option<u32>,
+    /// The workspace this zone is on ([`Workspace::id`]); empty in a file
+    /// saved before workspaces: the first one.
+    #[serde(default)]
+    pub workspace: String,
 }
 
 /// Where the shell's tab bar puts windows (`Topic::TabLayout`, persistent).
 /// A window that comes back (its app restarted, or the session restored
-/// it) takes its app's place. Keyed by app id while apps have one window
-/// each; per-tab keys come with window-per-tab apps.
+/// it) takes its place: its workspace, zone, and index. Also the
+/// workspaces themselves and which one shows, so the whole desk comes back
+/// together.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct TabLayout {
     pub zones: Vec<TabLayoutZone>,
+    /// The workspaces in order; empty before workspaces (one, "Main").
+    #[serde(default)]
+    pub workspaces: Vec<Workspace>,
+    /// The id of the workspace showing.
+    #[serde(default)]
+    pub showing: String,
+}
+
+/// A desktop workspace (Next slice 5): a whole desk of windows. The id
+/// is stable for its life; the name is the user's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Workspace {
+    pub id: String,
+    pub name: String,
+}
+
+/// The workspaces in order and which one is showing (shell → apps).
+/// Carried by the sticky `Topic::Workspaces`; the browser picks the
+/// profile of the one showing for a new window.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Workspaces {
+    pub workspaces: Vec<Workspace>,
+    pub showing: String,
+}
+
+/// The workspace a window is on (shell → apps). Carried by the sticky
+/// `Topic::WindowWorkspace`, keyed by `window_id`; the shell retracts it
+/// when the window closes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowWorkspace {
+    pub window_id: u32,
+    pub workspace: String,
 }
 
 /// Emitted by compositor when pointer enters a different surface/window.
@@ -1467,6 +1504,16 @@ define_topics! {
     // Appended last.
     #[sticky(keys = [window_id])]
     WindowChrome(WindowChrome),
+
+    // The workspaces and the one showing (shell → apps). Sticky; the
+    // shell persists them inside `TabLayout`. Appended last.
+    #[sticky]
+    Workspaces(Workspaces),
+
+    // The workspace a window is on (shell → apps). Sticky, keyed by
+    // window_id; retracted on close. Appended last.
+    #[sticky(keys = [window_id])]
+    WindowWorkspace(WindowWorkspace),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1484,6 +1531,8 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::ShowTab
             | TopicKind::TabActivity
             | TopicKind::WindowChrome
+            | TopicKind::Workspaces
+            | TopicKind::WindowWorkspace
     )
 }
 

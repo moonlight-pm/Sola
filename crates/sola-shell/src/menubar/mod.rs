@@ -1,7 +1,8 @@
 //! Menubar window — state, lifecycle, and view entry point.
 //!
 //! The menubar is the first of the four shell windows to open. It provides:
-//! - Left cluster: system-menu button, focused-app title, app-menu labels.
+//! - Left cluster: system-menu button, then a pill per workspace (Next
+//!   slice 5; app menus are in their windows' titlebars).
 //! - Right cluster: phrases, tight within and a breath between —
 //!   extras (mail / bell / mouse battery / bluetooth), spectrum, percents
 //!   (CPU / GPU / MEM), rates (RX / TX), clock.
@@ -10,6 +11,7 @@
 //! Density and type live in the view (compact chrome sizes, font roles);
 //! bar height stays fixed so zoning / overlay Y offsets stay stable.
 
+pub mod pills;
 pub mod view;
 
 use chrono::Local;

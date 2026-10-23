@@ -201,6 +201,25 @@ fn letter_keysym(k: KeyCode) -> Option<u32> {
         .map(|(_, c)| *c as u32)
 }
 
+/// Workspaces 1…9 sit on the digit row (Super+1…9; zoning lives on the
+/// number pad).
+pub const WORKSPACE_KEYS: [KeyCode; 9] = [
+    KeyCode::KEY_1,
+    KeyCode::KEY_2,
+    KeyCode::KEY_3,
+    KeyCode::KEY_4,
+    KeyCode::KEY_5,
+    KeyCode::KEY_6,
+    KeyCode::KEY_7,
+    KeyCode::KEY_8,
+    KeyCode::KEY_9,
+];
+
+/// The workspace a digit key names (0-based), if it is one.
+pub fn workspace_index(keycode: KeyCode) -> Option<usize> {
+    WORKSPACE_KEYS.iter().position(|k| *k == keycode)
+}
+
 /// Inverse of `to_registered`. Returns `None` for keysyms the shell never
 /// registers.
 pub fn from_chord_event(evt: &ChordEvent) -> Option<KeyChord> {

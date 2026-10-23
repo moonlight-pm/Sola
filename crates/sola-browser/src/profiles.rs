@@ -97,6 +97,9 @@ struct ProfilesRegistry {
     version: u32,
     active: String,
     profiles: Vec<ProfileEntry>,
+    /// Desktop workspace id → the profile its pages run (Next slice 5).
+    #[serde(default)]
+    workspaces: std::collections::BTreeMap<String, String>,
 }
 
 /// Ensure registry + active profile dirs exist, wipe legacy paths once,
@@ -147,6 +150,122 @@ pub fn bind_process_only(id: &str) -> Result<ActiveProfile, String> {
         .ok_or_else(|| "profile not found".to_string())?;
     ensure_profile_dirs(&entry.id);
     set_process_active(resolve_entry(&entry))
+}
+
+// ---------------------------------------------------------------------------
+// Workspaces (Next slice 5): each desktop workspace picks a profile, and
+// every page window on it runs that profile.
+// ---------------------------------------------------------------------------
+
+/// The desktop workspace showing, as the shell last said.
+static SHOWING: RwLock<Option<String>> = RwLock::new(None);
+
+/// The profile `workspace` picked: its choice when that profile still
+/// exists, else the first profile (Primary).
+pub fn profile_for_workspace(workspace: &str) -> String {
+    let reg = load_registry_or_empty();
+    reg.workspaces
+        .get(workspace)
+        .filter(|id| reg.profiles.iter().any(|p| &p.id == *id))
+        .cloned()
+        .or_else(|| reg.profiles.first().map(|p| p.id.clone()))
+        .unwrap_or(reg.active)
+}
+
+/// The profile new pages open under: the showing workspace's, or the
+/// registry's active one before the shell has said which shows.
+pub fn showing_profile() -> String {
+    match SHOWING.read().ok().and_then(|s| s.clone()) {
+        Some(ws) => profile_for_workspace(&ws),
+        None => registry_active_id(),
+    }
+}
+
+/// The workspace showing, if the shell has said.
+pub fn showing_workspace() -> Option<String> {
+    SHOWING.read().ok().and_then(|s| s.clone())
+}
+
+/// The shell's workspaces changed. A workspace not seen before starts on
+/// the profile of the one that was showing (the one it was made from); the
+/// first ones the browser hears of start on the registry's active profile,
+/// so the pages already open keep theirs. One the shell no longer lists
+/// (deleted) is forgotten. Returns true when the showing workspace changed.
+pub fn adopt_workspaces(workspaces: &[String], showing: &str) -> bool {
+    let previous = showing_workspace();
+    let mut reg = load_registry_or_empty();
+    let active = Some(reg.active.clone()).filter(|a| reg.profiles.iter().any(|p| &p.id == a));
+    let inherit = previous
+        .as_deref()
+        .map(profile_for_workspace)
+        .or(active)
+        .or_else(|| reg.profiles.first().map(|p| p.id.clone()))
+        .unwrap_or_default();
+    let known = reg.workspaces.len();
+    if !workspaces.is_empty() {
+        reg.workspaces.retain(|ws, _| workspaces.contains(ws));
+    }
+    let mut changed = reg.workspaces.len() != known;
+    for ws in workspaces {
+        if !reg.workspaces.contains_key(ws) && !inherit.is_empty() {
+            reg.workspaces.insert(ws.clone(), inherit.clone());
+            changed = true;
+        }
+    }
+    if changed {
+        if let Err(e) = write_registry(&registry_path(), &reg) {
+            tracing::warn!(error = %e, "save workspace profiles failed");
+        }
+    }
+    if let Ok(mut s) = SHOWING.write() {
+        *s = Some(showing.to_string());
+    }
+    previous.as_deref() != Some(showing)
+}
+
+/// `workspace` runs `profile` from now on (the Profiles menu). Also the
+/// registry's active profile, the default before workspaces are known.
+pub fn set_workspace_profile(workspace: &str, profile: &str) -> Result<(), String> {
+    let mut reg = load_registry_or_empty();
+    if !reg.profiles.iter().any(|p| p.id == profile) {
+        return Err("profile not found".into());
+    }
+    reg.workspaces
+        .insert(workspace.to_string(), profile.to_string());
+    reg.active = profile.to_string();
+    write_registry(&registry_path(), &reg).map_err(|e| e.to_string())
+}
+
+/// The profiles some workspace runs.
+pub fn workspace_profiles() -> Vec<String> {
+    let reg = load_registry_or_empty();
+    let mut out: Vec<String> = Vec::new();
+    for id in reg.workspaces.values() {
+        if reg.profiles.iter().any(|p| &p.id == id) && !out.contains(id) {
+            out.push(id.clone());
+        }
+    }
+    out
+}
+
+/// A profile's name, if it exists.
+pub fn name_of(id: &str) -> Option<String> {
+    list().into_iter().find(|p| p.id == id).map(|p| p.name)
+}
+
+/// Create a profile with a friendly `name` (it does not become anyone's).
+pub fn create(name: &str) -> Result<ProfileEntry, String> {
+    let name = sanitize_name(name)?;
+    let mut reg = load_registry_or_empty();
+    let entry = ProfileEntry {
+        id: new_profile_id(),
+        name,
+    };
+    reg.profiles.push(entry.clone());
+    ensure_profile_dirs(&entry.id);
+    write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
+    tracing::info!(id = %entry.id, name = %entry.name, "created profile");
+    Ok(entry)
 }
 
 /// Active profile (panics if [`ensure_active`] was never called).
@@ -255,6 +374,13 @@ pub fn delete(id: &str) -> Result<Option<ActiveProfile>, String> {
     if was_active {
         reg.active = reg.profiles[0].id.clone();
     }
+    // Its workspaces move to the first profile (Primary).
+    let first = reg.profiles[0].id.clone();
+    for profile in reg.workspaces.values_mut() {
+        if profile == id {
+            *profile = first.clone();
+        }
+    }
     write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
 
     remove_path(&profile_data_dir(id));
@@ -342,6 +468,7 @@ fn load_or_create_active() -> ActiveProfile {
                     id: id.clone(),
                     name: DEFAULT_NAME.to_string(),
                 }],
+                workspaces: Default::default(),
             };
             if let Err(e) = write_registry(&reg_path, &reg) {
                 tracing::error!(error = %e, path = %reg_path.display(), "failed to write profiles.json");
@@ -380,6 +507,7 @@ fn load_registry_or_empty() -> ProfilesRegistry {
         version: REGISTRY_VERSION,
         active: String::new(),
         profiles: Vec::new(),
+        workspaces: Default::default(),
     })
 }
 

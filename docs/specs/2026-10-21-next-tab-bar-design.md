@@ -35,8 +35,9 @@ shell's list, not to sola-river.
 | N8 | The bar comes first, under today's menubar. Titlebars with menus (board 01) arrive as each app moves to a window per tab; gaps (02) and islands (03) after; the dark grey base waits for the kit overhaul. |
 
 Proposed on board 06 and accepted for now, confirmed at their slice:
-**N6** a workspace is bound to a project; **N7** the browser's tab groups
-are dropped.
+**N6** a workspace is bound to a project (**dropped for now**, Joshua
+2026-10-23: projects are not tied to workspaces); **N7** the browser's tab
+groups are dropped.
 
 Decided later (Joshua, 2026-10-21): **N5 — the agent app is renamed
 Projects** (`sola-workspaces` → `sola-projects`, as board 04 draws) so
@@ -47,8 +48,9 @@ code and updates the **Workspaces names** lock in the same change.
 alias; tmux `sola-ws` / `sws-` and the `SOLA_WS_*` names stay (live
 sessions use them). The lock row is now **Projects names**.
 **Order:** the browser (slice 4) comes before Projects sessions (slice 3).
-**Profiles (Joshua, 2026-10-21):** each desktop workspace has its own
-browser profile (slice 5); until then page windows use the active profile.
+**Profiles (Joshua, 2026-10-21; shaped 2026-10-23):** each desktop
+workspace picks a browser profile and every browser window on it runs that
+profile (slice 5); until then page windows use the active profile.
 
 ## Model
 
@@ -186,7 +188,7 @@ novus runs River, so how novus gets it is settled before `next` merges.
 | 2 | Kit helpers for several windows per app; floating per window instead of by title; the `Tabs` topic; menu actions that name the window. Terminal opens a window per tab and drops its strip. | How a window learns its sola-river id (below) |
 | 3 | **Changed (Joshua, 2026-10-21):** each *project* is a window (a tab in the bar, named for the project) and its tabs run along a top bar inside it; the rail goes. Closing a project window keeps the project (Project → Open reopens it). Built 2026-10-21. The bar's row for a project shows its mark (2026-10-22): sticky `Topic::TabActivity` (key → idle / working / waiting) in the row's icon slot; a tab waiting on a decision beats one working. | N5 |
 | 4 | Browser: a frame slot, page size, and input target per window, as board pages already work; the strip and groups come out. | N7 |
-| 5 | Desks of windows in the OS sense (board 04): the bar heads with the one showing; switching swaps it. | N5 |
+| 5 | Desks of windows in the OS sense (board 04): the bar heads with the one showing; switching swaps it. Spec'd 2026-10-23: § Desktop workspaces, a browser profile each. | N5 |
 | — | Titlebars with menus (01), gaps (02), islands (03), dark grey base. | N8 |
 
 **Which tab a window is (settled 2026-10-21 for slice 2).** Before it
@@ -201,6 +203,118 @@ id falls back to order). `TabLayout` then keys tabs by `key`.
 No compositor change. A unique first title was rejected (it shows in the
 bar), and a client-set tag needs a protocol River lacks (rivulet could add
 one later if pairing proves fragile).
+
+## Desktop workspaces, a browser profile each (slice 5)
+
+Board 04 (workspaces), with the bar of board 06 listing only the
+workspace showing. Started 2026-10-23.
+
+**Decided (Joshua, 2026-10-23):** board 04's proposals — a switcher in
+the top band next to the flower, names and marks; named workspaces you
+keep; Super+Tab across every workspace; every window on exactly one
+workspace. **Each workspace picks one browser profile** (Primary by
+default; several may share one); every browser window on a workspace runs
+that profile, and **a page sent to another workspace reopens there under
+that workspace's profile**, so a workspace never mixes profiles. **N6 is
+dropped for now:** projects are not tied to workspaces. My calls: the
+vault stays shared across profiles (as frozen in the profiles spec);
+Design's Actual Size moves from ⌘1 to ⌘⇧0.
+
+### Model
+
+```text
+workspaces (ordered, named, kept; one showing)
+  workspace "Sola"   profile Primary
+    zone Left · zone Right · Floating      (as slices 1-6, per workspace)
+  workspace "Mail"   profile Primary
+  workspace "Work"   profile Work
+```
+
+- A **workspace** is an id (stable), a name, and a place in the order.
+  The list and which one is showing are the shell's: persistent
+  `Topic::Workspaces { workspaces: [{id, name}], showing }` (namespace
+  `shell/workspaces`). A fresh install has one, "Main".
+- **Stacks per workspace.** Each workspace has its own Left / Right /
+  Floating stacks, shown tabs, last tiled zone and Fullscreen / Cinema
+  tab. Dialogs follow their parent. `TabLayout` zones carry their
+  workspace (`#[serde(default)]`: an old file is all the first
+  workspace's).
+- **Composition** is the showing workspace only (menubar, bar, its tiles
+  and floats, overlays). Windows elsewhere are left out, so River hides
+  them; they keep running, and `TabWindow.shown` already goes false.
+- **Which workspace a window is on** goes out as sticky
+  `Topic::WindowWorkspace { window_id, workspace }` (keyed by window id,
+  retracted on close), for apps that care (the browser).
+
+### Where a window lands
+
+- A **new** window joins the showing workspace (its focused zone, as
+  today). A **returning** one (restart, restore) takes its saved workspace
+  and place.
+- **Super+Ctrl+1…9** sends the focused window to workspace N (end of the
+  same zone's stack there, shown); the showing workspace focuses its next
+  window. The tab bar's rows can be dragged onto a workspace pill.
+
+### Switching
+
+- **Super+1…9** shows workspace N; **Super+Ctrl+Tab** / **Super+Ctrl+
+  Shift+Tab** the next / previous. Showing restores that workspace's last
+  focused window.
+- **Super+Tab** lists apps on every workspace; confirming one whose window
+  is elsewhere shows that workspace. So do the launcher on a running app,
+  a notification, a tab-bar row, and `ShowTab`: anything that shows a
+  window shows its workspace first.
+- Focus fallbacks (a window closes, Super+H) stay on the showing
+  workspace.
+
+### The switcher (top band)
+
+- Right of the flower, a pill per workspace: its number and name; the
+  showing one lifted. Marks roll up from the workspace's windows: a
+  **diamond** when a tab waits on a decision (`TabActivity::Waiting`), a
+  **dot** when a Mail window there has unread mail. Working marks nothing.
+- Click a pill to show it. Its menu (right-click, or click the showing
+  one): **New Workspace**, **Rename…**, **Move Left / Right**, **Delete**
+  (its windows go to the previous workspace). Board 04's overview of live
+  thumbnails comes later.
+- The tab bar's head names the showing workspace.
+
+### The browser
+
+- **Several profiles live at once.** Each profile already has its own CEF
+  helper; the router stops treating one as "front": it routes every
+  command by the page it addresses, accepts frames, tab lists, dialogs,
+  context menus and popups from every helper, and makes page ids unique
+  across helpers. A command that names no page (sola-wrapper, Design)
+  still goes to the one helper.
+- **A page's profile is the profile of its window's workspace.** The
+  browser keeps the workspace → profile map in its profile registry
+  (`profiles.json`); a workspace it has not seen starts on the profile of
+  the workspace that was showing when it appeared (the registry's active
+  profile for the first ones it hears of, so pages already open keep
+  theirs).
+- **New windows** (⌘T, `OpenUrl`, a second launch, `tab.open`) open under
+  the showing workspace's profile; ⌘-click and popups under their
+  opener's.
+- **A page whose window lands on a workspace with another profile**
+  (sent there, or its workspace's profile changed) reopens at the same
+  URL under that profile, in the same window: its key and place stay; its
+  back history and form state do not.
+- **Profiles menu:** a check on this workspace's profile; picking another
+  sets it for the workspace (its pages reopen); New / Rename / Delete as
+  today. Deleting a profile moves its workspaces to Primary.
+- **Sessions** are saved per profile (`session_path_for`); a restore
+  opens the pages of every profile a workspace runs (and the active one),
+  and the shell puts each window back on its workspace by key. A profile no
+  workspace runs keeps its saved pages on disk, unopened.
+- Per-page lookups (window title, notification and media permissions)
+  use the page's profile, not the process-wide active one.
+
+### Not in slice 5
+
+The overview of thumbnails; a window on every workspace; workspace ↔
+project binding (N6); a vault per profile; the islands' top row (the
+switcher sits in today's band).
 
 ## Titlebars, gaps, the bar as an island (slice 6)
 

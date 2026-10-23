@@ -258,6 +258,86 @@ chrome driving it, so the risky half is smoked before the chrome changes:
    a diamond when a tab waits on a decision, a ring when one works.
 4. Titlebars with menus, gaps, the bar as an island — Phase 6 below
    (started 2026-10-22). Islands (board 03) after.
+5. Desktop workspaces with a browser profile each — Phase 5 below
+   (started 2026-10-23).
+
+## Phase 5 — Desktop workspaces, a browser profile each (slice 5)
+
+Spec: § Desktop workspaces, a browser profile each. Joshua (2026-10-23):
+board 04 as proposed; each workspace picks a profile (shared allowed); a
+page sent elsewhere reopens under the target's profile; N6 dropped. Shell
+first (it works with today's browser), then the browser's several live
+profiles, then the binding.
+
+- [x] **5a Bus:** sticky `Topic::Workspaces` and `Topic::WindowWorkspace`;
+      the workspaces persist inside `TabLayout` (`workspaces`, `showing`,
+      `TabLayoutZone.workspace`, all `#[serde(default)]`: an old file is
+      the first workspace's).
+- [x] **5b Shell model:** stacks per workspace (dialogs follow their
+      parent; ghosts and restore slots carry their workspace); the
+      composition is the showing workspace only (no unplaced-window leak
+      from other workspaces); frames, chrome and focus fallbacks per
+      workspace; anything that shows a window shows its workspace first.
+      Unit tests.
+- [x] **5c Shell keys and UI:** Super+1…9, Super+Ctrl+1…9, Super+Ctrl+
+      (Shift+)Tab; Super+K rows; the switcher pills in the band (names,
+      waiting diamond, unread dot; click shows; menu: New, Rename…, Move
+      Left / Right, Delete); the bar's head names the workspace; Design's
+      Actual Size → ⌘⇧0. Built: `stacks/` (a `Desk` per workspace;
+      readers without a window answer for the showing one), `app/
+      workspaces.rs`, `menubar/pills.rs`, `menu/workspace.rs` (menu and
+      rename card in the menu overlay); shell 219 tests.
+- [x] **5d Browser, several profiles live:** the router routes by page
+      (`Target`, `ShowPage`, close, active-tab commands wrapped as
+      `Target`, dialog answers by source), accepts every helper's frames,
+      tabs, dialogs, popups and context menus, and makes page ids unique;
+      the app keeps a profile per page, merges tab lists, saves sessions
+      per profile, and looks permissions and titles up by the page's
+      profile. sola-wrapper and Design unchanged.
+- [x] **5e Browser, bound to workspaces:** workspace → profile in
+      `profiles.json`; new windows in the showing workspace's profile; a
+      page on a workspace with another profile reopens in place; the
+      Profiles menu sets this workspace's profile; `tabs` reports the
+      profile. Built: router (`owners`, `prompts`, merged `pages`, fronts =
+      helpers with a page on screen or the active page; helper-minted ids
+      in per-profile ranges, `cef::host::tab_id_base`); `Cmd::InProfile`;
+      `TabInfo.profile`; `app/pages.rs` (open in a profile, reopen in place
+      via `PageWindows::retarget`, per-profile sessions, boot from the
+      profiles workspaces run); `profiles.json` `workspaces`; dialog and
+      notification answers go back to the asking page's helper. Browser 287
+      tests. The parked-profile swap is gone (its dead helper code stays).
+- [x] **5f Verify:** build, tests; apply and smoke with Joshua's OK
+      (switch, send, restart restores each workspace, two profiles' pages
+      painting at once on two workspaces, a page sent across reopens,
+      CPU with hidden workspaces' pages).
+      - Applied by Joshua 2026-10-23 (`pkg:sola` d6bb469f,
+        `pkg:sola-browser` 01fecf7a). Smoked by injection: the pill and
+        its menu, New Workspace, Rename (the card takes the keyboard),
+        a page opened on the new workspace, Profiles → New Profile sets
+        it for the workspace and the page reopens under it in place,
+        Super+1 / Super+2, Super+Ctrl+2 sends a page and it reopens under
+        the target's profile, helpers idle (0%) with pages on a hidden
+        workspace.
+      - Found on Restart Shell: the new shell said where windows were
+        before its saved layout was back (everything on the first
+        workspace, then the showing one), and the browser reopened pages
+        back and forth; one came back twice (its old id left the closed
+        set while its helper lagged). Fixed: the shell publishes
+        workspaces only once its layout is loaded; the browser waits for
+        the word to settle (600 ms) and never takes a reopened page's old
+        id back.
+      - Fix applied by Joshua 2026-10-23 (`pkg:sola` 96b78a20,
+        `pkg:sola-browser` 335396fc); the apply restarted the whole session.
+        Both workspaces and their windows came back, each profile's pages
+        (two each) in their own windows, and no page reopened. Cleanup by
+        the same means: Delete Profile on the test profile reopened its
+        page under Primary in place; Delete on the test workspace moved its
+        window to Main.
+      - After: the Delete Profile dialog said the profile's open tabs are
+        removed (they reopen under the first profile left; it says so
+        now), and `profiles.json` kept a deleted workspace's profile (the
+        browser now forgets workspaces the shell no longer lists). Built,
+        not yet applied.
 
 ## Phase 6 — Titlebars, gaps, the bar as an island (slice 6)
 

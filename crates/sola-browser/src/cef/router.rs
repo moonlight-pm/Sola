@@ -1,8 +1,14 @@
-//! Chrome-side router: one iced window talks to many headless CEF helpers.
+//! Chrome-side router: one chrome talks to many headless CEF helpers, one
+//! per profile, all live at once (Next slice 5: each workspace picks a
+//! profile, so pages of several profiles are on screen together).
 //!
-//! `Cmd::SwitchProfileWorkspace` swaps which helper receives input / paints
-//! frames. Helpers stay alive so switching back is instant and each profile
-//! keeps its own cookie root.
+//! Each page belongs to the helper that runs it (`owners`). A command that
+//! names a page (`Target`, `ShowPage`, `CloseTab`, `SetActiveTab`, an agent
+//! call, a dialog answer) goes to that page's helper; the rest go to the
+//! helper of the active page (`current`). Frames, tab lists and events come
+//! in from every helper; tab lists are merged, each page tagged with its
+//! profile. A helper is front (may paint, may show dialogs) while one of its
+//! pages is on screen or active; the others rest.
 
 use std::collections::{HashMap, HashSet};
 use std::os::unix::net::UnixStream;
@@ -26,7 +32,6 @@ use crate::profiles;
 
 struct Helper {
     to_engine: Sender<ToEngine>,
-    tabs: Arc<Mutex<Vec<TabInfo>>>,
     #[allow(dead_code)]
     child: Option<Child>,
 }
@@ -59,6 +64,26 @@ struct Shared {
     /// Last chrome content size (physical px) + scale. Helpers must match
     /// this or the shader stretches a 1280×800 park buffer across the window.
     viewport: Mutex<(u32, u32, f64)>,
+    /// The profile whose helper runs each page.
+    owners: Mutex<HashMap<u64, String>>,
+    /// The profile that raised each pending dialog or permission prompt.
+    prompts: Mutex<HashMap<(Prompt, u64), String>>,
+    /// Each helper's pages as it last reported them, in attach order.
+    pages: Mutex<Vec<(String, Vec<TabInfo>)>>,
+    /// Pages on screen (`ShowPage`).
+    shown: Mutex<HashSet<u64>>,
+    /// Profiles whose helper was last told it is front.
+    fronts: Mutex<HashSet<String>>,
+}
+
+/// What a helper asked chrome about, by kind: their ids come from each
+/// helper's own counter, so the kind and id find the asker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Prompt {
+    Js,
+    Auth,
+    Notify,
+    Media,
 }
 
 pub struct RouterHandles {
@@ -128,6 +153,11 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         agent: agent.clone(),
         next_id: next_id.clone(),
         viewport: Mutex::new((width, height, 1.0)),
+        owners: Mutex::new(HashMap::new()),
+        prompts: Mutex::new(HashMap::new()),
+        pages: Mutex::new(Vec::new()),
+        shown: Mutex::new(HashSet::new()),
+        fronts: Mutex::new(HashSet::new()),
     });
 
     let shared_w = shared.clone();
@@ -176,8 +206,8 @@ fn router_main(
     *shared.current.lock().unwrap() = live.clone();
     if let Err(e) = attach(&helpers, &shared, &live, &died_tx) {
         tracing::error!(error = %e, profile = %live, "router: failed to start active engine");
-    } else if let Some(h) = helpers.lock().unwrap().map.get(&live) {
-        let _ = h.to_engine.send(ToEngine::SetFront(true));
+    } else {
+        refresh_fronts(&helpers, &shared);
     }
     // Warm other profiles without blocking the first tab's OpenTab.
     let others: Vec<String> = profiles::list()
@@ -203,87 +233,13 @@ fn router_main(
 
     while let Ok(cmd) = cmd_rx.recv() {
         match cmd {
-            Cmd::SwitchProfileWorkspace {
-                park_as_profile_id: _,
-                resume_profile_id,
-                cef_cache_path: _,
-                create_tabs,
-                active,
-            } => {
-                if let Err(e) = attach(&helpers, &shared, &resume_profile_id, &died_tx) {
-                    tracing::error!(
-                        error = %e,
-                        profile = %resume_profile_id,
-                        "router: attach on switch failed"
-                    );
+            Cmd::InProfile { profile, cmd } => {
+                if let Err(e) = attach(&helpers, &shared, &profile, &died_tx) {
+                    tracing::error!(error = %e, %profile, "router: attach failed");
                     continue;
                 }
-                {
-                    let mut cur = shared.current.lock().unwrap();
-                    let prev = std::mem::replace(&mut *cur, resume_profile_id.clone());
-                    if prev != resume_profile_id {
-                        if let Some(old) = helpers.lock().unwrap().map.get(&prev) {
-                            let _ = old.to_engine.send(ToEngine::SetFront(false));
-                        }
-                    }
-                }
-                let set = helpers.lock().unwrap();
-                let helper = set.map.get(&resume_profile_id).unwrap();
-                let _ = helper.to_engine.send(ToEngine::SetFront(true));
-                let helper_tabs = helper.tabs.lock().unwrap().clone();
-                if helper_tabs.is_empty() {
-                    *shared.tabs.lock().unwrap() = Vec::new();
-                    if let Some(tabs) = create_tabs {
-                        tracing::info!(
-                            profile = %resume_profile_id,
-                            tabs = tabs.len(),
-                            "router: helper empty — opening parked/session tabs"
-                        );
-                        for (id, url, title) in tabs {
-                            bump_next(&shared, id.0);
-                            let _ = helper.to_engine.send(ToEngine::OpenTab {
-                                id: id.0,
-                                url,
-                                title,
-                            });
-                        }
-                    }
-                    let _ = helper.to_engine.send(ToEngine::SetActiveTab(active.0));
-                    shared.active.store(active.0, Ordering::Relaxed);
-                } else {
-                    // Helper already has browsers — adopt; never OpenTab
-                    // (that would reload parked pages).
-                    if let Some(max) = helper_tabs.iter().map(|t| t.id.0).max() {
-                        bump_next(&shared, max);
-                    }
-                    *shared.tabs.lock().unwrap() = helper_tabs.clone();
-                    let paint = if helper_tabs.iter().any(|t| t.id == active) {
-                        active.0
-                    } else {
-                        helper_tabs.first().map(|t| t.id.0).unwrap_or(active.0)
-                    };
-                    tracing::info!(
-                        profile = %resume_profile_id,
-                        tabs = helper_tabs.len(),
-                        active = paint,
-                        "router: adopting parked helper tabs"
-                    );
-                    let _ = helper.to_engine.send(ToEngine::SetActiveTab(paint));
-                    shared.active.store(paint, Ordering::Relaxed);
-                }
-                let (vw, vh, vscale) = *shared.viewport.lock().unwrap();
-                let _ = helper.to_engine.send(ToEngine::Resize {
-                    width: vw,
-                    height: vh,
-                    scale: vscale,
-                });
-                drop(set);
-                tracing::info!(
-                    profile = %resume_profile_id,
-                    width = vw,
-                    height = vh,
-                    "router: front helper"
-                );
+                send_to(&helpers, &shared, &profile, *cmd);
+                refresh_fronts(&helpers, &shared);
             }
             Cmd::CancelDownload { profile_id, id } => {
                 let set = helpers.lock().unwrap();
@@ -302,6 +258,18 @@ fn router_main(
                     let _ = h.to_engine.send(ToEngine::Shutdown);
                     tracing::info!(profile = %profile_id, "router: dropped helper");
                 }
+                shared.fronts.lock().unwrap().remove(&profile_id);
+                shared
+                    .owners
+                    .lock()
+                    .unwrap()
+                    .retain(|_, p| *p != profile_id);
+                let merged: Vec<TabInfo> = {
+                    let mut pages = shared.pages.lock().unwrap();
+                    pages.retain(|(p, _)| *p != profile_id);
+                    pages.iter().flat_map(|(_, l)| l.iter().cloned()).collect()
+                };
+                *shared.tabs.lock().unwrap() = merged;
             }
             Cmd::HelperDied { profile_id } => {
                 restore_dead_helper(&helpers, &shared, &died_tx, &mut deaths, &profile_id);
@@ -335,27 +303,144 @@ fn router_main(
             }
             other => {
                 let current = shared.current.lock().unwrap().clone();
-                let set = helpers.lock().unwrap();
-                if let Some(h) = set.map.get(&current) {
-                    if let Some(wire) = to_wire(other) {
-                        if let ToEngine::OpenTab { id, .. } | ToEngine::OpenBoard { id, .. } = &wire {
-                            bump_next(&shared, *id);
-                        }
-                        let _ = h.to_engine.send(wire);
+                let profile = route(&shared, &other).unwrap_or(current);
+                match &other {
+                    // The active page's helper takes the commands that
+                    // name no page from now on.
+                    Cmd::SetActiveTab(id) => {
+                        *shared.current.lock().unwrap() = profile.clone();
+                        shared.active.store(id.0, Ordering::Relaxed);
                     }
-                } else {
-                    tracing::warn!(profile = %current, "router: no helper for cmd (engine dead?)");
+                    Cmd::ShowPage { id, shown } => {
+                        let mut set = shared.shown.lock().unwrap();
+                        if *shown {
+                            set.insert(id.0);
+                        } else {
+                            set.remove(&id.0);
+                        }
+                    }
+                    _ => {}
                 }
+                let closed = match &other {
+                    Cmd::CloseTab(id) => Some(id.0),
+                    _ => None,
+                };
+                send_to(&helpers, &shared, &profile, other);
+                if let Some(id) = closed {
+                    shared.owners.lock().unwrap().remove(&id);
+                    shared.shown.lock().unwrap().remove(&id);
+                }
+                refresh_fronts(&helpers, &shared);
             }
         }
     }
 }
 
+/// Chrome mints ids below [`crate::cef::host::CHROME_ID_LIMIT`]; keep its
+/// counter past any of those a helper reports (a reused helper still runs
+/// pages from chrome's last run). Helper-minted ids live in their own
+/// ranges and never move it.
 fn bump_next(shared: &Shared, id: u64) {
+    if id >= crate::cef::host::CHROME_ID_LIMIT {
+        return;
+    }
     let next = shared.next_id.load(Ordering::Relaxed);
     if id + 1 > next {
         shared.next_id.store(id + 1, Ordering::Relaxed);
     }
+}
+
+/// Send `cmd` to `profile`'s helper. A page it opens is that profile's.
+fn send_to(helpers: &Arc<Mutex<HelperSet>>, shared: &Shared, profile: &str, cmd: Cmd<CefEngine>) {
+    let set = helpers.lock().unwrap();
+    let Some(h) = set.map.get(profile) else {
+        tracing::warn!(%profile, "router: no helper for cmd (engine dead?)");
+        return;
+    };
+    let Some(wire) = to_wire(cmd) else {
+        return;
+    };
+    if let ToEngine::OpenTab { id, .. } | ToEngine::OpenBoard { id, .. } = &wire {
+        bump_next(shared, *id);
+        shared
+            .owners
+            .lock()
+            .unwrap()
+            .insert(*id, profile.to_string());
+    }
+    let _ = h.to_engine.send(wire);
+}
+
+/// The profile a command belongs to when it names a page or answers a
+/// prompt; `None` for the active page's.
+fn route(shared: &Shared, cmd: &Cmd<CefEngine>) -> Option<String> {
+    let owner = |id: u64| shared.owners.lock().unwrap().get(&id).cloned();
+    let asker = |kind: Prompt, id: u64| shared.prompts.lock().unwrap().remove(&(kind, id));
+    match cmd {
+        Cmd::Target { tab, .. }
+        | Cmd::ShowPage { id: tab, .. }
+        | Cmd::CloseTab(tab)
+        | Cmd::SetActiveTab(tab) => owner(tab.0),
+        Cmd::Agent(req) => owner(req.tab),
+        Cmd::JsDialog { id, .. } => asker(Prompt::Js, *id),
+        Cmd::HttpAuth { id, .. } => asker(Prompt::Auth, *id),
+        Cmd::NotifyPermission { prompt_id, .. } => asker(Prompt::Notify, *prompt_id),
+        Cmd::MediaPermission { req_id, .. } => asker(Prompt::Media, *req_id),
+        _ => None,
+    }
+}
+
+/// Front: a helper with a page on screen, or the active page's. The rest
+/// rest (their active page stops painting). Told only on change.
+fn refresh_fronts(helpers: &Arc<Mutex<HelperSet>>, shared: &Shared) {
+    let mut want: HashSet<String> = HashSet::new();
+    {
+        let owners = shared.owners.lock().unwrap();
+        for id in shared.shown.lock().unwrap().iter() {
+            if let Some(p) = owners.get(id) {
+                want.insert(p.clone());
+            }
+        }
+    }
+    let current = shared.current.lock().unwrap().clone();
+    if !current.is_empty() {
+        want.insert(current);
+    }
+    let set = helpers.lock().unwrap();
+    let mut fronts = shared.fronts.lock().unwrap();
+    for (id, h) in &set.map {
+        let front = want.contains(id);
+        if fronts.contains(id) != front {
+            let _ = h.to_engine.send(ToEngine::SetFront(front));
+            if front {
+                fronts.insert(id.clone());
+            } else {
+                fronts.remove(id);
+            }
+            tracing::debug!(profile = %id, front, "router: helper front");
+        }
+    }
+}
+
+/// A helper reported its pages: they are its, and chrome sees every
+/// helper's pages together.
+fn set_pages(shared: &Shared, profile: &str, mut tabs: Vec<TabInfo>) {
+    {
+        let mut owners = shared.owners.lock().unwrap();
+        for t in &mut tabs {
+            t.profile = profile.to_string();
+            owners.insert(t.id.0, profile.to_string());
+        }
+    }
+    let merged: Vec<TabInfo> = {
+        let mut pages = shared.pages.lock().unwrap();
+        match pages.iter_mut().find(|(p, _)| p == profile) {
+            Some((_, list)) => *list = tabs,
+            None => pages.push((profile.to_string(), tabs)),
+        }
+        pages.iter().flat_map(|(_, list)| list.iter().cloned()).collect()
+    };
+    *shared.tabs.lock().unwrap() = merged;
 }
 
 fn restore_dead_helper(
@@ -385,19 +470,29 @@ fn restore_dead_helper(
             let _ = child.wait();
         }
     }
-    let was_front = shared.current.lock().unwrap().as_str() == profile_id;
-    let active = shared.active.load(Ordering::Relaxed);
+    shared.fronts.lock().unwrap().remove(profile_id);
+    // Its pages as last reported, less any chrome closed since.
+    let reopen: Vec<TabInfo> = {
+        let owners = shared.owners.lock().unwrap();
+        shared
+            .pages
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(p, _)| p == profile_id)
+            .map(|(_, list)| {
+                list.iter()
+                    .filter(|t| owners.get(&t.id.0).is_some_and(|o| o == profile_id))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
     tracing::error!(
         profile = %profile_id,
-        was_front,
-        "engine helper died — respawning (chrome will reopen its tabs)"
+        pages = reopen.len(),
+        "engine helper died — respawning and reopening its pages"
     );
-    // Drop the stale snapshot so iced does not merge resurrected
-    // closed tabs (old helper ids) into the strip.
-    if was_front {
-        shared.tabs.lock().unwrap().clear();
-        crate::chrome_wake::wake();
-    }
 
     let now = Instant::now();
     let stamps = deaths.entry(profile_id.to_string()).or_default();
@@ -417,26 +512,34 @@ fn restore_dead_helper(
         tracing::error!(profile = %profile_id, error = %e, "engine helper respawn failed");
         return;
     }
-    let set = helpers.lock().unwrap();
-    let Some(helper) = set.map.get(profile_id) else {
-        return;
-    };
-    if was_front {
-        let _ = helper.to_engine.send(ToEngine::SetFront(true));
-        if active != 0 {
-            shared.active.store(active, Ordering::Relaxed);
+    {
+        let set = helpers.lock().unwrap();
+        let Some(helper) = set.map.get(profile_id) else {
+            return;
+        };
+        let (vw, vh, vscale) = *shared.viewport.lock().unwrap();
+        let _ = helper.to_engine.send(ToEngine::Resize {
+            width: vw,
+            height: vh,
+            scale: vscale,
+        });
+        for t in &reopen {
+            let _ = helper.to_engine.send(ToEngine::OpenTab {
+                id: t.id.0,
+                url: t.url.clone(),
+                title: t.title.clone(),
+            });
+        }
+        let shown: Vec<u64> = shared.shown.lock().unwrap().iter().copied().collect();
+        for t in reopen.iter().filter(|t| shown.contains(&t.id.0)) {
+            let _ = helper.to_engine.send(ToEngine::ShowPage {
+                id: t.id.0,
+                shown: true,
+            });
         }
     }
-    let (vw, vh, vscale) = *shared.viewport.lock().unwrap();
-    let _ = helper.to_engine.send(ToEngine::Resize {
-        width: vw,
-        height: vh,
-        scale: vscale,
-    });
-    tracing::info!(
-        profile = %profile_id,
-        "engine helper restored (empty; chrome reopens tabs)"
-    );
+    refresh_fronts(helpers, shared);
+    tracing::info!(profile = %profile_id, "engine helper restored");
 }
 
 fn attach(
@@ -493,7 +596,6 @@ fn spawn_helper(
     let stream = wait_connect(&sock, Duration::from_secs(25))?;
     let frame_sock = profiles::engine_frame_sock_path(profile_id);
     let mut frame_reader = wait_connect(&frame_sock, Duration::from_secs(25))?;
-    let helper_tabs: Arc<Mutex<Vec<TabInfo>>> = Arc::new(Mutex::new(Vec::new()));
     let mut writer = stream
         .try_clone()
         .map_err(|e| format!("clone writer: {e}"))?;
@@ -517,7 +619,6 @@ fn spawn_helper(
         .map_err(|e| format!("spawn writer: {e}"))?;
 
     let shared_r = Arc::clone(shared);
-    let tabs_r = helper_tabs.clone();
     let profile_r = profile_id.to_string();
     let died_r = died_tx.clone();
     let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
@@ -530,7 +631,6 @@ fn spawn_helper(
                     Ok(msg) => {
                         handle_from(
                             &shared_r,
-                            &tabs_r,
                             &profile_r,
                             msg,
                             &ready_tx,
@@ -562,13 +662,7 @@ fn spawn_helper(
             loop {
                 match ipc::read_frame(&mut frame_reader) {
                     Ok((meta, pixels)) => {
-                        let is_front = {
-                            let cur = shared_f.current.lock().unwrap();
-                            cur.is_empty() || cur.as_str() == profile_f
-                        };
-                        if !is_front {
-                            continue;
-                        }
+                        // Every helper's: page ids are unique across them.
                         shared_f.frames.push(crate::engine::TaggedFrame {
                             tab_id: TabId(meta.tab_id),
                             frame: CefFrame {
@@ -605,31 +699,36 @@ fn spawn_helper(
     tracing::info!(profile = %profile_id, "router: helper ready");
     Ok(Helper {
         to_engine: to_tx,
-        tabs: helper_tabs,
         child,
     })
 }
 
 fn handle_from(
     shared: &Shared,
-    helper_tabs: &Mutex<Vec<TabInfo>>,
     profile_id: &str,
     msg: FromEngine,
     ready_tx: &mpsc::SyncSender<Result<(), String>>,
     announced: &mut bool,
 ) {
-    let is_front = {
+    // The active page's helper speaks for "the active tab".
+    let is_current = {
         let cur = shared.current.lock().unwrap();
         cur.is_empty() || cur.as_str() == profile_id
     };
+    let ask = |kind: Prompt, id: u64| {
+        shared
+            .prompts
+            .lock()
+            .unwrap()
+            .insert((kind, id), profile_id.to_string());
+    };
     match msg {
         FromEngine::Ready { tabs, active } => {
-            *helper_tabs.lock().unwrap() = tabs.clone();
-            if is_front {
-                *shared.tabs.lock().unwrap() = tabs;
+            set_pages(shared, profile_id, tabs);
+            if is_current && active != 0 {
                 shared.active.store(active, Ordering::Relaxed);
-                crate::chrome_wake::wake();
             }
+            crate::chrome_wake::wake();
             if !*announced {
                 *announced = true;
                 let _ = ready_tx.send(Ok(()));
@@ -639,28 +738,21 @@ fn handle_from(
             if let Some(max) = tabs.iter().map(|t| t.id.0).max() {
                 bump_next(shared, max);
             }
-            *helper_tabs.lock().unwrap() = tabs.clone();
-            if is_front {
-                *shared.tabs.lock().unwrap() = tabs;
-                crate::chrome_wake::wake();
-            }
+            set_pages(shared, profile_id, tabs);
+            crate::chrome_wake::wake();
         }
         FromEngine::Active(id) => {
-            if is_front {
+            if is_current {
                 shared.active.store(id, Ordering::Relaxed);
                 crate::chrome_wake::wake();
             }
         }
         FromEngine::Cursor(c) => {
-            if is_front {
-                shared.cursor.store(c, Ordering::Relaxed);
-            }
+            shared.cursor.store(c, Ordering::Relaxed);
         }
         FromEngine::Clipboard(text) => {
-            if is_front {
-                *shared.clipboard.lock().unwrap() = Some(text);
-                crate::chrome_wake::wake();
-            }
+            *shared.clipboard.lock().unwrap() = Some(text);
+            crate::chrome_wake::wake();
         }
         FromEngine::ImeCaret {
             x,
@@ -669,15 +761,13 @@ fn handle_from(
             h,
             tab_id,
         } => {
-            if is_front {
-                *shared.ime.lock().unwrap() = ImeCaret {
-                    x,
-                    y,
-                    w,
-                    h,
-                    tab_id,
-                };
-            }
+            *shared.ime.lock().unwrap() = ImeCaret {
+                x,
+                y,
+                w,
+                h,
+                tab_id,
+            };
         }
         FromEngine::Download(ev) => {
             // Any helper — parked profiles still finish downloads.
@@ -693,32 +783,47 @@ fn handle_from(
             crate::chrome_wake::wake();
         }
         FromEngine::PageContext(ctx) => {
-            if is_front {
-                shared.page_menus.lock().unwrap().push(ctx);
-                crate::chrome_wake::wake();
-            }
+            shared.page_menus.lock().unwrap().push(ctx);
+            crate::chrome_wake::wake();
         }
         FromEngine::OpenBackgroundTab { url, activate } => {
-            if is_front && crate::util::href_is_new_tab_target(&url) {
+            if crate::util::href_is_new_tab_target(&url) {
                 shared
                     .background_tabs
                     .lock()
                     .unwrap()
-                    .push(crate::engine::ChromeTabRequest { url, activate });
+                    .push(crate::engine::ChromeTabRequest {
+                        url,
+                        activate,
+                        profile: profile_id.to_string(),
+                    });
                 crate::chrome_wake::wake();
             }
         }
         FromEngine::Notify(ev) => {
+            match &ev {
+                crate::notify::Ipc::Perm(p) => ask(Prompt::Notify, p.req_id),
+                crate::notify::Ipc::Media(m) => {
+                    for id in [m.prompt_id, m.access_id].into_iter().flatten() {
+                        ask(Prompt::Media, id);
+                    }
+                }
+                crate::notify::Ipc::Show(_) => {}
+            }
             shared.notifications.lock().unwrap().push(ev);
             crate::chrome_wake::wake();
         }
         FromEngine::JsDialog(ev) => {
-            if is_front {
-                shared.js_dialogs.lock().unwrap().push(ev);
-                crate::chrome_wake::wake();
+            if let crate::js_dialog::Event::Open(d) = &ev {
+                ask(Prompt::Js, d.id);
             }
+            shared.js_dialogs.lock().unwrap().push(ev);
+            crate::chrome_wake::wake();
         }
         FromEngine::HttpAuth(ev) => {
+            if let crate::http_auth::Event::Open(d) = &ev {
+                ask(Prompt::Auth, d.id);
+            }
             shared.http_auth.lock().unwrap().push(ev);
             crate::chrome_wake::wake();
         }
@@ -727,30 +832,31 @@ fn handle_from(
             crate::chrome_wake::wake();
         }
         FromEngine::DevTools(ev) => {
-            if is_front {
-                if let crate::engine::DevToolsEvent::Opened { paint_id, .. } = ev {
-                    bump_next(shared, paint_id.0);
-                }
-                shared.devtools.lock().unwrap().push(ev);
-                crate::chrome_wake::wake();
+            if let crate::engine::DevToolsEvent::Opened { paint_id, .. } = ev {
+                bump_next(shared, paint_id.0);
+                shared
+                    .owners
+                    .lock()
+                    .unwrap()
+                    .insert(paint_id.0, profile_id.to_string());
             }
+            shared.devtools.lock().unwrap().push(ev);
+            crate::chrome_wake::wake();
         }
         FromEngine::Agent(reply) => {
             shared.agent.lock().unwrap().push(reply);
             crate::chrome_wake::wake();
         }
         FromEngine::Favicon { tab_id, png } => {
-            if is_front {
-                shared
-                    .favicons
-                    .lock()
-                    .unwrap()
-                    .push(crate::engine::FaviconIpc {
-                        tab_id: TabId(tab_id),
-                        png,
-                    });
-                crate::chrome_wake::wake();
-            }
+            shared
+                .favicons
+                .lock()
+                .unwrap()
+                .push(crate::engine::FaviconIpc {
+                    tab_id: TabId(tab_id),
+                    png,
+                });
+            crate::chrome_wake::wake();
         }
     }
 }
@@ -909,7 +1015,7 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
             cmd: Box::new(to_wire(*cmd)?),
         }),
         Cmd::ShowPage { id, shown } => Some(ToEngine::ShowPage { id: id.0, shown }),
-        Cmd::SwitchProfileWorkspace { .. }
+        Cmd::InProfile { .. }
         | Cmd::DropParkedProfile { .. }
         | Cmd::CancelDownload { .. }
         | Cmd::HelperDied { .. }

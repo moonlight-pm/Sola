@@ -16,6 +16,11 @@ pub enum ShortcutAction {
     ScreenshotRegion,
     ScreenshotWindow,
     Zone(Zone),
+    /// Show workspace N (0-based).
+    ShowWorkspace(usize),
+    /// Send the focused window to workspace N (0-based).
+    SendToWorkspace(usize),
+    StepWorkspace { back: bool },
     Menu { app_id: String, action_id: String },
 }
 
@@ -196,6 +201,30 @@ fn shell_rows() -> Vec<ShortcutRow> {
             "Cycle Windows",
             Some(KeyCode::GRAVE.meta()),
             ShortcutAction::Cycle,
+        ),
+        row(
+            "Workspaces",
+            "Show Workspace 1 (to 9)",
+            Some(KeyCode::KEY_1.meta()),
+            ShortcutAction::ShowWorkspace(0),
+        ),
+        row(
+            "Workspaces",
+            "Send Window to Workspace 1 (to 9)",
+            Some(KeyCode::KEY_1.meta().ctrl()),
+            ShortcutAction::SendToWorkspace(0),
+        ),
+        row(
+            "Workspaces",
+            "Next Workspace",
+            Some(KeyCode::TAB.meta().ctrl()),
+            ShortcutAction::StepWorkspace { back: false },
+        ),
+        row(
+            "Workspaces",
+            "Previous Workspace",
+            Some(KeyCode::TAB.meta().ctrl().shift()),
+            ShortcutAction::StepWorkspace { back: true },
         ),
         row(
             "Capture",

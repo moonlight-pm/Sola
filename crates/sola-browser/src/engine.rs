@@ -172,6 +172,10 @@ pub struct TabInfo {
     /// Index of the current history entry in [`Self::history`].
     #[serde(default)]
     pub history_index: i32,
+    /// The profile whose helper runs this page (set by the router; empty
+    /// on a chrome-side guess until the helper reports).
+    #[serde(default)]
+    pub profile: String,
 }
 
 impl TabInfo {
@@ -186,6 +190,7 @@ impl TabInfo {
             load_progress: 0.0,
             history: Vec::new(),
             history_index: 0,
+            profile: String::new(),
         }
     }
 }
@@ -276,24 +281,14 @@ pub enum Cmd<E: Engine> {
     /// Script is sourced from chrome; do not put untrusted page content here
     /// without escaping — vault fill embeds secrets via JSON string literals.
     EvaluateJs(String),
-    /// Profile workspace switch without reloading parked pages.
-    ///
-    /// 1. Hide + park the current live tabs under `park_as_profile_id`
-    ///    (same CEF browsers + request context stay in memory).
-    /// 2. If a park exists for `resume_profile_id`, restore it.
-    /// 3. Else create a request context at `cef_cache_path` and open
-    ///    `create_tabs` (cold profile / after eviction).
-    /// 4. Apply the shared eviction policy (idle / tab budget / park count).
-    SwitchProfileWorkspace {
-        park_as_profile_id: String,
-        resume_profile_id: String,
-        cef_cache_path: String,
-        /// `None` → resume from park only (must exist). `Some` → create these
-        /// tabs if not parked (or after forced create).
-        create_tabs: Option<Vec<(TabId, String, String)>>,
-        active: TabId,
+    /// Run `cmd` on `profile`'s helper (started if needed). An `OpenTab`
+    /// inside opens the page under that profile; commands that name a page
+    /// route by the page without this.
+    InProfile {
+        profile: String,
+        cmd: Box<Cmd<E>>,
     },
-    /// Drop a parked profile workspace (eviction / profile deleted).
+    /// Stop a profile's helper (the profile was deleted).
     DropParkedProfile {
         profile_id: String,
     },
@@ -875,6 +870,8 @@ pub type PageMenusHandle = Arc<Mutex<Vec<PageContext>>>;
 pub struct ChromeTabRequest {
     pub url: String,
     pub activate: bool,
+    /// The opener's profile: the new page runs under it.
+    pub profile: String,
 }
 
 /// Queue of [`ChromeTabRequest`]. Name is historical (cmd-click was

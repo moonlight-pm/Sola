@@ -46,7 +46,8 @@ pub fn app_menu() -> AppMenuPayload {
                 label: "View".into(),
                 items: vec![
                     action(FIT, "Fit All", Some(KeyCode::KEY_0.meta())),
-                    action(ACTUAL_SIZE, "Actual Size", Some(KeyCode::KEY_1.meta())),
+                    // ⌘1 is Super+1, workspace 1; ⌘⇧0 is 100% (as in Figma).
+                    action(ACTUAL_SIZE, "Actual Size", Some(KeyCode::KEY_0.meta_shift())),
                     action(ZOOM_IN, "Zoom In", Some(KeyCode::EQUAL.meta())),
                     action(ZOOM_OUT, "Zoom Out", Some(KeyCode::MINUS.meta())),
                     MenuItem::Divider,

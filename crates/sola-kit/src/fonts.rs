@@ -129,6 +129,42 @@ pub fn display() -> Font {
 pub fn chrome() -> Font {
     current().chrome
 }
+/// Width of one unwrapped line of `content` at `size` in `font`, laid out
+/// as iced will draw it (remembered, so a relayout does not shape the same
+/// words again). For widgets that place things beside text they draw.
+pub fn line_width(content: &str, size: f32, font: Font) -> f32 {
+    use iced::advanced::text::{self, Paragraph as _};
+    type Para = <iced::Renderer as text::Renderer>::Paragraph;
+    thread_local! {
+        static WIDTHS: std::cell::RefCell<std::collections::HashMap<(String, u32, Font), f32>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    let key = (content.to_string(), size.to_bits(), font);
+    if let Some(w) = WIDTHS.with(|m| m.borrow().get(&key).copied()) {
+        return w;
+    }
+    let w = Para::with_text(text::Text {
+        content,
+        bounds: iced::Size::INFINITE,
+        size: iced::Pixels(size),
+        line_height: text::LineHeight::default(),
+        font,
+        align_x: text::Alignment::Default,
+        align_y: iced::alignment::Vertical::Top,
+        shaping: text::Shaping::Advanced,
+        wrapping: text::Wrapping::None,
+    })
+    .min_width();
+    WIDTHS.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() > 1024 {
+            m.clear();
+        }
+        m.insert(key, w);
+    });
+    w
+}
+
 pub fn mono() -> Font {
     current().mono
 }
