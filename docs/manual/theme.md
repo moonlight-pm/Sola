@@ -73,17 +73,22 @@ application writes into its code does not follow the theme.
 
 | Token | Default | Iced palette slots | Used for |
 |---|---|---|---|
-| `bg-primary` | `#0c0e12` | `background.base`, `background.weakest` | Window canvas |
-| `bg-secondary` | `#151922` | `background.weaker`, `background.weak` | Raised panels: sidebars, cards |
-| `bg-hover` | `#1e2533` | `background.neutral`, `background.strong`, `secondary.weak` | Hover |
-| `border` | `#2a3344` | `background.stronger`, `background.strongest`, `secondary.base`, `secondary.strong` | Hard edges and chrome |
-| `text-primary` | `#e9ecf2` | Text on every background slot and on `secondary.strong` | Primary labels |
-| `text-tertiary` | `#8b94a8` | Text on `secondary.base` and `secondary.weak` | Muted labels |
+| `bg-primary` | `#0b0b0b` | `background.base`, `background.weakest` | Window canvas |
+| `bg-secondary` | `#151515` | `background.weaker`, `background.weak` | Raised panels: sidebars, cards |
+| `bg-hover` | `#1f1f1f` | `background.neutral`, `background.strong`, `secondary.weak` | Hover |
+| `border` | `#2a2a2a` | `background.stronger`, `background.strongest`, `secondary.base`, `secondary.strong` | Hard edges and chrome |
+| `text-primary` | `#ececec` | Text on every background slot and on `secondary.strong` | Primary labels |
+| `text-tertiary` | `#949494` | Text on `secondary.base` and `secondary.weak` | Muted labels |
 | `accent` | `#3dd6f5` | `primary`; Iced derives its lighter and darker shades | Focus, selection chrome, key status |
 | `success` | `#3ecf8e` | `success` | Status |
 | `warning` | `#e8b84a` | `warning` | Status |
 | `danger` | `#f07178` | `danger` | Status |
-| `selection` | `#2c333e` | None; read with `sola_kit::theme::selection()` | Selected rows and text selection |
+| `selection` | `#292929` | None; read with `sola_kit::theme::selection()` | Selected rows and text selection |
+
+The base is neutral grey. Until 2026-10-23 it was a blue-tinted slate
+(`#0c0e12`, `#151922`, …). When the shell receives a saved theme that still has
+those slate values, it swaps each one for its grey and saves the result.
+Colours you picked yourself are kept.
 
 Colour values are `#rrggbb` or `#rrggbbaa`. Terminal and Projects also
 derive their terminal colours from these tokens: the default foreground and
@@ -136,13 +141,13 @@ The shell's chrome has its own tokens in the same palette, all in the group
 
 | Token | Default | Controls |
 |---|---|---|
-| `shell-menubar-bg` | `#050608` | Menubar background |
+| `shell-menubar-bg` | `#050505` | Menubar background |
 | `shell-backdrop-dim` | `#00000099` | Dimming behind the launcher |
-| `shell-switcher-bg` | `#151922e6` | Switcher panel fill |
+| `shell-switcher-bg` | `#151515e6` | Switcher panel fill |
 | `shell-switcher-border` | `#ffffff1a` | Switcher panel border |
 | `shell-switcher-icon-bg` | `#ffffff2e` | Plate behind the selected app in the switcher |
-| `shell-switcher-icon-fg` | `#e9ecf2` | Tint of icons in the switcher |
-| `shell-switcher-icon-fg-sel` | `#e9ecf2` | Saved and editable; the switcher does not use it |
+| `shell-switcher-icon-fg` | `#ececec` | Tint of icons in the switcher |
+| `shell-switcher-icon-fg-sel` | `#ececec` | Saved and editable; the switcher does not use it |
 | `shell-switcher-pad` | `14px` | Switcher panel padding |
 | `shell-switcher-tile-pad` | `8px` | Inset of each icon cell in the switcher |
 | `shell-launcher-width` | `560px` | Launcher width |

@@ -1851,7 +1851,7 @@ fn shelf_fingerprint_from_bus(cals: &[CalendarShelf]) -> String {
 fn rename_color_swatch<'a>(color: Color, on_press: Msg) -> Element<'a, Msg> {
     const SIZE: f32 = 16.0;
     let ink = if (0.299 * color.r + 0.587 * color.g + 0.114 * color.b) > 0.55 {
-        Color::from_rgb(0.12, 0.12, 0.14)
+        Color::from_rgb(0.1222, 0.12, 0.122)
     } else {
         Color::WHITE
     };
@@ -1875,7 +1875,7 @@ fn rename_color_swatch<'a>(color: Color, on_press: Msg) -> Element<'a, Msg> {
 
 fn rename_commit_button<'a>(msg: Msg) -> Element<'a, Msg> {
     let handle = icon_handle("lucide/check");
-    let glyph = icon_svg_colored(handle, 12, Color::from_rgb(0.85, 0.87, 0.90));
+    let glyph = icon_svg_colored(handle, 12, Color::from_rgb(0.8711, 0.87, 0.871));
     button(glyph)
         .padding(Padding::from([2, 5]))
         .style(kit_btn::ghost)
@@ -1885,7 +1885,7 @@ fn rename_commit_button<'a>(msg: Msg) -> Element<'a, Msg> {
 
 fn hide_cal_button<'a>(msg: Msg) -> Element<'a, Msg> {
     let handle = icon_handle("lucide/eye-off");
-    let glyph = icon_svg_colored(handle, 12, Color::from_rgb(0.85, 0.87, 0.90));
+    let glyph = icon_svg_colored(handle, 12, Color::from_rgb(0.8711, 0.87, 0.871));
     button(glyph)
         .padding(Padding::from([2, 5]))
         .style(kit_btn::ghost)

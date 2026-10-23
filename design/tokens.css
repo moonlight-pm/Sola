@@ -1,28 +1,29 @@
 /* Sola design tokens. Color names are the bus palette keys.
- * Shared by every canvas in design/ (../tokens.css). */
+ * Shared by every canvas in design/ (../tokens.css). Mirrors the kit as
+ * built: since Next (2026-10-23) the base is neutral grey, no blue. */
 :root {
   /* Surfaces */
-  --bg-primary: #0c0e12;
-  --bg-chrome: #121722;
-  --bg-secondary: #151922;
-  --bg-hover: #1e2533;
-  --selection: #2c333e;
+  --bg-primary: #0b0b0b;
+  --bg-chrome: #141414;
+  --bg-secondary: #151515;
+  --bg-hover: #1f1f1f;
+  --selection: #292929;
 
   /* Lines */
-  --border: #2a3344;
-  --hairline: #252931;
-  --hairline-strong: #31353d;
+  --border: #2a2a2a;
+  --hairline: #222222;
+  --hairline-strong: #2b2b2b;
 
   /* Fields */
-  --field-well: #050608;
-  --field-edge: #232426;
+  --field-well: #050505;
+  --field-edge: #1e1e1e;
   --field-focus: #24788a;
 
   /* Text */
-  --text-primary: #e9ecf2;
-  --text-secondary: #8b94a8;
-  --text-tertiary: #6b7385;
-  --text-ghost: #acb3c2;
+  --text-primary: #ececec;
+  --text-secondary: #949494;
+  --text-tertiary: #737373;
+  --text-ghost: #b3b3b3;
 
   /* Accent */
   --accent: #3dd6f5;
@@ -50,19 +51,19 @@
   --danger-outline-fill: #2b222b;
   --danger-outline-edge: #713e46;
   --danger-outline-text: #f28288;
-  --secondary-fill: #1e222b;
-  --secondary-edge: #393d44;
-  --secondary-hover: #2c323f;
-  --ghost-hover: #1e2533b3;
+  --secondary-fill: #1d1d1d;
+  --secondary-edge: #313131;
+  --secondary-hover: #292929;
+  --ghost-hover: #1f1f1fb3;
 
   /* Menus */
-  --menu-hover: #1e2533bf;
-  --menubar-active: #e9ecf22e;
+  --menu-hover: #1f1f1fbf;
+  --menubar-active: #ececec2e;
 
   /* Shell chrome */
-  --shell-menubar-bg: #050608;
+  --shell-menubar-bg: #050505;
   --shell-backdrop-dim: #00000099;
-  --shell-switcher-bg: #151922e6;
+  --shell-switcher-bg: #151515e6;
   --shell-switcher-border: #ffffff1a;
   --shell-switcher-icon-bg: #ffffff2e;
 
@@ -122,8 +123,8 @@
 
   /* Sol, LEDs, phosphor */
   --sol: #ffb800;
-  --led-off: #e9ecf21f;
-  --stat-label: #e9ecf29e;
+  --led-off: #ececec1f;
+  --stat-label: #ececec9e;
   --phosphor-1: #38fa6b;
   --phosphor-2: #1febe0;
   --phosphor-3: #6185ff;
@@ -131,10 +132,10 @@
   --phosphor-5: #ff942e;
 
   /* Proposed */
-  --text-tertiary-proposed: #7d8597;
-  --rail-hover: #232731;
-  --rail-selected: #333741;
-  --rail-lip: #4b4f57;
+  --text-tertiary-proposed: #858585;
+  --rail-hover: #212121;
+  --rail-selected: #2d2d2d;
+  --rail-lip: #3f3f3f;
   --rail-text: #ffffffb3;
 }
 

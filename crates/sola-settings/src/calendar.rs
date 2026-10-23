@@ -1018,7 +1018,7 @@ fn cal_disc<'a>(color: Color) -> Element<'a, CalMsg> {
 fn color_swatch<'a>(color: Color, on_press: CalMsg) -> Element<'a, CalMsg> {
     const SIZE: f32 = 16.0;
     let ink = if (0.299 * color.r + 0.587 * color.g + 0.114 * color.b) > 0.55 {
-        Color::from_rgb(0.12, 0.12, 0.14)
+        Color::from_rgb(0.1222, 0.12, 0.122)
     } else {
         Color::WHITE
     };

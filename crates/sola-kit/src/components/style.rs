@@ -58,10 +58,10 @@ pub const PAD_CONTROL: [u16; 2] = [7, 14];
 /// Compact control padding — toolbar, steppers, dense chrome.
 pub const PAD_CONTROL_SM: [u16; 2] = [5, 11];
 
-/// Cool graphite used for sidebar columns and the full-width chrome
-/// strip (OD `--material-sidebar` `#121722`). One surface so a top bar
-/// that spans the window meets the tab column without a colour step.
-pub const CHROME_SURFACE: Color = Color::from_rgb(0.071, 0.090, 0.133);
+/// Grey used for sidebar columns and the full-width chrome strip
+/// (Next `--bg-chrome` `#141414`). One surface so a top bar that spans
+/// the window meets the tab column without a colour step.
+pub const CHROME_SURFACE: Color = Color::from_rgb(0.078, 0.078, 0.078);
 
 /// Soft hairline weight — OD `--hairline` (white 7% in sRGB over surface).
 pub const HAIRLINE_A: f32 = 0.07;
@@ -134,7 +134,7 @@ pub fn stage_fill(_bg: Color, raised: Color, _accent: Color) -> Background {
 /// Optional soft canvas wash — **not** used as the storybook page fill.
 ///
 /// OD layers dual *radials* that fade to transparent over solid `--bg`
-/// (`#0c0e12`). A full-pane linear with a strong selection stop reads as a
+/// (`#0b0b0b`). A full-pane linear with a strong selection stop reads as a
 /// grey/teal gradient. Prefer solid `background.base` for app canvas; keep
 /// this helper only for deliberate accent panels (hero / stage).
 pub fn canvas_ambient(bg: Color, accent: Color, selection: Color) -> Background {
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn mix_white_matches_css_srgb_mix() {
-        let surface = Color::from_rgb(0.082, 0.098, 0.133); // ~#151922
+        let surface = Color::from_rgb(0.082, 0.082, 0.082); // ~#151515
         let c = mix_white(surface, 0.07);
         // 0.07*1 + 0.93*channel
         assert!((c.r - (surface.r * 0.93 + 0.07)).abs() < 1e-5);
@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn bevel_ring_is_gradient_tl_darker_than_br() {
-        let surface = Color::from_rgb(0.082, 0.098, 0.133);
+        let surface = Color::from_rgb(0.082, 0.082, 0.082);
         let Background::Gradient(g) = bevel_ring(surface) else {
             panic!("bevel_ring must be a gradient");
         };
@@ -541,7 +541,7 @@ mod tests {
     #[test]
     fn on_color_picks_white_ink_on_black() {
         assert_eq!(on_color(Color::BLACK), Color::WHITE);
-        assert_eq!(on_color(Color::from_rgb(0.07, 0.09, 0.13)), Color::WHITE);
+        assert_eq!(on_color(Color::from_rgb(0.078, 0.078, 0.078)), Color::WHITE);
     }
 
     #[test]

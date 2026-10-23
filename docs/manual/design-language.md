@@ -9,7 +9,7 @@
 
 ## 1. North star
 
-**Sola is a cool graphite tool UI** — dense chrome, sparse cyan signal, quiet
+**Sola is a graphite tool UI on neutral greys** — dense chrome, sparse cyan signal, quiet
 selection — with **macOS Dark Mode density and hierarchy** as craft reference,
 not a pixel-perfect HIG clone.
 
@@ -24,7 +24,7 @@ or the graphite brand requires it.
 
 | Area | macOS default | Sola |
 |------|---------------|------|
-| Palette | System greys | **Cool graphite** (`#0c0e12` / `#151922` / …) |
+| Palette | System greys | **Graphite on neutral greys** (`#0b0b0b` / `#151515` / …; no blue since 2026-10-23) |
 | Window layout | Freeform windows with title bars | **New windows float** at app size; **zoning** is opt-in snap |
 | Zoned (tiled) windows | Title bar + traffic lights | **No title bars** on zoned windows |
 | Floating windows | System/CSD title bars | **Client decorations** when floating (`Topic::WindowFloating`) |
@@ -65,7 +65,7 @@ CSS comps use tools iced only partially has. Map intentionally:
 
 Materials (menu bar, menus, sidebars, HUD-style overlays) still *aim* for blur + translucent fills when the compositor supports them. Until then:
 
-- Prefer **gradient lift + graphite steps** over flat `#151922` everywhere.
+- Prefer **gradient lift + graphite steps** over flat `#151515` everywhere.
 - Prefer **behind-window** blend for floating shell chrome when possible; opaque fallbacks stay graphite, not pure black.
 - Avoid decorative multi-hue marketing gradients. Soft accent/selection washes only.
 
@@ -110,13 +110,13 @@ All UI color should resolve through the kit / bus theme:
 
 | Intent | Behavior | Kit / bus direction (seed) |
 |--------|----------|----------------------------|
-| Window / canvas | Darkest graphite | `bg` / `bg-primary` `#0c0e12` |
-| Raised (sidebar, card, menu) | One step up | `bg_raised` / `bg-secondary` `#151922` |
-| Hover / selected row | Further lift; selection is graphite, not darkened neon | `bg_hover` `#1e2533`, selection `#2c333e` |
+| Window / canvas | Darkest graphite | `bg` / `bg-primary` `#0b0b0b` |
+| Raised (sidebar, card, menu) | One step up | `bg_raised` / `bg-secondary` `#151515` |
+| Hover / selected row | Further lift; selection is graphite, not darkened neon | `bg_hover` `#1f1f1f`, selection `#292929` |
 | Soft hairlines | White@α separators | kit `hairline` / `hairline_strong` |
-| Hard edges | Stronger chrome | `border` `#2a3344` |
-| Primary label | Cool off-white | `fg` / `text-primary` `#e9ecf2` |
-| Secondary label | Muted blue-grey | `fg_muted` `#8b94a8` |
+| Hard edges | Stronger chrome | `border` `#2a2a2a` |
+| Primary label | Off-white | `fg` / `text-primary` `#ececec` |
+| Secondary label | Muted grey | `fg_muted` `#949494` |
 | Accent | Sparse: focus, primary, key status | `accent` `#3dd6f5` |
 | Success / warning / danger | Soft semantic | `#3ecf8e` / `#e8b84a` / `#f07178` |
 

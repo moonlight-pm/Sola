@@ -156,12 +156,12 @@ fn parse_request_line(line: &str, expected_state: &str) -> Result<String> {
 }
 
 fn success_page() -> String {
-    "<html><body style=\"font-family:sans-serif;background:#0c0e12;color:#e8eaed;padding:48px\"><h1>Signed in</h1><p>You can close this tab and return to Settings.</p></body></html>".into()
+    "<html><body style=\"font-family:sans-serif;background:#0b0b0b;color:#eaeaea;padding:48px\"><h1>Signed in</h1><p>You can close this tab and return to Settings.</p></body></html>".into()
 }
 
 fn failure_page(error: &str) -> String {
     format!(
-        "<html><body style=\"font-family:sans-serif;background:#0c0e12;color:#e8eaed;padding:48px\"><h1>Sign-in did not finish</h1><p>{}</p></body></html>",
+        "<html><body style=\"font-family:sans-serif;background:#0b0b0b;color:#eaeaea;padding:48px\"><h1>Sign-in did not finish</h1><p>{}</p></body></html>",
         error.replace('&', "&amp;").replace('<', "&lt;")
     )
 }

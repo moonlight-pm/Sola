@@ -92,7 +92,7 @@ fn caption<'a>(left: &'a str, right: String) -> Element<'a, Msg> {
             .style(|_: &Theme| iced::widget::text::Style {
                 color: Some(Color {
                     a: 0.5,
-                    ..Color::from_rgb(0.902, 0.929, 0.953)
+                    ..Color::from_rgb(0.925, 0.925, 0.925)
                 }),
             }),
     ]
@@ -101,7 +101,7 @@ fn caption<'a>(left: &'a str, right: String) -> Element<'a, Msg> {
 
 fn cpu_card(shell: &Shell) -> Element<'_, Msg> {
     let s = &shell.stats;
-    let neutral = Color::from_rgb(0.902, 0.929, 0.953);
+    let neutral = Color::from_rgb(0.925, 0.925, 0.925);
     let detail = match &s.detail {
         Some(crate::stats::Detail::Cpu(d)) => Some(d),
         _ => None,
@@ -112,7 +112,7 @@ fn cpu_card(shell: &Shell) -> Element<'_, Msg> {
         text(id.model.clone())
             .size(12)
             .style(|_: &Theme| iced::widget::text::Style {
-                color: Some(Color::from_rgb(0.788, 0.820, 0.851)),
+                color: Some(Color::from_rgb(0.816, 0.816, 0.816)),
             })
             .into(),
         text(format!("{}C / {}T", id.cores, id.threads))
@@ -178,7 +178,7 @@ fn cpu_card(shell: &Shell) -> Element<'_, Msg> {
 
 fn mem_card(shell: &Shell) -> Element<'_, Msg> {
     let s = &shell.stats;
-    let neutral = Color::from_rgb(0.902, 0.929, 0.953);
+    let neutral = Color::from_rgb(0.925, 0.925, 0.925);
     let detail = match &s.detail {
         Some(crate::stats::Detail::Mem(d)) => Some(d),
         _ => None,
@@ -191,7 +191,7 @@ fn mem_card(shell: &Shell) -> Element<'_, Msg> {
         text(format!("{total_gb:.0} GB"))
             .size(12)
             .style(|_: &Theme| iced::widget::text::Style {
-                color: Some(Color::from_rgb(0.788, 0.820, 0.851)),
+                color: Some(Color::from_rgb(0.816, 0.816, 0.816)),
             })
             .into(),
         text("RAM")
@@ -272,7 +272,7 @@ fn seg_bar<'a>(used: u64, cache: u64, free: u64) -> Element<'a, Msg> {
     container(row![
         seg(used, Color::from_rgb(0.0, 0.831, 1.0)),
         seg(cache, Color::from_rgb(0.122, 0.435, 0.922)),
-        seg(free, Color::from_rgb(0.188, 0.211, 0.243)),
+        seg(free, Color::from_rgb(0.173, 0.173, 0.173)),
     ])
     .width(Length::Fixed(288.0))
     .height(Length::Fixed(8.0))
@@ -299,12 +299,12 @@ fn graph_box<'a>(inner: Element<'a, Msg>) -> Element<'a, Msg> {
         .height(Length::Fixed(58.0))
         .style(|_: &Theme| iced::widget::container::Style {
             background: Some(iced::Background::Color(Color::from_rgb(
-                0.051, 0.067, 0.090,
+                0.055, 0.055, 0.055,
             ))),
             border: iced::Border {
                 radius: 6.0.into(),
                 width: 1.0,
-                color: Color::from_rgb(0.129, 0.149, 0.176),
+                color: Color::from_rgb(0.122, 0.122, 0.122),
             },
             ..Default::default()
         })
@@ -353,7 +353,7 @@ fn divider<'a>() -> Element<'a, Msg> {
         .height(Length::Fixed(1.0))
         .style(|_: &Theme| iced::widget::container::Style {
             background: Some(iced::Background::Color(Color::from_rgb(
-                0.129, 0.149, 0.176,
+                0.122, 0.122, 0.122,
             ))),
             ..Default::default()
         })
@@ -392,7 +392,7 @@ fn proc_row<'a>(name: &'a str, val: String, value: f32, max: f32) -> Element<'a,
     .height(Length::Fixed(3.0))
     .style(|_: &Theme| iced::widget::container::Style {
         background: Some(iced::Background::Color(Color::from_rgb(
-            0.102, 0.122, 0.153,
+            0.102, 0.102, 0.102,
         ))),
         border: iced::Border {
             radius: 2.0.into(),
@@ -406,7 +406,7 @@ fn proc_row<'a>(name: &'a str, val: String, value: f32, max: f32) -> Element<'a,
             text(name.to_string())
                 .size(13)
                 .style(|_: &Theme| iced::widget::text::Style {
-                    color: Some(Color::from_rgb(0.788, 0.820, 0.851))
+                    color: Some(Color::from_rgb(0.816, 0.816, 0.816))
                 }),
             iced::widget::Space::new().width(Length::Fill),
             text(val).font(sola_kit::fonts::MONO).size(12),
@@ -425,7 +425,7 @@ fn footer_pair<'a>(l1: &'a str, v1: String, l2: &'a str, v2: String) -> Element<
                 .font(sola_kit::fonts::MONO)
                 .size(12)
                 .style(|_: &Theme| iced::widget::text::Style {
-                    color: Some(Color::from_rgb(0.788, 0.820, 0.851))
+                    color: Some(Color::from_rgb(0.816, 0.816, 0.816))
                 }),
         ]
         .spacing(3);
@@ -518,7 +518,7 @@ where
         text(direction)
             .size(12)
             .style(|_: &Theme| iced::widget::text::Style {
-                color: Some(Color::from_rgb(0.788, 0.820, 0.851)),
+                color: Some(Color::from_rgb(0.816, 0.816, 0.816)),
             })
             .into(),
         text(
@@ -561,7 +561,7 @@ where
     stat_card(
         label,
         fmt_rate(rate),
-        Color::from_rgb(0.902, 0.929, 0.953),
+        Color::from_rgb(0.925, 0.925, 0.925),
         identity,
         body,
     )
@@ -584,7 +584,7 @@ fn fmt_bytes(b: u64) -> String {
 
 fn gpu_card(shell: &Shell) -> Element<'_, Msg> {
     let s = &shell.stats;
-    let neutral = Color::from_rgb(0.902, 0.929, 0.953);
+    let neutral = Color::from_rgb(0.925, 0.925, 0.925);
     let util = s.gpu.map(|g| g.util).unwrap_or(0.0);
     let detail = match &s.detail {
         Some(crate::stats::Detail::Gpu(d)) => Some(d),
@@ -599,7 +599,7 @@ fn gpu_card(shell: &Shell) -> Element<'_, Msg> {
         )
         .size(12)
         .style(|_: &Theme| iced::widget::text::Style {
-            color: Some(Color::from_rgb(0.788, 0.820, 0.851)),
+            color: Some(Color::from_rgb(0.816, 0.816, 0.816)),
         })
         .into(),
         text(
@@ -706,7 +706,7 @@ fn level_bar<'a>(frac: f32, color: Color) -> Element<'a, Msg> {
     .height(Length::Fixed(8.0))
     .style(|_: &Theme| iced::widget::container::Style {
         background: Some(iced::Background::Color(Color::from_rgb(
-            0.188, 0.211, 0.243,
+            0.173, 0.173, 0.173,
         ))),
         border: iced::Border {
             radius: 4.0.into(),

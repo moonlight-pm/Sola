@@ -1241,9 +1241,9 @@ fn section_header<'a, Message: Clone + 'a>(
             handle,
             12,
             Color {
-                r: 0.55,
+                r: 0.58,
                 g: 0.58,
-                b: 0.64,
+                b: 0.58,
                 a: 0.95,
             },
         ))
@@ -2020,9 +2020,9 @@ fn item_text_block<'a, Message: 'a>(
     let mut title_row = row![].spacing(SPACE_SM).align_y(iced::Alignment::Center);
     if let Some(collapsed) = section_header {
         let chev = ink.unwrap_or(Color {
-            r: 0.55,
+            r: 0.58,
             g: 0.58,
-            b: 0.64,
+            b: 0.58,
             a: 0.95,
         });
         title_row = title_row.push(section_chevron(collapsed, chev));
@@ -2164,9 +2164,9 @@ fn hover_action_button<'a, Message: Clone + 'a>(
         }
     } else {
         Color {
-            r: 0.55,
+            r: 0.58,
             g: 0.58,
-            b: 0.64,
+            b: 0.58,
             a: 0.90,
         }
     };
@@ -3136,9 +3136,9 @@ fn card_surface_style(theme: &Theme, active: bool, hovered: bool) -> container::
     let border_atom = p.background.stronger.color;
 
     if active {
-        // --tab-active-bg: gradient hover@92%+raised → raised@88%+#0a0c10
+        // --tab-active-bg: gradient hover@92%+raised → raised@88%+#0a0a0a
         let top = mix(hover, raised, 0.92);
-        let bottom = mix(raised, Color::from_rgb(0.039, 0.047, 0.063), 0.88);
+        let bottom = mix(raised, Color::from_rgb(0.039, 0.039, 0.039), 0.88);
         container::Style {
             background: Some(linear_bg(180.0, &[(0.0, top), (1.0, bottom)])),
             text_color: Some(p.background.base.text),

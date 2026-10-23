@@ -50,34 +50,34 @@ use sola_core::theme::Theme as BusTheme;
 pub const THEME_NAME: &str = "sola";
 
 pub mod hex {
-    // Cool graphite tool UI (Open Design sola-kit-ds). Keep in sync with
-    // `Palette::seed` in sola-core.
-    /// Window / canvas base — deep graphite.
-    pub const BG: &str = "#0c0e12";
-    /// Primary label — cool off-white for contrast on dark fills.
-    pub const FG: &str = "#e9ecf2";
+    // Graphite tool UI on neutral greys (Next: no blue in the base).
+    // Keep in sync with `Palette::seed` in sola-core.
+    /// Window / canvas base — near-black grey.
+    pub const BG: &str = "#0b0b0b";
+    /// Primary label — off-white for contrast on dark fills.
+    pub const FG: &str = "#ececec";
     /// Sparse accent (selection chrome, focus, key status).
     pub const ACCENT: &str = "#3dd6f5";
     pub const SUCCESS: &str = "#3ecf8e";
     pub const WARNING: &str = "#e8b84a";
     pub const DANGER: &str = "#f07178";
     /// Muted / secondary label.
-    pub const FG_MUTED: &str = "#8b94a8";
+    pub const FG_MUTED: &str = "#949494";
     /// Raised panel / sidebar / card.
-    pub const BG_RAISED: &str = "#151922";
+    pub const BG_RAISED: &str = "#151515";
     /// Hover lift.
-    pub const BG_HOVER: &str = "#1e2533";
+    pub const BG_HOVER: &str = "#1f1f1f";
     /// Stronger edges / hard chrome (soft hairlines use white@α in style).
-    pub const BORDER: &str = "#2a3344";
-    /// Selected-row / field text-selection fill — cool graphite lift, not a
+    pub const BORDER: &str = "#2a2a2a";
+    /// Selected-row / field text-selection fill — a grey lift, not a
     /// darkened neon. `#3dd6f5` goes muddy when mixed toward black, so
-    /// this atom is a slate step above raised (distinct from `BG_HOVER`)
+    /// this atom is a grey step above raised (distinct from `BG_HOVER`)
     /// and neon stays full-chroma for accent only.
     ///
     /// Terminal / Projects **cell** selection is not this atom: those
     /// grids overlay [`ACCENT`] at alpha so the wash stays neon and
     /// scannable (`sola_terminal::term_view::Palette::from_kit_theme`).
-    pub const SELECTION: &str = "#2c333e";
+    pub const SELECTION: &str = "#292929";
 }
 
 /// Build the kit's iced theme from its compile-time default atoms.
@@ -585,13 +585,13 @@ pub fn color_to_hex(c: Color) -> String {
 /// Menubar stays near-black (opaque greys first; blur deferred). Switcher
 /// is a Cmd+Tab-style HUD: neutral frosted pill, soft light plate under
 /// the selected icon (not an accent pill).
-const SHELL_MENUBAR_BG: &str = "#050608";
+const SHELL_MENUBAR_BG: &str = "#050505";
 const SHELL_BACKDROP_DIM: &str = "#00000099";
-const SHELL_SWITCHER_BG: &str = "#151922e6"; // raised graphite HUD glass
+const SHELL_SWITCHER_BG: &str = "#151515e6"; // raised grey HUD glass
 const SHELL_SWITCHER_BORDER: &str = "#ffffff1a";
 const SHELL_SWITCHER_ICON_BG: &str = "#ffffff2e"; // soft raised plate under icon
-const SHELL_SWITCHER_ICON_FG: &str = "#e9ecf2";
-const SHELL_SWITCHER_ICON_FG_SEL: &str = "#e9ecf2";
+const SHELL_SWITCHER_ICON_FG: &str = "#ececec";
+const SHELL_SWITCHER_ICON_FG_SEL: &str = "#ececec";
 // Compact frame around a large-icon strip.
 const SHELL_SWITCHER_PAD: f32 = 14.0;
 const SHELL_SWITCHER_TILE_PAD: f32 = 8.0;
@@ -835,7 +835,7 @@ mod tests {
         assert_eq!(atoms.bg_hover, parse(hex::BG_HOVER));
         // Seed currently uses the same step for tertiary + hover; still
         // must load via the `bg-hover` token binding, not hard-coded elsewhere.
-        assert_eq!(atoms.bg_hover, parse("#1e2533"));
+        assert_eq!(atoms.bg_hover, parse("#1f1f1f"));
     }
 
     // Sub-decision (A4): the seed speaks the kit's font-role vocabulary,
@@ -1003,17 +1003,18 @@ mod tests {
     }
 
     #[test]
-    fn seed_surfaces_are_graphite_not_primer() {
+    fn seed_surfaces_are_neutral_grey() {
         let atoms = Atoms::default();
-        assert_eq!(atoms.bg, parse("#0c0e12"));
-        assert_eq!(atoms.bg_raised, parse("#151922"));
+        assert_eq!(atoms.bg, parse("#0b0b0b"));
+        assert_eq!(atoms.bg_raised, parse("#151515"));
         assert_eq!(atoms.accent, parse("#3dd6f5"), "soft cyan accent");
         assert_eq!(
             atoms.selection,
-            parse("#2c333e"),
-            "graphite selection, not dark cyan"
+            parse("#292929"),
+            "grey selection, not dark cyan"
         );
-        // Not the old Primer canvas or macOS system greys
+        // Not the retired slate, the old Primer canvas or macOS system greys
+        assert_ne!(atoms.bg, parse("#0c0e12"));
         assert_ne!(atoms.bg, parse("#0d1117"));
         assert_ne!(atoms.bg, parse("#1c1c1e"));
     }
@@ -1021,11 +1022,11 @@ mod tests {
     #[test]
     fn switcher_defaults_are_cmd_tab_hud() {
         let s = ShellStyle::default();
-        assert_eq!(color_to_hex(s.switcher_bg), "#151922e6");
+        assert_eq!(color_to_hex(s.switcher_bg), "#151515e6");
         assert_eq!(color_to_hex(s.switcher_border), "#ffffff1a");
         // Soft light plate under icon — not cyan, not selection-atom teal
         assert_eq!(color_to_hex(s.switcher_icon_bg), "#ffffff2e");
-        assert_eq!(color_to_hex(s.switcher_icon_fg_sel), "#e9ecf2");
+        assert_eq!(color_to_hex(s.switcher_icon_fg_sel), "#ececec");
         assert_eq!(s.switcher_pad, 14.0);
         assert_eq!(s.switcher_tile_pad, 8.0);
     }

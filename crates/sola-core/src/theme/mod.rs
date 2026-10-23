@@ -24,6 +24,7 @@
 
 mod css;
 mod palette;
+mod slate;
 mod types;
 mod validate;
 

@@ -1171,7 +1171,7 @@ impl Storybook {
         .width(Length::Fill)
         .height(Length::Fill);
 
-        // Content column: solid seed canvas (`#0c0e12`).
+        // Content column: solid seed canvas (`#0b0b0b`).
         let content_col = container(
             column![content, self.font_prewarm()]
                 .width(Length::Fill)

@@ -169,7 +169,16 @@ impl Shell {
     }
 
     /// Apply an updated bus theme to the iced renderer.
-    fn on_theme(&mut self, t: BusTheme) {
+    fn on_theme(&mut self, mut t: BusTheme) {
+        // A theme saved before Next still has the slate base: swap it for
+        // the greys and save that, so every app follows.
+        if t.retire_slate() {
+            tracing::info!("theme: slate base retired for neutral greys");
+            let saved = t.clone();
+            super::with_bus(|bus| {
+                let _ = bus.emit(Topic::Theme(saved));
+            });
+        }
         self.theme = sola_kit::theme::theme_from_bus(&t);
         self.style = sola_kit::theme::shell_style_from_bus_theme(&t);
         sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(&t));
