@@ -279,6 +279,8 @@ pub(crate) fn drop_window(state: &mut AppData, window_id: u32) {
     state.gamescope_last_size_at.remove(&window_id);
     state.last_position.remove(&window_id);
     state.floating.remove(&window_id);
+    state.chrome.remove(&window_id);
+    state.tiled_sent.remove(&window_id);
     state.last_composition.retain(|&id| id != window_id);
     state.pending.manage.remove(&window_id);
     state.pending.render_positions.remove(&window_id);

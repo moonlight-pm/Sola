@@ -5,11 +5,12 @@
 //! in the icon's place, so the title does not move.
 
 use iced::widget::{container, text};
-use iced::{Element, Length, Padding};
+use iced::{Element, Padding};
 use sola_bus::topics::{Activity, Zone};
 use sola_kit::components::style::SPACE_MD;
 use sola_kit::components::{
-    LEADING_SLOT, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection, icon, status_mark,
+    LEADING_SLOT, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection, icon, island,
+    status_mark,
 };
 use sola_kit::fonts;
 
@@ -74,14 +75,9 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .fill_width()
         .header(head.into())
         .build();
-    container(panel)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(|theme: &iced::Theme| {
-            container::Style::default()
-                .background(theme.extended_palette().background.weak.color)
-        })
-        .into()
+    // An island in the grid's left column (board 06): rounded, rimmed,
+    // its corners the ground's black.
+    island(panel)
 }
 
 /// The mark a row shows for its tab's activity; none when idle.

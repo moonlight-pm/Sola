@@ -11,6 +11,7 @@ pub mod audio;
 pub mod bluetooth;
 mod builtins;
 pub mod calendar;
+pub mod chrome;
 pub mod components;
 pub mod keys;
 pub mod launcher;

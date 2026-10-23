@@ -11,6 +11,30 @@ use tracing::debug;
 use crate::client::AppData;
 use crate::pending::FocusAction;
 
+/// The rim around a window whose app draws no frame: premultiplied white at
+/// 7%, 18% while focused (the kit frame's rim, board 02).
+const RIM: u32 = (0.07 * u32::MAX as f64) as u32;
+const RIM_FOCUSED: u32 = (0.18 * u32::MAX as f64) as u32;
+
+/// Tell each window whether it is tiled (`WindowChrome.tiled`), so clients
+/// that draw shadows or round corners drop them. Manage sequence. Sent only
+/// on change: each `set_tiled` schedules a configure.
+fn apply_tiled(state: &mut AppData) {
+    use crate::protocol::river_window_management_v1::river_window_v1::Edges;
+    for (id, proxy) in &state.windows_by_id {
+        let tiled = state
+            .chrome
+            .get(id)
+            .is_some_and(|c| c.tiled && !c.cinema);
+        // A new window starts untiled; say nothing until that changes.
+        if state.tiled_sent.get(id).copied().unwrap_or(false) == tiled {
+            continue;
+        }
+        proxy.set_tiled(if tiled { Edges::all() } else { Edges::empty() });
+        state.tiled_sent.insert(*id, tiled);
+    }
+}
+
 // Per `river-window-management-v1.xml`, each request is marked as
 // belonging to either the manage or render sequence:
 //   Manage:  propose_dimensions, focus_window, clear_focus
@@ -306,6 +330,7 @@ pub fn handle_manage_start(state: &mut AppData) {
     }
 
     apply_fullscreen_requests(state);
+    apply_tiled(state);
 
     // CSD move/resize: cursor device + any pending op_start_pointer/op_end.
     // No Super+button pointer bindings — those clicks reach clients.
@@ -372,10 +397,22 @@ pub fn handle_render_start(state: &mut AppData) {
         .unwrap_or(0);
     let positions_len = state.pending.render_positions.len();
 
-    // Disable borders for any window we've seen but not yet decorated.
+    // A hairline around windows whose app draws no frame (the shell's
+    // `WindowChrome.rim`), lit while focused; none for the rest (kit apps
+    // draw their own rim). Drawn outside the content, so it sits in the gap.
     // Cheap to send repeatedly — River only diffs the resulting state.
-    for proxy in state.windows_by_id.values() {
-        proxy.set_borders(Edges::empty(), 0, 0, 0, 0, 0);
+    for (id, proxy) in &state.windows_by_id {
+        let rim = state.chrome.get(id).is_some_and(|c| c.rim && !c.cinema);
+        if rim {
+            let a = if state.focused_window == Some(*id) {
+                RIM_FOCUSED
+            } else {
+                RIM
+            };
+            proxy.set_borders(Edges::all(), 1, a, a, a, a);
+        } else {
+            proxy.set_borders(Edges::empty(), 0, 0, 0, 0, 0);
+        }
     }
 
     if let Some(order) = state.pending.composition.take() {

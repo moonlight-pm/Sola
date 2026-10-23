@@ -116,7 +116,7 @@ impl Page {
             Page::Select => "Select",
             Page::Sidebar => "Sidebar",
             Page::Split => "Split",
-            Page::Titlebar => "Titlebar",
+            Page::Titlebar => "Window frame",
             Page::Toolbar => "Toolbar",
         }
     }
@@ -1211,8 +1211,8 @@ impl Storybook {
         .height(Length::Fill)
         .into();
 
-        sola_kit::wrap_if_floating(
-            self.float.is_floating_any(),
+        sola_kit::window_frame(
+            self.float.chrome_any(),
             "Kit",
             Msg::TitleDrag,
             Msg::TitleClose,

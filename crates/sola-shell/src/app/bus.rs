@@ -9,8 +9,9 @@ use std::time::Duration;
 use iced::Task;
 use sola_bus::topics::{
     AppHidden, AppMenuPayload, AppNotification, AppToast, Application, ChordEvent, FloatGeometry,
-    FocusTarget, LaunchResultPayload, MailStatus, MouseClickedPayload, MouseEnteredPayload,
-    OutputGeometry, TabLayout, Topic, UserAppExitedPayload, Window, WindowFloating,
+    FocusTarget, LaunchResultPayload, MailStatus, MenuActionPayload, MouseClickedPayload,
+    MouseEnteredPayload,
+    OutputGeometry, TabLayout, Topic, UserAppExitedPayload, Window, WindowChrome, WindowFloating,
     WindowGeometry, WindowParent, Zone,
 };
 use sola_core::theme::Theme as BusTheme;
@@ -118,6 +119,7 @@ impl Shell {
                 self.on_mail_status(s, message.sticky);
                 Task::none()
             }
+            Topic::MenuAction(a) => self.on_titlebar_menu_action(a),
             // All other topics are not consumed by sola-shell; ignore quietly.
             _ => Task::none(),
         }
@@ -126,6 +128,25 @@ impl Shell {
     // -------------------------------------------------------------------------
     // Real handlers
     // -------------------------------------------------------------------------
+
+    /// A Window-menu choice from an app's titlebar (kit `menu::choose`). The
+    /// click focused that app's window, so act on the focused window as the
+    /// shortcut would. Other actions are the app's own and never reach here.
+    fn on_titlebar_menu_action(&mut self, a: MenuActionPayload) -> Task<Msg> {
+        let Some(action) = sola_kit::parse_window_action(&a.action_id) else {
+            return Task::none();
+        };
+        if self.focused_app_id.as_deref() != Some(a.app_id.as_str()) {
+            tracing::warn!(
+                app_id = %a.app_id,
+                action_id = %a.action_id,
+                focused = ?self.focused_app_id,
+                "titlebar window action from an app without focus; ignored"
+            );
+            return Task::none();
+        }
+        self.handle_window_action(action)
+    }
 
     /// Menubar whisper (Opening… / screenshot). Not a notification.
     fn on_app_toast(&mut self, t: AppToast) -> Task<Msg> {
@@ -655,6 +676,8 @@ impl Shell {
         self.menus.set_menu(m);
         // Always re-emit in case this is the focused app (per-app shortcuts changed).
         self.emit_registered_chords();
+        // An app that publishes menus draws its own frame: no compositor rim.
+        self.sync_window_chrome();
         let _ = focused_is_this; // used implicitly via emit_registered_chords
     }
 
@@ -1481,6 +1504,39 @@ impl Shell {
                     window_id,
                     floating,
                 }));
+            }
+        }
+    }
+}
+
+impl Shell {
+    /// Publish `Topic::WindowChrome` for every app window whose chrome
+    /// changed (tiled, Cinema, compositor rim), and retract departed ones.
+    /// Runs with every frame emission and when an app publishes menus.
+    pub(super) fn sync_window_chrome(&mut self) {
+        let present = self.tabs.present();
+        let next: Vec<WindowChrome> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Self::APP_ID)
+            .map(|w| WindowChrome {
+                window_id: w.window_id,
+                tiled: matches!(self.tabs.zone_of(w.window_id), Some(Zone::Left | Zone::Right))
+                    && !self.zoning.is_floating(w.window_id),
+                cinema: present == Some((w.window_id, crate::stacks::Present::Cinema)),
+                rim: self.menus.get_menu(&w.app_id).is_none(),
+            })
+            .collect();
+        let changes = self.window_chrome.update(next);
+        if changes.emit.is_empty() && changes.retract.is_empty() {
+            return;
+        }
+        if let Some(Ok(mut bus)) = sola_kit::app::try_bus().map(|b| b.lock()) {
+            for chrome in changes.emit {
+                let _ = bus.emit(Topic::WindowChrome(chrome));
+            }
+            for chrome in changes.retract {
+                let _ = bus.retract(Topic::WindowChrome(chrome));
             }
         }
     }

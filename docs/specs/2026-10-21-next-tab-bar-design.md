@@ -1,14 +1,14 @@
 # Next — one tab list (the bar)
 
 **Date:** 2026-10-21  
-**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 5 and the visual items not started.  
+**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 6 (titlebars with menus, gaps, the bar as an island) applied 2026-10-23; slice 5 and the islands not started.  
 **Related:** design `design/next/` boards 05 (the master sidebar), 06 (one tab list) and their continued boards; idea [desks](../ideas/2026-10-12-desks.md) (this is its panel model); plan [`plans/2026-10-21-next-tab-bar-plan.md`](../plans/2026-10-21-next-tab-bar-plan.md)
 
 | | |
 |--|--|
 | **Implementation** | On `next`, applied on canto. Slice 1 (2026-10-21): `crates/sola-shell/src/stacks.rs` (model), `tabbar/` (window + view), `zoning.rs` (bar, tile, present frames; floats), `app.rs` / `app/bus.rs` (composition, placement, focus, zone keys, `TabLayout`); sola-bus `Topic::WindowParent` + `Topic::TabLayout`; sola-river forwards River's `parent`. Slice 2: `Topic::Tab` / `Topic::TabWindow`, `pairing.rs`, kit `tabs::TabWindows`; Terminal a window per tab. Slice 4: the browser a window per page, groups and the strip gone (4g). Slice 3 as changed: Projects a window per project with a top bar of tabs; its bar row carries the project's activity (`Topic::TabActivity`, 2026-10-22). |
 | **Dogfood** | canto, branch `next` (rivulet); smoked by injection — detail in `CURRENT.md` and the `shell-desks` capability row. |
-| **Gaps** | Slice 5 (desks of windows, N6); titlebars with menus, gaps, islands; a dialog riding its parent unsmoked; browser ⌘-click, vault, downloads unsmoked; no keyboard tab switching in a project's top bar. |
+| **Gaps** | Slice 5 (desks of windows, N6); the islands (board 03); slice 6 leftovers (menu folding, titlebar zone glyph); a dialog riding its parent unsmoked; browser ⌘-click, vault, downloads unsmoked; no keyboard tab switching in a project's top bar. |
 
 ## Intent
 
@@ -201,6 +201,82 @@ id falls back to order). `TabLayout` then keys tabs by `key`.
 No compositor change. A unique first title was rejected (it shows in the
 bar), and a client-set tag needs a protocol River lacks (rivulet could add
 one later if pairing proves fragile).
+
+## Titlebars, gaps, the bar as an island (slice 6)
+
+Boards 01 (menus on the window) and 02 (gaps and the ground), and the bar
+of board 06 drawn as an island. Started 2026-10-22.
+
+**Decided (Joshua, 2026-10-22):** the boards' PROPOSED picks as drawn —
+one 38 px row (close · bold app name · menus · title right-aligned),
+unfocused menus dimmed but clickable, a 10 px gap everywhere, 12 px
+corners, focus as a lit 1 px rim (no accent ring), a black ground. The
+dropdowns are drawn by the kit inside the window, not by the shell.
+Windows that are not ours sit in the grid, square, with a hairline border
+from the compositor, and keep their own title bars (server-drawn titlebars
+later). The top band stays 28 px with the flower and the instruments; the
+islands of board 03 come later.
+
+### Geometry (canto, 1920 × 1080, gap 10)
+
+| Thing | Rect |
+|--|--|
+| Menubar | 0, 0, 1920 × 28 (unchanged) |
+| Bar | 10, 38, 240 × 1032 |
+| Content area | 260, 38, 1650 × 1032 |
+| Left / Right | 820 × 1032 each, 10 apart; a lone zone takes 1650 |
+| Fullscreen | The content area |
+| Cinema | The whole output, no titlebar, no gap |
+| Floats | Inside the content area as before |
+
+### The window frame (kit)
+
+- Every kit window draws it: tiled, floating, and Fullscreen. A 38 px
+  titlebar on top, the app's content under it, 12 px corners, a 1 px rim
+  drawn over the edge (18% white focused, 7% not).
+- **Tiled** windows stay opaque (opaque-region scanout, `PERFORMANCE.md`):
+  the corners outside the radius are painted the ground's black.
+  **Floating** windows stay transparent there, keep the edge resize grips,
+  and the titlebar drags them.
+- **Titlebar row:** the close dot (12 px, 13 px in; red only when
+  focused), the app's first menu under its name in bold, the other menus
+  (13 px, 8 px pad, 24 px pills; the open one is a pill), the Window menu
+  last (the kit's `ensure_window_menu`), then the window title in tertiary
+  ink, right-aligned, truncated first. A title equal to the app name is
+  not repeated.
+- **Focus** comes from the window's own focus events: a focused titlebar
+  is a step brighter; unfocused, the menus dim to tertiary ink but still
+  open on click. Losing focus closes an open menu.
+- **Dropdowns** hang 4 px under their title, inside the window: hovering
+  another title while one is open switches; Esc, a click outside, or
+  choosing an item closes it.
+- **Where an item goes:** a Window-menu item goes on the bus as
+  `MenuAction` and the shell acts on its focused window; every other item
+  is handed straight back to the app as its own `MenuAction` (a local
+  loopback into the kit's bus stream — the bus never echoes an ephemeral
+  event to its sender). Apps keep their one `MenuAction` handler; keyboard
+  shortcuts still go through the shell as today.
+- **Menus come from the app's own publish:** `BusSetup::app_menu*` and a
+  kit `menu::publish` (for apps that republish at runtime) keep the app's
+  latest `AppMenuPayload` in the kit; the shell still caches it for
+  shortcuts.
+
+### The shell
+
+- The menubar drops the focused app's name and menus; the flower (system
+  menu), the instruments and the clock stay.
+- The bar is an island: 12 px corners, a 1 px rim, ground-black corners,
+  in the grid's left column.
+- Foreign windows (no published menu) get a 1 px hairline border from the
+  compositor while tiled (River `set_borders`, which draws outside the
+  content, in the gap); every tiled window is told it is tiled
+  (`set_tiled`) so clients that draw shadows drop them.
+
+### Not in slice 6
+
+Board 03's islands; titlebar drag to another zone; the zone glyph and
+stack count on the right of the titlebar; menus folding into ··· on a
+narrow tile; server-drawn titlebars for foreign apps; the dark grey base.
 
 ## Not in slice 1
 

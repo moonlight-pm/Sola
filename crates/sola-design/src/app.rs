@@ -101,6 +101,10 @@ pub enum Msg {
     Pace,
     /// The window gained (`true`) or lost keyboard focus.
     Focused(bool),
+    /// Titlebar: start a move (floating), the close dot, an edge resize.
+    TitleDrag,
+    TitleClose,
+    TitleResize(iced::window::Direction),
     /// Copy the shown canvas's share link (`true`: a new link first).
     ShareLink(bool),
     /// Open / close the flows list above the pill.
@@ -139,6 +143,7 @@ pub fn run() -> iced::Result {
             TopicKind::CloseApp,
             TopicKind::Windows,
             TopicKind::WindowFloating,
+            TopicKind::WindowChrome,
             // River delivers a bare Super press as a chord: Super+click.
             TopicKind::Chord,
             TopicKind::ChordReleased,
@@ -183,11 +188,7 @@ pub fn run() -> iced::Result {
 }
 
 fn publish_menu() {
-    if let Ok(mut client) = bus().lock() {
-        if let Err(e) = client.emit(Topic::SetAppMenu(menu::app_menu())) {
-            tracing::warn!("app-menu publish failed: {e:?}");
-        }
-    }
+    sola_kit::menu::publish(menu::app_menu());
 }
 
 /// Agent calls waiting for a reply. Nav calls are fire-and-forget.
@@ -429,6 +430,15 @@ impl App {
             Msg::Budget => self.budget_tick(),
             Msg::Pace => {}
             Msg::Focused(focused) => self.focused = focused,
+            Msg::TitleDrag => {
+                return iced::window::latest().then(|id| id.map_or(Task::none(), iced::window::drag));
+            }
+            Msg::TitleResize(dir) => {
+                return iced::window::latest().then(move |id| {
+                    id.map_or(Task::none(), |id| iced::window::drag_resize(id, dir))
+                });
+            }
+            Msg::TitleClose => sola_kit::close_app(APP_ID),
             Msg::ShareLink(rotate) => return self.copy_share_link(rotate),
             Msg::Animate => {
                 let now = Instant::now();
@@ -1107,10 +1117,19 @@ impl App {
             plane_bg,
         );
         let main = row![rail, self.plane_view(plane_bg)];
-        match rail::dialog(&self.add, &self.canvas_draft, &self.catalog.projects) {
-            Some(dialog) => stack![main, dialog].into(),
-            None => main.into(),
-        }
+        let body: Element<'_, Msg> =
+            match rail::dialog(&self.add, &self.canvas_draft, &self.catalog.projects) {
+                Some(dialog) => stack![main, dialog].into(),
+                None => main.into(),
+            };
+        sola_kit::window_frame(
+            self.float.chrome_any(),
+            "Design",
+            Msg::TitleDrag,
+            Msg::TitleClose,
+            Msg::TitleResize,
+            body,
+        )
     }
 
     fn plane_view(&self, bg: Color) -> Element<'_, Msg> {

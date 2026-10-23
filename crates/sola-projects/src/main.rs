@@ -77,6 +77,7 @@ fn main() -> iced::Result {
             TopicKind::CloseApp,
             TopicKind::Windows,
             TopicKind::WindowFloating,
+            TopicKind::WindowChrome,
             TopicKind::TabWindow,
             TopicKind::NotificationActivate,
         ])
@@ -358,6 +359,13 @@ impl App {
         self.windows
             .river_id(window)
             .is_some_and(|id| self.float.is_window_floating(id))
+    }
+
+    /// How to frame `window`: tiled, floating, or bare in Cinema.
+    fn chrome(&self, window: window::Id) -> sola_kit::Chrome {
+        self.windows
+            .river_id(window)
+            .map_or(sola_kit::Chrome::Tiled, |id| self.float.chrome(id))
     }
 
     fn subscription(&self) -> Subscription<Msg> {
@@ -773,8 +781,8 @@ impl App {
                 ..container::Style::default()
             });
 
-        sola_kit::wrap_if_floating(
-            self.is_floating(window),
+        sola_kit::window_frame(
+            self.chrome(window),
             self.title(window),
             Msg::TitleDrag(window),
             Msg::TitleClose(window),
@@ -930,11 +938,7 @@ impl App {
             .filter(|p| !self.windows.has(&p.id))
             .map(|p| (p.id.clone(), p.name.clone()))
             .collect();
-        if let Ok(mut client) = bus().lock() {
-            if let Err(e) = client.emit(Topic::SetAppMenu(menu::app_menu(&closed))) {
-                tracing::warn!("app-menu publish failed: {e:?}");
-            }
-        }
+        sola_kit::menu::publish(menu::app_menu(&closed));
     }
 
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {

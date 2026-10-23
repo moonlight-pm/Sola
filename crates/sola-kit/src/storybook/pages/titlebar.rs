@@ -1,19 +1,83 @@
-//! Titlebar — the floating window, not an isolated strip.
+//! Window frame — the titlebar with menus every kit window wears (Next,
+//! boards 01 and 02): tiled focused, tiled unfocused, floating.
 
-use iced::widget::{column, container, text};
-use iced::{Background, Border, Color, Element, Length, Theme};
+use iced::widget::{column, container, row, text};
+use iced::{Background, Element, Length, Theme};
 
+use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem};
 use sola_kit::components::text::{body, muted};
-use sola_kit::components::titlebar::floating_frame;
+use sola_kit::components::{Chrome, WindowFrame};
 
 use crate::storybook::Msg;
 use crate::storybook::pages::chrome::{lede, scene};
 
 pub fn view() -> Element<'static, Msg> {
-    // Full-bleed list + bottom band: would square the bottom corners if
-    // the face only AABB-clipped. The rounded punch should keep the fill
-    // inside the curve against the page behind the demo.
-    let bleed = container(
+    column![
+        lede(
+            "Window frame",
+            "Every window's frame: a 38 px titlebar with the close dot, the app's menus (its name in bold first, Window last) and the title right-aligned; 12 px corners; a 1 px rim lit while focused. A tile is opaque and paints its corners the ground; a float clears them and resizes from its edges. The body is full-bleed on purpose: the accent band must still meet the curve.",
+        ),
+        scene("Tiled · focused, then unfocused"),
+        row![
+            sample(Chrome::Tiled, true, "Inbox · 12 unread"),
+            sample(Chrome::Tiled, false, "Inbox · 12 unread"),
+        ]
+        .spacing(20),
+        scene("Floating · a long title gives way first"),
+        sample(
+            Chrome::Floating,
+            true,
+            "Re: the quarterly review of every window frame in the kit"
+        ),
+        text("Menus open here (their items do nothing); close and drag are inert.")
+            .size(12)
+            .style(muted),
+    ]
+    .spacing(16)
+    .into()
+}
+
+fn sample(chrome: Chrome, focused: bool, title: &'static str) -> Element<'static, Msg> {
+    let frame = WindowFrame::new(chrome, bleed())
+        .title(title)
+        .menus(demo_menus())
+        .focused(focused)
+        .on_drag(Msg::Noop)
+        .on_close(Msg::Noop)
+        .on_resize(|_| Msg::Noop);
+    container(frame)
+        .width(Length::Fixed(440.0))
+        .height(Length::Fixed(240.0))
+        .into()
+}
+
+/// Mail's menus. The demo's own Window menu stands in for the real one,
+/// whose items would move the storybook's window.
+fn demo_menus() -> AppMenuPayload {
+    let item = |id: &str, label: &str, checked: bool| MenuItem::Action {
+        id: format!("demo.{id}"),
+        label: label.into(),
+        shortcut: None,
+        disabled: false,
+        checked,
+    };
+    let menu = |label: &str, items: Vec<MenuItem>| MenuDefinition {
+        label: label.into(),
+        items,
+    };
+    AppMenuPayload {
+        app_id: "sola-kit-demo".into(),
+        menus: vec![
+            menu("Mail", vec![item("about", "About Mail", false), MenuItem::Divider, item("quit", "Quit Mail", false)]),
+            menu("Message", vec![item("new", "New Message", false), item("reply", "Reply", false), item("forward", "Forward", false)]),
+            menu("View", vec![item("threads", "Threads", true), item("unread", "Unread Only", false)]),
+            menu("Window", vec![item("hide", "Hide", false)]),
+        ],
+    }
+}
+
+fn bleed() -> Element<'static, Msg> {
+    container(
         column![
             row_block("Inbox"),
             row_block("Drafts"),
@@ -38,41 +102,10 @@ pub fn view() -> Element<'static, Msg> {
     )
     .width(Length::Fill)
     .height(Length::Fill)
-    .style(|theme: &Theme| {
-        let p = theme.extended_palette();
-        iced::widget::container::Style {
-            background: Some(Background::Color(p.background.strong.color)),
-            border: Border {
-                color: Color::TRANSPARENT,
-                width: 0.0,
-                radius: 0.0.into(),
-            },
-            ..Default::default()
-        }
-    });
-
-    let framed = container(floating_frame(
-        "Kit",
-        Msg::Noop,
-        Msg::Noop,
-        |_| Msg::Noop,
-        bleed.into(),
-    ))
-    .width(Length::Fixed(420.0))
-    .height(Length::Fixed(220.0));
-
-    column![
-        lede(
-            "Titlebar",
-            "macOS-adjacent float chrome: traffic-light close, centered title, rounded rectangle on all four corners. The body is full-bleed on purpose — if the clip were only the AABB, the accent band would square the bottom ears.",
-        ),
-        scene("Floating frame"),
-        framed,
-        text("Drag and close are inert here — real behaviour lives on the host window.")
-            .size(12)
-            .style(muted),
-    ]
-    .spacing(16)
+    .style(|theme: &Theme| iced::widget::container::Style {
+        background: Some(Background::Color(theme.extended_palette().background.strong.color)),
+        ..Default::default()
+    })
     .into()
 }
 

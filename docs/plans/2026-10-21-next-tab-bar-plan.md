@@ -256,4 +256,43 @@ chrome driving it, so the risky half is smoked before the chrome changes:
    (the rail goes). Built and applied 2026-10-21 (`f6ef9cf8`). Its row in
    the shell's bar shows the project's activity (2026-10-22, `2c4b95a4`):
    a diamond when a tab waits on a decision, a ring when one works.
-4. Titlebars with menus, gaps, islands.
+4. Titlebars with menus, gaps, the bar as an island — Phase 6 below
+   (started 2026-10-22). Islands (board 03) after.
+
+## Phase 6 — Titlebars, gaps, the bar as an island (slice 6)
+
+Spec: § Titlebars, gaps, the bar as an island. Joshua took the boards'
+picks as drawn, kit-drawn dropdowns, a compositor border for foreign
+windows, and the 28 px band kept (2026-10-22).
+
+- [x] **6a Gaps:** `GAP = 10` in `zoning.rs`; bar, content area, tiles,
+      Fullscreen from it; Cinema unchanged. Tests at 1920 × 1080.
+- [x] **6b The bar island:** kit `island` — rounded, rimmed, ground-black
+      corners.
+- [x] **6c Kit frame:** `components/window_frame/` (`frame`, `bar`,
+      `dropdown`, `grips`, `island`, `paint`) — titlebar row with menus,
+      dropdown overlay, rim, corners (`float_clip::draw_ears` clears them
+      on floats, paints them the ground on tiles); `menu::publish` /
+      `current` / `choose` (Window items on the bus, the rest delivered
+      locally); storybook page (Window frame). `titlebar.rs` is gone.
+- [x] **6d Apps:** `wrap_if_floating` → `window_frame` at every call
+      site; Design gains the frame, Install too when it runs in a session;
+      Terminal, Design, Projects and the browser publish through
+      `menu::publish`.
+- [x] **6e Shell menubar:** the app name, menus and their label-position
+      plumbing go; Window-menu `MenuAction`s from apps act on the focused
+      window. The shell's menu state still carries `is_system` though only
+      the flower opens a dropdown now (cleanup left for later).
+- [x] **6f sola-river:** sticky `Topic::WindowChrome { window_id, tiled,
+      cinema, rim }` from the shell (`chrome.rs`, diffed); a 1 px rim (7%,
+      18% focused) on windows whose app published no menu; `set_tiled`
+      sent on change; float shadow radius 12.
+- [x] **6g Cinema:** `FloatState::chrome` / `chrome_any` → `Chrome::Bare`.
+- [x] **6h Verify:** debug build of the workspace and tests pass (bus 110,
+      kit 166, shell 210, terminal 195, projects 109, design 105, mail 287,
+      browser 90). Applied by Joshua 2026-10-23 (`pkg:sola` 28a139da,
+      `pkg:sola-browser` f4e3fcd7, `pkg:sola-design` 06be463b). Smoked by
+      injection: frames and gaps at 5×, the bar island, a menu open /
+      hover-switch / Esc, Window → Float and → Right from the titlebar,
+      Cinema without a frame and back. Not smoked: the close dot, edge
+      resize, a foreign window's rim (none running).

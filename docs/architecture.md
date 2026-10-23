@@ -214,7 +214,7 @@ swapchains in the background (see
 | Shortcuts | Super+K cheatsheet (parked 2×2 while dismissed; live Frame is the card + shadow pad, not the usable output) |
 | Selection | Super+Shift+4 freeze-then-marquee (RGBA still of the live output, then crop; parked 2×2 while dismissed; live Frame is full output) |
 | Notify | Live notification cards (tight Frame under the menubar, trailing edge with the clock; parked 2×2 while empty) |
-| Tab bar (`next` only) | Next's one tab list ([spec](specs/2026-10-21-next-tab-bar-design.md)): docked left under the menubar (240 px), always mapped, composed right above the menubar. Kit `SidebarPanel`: a section per zone (Left, Right, Floating), a row per window (app icon, title); click shows, drag moves between zones. Model in `stacks.rs` |
+| Tab bar (`next` only) | Next's one tab list ([spec](specs/2026-10-21-next-tab-bar-design.md)): docked left under the menubar (240 px, one gap in: 10, 38 on canto), always mapped, composed right above the menubar. Kit `SidebarPanel` on a kit `island` (rounded, rimmed, ground-black corners): a section per zone (Left, Right, Floating), a row per window (app icon, title); click shows, drag moves between zones. Model in `stacks.rs` |
 
 **On `next` (Next tab bar):** every app window is a tab in a zone. The two
 tiled zones (Left / Right, 50 / 50 of the content area right of the bar;
@@ -236,6 +236,21 @@ Projects sends each project window's roll-up (a tab waiting on a decision
 beats a tab working). `Topic::Zones` is no
 longer read or written on `next`. Super+KP_4 / KP_6 move a tab, KP_0 /
 KP_Enter show it Fullscreen (content area) / Cinema (output).
+
+**On `next`, window frames (slice 6):** one 10 px gap (`zoning::GAP`)
+around the output under the menubar, between the bar and the tiles, and
+between tiles. Every kit window draws its own frame (`sola-kit`
+`components/window_frame`): a 38 px titlebar with the app's menus (the kit
+keeps the app's latest `AppMenuPayload` from `BusSetup` / `menu::publish`;
+a dropdown is an overlay inside the window; a Window item goes on the bus as
+`MenuAction` and the shell acts on its focused window, any other item is
+handed back to the app's own bus stream), 12 px corners, a lit rim. Tiles
+stay opaque with their corners painted the ground; floats clear them. The
+menubar carries no app menus. The shell publishes sticky
+`Topic::WindowChrome` (window id → tiled, Cinema, rim; `chrome.rs`):
+sola-river sends `set_tiled` on change and a 1 px border on windows whose
+app published no menu (foreign apps); kit apps drop the frame in Cinema
+(`FloatState::chrome`).
 
 **On master:** zoning / floating is coordinated with `sola-river` over the
 bus: unassigned windows **default-float** (client size +

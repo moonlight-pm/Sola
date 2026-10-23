@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use sola_bus::topics::{
     AppMenuPayload, ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate,
-    MenuActionPayload, MenuItem, RegisteredChord, TabLayout, Topic, Window, Zone,
+    MenuActionPayload, RegisteredChord, TabLayout, Topic, Window, Zone,
 };
 use sola_core::{KeyChord, KeyCode};
 use sola_kit::theme;
@@ -96,11 +96,6 @@ pub enum Msg {
     MenuAction {
         app_id: String,
         action_id: String,
-    },
-    /// Menubar view reports the laid-out X position of a label at `index`.
-    MenuLabelPosition {
-        index: usize,
-        x: f32,
     },
     /// Clock subscription tick.
     ClockTick,
@@ -316,6 +311,8 @@ pub struct Shell {
     /// Last on-screen state sent for each tab window (`TabWindow.shown`).
     tab_shown_sent: HashMap<u32, bool>,
     pub tabbar: crate::tabbar::TabBarState,
+    /// Each window's last published `Topic::WindowChrome`.
+    pub window_chrome: crate::chrome::ChromeState,
     /// The saved `TabLayout` was taken (later replays are our own echo).
     tab_layout_loaded: bool,
     /// Safe to save the layout: the saved one was read, or there is none.
@@ -482,6 +479,7 @@ impl Shell {
             tab_activity: HashMap::new(),
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
+            window_chrome: crate::chrome::ChromeState::default(),
             tab_layout_loaded: tab_layout_ready,
             tab_layout_ready,
             last_tab_layout: None,
@@ -1466,36 +1464,17 @@ impl Shell {
         self.sync_tab_shown();
     }
 
-    /// Which top-level menu of `app_id` contains `action_id`, as a position
-    /// in its menu list (0 = the app-name slot shown as the title). `None`
-    /// if the app has no cached menu or the action isn't found.
-    fn menu_index_for_action(&self, app_id: &str, action_id: &str) -> Option<usize> {
-        let payload = self.effective_app_menu(app_id);
-        payload.menus.iter().position(|menu| {
-            menu.items
-                .iter()
-                .any(|item| matches!(item, MenuItem::Action { id, .. } if id == action_id))
-        })
-    }
-
-    /// Briefly flash the menubar label that owns `(app_id, action_id)` — the
-    /// macOS "command went through the menu" feedback. The shell's own actions
-    /// live under the system flower; a focused app's actions map to its title
-    /// (index 0) or one of its menu labels. Returns the timer task that ends
-    /// the pulse, or `Task::none()` if there's no label to flash.
-    fn flash_menu_action(&mut self, app_id: &str, action_id: &str) -> iced::Task<Msg> {
-        let target = if app_id == Self::APP_ID {
-            FlashTarget {
-                is_system: true,
-                index: 0,
-            }
-        } else if let Some(index) = self.menu_index_for_action(app_id, action_id) {
-            FlashTarget {
-                is_system: false,
-                index,
-            }
-        } else {
+    /// Briefly flash the flower when a shortcut runs one of the shell's own
+    /// actions — the macOS "command went through the menu" feedback. App
+    /// menus are in their windows' titlebars, so their shortcuts flash
+    /// nothing here. Returns the timer task that ends the pulse.
+    fn flash_menu_action(&mut self, app_id: &str, _action_id: &str) -> iced::Task<Msg> {
+        if app_id != Self::APP_ID {
             return iced::Task::none();
+        }
+        let target = FlashTarget {
+            is_system: true,
+            index: 0,
         };
         let generation = self.menubar.begin_flash(target);
         iced::Task::perform(tokio::time::sleep(Duration::from_millis(150)), move |_| {
@@ -1642,7 +1621,7 @@ impl Shell {
     /// still use [`crate::zoning::overlay_frame`]). Lookup misses until
     /// River publishes the surface — a later `Windows` / `WindowOpened`
     /// fills in.
-    pub fn emit_all_frames(&self) {
+    pub fn emit_all_frames(&mut self) {
         let mut frames: Vec<FrameUpdate> = Vec::new();
 
         if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
@@ -1659,6 +1638,7 @@ impl Shell {
         self.collect_overlay_frames(&mut frames);
         frames.extend(self.tab_frames());
         Self::emit_frames(frames);
+        self.sync_window_chrome();
     }
 
     /// Every tiled tab's zone rectangle — hidden tabs too, so showing one
@@ -1883,73 +1863,6 @@ impl Shell {
             return self.theme.clone();
         }
         theme::overlay(&self.theme)
-    }
-
-    /// Laid-out left edge of a menubar title, if measured.
-    fn menu_anchor(positions: &[f32], index: usize, is_system: bool) -> Option<f32> {
-        if is_system {
-            return Some(0.0);
-        }
-        positions
-            .get(index)
-            .copied()
-            .filter(|x| x.is_finite() && *x > 0.0)
-    }
-
-    /// Estimate the left-edge X of the menubar element identified by
-    /// `(index, is_system)`.
-    ///
-    /// Font-metric math, not a post-layout measurement. Good enough for
-    /// anchoring a dropdown until real geometry arrives via
-    /// MenuLabelPosition events.
-    ///
-    /// Layout:
-    ///   [system-btn ~34px] [app-title: (chars×7.5)+16] [label[1]: ...] ...
-    ///
-    /// - `is_system=true`  → 0 (system icon is the leftmost element)
-    /// - `index=0`         → SYSTEM_BTN_W (left edge of app title)
-    /// - `index=n` (n≥1)   → after app title and labels [1..n]
-    pub fn estimate_label_x(&self, index: usize, is_system: bool) -> f32 {
-        const CHAR_WIDTH: f32 = 6.5;
-        const PAD_H: f32 = crate::menubar::MENU_PAD_H * 2.0;
-        const SYSTEM_BTN_W: f32 =
-            crate::menubar::ICON_SIZE as f32 + crate::menubar::MENU_PAD_H * 2.0;
-
-        if is_system {
-            return 0.0;
-        }
-
-        if index == 0 {
-            return SYSTEM_BTN_W;
-        }
-
-        // Width of the app title label (index 0 slot).
-        let title_label = self
-            .focused_app_id
-            .as_deref()
-            .and_then(|id| self.menus.get_menu(id))
-            .and_then(|p| p.menus.first())
-            .map(|m| m.label.as_str())
-            .unwrap_or("");
-        let title_w = title_label.len() as f32 * CHAR_WIDTH + PAD_H;
-
-        let app_id = self.focused_app_id.as_deref().unwrap_or("");
-        let owned = if app_id.is_empty() {
-            None
-        } else {
-            Some(self.effective_app_menu(app_id))
-        };
-
-        let mut x = SYSTEM_BTN_W + title_w;
-        for i in 1..index {
-            let label_len = owned
-                .as_ref()
-                .and_then(|p| p.menus.get(i))
-                .map(|m| m.label.len())
-                .unwrap_or(6); // fallback 6 chars
-            x += label_len as f32 * CHAR_WIDTH + PAD_H;
-        }
-        x
     }
 
     /// Estimate the left-edge X of the system-stat indicator for `metric`.
@@ -2402,9 +2315,9 @@ impl Shell {
                     return iced::Task::none();
                 }
 
-                self.menu_anchor_x =
-                    Self::menu_anchor(&self.menubar.label_positions, index, is_system)
-                        .unwrap_or_else(|| self.estimate_label_x(index, is_system));
+                // Only the flower opens a menubar dropdown now (app menus are
+                // in their windows' titlebars); it is the bar's first element.
+                self.menu_anchor_x = 0.0;
                 self.menu_open = true;
                 self.current_open_index = Some(index);
                 self.current_open_is_system = is_system;
@@ -2421,9 +2334,9 @@ impl Shell {
                 let same = self.current_open_index == Some(index)
                     && self.current_open_is_system == is_system;
                 if self.menu_open && !same {
-                    self.menu_anchor_x =
-                        Self::menu_anchor(&self.menubar.label_positions, index, is_system)
-                            .unwrap_or_else(|| self.estimate_label_x(index, is_system));
+                    // Only the flower opens a menubar dropdown now (app menus are
+                // in their windows' titlebars); it is the bar's first element.
+                self.menu_anchor_x = 0.0;
                     self.current_open_index = Some(index);
                     self.current_open_is_system = is_system;
                     self.set_open_panel(None);
@@ -2496,21 +2409,6 @@ impl Shell {
                 self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
-                iced::Task::none()
-            }
-            Msg::MenuLabelPosition { index, x } => {
-                if self.menubar.label_positions.len() <= index {
-                    self.menubar.label_positions.resize(index + 1, 0.0);
-                }
-                self.menubar.label_positions[index] = x;
-                if self.menu_open
-                    && !self.current_open_is_system
-                    && self.current_open_index == Some(index)
-                    && (self.menu_anchor_x - x).abs() >= 0.5
-                {
-                    self.menu_anchor_x = x;
-                    self.emit_overlay_frames();
-                }
                 iced::Task::none()
             }
             // --- Launcher ---
@@ -3013,6 +2911,7 @@ mod pending_launch_tests {
             tab_activity: HashMap::new(),
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
+            window_chrome: crate::chrome::ChromeState::default(),
             tab_layout_loaded: false,
             tab_layout_ready: false,
             last_tab_layout: None,
@@ -3095,6 +2994,7 @@ mod pending_launch_tests {
 #[cfg(test)]
 mod hide_tests {
     use super::*;
+    use sola_bus::topics::MenuItem;
 
     fn win(id: u32, app: &str, title: &str) -> Window {
         Window {
@@ -3138,6 +3038,7 @@ mod hide_tests {
             tab_activity: HashMap::new(),
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
+            window_chrome: crate::chrome::ChromeState::default(),
             tab_layout_loaded: false,
             tab_layout_ready: false,
             last_tab_layout: None,

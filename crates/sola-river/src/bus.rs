@@ -20,6 +20,9 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     // sola-river restart). Without this, `floating` stays empty and
     // titlebar drag bails at the "not floating" guard.
     TopicKind::WindowFloating,
+    // Tiled hints and the rim for foreign windows. Sticky: replays on a
+    // sola-river restart.
+    TopicKind::WindowChrome,
     TopicKind::RegisteredChords,
     TopicKind::CloseApp,
     TopicKind::Shutdown,

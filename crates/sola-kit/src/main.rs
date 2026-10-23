@@ -31,6 +31,7 @@ fn main() -> iced::Result {
             TopicKind::MenuAction,
             TopicKind::Windows,
             TopicKind::WindowFloating,
+            TopicKind::WindowChrome,
         ])
         .app_menu("Kit", [("quit", "Quit Kit", KeyCode::Q.meta())])
         .window_menu()

@@ -190,6 +190,10 @@ enum Msg {
     ApplyPoll,
     /// Reboot (real) or quit (dry-run).
     Finish,
+    /// The titlebar's close dot (in a session; the live installer has none).
+    TitleClose,
+    /// Titlebar drag or edge resize: the installer stays tiled.
+    TitleNoop,
 }
 
 impl App {
@@ -393,6 +397,8 @@ impl App {
                     }
                 }
             }
+            Msg::TitleClose => sola_kit::close_app(APP_ID),
+            Msg::TitleNoop => {}
             Msg::Finish => {
                 if self.dry_run {
                     return iced::exit();
@@ -424,7 +430,7 @@ impl App {
                 .into()
         };
 
-        container(content)
+        let body: Element<'_, Msg> = container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(|theme: &Theme| {
@@ -435,7 +441,18 @@ impl App {
                     ..Default::default()
                 }
             })
-            .into()
+            .into();
+        if self.standalone {
+            return body;
+        }
+        sola_kit::window_frame(
+            false,
+            "Install Sola",
+            Msg::TitleNoop,
+            Msg::TitleClose,
+            |_| Msg::TitleNoop,
+            body,
+        )
     }
 
     fn top_chrome(&self) -> Element<'_, Msg> {

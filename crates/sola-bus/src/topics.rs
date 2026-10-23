@@ -161,6 +161,22 @@ pub struct WindowParent {
     pub parent: u32,
 }
 
+/// How a window is shown, for whoever draws around it (shell → sola-river
+/// and apps). Carried by the sticky `Topic::WindowChrome`, keyed by
+/// `window_id`; the shell retracts it when the window closes. `tiled`: the
+/// window sits in a zone (River `set_tiled`, so clients drop their
+/// shadows). `cinema`: it covers the whole output (a kit app drops its
+/// frame). `rim`: its app draws no frame of its own (it published no menu:
+/// not a Sola app), so sola-river borders it with a hairline. Separate from
+/// `WindowFloating`, which sola-river and every kit app already decode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowChrome {
+    pub window_id: u32,
+    pub tiled: bool,
+    pub cinema: bool,
+    pub rim: bool,
+}
+
 /// A window an app opens as a tab (app → shell), announced just before
 /// the window opens. Carried by the sticky `Topic::Tab`, keyed by `key`;
 /// the app retracts it when the tab closes. The shell pairs each process's
@@ -1445,6 +1461,12 @@ define_topics! {
     // keyed by key; retracted when the tab closes. Appended last.
     #[sticky(keys = [key])]
     TabActivity(TabActivity),
+
+    // How a window is shown: tiled, Cinema, compositor rim (shell →
+    // sola-river, apps). Sticky, keyed by window_id; retracted on close.
+    // Appended last.
+    #[sticky(keys = [window_id])]
+    WindowChrome(WindowChrome),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1461,6 +1483,7 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::TabWindow
             | TopicKind::ShowTab
             | TopicKind::TabActivity
+            | TopicKind::WindowChrome
     )
 }
 
@@ -1563,6 +1586,24 @@ mod tests {
             other => panic!("expected TabActivity, got {other:?}"),
         }
         assert!(topic_kind_is_after_mail_status(TopicKind::TabActivity));
+    }
+
+    #[test]
+    fn window_chrome_is_sticky_per_window() {
+        let chrome = WindowChrome {
+            window_id: 42,
+            tiled: true,
+            cinema: false,
+            rim: true,
+        };
+        let msg = Topic::WindowChrome(chrome).to_message();
+        assert!(TopicKind::WindowChrome.behavior().is_sticky());
+        assert_eq!(msg.keys, vec!["42".to_string()]);
+        match Topic::parse(&msg) {
+            Some(Topic::WindowChrome(back)) => assert_eq!(back, chrome),
+            other => panic!("expected WindowChrome, got {other:?}"),
+        }
+        assert!(topic_kind_is_after_mail_status(TopicKind::WindowChrome));
     }
 
     #[test]

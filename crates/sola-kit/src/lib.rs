@@ -44,9 +44,8 @@ pub mod theme;
 
 pub use app::{BusSetup, QUIT_ACTION_ID, apply_theme_update, is_self_quit};
 pub use call::{CallSetup, call_subscription, install_observer, observe_subscription};
-pub use float::{
-    FloatState, close_app, drag, drag_resize, theme_for, window_ready_task, wrap_if_floating,
-};
+pub use components::window_frame::{Chrome, window_frame};
+pub use float::{FloatState, close_app, drag, drag_resize, theme_for, window_ready_task};
 pub use menu::{
     WINDOW_MENU_LABEL, WindowAction, ensure_window_menu, parse_window_action, window_menu,
 };

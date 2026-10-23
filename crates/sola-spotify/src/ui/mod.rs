@@ -1646,8 +1646,8 @@ impl App {
         } else {
             body
         };
-        sola_kit::wrap_if_floating(
-            self.float.is_floating_any(),
+        sola_kit::window_frame(
+            self.float.chrome_any(),
             "Spotify",
             Msg::TitleDrag,
             Msg::TitleClose,

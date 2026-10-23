@@ -3227,8 +3227,8 @@ impl<E: Engine> App<E> {
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
-        sola_kit::wrap_if_floating(
-            self.window_floating(window),
+        sola_kit::window_frame(
+            self.window_chrome(window),
             info.map(|t| t.title.clone()).unwrap_or_default(),
             Msg::TitleDrag,
             Msg::TitleClose,
@@ -3242,6 +3242,13 @@ impl<E: Engine> App<E> {
         self.windows
             .river_id(window)
             .is_some_and(|id| self.float.is_window_floating(id))
+    }
+
+    /// How to frame `window`: tiled, floating, or bare in Cinema.
+    fn window_chrome(&self, window: iced::window::Id) -> sola_kit::Chrome {
+        self.windows
+            .river_id(window)
+            .map_or(sola_kit::Chrome::Tiled, |id| self.float.chrome(id))
     }
 
     /// The window title: the page's title and address.
@@ -3369,8 +3376,8 @@ impl<E: Engine> App<E> {
             content
         };
 
-        sola_kit::wrap_if_floating(
-            self.window_floating(window),
+        sola_kit::window_frame(
+            self.window_chrome(window),
             self.title(window),
             Msg::TitleDrag,
             Msg::TitleClose,

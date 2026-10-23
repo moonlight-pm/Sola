@@ -18,8 +18,11 @@ pub struct TabBarState {
 /// Open the bar's window. Placed by `Topic::Frame` like the menubar.
 pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
     let mut settings = window_settings("sola-shell");
-    settings.size = iced::Size::new(crate::zoning::BAR_WIDTH as f32, 1052.0);
-    settings.position = iced::window::Position::Specific(iced::Point::new(0.0, 28.0));
+    settings.size = iced::Size::new(crate::zoning::BAR_WIDTH as f32, 1032.0);
+    settings.position = iced::window::Position::Specific(iced::Point::new(
+        crate::zoning::GAP as f32,
+        (crate::zoning::MENUBAR_HEIGHT + crate::zoning::GAP) as f32,
+    ));
     settings.resizable = false;
     settings.decorations = false;
     window::open(settings)

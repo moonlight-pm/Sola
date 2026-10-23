@@ -302,30 +302,35 @@ const GAMESCOPE_NEST_H: i32 = 1080;
 /// The tab bar, docked left under the menubar (Next).
 pub const BAR_WIDTH: i32 = 240;
 
-/// Where tiles go: right of the bar, under the menubar.
+/// The one gap of the grid (board 02): around the output's edges under the
+/// menubar, between the bar and the tiles, and between tiles. What shows
+/// through it is the ground (the compositor's black).
+pub const GAP: i32 = 10;
+
+/// Where tiles go: right of the bar, under the menubar, one gap in from
+/// every edge.
 pub fn content_rect(output_w: i32, output_h: i32) -> (i32, i32, i32, i32) {
-    (
-        BAR_WIDTH,
-        MENUBAR_HEIGHT,
-        (output_w - BAR_WIDTH).max(1),
-        (output_h - MENUBAR_HEIGHT).max(1),
-    )
+    let x = GAP + BAR_WIDTH + GAP;
+    let y = MENUBAR_HEIGHT + GAP;
+    (x, y, (output_w - x - GAP).max(1), (output_h - y - GAP).max(1))
 }
 
-/// The tab bar's Frame.
+/// The tab bar's Frame: the grid's left column.
 pub fn bar_frame(window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
+    let y = MENUBAR_HEIGHT + GAP;
     FrameUpdate {
         window_id,
-        x: 0,
-        y: MENUBAR_HEIGHT,
+        x: GAP,
+        y,
         width: BAR_WIDTH.min(output_w.max(1)),
-        height: (output_h - MENUBAR_HEIGHT).max(1),
+        height: (output_h - y - GAP).max(1),
         fullscreen: false,
     }
 }
 
 /// A tiled zone's rectangle. Only the `occupied` zones (and `zone`
 /// itself) share the content area, so an empty zone gives its width away.
+/// Columns sit one [`GAP`] apart.
 pub fn tile_frame(
     window_id: u32,
     zone: Zone,
@@ -340,17 +345,21 @@ pub fn tile_frame(
         .filter(|(z, _)| *z == zone || occupied.contains(z))
         .collect();
     let total: f32 = columns.iter().map(|(_, f)| f).sum();
+    let gaps = GAP * (columns.len() as i32 - 1).max(0);
+    let avail = (cw - gaps).max(1) as f32;
     let mut before = 0.0;
     let mut span = (0.0, 1.0);
-    for (z, f) in &columns {
+    let mut index = 0;
+    for (i, (z, f)) in columns.iter().enumerate() {
         if *z == zone {
             span = (before / total, (before + f) / total);
+            index = i as i32;
             break;
         }
         before += f;
     }
-    let x0 = cx + (cw as f32 * span.0).round() as i32;
-    let x1 = cx + (cw as f32 * span.1).round() as i32;
+    let x0 = cx + (avail * span.0).round() as i32 + index * GAP;
+    let x1 = cx + (avail * span.1).round() as i32 + index * GAP;
     FrameUpdate {
         window_id,
         x: x0,
@@ -699,22 +708,22 @@ mod tests {
 
     #[test]
     fn bar_and_two_halves_on_canto() {
-        assert_eq!(rect(&bar_frame(1, 1920, 1080)), (0, 28, 240, 1052));
+        assert_eq!(rect(&bar_frame(1, 1920, 1080)), (10, 38, 240, 1032));
         let both = [Zone::Left, Zone::Right];
-        assert_eq!(rect(&tile_frame(1, Zone::Left, &both, 1920, 1080)), (240, 28, 840, 1052));
-        assert_eq!(rect(&tile_frame(1, Zone::Right, &both, 1920, 1080)), (1080, 28, 840, 1052));
+        assert_eq!(rect(&tile_frame(1, Zone::Left, &both, 1920, 1080)), (260, 38, 820, 1032));
+        assert_eq!(rect(&tile_frame(1, Zone::Right, &both, 1920, 1080)), (1090, 38, 820, 1032));
     }
 
     #[test]
     fn a_lone_zone_takes_the_content_area() {
-        assert_eq!(rect(&tile_frame(1, Zone::Left, &[Zone::Left], 1920, 1080)), (240, 28, 1680, 1052));
-        assert_eq!(rect(&tile_frame(1, Zone::Right, &[], 1920, 1080)), (240, 28, 1680, 1052));
+        assert_eq!(rect(&tile_frame(1, Zone::Left, &[Zone::Left], 1920, 1080)), (260, 38, 1650, 1032));
+        assert_eq!(rect(&tile_frame(1, Zone::Right, &[], 1920, 1080)), (260, 38, 1650, 1032));
     }
 
     #[test]
     fn present_frames() {
         let f = present_frame(1, Present::Fullscreen, 1920, 1080);
-        assert_eq!((rect(&f), f.fullscreen), ((240, 28, 1680, 1052), false));
+        assert_eq!((rect(&f), f.fullscreen), ((260, 38, 1650, 1032), false));
         let f = present_frame(1, Present::Cinema, 1920, 1080);
         assert_eq!((rect(&f), f.fullscreen), ((0, 0, 1920, 1080), true));
     }
@@ -755,20 +764,20 @@ mod tests {
     fn float_key_shrinks_the_tile_in_place() {
         let mut s = state_with_output(1920, 1080);
         let f = s
-            .float_in_place("sola-terminal", 7, Some((1080, 28, 840, 1052)))
+            .float_in_place("sola-terminal", 7, Some((1090, 38, 820, 1032)))
             .expect("frame");
-        assert_eq!(rect(&f), (1130, 78, 740, 952));
+        assert_eq!(rect(&f), (1140, 88, 720, 932));
         assert!(s.is_floating(7));
-        assert_eq!(s.float_geometry["sola-terminal"].x, 1130);
+        assert_eq!(s.float_geometry["sola-terminal"].x, 1140);
         // Nothing to shrink from: the content area, inset.
         let f = s.float_in_place("other", 8, None).expect("frame");
-        assert_eq!(rect(&f), (290, 78, 1580, 952));
+        assert_eq!(rect(&f), (310, 88, 1550, 932));
     }
 
     #[test]
     fn gamescope_floats_at_the_nest_aspect() {
         let mut s = state_with_output(1920, 1080);
-        let f = s.float_in_place("gamescope", 9, Some((240, 28, 840, 1052))).expect("frame");
+        let f = s.float_in_place("gamescope", 9, Some((260, 38, 820, 1032))).expect("frame");
         let aspect = f.width as f32 / f.height as f32;
         assert!((aspect - 16.0 / 9.0).abs() < 0.01, "{aspect}");
         assert!(s.float("gamescope", 10, false).is_some());

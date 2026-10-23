@@ -59,8 +59,8 @@ pub mod style;
 pub mod swatch;
 pub mod text;
 pub mod text_input;
-pub mod titlebar;
 pub mod toolbar;
+pub mod window_frame;
 
 pub use badge::{COUNT_MARK_H, Tone, badge, count_label, count_mark};
 pub use button::confirm_button;
@@ -96,5 +96,5 @@ pub use spectrum::{GradientStrip, SvSquare, alpha_strip, hue_strip, sv_square};
 pub use split::{split, split_with};
 pub use status_mark::{STATUS_MARK_SLOT, SidebarIndicator, status_mark};
 pub use swatch::{swatch, swatch_sized};
-pub use titlebar::{floating_frame, titlebar};
 pub use toolbar::{toolbar_button, toolbar_button_msg, toolbar_icon, toolbar_icon_tip};
+pub use window_frame::{Chrome, WindowFrame, island, window_frame};

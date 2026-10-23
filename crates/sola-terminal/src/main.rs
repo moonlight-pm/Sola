@@ -122,11 +122,7 @@ fn main() -> iced::Result {
 
     // Publish the full multi-menu payload directly (BusSetup::app_menu only
     // handles a single-menu definition; terminal needs several menus).
-    if let Ok(mut client) = bus().lock() {
-        if let Err(e) = client.emit(Topic::SetAppMenu(menu::terminal_menu())) {
-            tracing::warn!("initial app-menu publish failed: {e:?}");
-        }
-    }
+    sola_kit::menu::publish(menu::terminal_menu());
 
     // A window per tab: each is a tab in the shell's tab bar.
     iced::daemon(App::boot, App::update, App::view)
@@ -248,6 +244,7 @@ const SESSION_TOPICS: &[TopicKind] = &[
     TopicKind::CloseApp,
     TopicKind::Windows,
     TopicKind::WindowFloating,
+    TopicKind::WindowChrome,
     TopicKind::TabWindow,
     TopicKind::TerminalSession,
 ];
@@ -310,6 +307,13 @@ impl App {
         self.tab_windows
             .river_id(window)
             .is_some_and(|id| self.float.is_window_floating(id))
+    }
+
+    /// How to frame `window`: tiled, floating, or bare in Cinema.
+    fn chrome(&self, window: window::Id) -> sola_kit::Chrome {
+        self.tab_windows
+            .river_id(window)
+            .map_or(sola_kit::Chrome::Tiled, |id| self.float.chrome(id))
     }
 
     fn subscription(&self) -> Subscription<Msg> {
@@ -561,8 +565,8 @@ impl App {
             })
             .into();
 
-        sola_kit::wrap_if_floating(
-            self.is_floating(window),
+        sola_kit::window_frame(
+            self.chrome(window),
             self.title(window),
             Msg::TitleDrag(window),
             Msg::TitleClose(window),

@@ -1,230 +1,41 @@
-//! Rounded-rect clip for floating CSD.
+//! Rounded corners for window frames.
 //!
 //! iced 0.14 `container.clip(true)` scissors to the **axis-aligned** layout
 //! rectangle. Full-bleed children (lists, fills, terminal grid, CEF) therefore
-//! paint the AABB "ears" outside a rounded face. This widget draws the child
-//! normally, then dest-out punches those ears in a **later layer** so quads,
-//! text, images, and shader primitives (CEF) are all cleared.
-//!
-//! Resize grips stay on a still-later layer so the nearly-invisible AABB
-//! corner pads keep owning pointer hits.
+//! paint the AABB "ears" outside a rounded face. [`draw_ears`] runs after the
+//! frame's content, in a **later layer**, so quads, text, images, and shader
+//! primitives (CEF) are all covered: a floating window's ears are cleared to
+//! transparent (dest-out); a tiled window's are painted the ground colour so
+//! the window stays opaque (opaque-region scanout, `PERFORMANCE.md`).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use iced::advanced::Renderer as _;
-use iced::advanced::layout::{self, Layout};
-use iced::advanced::overlay;
-use iced::advanced::widget::{Operation, Tree, Widget};
-use iced::advanced::{Clipboard, Shell, mouse, renderer};
 use iced::widget::shader;
-use iced::{
-    Background, Border, Color, Element, Event, Length, Point, Rectangle, Size, Theme, Vector,
-};
+use iced::{Color, Rectangle};
+#[cfg(test)]
+use iced::Point;
 
-use crate::components::style::{HAIRLINE_A, RADIUS_XL, mix_white};
-
-/// Matches [`super::titlebar`] frame pad — kept local so this module
-/// does not cycle with the titlebar crate path.
-const FRAME_BORDER: f32 = 1.0;
-
-/// Wrap `content` so it cannot paint outside a rounded rect of `radius`
-/// (logical px; typically the floating face radius).
-pub fn wrap<'a, Message>(
-    content: impl Into<Element<'a, Message, Theme>>,
-    radius: f32,
-) -> Element<'a, Message, Theme>
-where
-    Message: 'a,
-{
-    RoundedClip {
-        content: content.into(),
-        radius,
-    }
-    .into()
+/// What the corners outside the radius become.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Ears {
+    /// Transparent: the desktop shows (a floating window's ARGB swapchain).
+    Clear,
+    /// Opaque in this colour: the ground behind a tile.
+    Paint(Color),
 }
 
-struct RoundedClip<'a, Message> {
-    content: Element<'a, Message, Theme>,
-    radius: f32,
-}
-
-impl<Message> Widget<Message, Theme, iced::Renderer> for RoundedClip<'_, Message> {
-    fn children(&self) -> Vec<Tree> {
-        vec![Tree::new(&self.content)]
-    }
-
-    fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(std::slice::from_ref(&self.content));
-    }
-
-    fn size(&self) -> Size<Length> {
-        Size {
-            width: Length::Fill,
-            height: Length::Fill,
-        }
-    }
-
-    fn layout(
-        &mut self,
-        tree: &mut Tree,
-        renderer: &iced::Renderer,
-        limits: &layout::Limits,
-    ) -> layout::Node {
-        let child = self
-            .content
-            .as_widget_mut()
-            .layout(&mut tree.children[0], renderer, limits);
-        let size = limits.resolve(Length::Fill, Length::Fill, child.size());
-        layout::Node::with_children(size, vec![child])
-    }
-
-    fn operate(
-        &mut self,
-        tree: &mut Tree,
-        layout: Layout<'_>,
-        renderer: &iced::Renderer,
-        operation: &mut dyn Operation,
-    ) {
-        let child = layout.children().next().expect("float-clip content");
-        self.content
-            .as_widget_mut()
-            .operate(&mut tree.children[0], child, renderer, operation);
-    }
-
-    fn update(
-        &mut self,
-        tree: &mut Tree,
-        event: &Event,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        renderer: &iced::Renderer,
-        clipboard: &mut dyn Clipboard,
-        shell: &mut Shell<'_, Message>,
-        viewport: &Rectangle,
-    ) {
-        let child = layout.children().next().expect("float-clip content");
-        self.content.as_widget_mut().update(
-            &mut tree.children[0],
-            event,
-            child,
-            cursor,
-            renderer,
-            clipboard,
-            shell,
-            viewport,
-        );
-    }
-
-    fn mouse_interaction(
-        &self,
-        tree: &Tree,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-        renderer: &iced::Renderer,
-    ) -> mouse::Interaction {
-        let child = layout.children().next().expect("float-clip content");
-        self.content.as_widget().mouse_interaction(
-            &tree.children[0],
-            child,
-            cursor,
-            viewport,
-            renderer,
-        )
-    }
-
-    fn overlay<'b>(
-        &'b mut self,
-        tree: &'b mut Tree,
-        layout: Layout<'b>,
-        renderer: &iced::Renderer,
-        viewport: &Rectangle,
-        translation: Vector,
-    ) -> Option<overlay::Element<'b, Message, Theme, iced::Renderer>> {
-        let child = layout.children().next().expect("float-clip content");
-        self.content.as_widget_mut().overlay(
-            &mut tree.children[0],
-            child,
-            renderer,
-            viewport,
-            translation,
-        )
-    }
-
-    fn draw(
-        &self,
-        tree: &Tree,
-        renderer: &mut iced::Renderer,
-        theme: &Theme,
-        style: &renderer::Style,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        viewport: &Rectangle,
-    ) {
-        let bounds = layout.bounds();
-        let Some(visible) = bounds.intersection(viewport) else {
-            return;
-        };
-        let child = layout.children().next().expect("float-clip content");
-        self.content.as_widget().draw(
-            &tree.children[0],
-            renderer,
-            theme,
-            style,
-            child,
-            cursor,
-            &visible,
-        );
-
-        // Later layer than the child so the punch lands after this layer's
-        // quads, meshes, shaders (CEF), images, and text.
-        use iced_wgpu::primitive::Renderer as _;
-        renderer.with_layer(bounds, |renderer| {
-            renderer.draw_primitive(
-                bounds,
-                FacePunch {
-                    radius: self.radius,
-                },
-            );
-        });
-
-        // Inner-radius punch can clear the 1px outer hairline in the corner
-        // ring (same circle centre, r vs r+1). Redraw the frame stroke so
-        // the chrome edge stays continuous.
-        let frame = Rectangle {
-            x: bounds.x - FRAME_BORDER,
-            y: bounds.y - FRAME_BORDER,
-            width: bounds.width + 2.0 * FRAME_BORDER,
-            height: bounds.height + 2.0 * FRAME_BORDER,
-        };
-        let p = theme.extended_palette();
-        let fill = p.background.base.color;
-        let fill = if fill.a < 0.01 {
-            p.background.weaker.color
-        } else {
-            fill
-        };
-        renderer.with_layer(frame, |renderer| {
-            renderer.fill_quad(
-                renderer::Quad {
-                    bounds: frame,
-                    border: Border {
-                        color: mix_white(fill, HAIRLINE_A),
-                        width: FRAME_BORDER,
-                        radius: RADIUS_XL.into(),
-                    },
-                    ..renderer::Quad::default()
-                },
-                Background::Color(Color::TRANSPARENT),
-            );
-        });
-    }
-}
-
-impl<'a, Message: 'a> From<RoundedClip<'a, Message>> for Element<'a, Message, Theme> {
-    fn from(value: RoundedClip<'a, Message>) -> Self {
-        Element::new(value)
-    }
+/// Cover `bounds`' corners outside a rounded rect of `radius` (logical px).
+/// Call after the content is drawn; opens its own layer.
+pub(crate) fn draw_ears(renderer: &mut iced::Renderer, bounds: Rectangle, radius: f32, ears: Ears) {
+    use iced_wgpu::primitive::Renderer as _;
+    let fill = match ears {
+        Ears::Clear => None,
+        Ears::Paint(c) => Some([c.r, c.g, c.b, c.a]),
+    };
+    renderer.with_layer(bounds, |renderer| {
+        renderer.draw_primitive(bounds, FacePunch { radius, fill });
+    });
 }
 
 /// Signed distance to a rounded rectangle (iced quad convention).
@@ -232,7 +43,7 @@ impl<'a, Message: 'a> From<RoundedClip<'a, Message>> for Element<'a, Message, Th
 /// Negative is inside. The AA band is `clamp(0.5 - dist, 0, 1)`, so a pixel
 /// with `dist >= 0.5` is fully outside the fill. Used by unit tests (and the
 /// titlebar resize-zone test) — not on the draw path.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn rounded_rect_dist(p: Point, bounds: Rectangle, radius: f32) -> f32 {
     let radius = radius.min(bounds.width.min(bounds.height) * 0.5);
     let local_x = p.x - bounds.x;
@@ -242,14 +53,14 @@ pub(crate) fn rounded_rect_dist(p: Point, bounds: Rectangle, radius: f32) -> f32
     rounded_box_sdf(px, py, bounds.width, bounds.height, radius * 2.0) / 2.0
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 fn rounded_box_sdf(px: f32, py: f32, size_x: f32, size_y: f32, corner: f32) -> f32 {
     let qx = px.abs() - size_x + corner;
     let qy = py.abs() - size_y + corner;
     qx.max(qy).min(0.0) + length(qx.max(0.0), qy.max(0.0)) - corner
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 fn length(x: f32, y: f32) -> f32 {
     (x * x + y * y).sqrt()
 }
@@ -257,10 +68,15 @@ fn length(x: f32, y: f32) -> f32 {
 #[derive(Debug)]
 struct FacePunch {
     radius: f32,
+    /// `None` clears the ears; `Some(rgba)` paints them.
+    fill: Option<[f32; 4]>,
 }
 
 struct FaceClipPipeline {
-    pipeline: iced::wgpu::RenderPipeline,
+    /// dest-out: the ears become transparent.
+    clear: iced::wgpu::RenderPipeline,
+    /// premultiplied over: the ears take the fill colour.
+    paint: iced::wgpu::RenderPipeline,
     layout: iced::wgpu::BindGroupLayout,
     slots: Vec<ClipSlot>,
     prepared: usize,
@@ -270,6 +86,7 @@ struct FaceClipPipeline {
 struct ClipSlot {
     buffer: iced::wgpu::Buffer,
     bind_group: iced::wgpu::BindGroup,
+    paint: bool,
 }
 
 impl std::fmt::Debug for FaceClipPipeline {
@@ -280,7 +97,7 @@ impl std::fmt::Debug for FaceClipPipeline {
     }
 }
 
-const UNIFORM_SIZE: u64 = 32;
+const UNIFORM_SIZE: u64 = 48;
 
 impl shader::Pipeline for FaceClipPipeline {
     fn new(
@@ -311,45 +128,23 @@ impl shader::Pipeline for FaceClipPipeline {
                 bind_group_layouts: &[&layout],
                 push_constant_ranges: &[],
             });
-        let pipeline = device.create_render_pipeline(&iced::wgpu::RenderPipelineDescriptor {
-            label: Some("sola-kit face clip rp"),
-            layout: Some(&pipeline_layout),
-            vertex: iced::wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(iced::wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(iced::wgpu::ColorTargetState {
-                    format,
-                    // dest * (1 - src.a): src.a is "how much to punch".
-                    blend: Some(iced::wgpu::BlendState {
-                        color: iced::wgpu::BlendComponent {
-                            src_factor: iced::wgpu::BlendFactor::Zero,
-                            dst_factor: iced::wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: iced::wgpu::BlendOperation::Add,
-                        },
-                        alpha: iced::wgpu::BlendComponent {
-                            src_factor: iced::wgpu::BlendFactor::Zero,
-                            dst_factor: iced::wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: iced::wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: iced::wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: iced::wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: iced::wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        // dest * (1 - src.a): src.a is "how much to punch".
+        let clear_blend = iced::wgpu::BlendComponent {
+            src_factor: iced::wgpu::BlendFactor::Zero,
+            dst_factor: iced::wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: iced::wgpu::BlendOperation::Add,
+        };
+        // src + dest * (1 - src.a), src premultiplied by the shader.
+        let paint_blend = iced::wgpu::BlendComponent {
+            src_factor: iced::wgpu::BlendFactor::One,
+            dst_factor: iced::wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: iced::wgpu::BlendOperation::Add,
+        };
+        let clear = build_pipeline(device, &pipeline_layout, &shader, format, clear_blend);
+        let paint = build_pipeline(device, &pipeline_layout, &shader, format, paint_blend);
         Self {
-            pipeline,
+            clear,
+            paint,
             layout,
             slots: Vec::new(),
             prepared: 0,
@@ -361,6 +156,43 @@ impl shader::Pipeline for FaceClipPipeline {
         self.prepared = 0;
         self.drawn.store(0, Ordering::Relaxed);
     }
+}
+
+fn build_pipeline(
+    device: &iced::wgpu::Device,
+    layout: &iced::wgpu::PipelineLayout,
+    shader: &iced::wgpu::ShaderModule,
+    format: iced::wgpu::TextureFormat,
+    blend: iced::wgpu::BlendComponent,
+) -> iced::wgpu::RenderPipeline {
+    device.create_render_pipeline(&iced::wgpu::RenderPipelineDescriptor {
+        label: Some("sola-kit face clip rp"),
+        layout: Some(layout),
+        vertex: iced::wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(iced::wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(iced::wgpu::ColorTargetState {
+                format,
+                blend: Some(iced::wgpu::BlendState {
+                    color: blend,
+                    alpha: blend,
+                }),
+                write_mask: iced::wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: iced::wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: iced::wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
 }
 
 impl shader::Primitive for FacePunch {
@@ -389,14 +221,21 @@ impl shader::Primitive for FacePunch {
                     resource: buffer.as_entire_binding(),
                 }],
             });
-            pipeline.slots.push(ClipSlot { buffer, bind_group });
+            pipeline.slots.push(ClipSlot {
+                buffer,
+                bind_group,
+                paint: false,
+            });
         }
-        let slot = &pipeline.slots[pipeline.prepared];
+        let slot = &mut pipeline.slots[pipeline.prepared];
+        slot.paint = self.fill.is_some();
         let scale = viewport.scale_factor() as f32;
         let origin = [bounds.x * scale, bounds.y * scale];
         let size = [bounds.width * scale, bounds.height * scale];
         let radius = self.radius * scale;
-        write_uniforms(queue, &slot.buffer, origin, size, radius);
+        // Clear mode reads only alpha: punch fully.
+        let fill = self.fill.unwrap_or([0.0, 0.0, 0.0, 1.0]);
+        write_uniforms(queue, &slot.buffer, origin, size, radius, fill);
         pipeline.prepared += 1;
     }
 
@@ -405,7 +244,11 @@ impl shader::Primitive for FacePunch {
         let Some(slot) = pipeline.slots.get(i) else {
             return true;
         };
-        pass.set_pipeline(&pipeline.pipeline);
+        pass.set_pipeline(if slot.paint {
+            &pipeline.paint
+        } else {
+            &pipeline.clear
+        });
         pass.set_bind_group(0, &slot.bind_group, &[]);
         pass.draw(0..3, 0..1);
         true
@@ -418,6 +261,7 @@ fn write_uniforms(
     origin: [f32; 2],
     size: [f32; 2],
     radius: f32,
+    fill: [f32; 4],
 ) {
     let mut bytes = [0u8; UNIFORM_SIZE as usize];
     bytes[0..4].copy_from_slice(&origin[0].to_le_bytes());
@@ -425,6 +269,9 @@ fn write_uniforms(
     bytes[8..12].copy_from_slice(&size[0].to_le_bytes());
     bytes[12..16].copy_from_slice(&size[1].to_le_bytes());
     bytes[16..20].copy_from_slice(&radius.to_le_bytes());
+    for (i, c) in fill.iter().enumerate() {
+        bytes[32 + 4 * i..36 + 4 * i].copy_from_slice(&c.to_le_bytes());
+    }
     queue.write_buffer(buffer, 0, &bytes);
 }
 
@@ -432,6 +279,7 @@ const SHADER: &str = r#"
 struct Uniforms {
     origin_size: vec4<f32>,
     radius_pad: vec4<f32>,
+    fill: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -463,7 +311,9 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         radius * 2.0,
     ) / 2.0;
     let inside = clamp(0.5 - dist, 0.0, 1.0);
-    return vec4<f32>(0.0, 0.0, 0.0, 1.0 - inside);
+    let ear = 1.0 - inside;
+    // Clear reads only alpha (dest-out); paint wants premultiplied colour.
+    return vec4<f32>(u.fill.rgb * u.fill.a * ear, u.fill.a * ear);
 }
 "#;
 

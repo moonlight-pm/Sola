@@ -142,6 +142,12 @@ pub struct AppData {
     /// Windows the shell has marked floating (`Topic::WindowFloating`). Gates
     /// CSD move/resize. Dropped when the window closes.
     pub floating: std::collections::HashSet<u32>,
+    /// How the shell shows each window (`Topic::WindowChrome`): tiled hints
+    /// and the hairline rim for windows whose app draws no frame. Dropped
+    /// when the window closes.
+    pub chrome: std::collections::HashMap<u32, sola_bus::topics::WindowChrome>,
+    /// The `set_tiled` state last sent per window (each send is a configure).
+    pub tiled_sent: std::collections::HashMap<u32, bool>,
     /// Window currently under the pointer, tracked from `river_seat_v1`
     /// `pointer_enter`/`pointer_leave`. A move/resize op targets this window at
     /// button-press time.
@@ -232,6 +238,8 @@ impl AppData {
             conn: None,
             focused_window: None,
             floating: std::collections::HashSet::new(),
+            chrome: std::collections::HashMap::new(),
+            tiled_sent: std::collections::HashMap::new(),
             pointer_window: None,
             pointer_pos: None,
             op: None,
@@ -329,6 +337,17 @@ pub fn bus_tick(state: &mut AppData) {
                 // Kick a manage/render cycle so decoration-below shadows
                 // attach or tear down promptly (not only on the next frame).
                 state.pending.manage_dirty = true;
+            }
+            sola_bus::topics::Topic::WindowChrome(c) => {
+                // A retraction arrives as the same topic, not sticky.
+                if msg.sticky {
+                    state.chrome.insert(c.window_id, c);
+                } else {
+                    state.chrome.remove(&c.window_id);
+                }
+                // set_tiled is manage-only, borders render-only.
+                state.pending.manage_dirty = true;
+                state.pending.render_dirty = true;
             }
             sola_bus::topics::Topic::Frame(f) => {
                 let app_id = state.registry.app_id_for(f.window_id).unwrap_or("?");

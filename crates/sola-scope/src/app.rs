@@ -269,8 +269,8 @@ impl App {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        sola_kit::wrap_if_floating(
-            self.float.is_floating_any(),
+        sola_kit::window_frame(
+            self.float.chrome_any(),
             "Scope",
             Msg::TitleDrag,
             Msg::TitleClose,

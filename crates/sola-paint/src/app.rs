@@ -825,8 +825,8 @@ impl App {
             .height(Length::Fill)
             .into();
 
-        let framed = sola_kit::wrap_if_floating(
-            self.float.is_floating_any(),
+        let framed = sola_kit::window_frame(
+            self.float.chrome_any(),
             "Paint",
             Msg::TitleDrag,
             Msg::TitleClose,

@@ -10,7 +10,6 @@
 //! Density and type live in the view (compact chrome sizes, font roles);
 //! bar height stays fixed so zoning / overlay Y offsets stay stable.
 
-pub mod report;
 pub mod view;
 
 use chrono::Local;
@@ -76,10 +75,6 @@ pub struct MenubarState {
     pub toast_generation: u64,
     /// Current local time — updated by `Msg::ClockTick`.
     pub clock_now: chrono::DateTime<Local>,
-    /// X-coordinates of each app-menu label button, in left-to-right order.
-    /// Populated by Task 7 (menu anchor work); declared now so view can
-    /// reference the field without a later structural change.
-    pub label_positions: Vec<f32>,
     /// Menubar label currently flashing as keyboard-shortcut feedback, if any.
     pub flash: Option<FlashTarget>,
     /// Generation counter to cancel stale flash-expiry callbacks (see
@@ -93,7 +88,6 @@ impl MenubarState {
             toast: None,
             toast_generation: 0,
             clock_now: Local::now(),
-            label_positions: Vec::new(),
             flash: None,
             flash_generation: 0,
         }

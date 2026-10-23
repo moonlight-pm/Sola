@@ -1,15 +1,18 @@
 //! Menubar window view.
 //!
 //! Layout (left-to-right):
-//!   [≡] [App Name] [Menu1] [Menu2] … ──────── [mail?] [stats] [clock]
-//!    ^system-menu  ^app-title  ^menu-labels (index 0 is the app name menu)
+//!   [≡] ──────────────────────────── [mail?] [stats] [clock]
+//!    ^system-menu
+//!
+//! App menus are not here: each app carries its own in its window's
+//! titlebar (kit `window_frame`, Next slice 6).
 //!
 //! Transient toasts are overlaid at the **horizontal center** of the bar
 //! (not in the right cluster), so short status like "Opening Terminal…"
 //! reads as bar-level feedback rather than a trailing status item.
 //!
-//! Type matches macOS menu bar: one chrome face throughout (labels, stats,
-//! clock). Focused-app name is bold (macOS application menu title). Colours
+//! Type matches macOS menu bar: one chrome face throughout (stats, clock).
+//! Colours
 //! come from the live theme palette (no view-local hex). Mono is for
 //! code/detail panels, not menubar status values.
 //!
@@ -25,7 +28,6 @@ use sola_kit::fonts;
 use crate::app::Msg;
 use crate::components::clock::clock_widget;
 use crate::components::toast::toast_widget;
-use crate::menu::state::synthesized_menu;
 use crate::menubar::{
     EXTRA_PAD_H, FlashTarget, ICON_SIZE, MENU_PAD_H, PHRASE_GAP, STAT_INNER_SPACING, STAT_PAD_H,
     WINDOW_HEIGHT,
@@ -68,14 +70,6 @@ fn stat_pad() -> Padding {
 /// hangs below 13pt cap height, so marks sit low. Same lift for icons
 /// and pixel graphs.
 const CHROME_NUDGE_UP: f32 = 2.0;
-
-/// Bold chrome for the focused-app title (macOS application menu name).
-fn app_title_font() -> iced::Font {
-    iced::Font {
-        weight: iced::font::Weight::Bold,
-        ..fonts::chrome()
-    }
-}
 
 /// Full-height menubar control: button is exactly [`BAR_H`] tall so layout
 /// (and hit testing) spans y=0…BAR_H of the window.
@@ -140,40 +134,6 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             is_system: true,
         }),
     );
-
-    // ── Focused-app title ─────────────────────────────────────────────
-    // Bold — matches macOS application menu title vs regular menu labels.
-    let app_title_str = focused_app_title(shell);
-    let clickable = has_menu(shell);
-    let title_active =
-        (shell.menu_open && !shell.current_open_is_system && shell.current_open_index == Some(0))
-            || flashing(shell, false, 0);
-    let app_title: Element<'_, Msg> = if clickable {
-        crate::menubar::report::ReportX::wrap(
-            0,
-            bar_item(
-                text(app_title_str).font(app_title_font()).size(CHROME_SIZE),
-                title_active,
-                Msg::OpenMenu {
-                    index: 0,
-                    is_system: false,
-                },
-                Some(Msg::HoverMenu {
-                    index: 0,
-                    is_system: false,
-                }),
-            ),
-        )
-    } else {
-        container(text(app_title_str).font(app_title_font()).size(CHROME_SIZE))
-            .padding(menu_pad())
-            .height(Length::Fixed(BAR_H))
-            .align_y(Alignment::Center)
-            .into()
-    };
-
-    // ── App-menu labels (menus[1..]) ──────────────────────────────────
-    let menu_labels: Vec<Element<'_, Msg>> = app_menu_labels(shell);
 
     // ── Right cluster: stats + clock (toast is centered overlay) ─────
     let clock_active = panel_active(shell, crate::app::Panel::Calendar);
@@ -248,8 +208,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     .into();
 
     // ── Assemble ──────────────────────────────────────────────────────
-    let mut left = vec![system_btn, app_title];
-    left.extend(menu_labels);
+    let left = vec![system_btn];
 
     let mut extras: Vec<Element<'_, Msg>> = Vec::new();
     if let Some(unread) = shell.mail_unread_badge() {
@@ -363,41 +322,6 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn focused_app_title(shell: &crate::app::Shell) -> String {
-    let Some(ref app_id) = shell.focused_app_id else {
-        return String::new();
-    };
-
-    if let Some(payload) = shell.menus.get_menu(app_id) {
-        if let Some(first) = payload.menus.first() {
-            if !first.label.is_empty() {
-                return first.label.clone();
-            }
-        }
-    }
-    // Empty host app_id (pre-inference gamescope) — try gamescope menu.
-    if app_id.is_empty() {
-        if let Some(payload) = shell.menus.get_menu("gamescope") {
-            if let Some(first) = payload.menus.first() {
-                if !first.label.is_empty() {
-                    return first.label.clone();
-                }
-            }
-        }
-    }
-
-    let synth = synthesized_menu(app_id, &display_label(shell, app_id));
-    synth
-        .menus
-        .first()
-        .map(|d| d.label.clone())
-        .unwrap_or_else(|| app_id.clone())
-}
-
-fn has_menu(shell: &crate::app::Shell) -> bool {
-    shell.focused_app_id.is_some()
-}
-
 fn flashing(shell: &crate::app::Shell, is_system: bool, index: usize) -> bool {
     shell.menubar.flash == Some(FlashTarget { is_system, index })
 }
@@ -407,72 +331,6 @@ fn flashing(shell: &crate::app::Shell, is_system: bool, index: usize) -> bool {
 /// volume (and other) chips from staying filled after the popover is gone.
 fn panel_active(shell: &crate::app::Shell, panel: crate::app::Panel) -> bool {
     shell.menu_open && shell.open_panel == Some(panel)
-}
-
-fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
-    let Some(ref app_id) = shell.focused_app_id else {
-        return Vec::new();
-    };
-
-    let payload = shell.effective_app_menu(app_id);
-
-    payload
-        .menus
-        .iter()
-        .enumerate()
-        .skip(1)
-        .map(|(index, menu)| {
-            let active = (shell.menu_open
-                && !shell.current_open_is_system
-                && shell.current_open_index == Some(index))
-                || flashing(shell, false, index);
-            crate::menubar::report::ReportX::wrap(
-                index,
-                bar_item(
-                    text(menu.label.clone())
-                        .font(fonts::chrome())
-                        .size(CHROME_SIZE),
-                    active,
-                    Msg::OpenMenu {
-                        index,
-                        is_system: false,
-                    },
-                    Some(Msg::HoverMenu {
-                        index,
-                        is_system: false,
-                    }),
-                ),
-            )
-        })
-        .collect()
-}
-
-fn display_label(shell: &crate::app::Shell, app_id: &str) -> String {
-    if let Some(app) = shell.applications.get_for_window(app_id) {
-        return app.label.clone();
-    }
-    // gamescope sometimes maps with empty app_id before river infers it —
-    // still prefer the Arcade-published gamescope catalog label.
-    if app_id.is_empty() {
-        if let Some(app) = shell.applications.get_for_window("gamescope") {
-            return app.label.clone();
-        }
-        // Fall back to a non-empty window title if we have one.
-        if let Some(t) = shell
-            .known_windows
-            .iter()
-            .find(|w| w.app_id.is_empty() && !w.title.is_empty())
-            .map(|w| w.title.clone())
-        {
-            return t;
-        }
-        return String::new();
-    }
-    let mut chars = app_id.chars();
-    match chars.next() {
-        Some(c) => c.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
 }
 
 /// Status indicator: muted chrome label + fixed btop-style pixel graph.

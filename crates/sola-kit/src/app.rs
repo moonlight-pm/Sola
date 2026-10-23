@@ -201,10 +201,12 @@ impl BusSetup {
             }
         }
         if !self.app_menus.is_empty() {
-            if let Err(e) = client.emit(Topic::SetAppMenu(AppMenuPayload {
+            let payload = AppMenuPayload {
                 app_id: self.app_id.into(),
                 menus: self.app_menus,
-            })) {
+            };
+            crate::menu::remember(payload.clone());
+            if let Err(e) = client.emit(Topic::SetAppMenu(payload)) {
                 tracing::warn!(app_id = self.app_id, "publish app menu failed: {e}");
             }
         }
@@ -217,9 +219,8 @@ impl BusSetup {
     }
 }
 
-/// Window settings every sola iced app uses: `decorations: false` (zoned
-/// windows are chrome-less; while floating the app draws CSD via kit
-/// titlebar when it honors `Topic::WindowFloating`) + the correct
+/// Window settings every sola iced app uses: `decorations: false` (the app
+/// draws its own frame, [`crate::window_frame`]) + the correct
 /// `xdg_toplevel.app_id` so the shell can match `SetAppMenu` against the
 /// surface.
 ///
@@ -241,8 +242,8 @@ pub fn window_settings(app_id: &'static str) -> iced::window::Settings {
 }
 
 /// Like [`window_settings`], but with an alpha surface so a floating kit
-/// app can draw rounded corners ([`crate::components::titlebar::floating_frame`])
-/// without square opaque corners from the window fill.
+/// app can clear its frame's corners ([`crate::window_frame`]) instead of
+/// showing square opaque ones from the window fill.
 ///
 /// While floating, pair with [`crate::theme::overlay`] so `background.base`
 /// is clear and only the rounded frame paints. While zoned/tiled, keep the
@@ -420,6 +421,13 @@ fn forward_or_buffer(msg: Arc<Message>) {
         drop(slot);
         push_pending(msg);
     }
+}
+
+/// Hand `topic` to this process's own bus stream as if the bus had
+/// delivered it. The bus never echoes an ephemeral event to its sender;
+/// a titlebar menu choice reaches its app this way ([`crate::menu::choose`]).
+pub(crate) fn deliver_locally(topic: Topic) {
+    forward_or_buffer(Arc::new(topic.to_message()));
 }
 
 fn install_bus_stream_tx(tx: iced::futures::channel::mpsc::UnboundedSender<Arc<Message>>) {

@@ -69,6 +69,7 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::MenuAction,
     TopicKind::CloseApp,
     TopicKind::WindowFloating,
+    TopicKind::WindowChrome,
     TopicKind::OpenUrl,
     TopicKind::Chord,
     TopicKind::ChordReleased,
@@ -193,11 +194,7 @@ pub fn profiles_menu() -> MenuDefinition {
 
 /// Re-publish Browser + Edit + Profiles menus (after create/rename/delete).
 pub fn republish_menus(app_id: &str) {
-    if let Ok(mut client) = sola_kit::app::bus().lock() {
-        if let Err(e) = client.emit(Topic::SetAppMenu(browser_app_menu(app_id))) {
-            tracing::warn!(error = %e, "republish browser menus failed");
-        }
-    }
+    sola_kit::menu::publish(browser_app_menu(app_id));
 }
 
 /// Stable widget id for the chrome URL field, so the `Focus URL` action can

@@ -344,8 +344,8 @@ impl App {
             .height(Length::Fill)
             .into();
 
-        sola_kit::wrap_if_floating(
-            self.float.is_floating_any(),
+        sola_kit::window_frame(
+            self.float.chrome_any(),
             "Settings",
             Msg::TitleDrag,
             Msg::TitleClose,
