@@ -201,6 +201,27 @@ pub struct ShowTab {
     pub key: String,
 }
 
+/// What a tab is doing, for its row in the shell's tab bar (app → shell):
+/// Projects marks a project window that has an agent working or waiting on
+/// a decision. Sticky, keyed by `key` (a [`Tab::key`]); sent on change, and
+/// first when the tab's window opens, so a restarted app clears what it
+/// left; retracted when the tab closes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabActivity {
+    pub key: String,
+    pub activity: Activity,
+}
+
+/// A [`TabActivity`]'s state. Waiting outranks working where an app rolls
+/// several up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Activity {
+    Idle,
+    Working,
+    /// Needs a decision from the user.
+    Waiting,
+}
+
 /// One zone of the shell's tab bar as last saved: its tabs' keys in bar
 /// order, and which of them the zone shows (an index into `apps`). A key
 /// is a [`Tab::key`], or the app id for a window that is not an announced
@@ -1419,6 +1440,11 @@ define_topics! {
 
     // Show a tab's window and focus it (app → shell). Appended last.
     ShowTab(ShowTab),
+
+    // What a tab is doing, for its tab-bar row (app → shell). Sticky,
+    // keyed by key; retracted when the tab closes. Appended last.
+    #[sticky(keys = [key])]
+    TabActivity(TabActivity),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1434,6 +1460,7 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::Tab
             | TopicKind::TabWindow
             | TopicKind::ShowTab
+            | TopicKind::TabActivity
     )
 }
 
@@ -1520,6 +1547,22 @@ mod tests {
             other => panic!("expected MailStatus, got {other:?}"),
         }
         assert_eq!(TopicKind::MailStatus.as_str(), "MailStatus");
+    }
+
+    #[test]
+    fn tab_activity_is_sticky_per_tab() {
+        let activity = TabActivity {
+            key: "sola-projects/proj-sola".into(),
+            activity: Activity::Waiting,
+        };
+        let msg = Topic::TabActivity(activity.clone()).to_message();
+        assert!(TopicKind::TabActivity.behavior().is_sticky());
+        assert_eq!(msg.keys, vec!["sola-projects/proj-sola".to_string()]);
+        match Topic::parse(&msg) {
+            Some(Topic::TabActivity(back)) => assert_eq!(back, activity),
+            other => panic!("expected TabActivity, got {other:?}"),
+        }
+        assert!(topic_kind_is_after_mail_status(TopicKind::TabActivity));
     }
 
     #[test]

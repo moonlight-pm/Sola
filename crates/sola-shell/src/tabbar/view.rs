@@ -1,12 +1,16 @@
 //! The tab bar's view: a head with the tab count, then a section per zone
 //! (name, count) with a row per window (app icon, title). A tiled zone's
-//! shown tab is the active row; the focused float is too.
+//! shown tab is the active row; the focused float is too. A tab that is
+//! working or waiting on a decision (`Topic::TabActivity`) shows that mark
+//! in the icon's place, so the title does not move.
 
 use iced::widget::{container, text};
 use iced::{Element, Length, Padding};
-use sola_bus::topics::Zone;
+use sola_bus::topics::{Activity, Zone};
 use sola_kit::components::style::SPACE_MD;
-use sola_kit::components::{LEADING_SLOT, SidebarItem, SidebarPanel, SidebarSection, icon};
+use sola_kit::components::{
+    LEADING_SLOT, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection, icon, status_mark,
+};
 use sola_kit::fonts;
 
 use super::{row_id, section_id, zone_label};
@@ -36,10 +40,19 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                 let label = title
                     .map(str::to_string)
                     .unwrap_or_else(|| app_label(shell, &t.app_id));
+                let activity = shell
+                    .pairing
+                    .key_of(t.window_id)
+                    .and_then(|key| shell.tab_activity.get(key))
+                    .copied();
+                let leading: Element<'_, Msg> = match mark(activity) {
+                    Some(indicator) => status_mark(indicator),
+                    None => icon(app_icon(shell, &t.app_id), LEADING_SLOT as u16).into(),
+                };
                 let mut item = SidebarItem::new(label, Msg::ShowTab(t.window_id))
                     .id(row_id(t.window_id))
                     .active(shown == Some(t.window_id))
-                    .leading(icon(app_icon(shell, &t.app_id), LEADING_SLOT as u16));
+                    .leading(leading);
                 if hidden(&t.app_id) {
                     item = item.secondary("hidden");
                 }
@@ -71,6 +84,15 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .into()
 }
 
+/// The mark a row shows for its tab's activity; none when idle.
+fn mark(activity: Option<Activity>) -> Option<SidebarIndicator> {
+    match activity? {
+        Activity::Working => Some(SidebarIndicator::Working),
+        Activity::Waiting => Some(SidebarIndicator::Waiting),
+        Activity::Idle => None,
+    }
+}
+
 fn app_label(shell: &Shell, app_id: &str) -> String {
     shell
         .applications
@@ -86,4 +108,17 @@ fn app_icon<'a>(shell: &'a Shell, app_id: &str) -> &'a str {
         .map(|a| a.icon.as_str())
         .filter(|s| !s.is_empty())
         .unwrap_or("lucide/box")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_work_and_decisions_replace_the_icon() {
+        assert_eq!(mark(Some(Activity::Waiting)), Some(SidebarIndicator::Waiting));
+        assert_eq!(mark(Some(Activity::Working)), Some(SidebarIndicator::Working));
+        assert_eq!(mark(Some(Activity::Idle)), None);
+        assert_eq!(mark(None), None);
+    }
 }

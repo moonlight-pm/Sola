@@ -354,6 +354,9 @@ Fails if the app or `sola-call` is down; it does not launch a window. A
 tab is one checkout in a project: the project root, a `.worktrees/`
 worktree, or a folder. Each project is its own window (a tab in the
 shell's tab bar, named for the project), with its tabs along the top.
+That row in the shell's bar shows a project's activity in place of its
+icon: an amber diamond when any of its tabs is waiting on a decision, a
+spinning ring when any is working (the diamond wins), the icon otherwise.
 The app was called Workspaces, and a tab a workspace, until 2026-10-21;
 `solactl workspaces` and the `workspace.*` methods are gone, with no
 alias.

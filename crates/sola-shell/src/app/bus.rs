@@ -75,6 +75,14 @@ impl Shell {
                 self.on_tab(t, message.sticky);
                 Task::none()
             }
+            Topic::TabActivity(a) => {
+                if message.sticky {
+                    self.tab_activity.insert(a.key, a.activity);
+                } else {
+                    self.tab_activity.remove(&a.key);
+                }
+                Task::none()
+            }
             Topic::ShowTab(s) => {
                 match self.pairing.window_of(&s.key) {
                     Some(wid) => self.activate_window(wid),

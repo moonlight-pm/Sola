@@ -310,6 +310,9 @@ pub struct Shell {
     pub tabs: Stacks,
     /// Announced tabs (`Topic::Tab`) and the windows they are.
     pub pairing: crate::pairing::Pairing,
+    /// What each tab is doing (`Topic::TabActivity`), by tab key: the
+    /// mark on its bar row.
+    pub tab_activity: HashMap<String, sola_bus::topics::Activity>,
     /// Last on-screen state sent for each tab window (`TabWindow.shown`).
     tab_shown_sent: HashMap<u32, bool>,
     pub tabbar: crate::tabbar::TabBarState,
@@ -476,6 +479,7 @@ impl Shell {
             tabbar_window_id: None,
             tabs: Stacks::new(),
             pairing: crate::pairing::Pairing::default(),
+            tab_activity: HashMap::new(),
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             tab_layout_loaded: tab_layout_ready,
@@ -3006,6 +3010,7 @@ mod pending_launch_tests {
             tabbar_window_id: None,
             tabs: Stacks::new(),
             pairing: crate::pairing::Pairing::default(),
+            tab_activity: HashMap::new(),
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             tab_layout_loaded: false,
@@ -3130,6 +3135,7 @@ mod hide_tests {
             tabbar_window_id: None,
             tabs: Stacks::new(),
             pairing: crate::pairing::Pairing::default(),
+            tab_activity: HashMap::new(),
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             tab_layout_loaded: false,

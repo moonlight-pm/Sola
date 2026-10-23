@@ -6,7 +6,11 @@
 use std::collections::HashMap;
 
 use iced::{Task, window};
+use sola_bus::topics::Activity;
 use sola_kit::tabs::TabWindows;
+
+use crate::catalog::Tab;
+use crate::status::AgentStatus;
 
 /// The key of the window shown while there is no project yet.
 pub const EMPTY: &str = "";
@@ -107,5 +111,62 @@ impl ProjectWindows {
         if let Some(window) = self.window_of(project_id) {
             self.tabs.show(window);
         }
+    }
+
+    /// Mark each window's row in the shell's tab bar with its project's
+    /// activity. Sends only what changed.
+    pub fn publish_activity(&mut self, tabs: &[Tab]) {
+        for (window, project) in self.by_window.iter() {
+            self.tabs.set_activity(*window, project_activity(project, tabs));
+        }
+    }
+}
+
+/// A project's mark: a tab waiting on a decision beats a tab working.
+pub fn project_activity(project_id: &str, tabs: &[Tab]) -> Activity {
+    AgentStatus::rollup(
+        tabs.iter()
+            .filter(|t| t.project_id == project_id)
+            .map(|t| t.status),
+    )
+    .activity()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::catalog::Kind;
+
+    fn tab(id: &str, project_id: &str, status: AgentStatus) -> Tab {
+        Tab {
+            id: id.into(),
+            project_id: project_id.into(),
+            name: id.into(),
+            title: None,
+            path: PathBuf::from("/tmp"),
+            kind: Kind::Worktree,
+            parent: None,
+            layout: None,
+            active_pane: None,
+            status,
+            agent: None,
+        }
+    }
+
+    #[test]
+    fn a_decision_outranks_work_within_a_project() {
+        let tabs = [
+            tab("a", "sola", AgentStatus::Working),
+            tab("b", "sola", AgentStatus::Waiting),
+            tab("c", "oath", AgentStatus::Working),
+            tab("d", "oath", AgentStatus::Done),
+            tab("e", "site", AgentStatus::Done),
+        ];
+        assert_eq!(project_activity("sola", &tabs), Activity::Waiting);
+        assert_eq!(project_activity("oath", &tabs), Activity::Working);
+        assert_eq!(project_activity("site", &tabs), Activity::Idle);
+        assert_eq!(project_activity(EMPTY, &tabs), Activity::Idle);
     }
 }

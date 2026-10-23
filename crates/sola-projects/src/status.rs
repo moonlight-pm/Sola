@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sola_kit::components::SidebarIndicator;
+use sola_bus::topics::Activity;
 
 use crate::hooks::Incoming;
 use crate::presence::Presence;
@@ -39,6 +40,16 @@ impl AgentStatus {
             Self::Waiting => SidebarIndicator::Waiting,
             Self::Done => SidebarIndicator::Done,
             Self::Idle => SidebarIndicator::Idle,
+        }
+    }
+
+    /// The mark on a project window's row in the shell's tab bar: only
+    /// working and waiting show there; done reads as idle.
+    pub fn activity(self) -> Activity {
+        match self {
+            Self::Working => Activity::Working,
+            Self::Waiting => Activity::Waiting,
+            Self::Done | Self::Idle => Activity::Idle,
         }
     }
 
@@ -1252,6 +1263,14 @@ mod tests {
             AgentStatus::Done
         );
         assert_eq!(AgentStatus::rollup([]), AgentStatus::Idle);
+    }
+
+    #[test]
+    fn only_working_and_waiting_mark_the_bar() {
+        assert_eq!(AgentStatus::Waiting.activity(), Activity::Waiting);
+        assert_eq!(AgentStatus::Working.activity(), Activity::Working);
+        assert_eq!(AgentStatus::Done.activity(), Activity::Idle);
+        assert_eq!(AgentStatus::Idle.activity(), Activity::Idle);
     }
 
     #[test]

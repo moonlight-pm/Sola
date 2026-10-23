@@ -5,13 +5,15 @@
 //! place in the tab bar; the shell answers with the window's sola-river id
 //! and whether it is on screen (`Topic::TabWindow`). Subscribe to
 //! `TopicKind::TabWindow` and feed every bus message to
-//! [`TabWindows::update`].
+//! [`TabWindows::update`]. [`TabWindows::set_activity`] puts a mark on the
+//! tab's row in the bar (`Topic::TabActivity`: working, or waiting on a
+//! decision).
 
 use std::collections::HashMap;
 
 use iced::{Task, window};
 use sola_bus::Message;
-use sola_bus::topics::{ShowTab, Tab, TabWindow, Topic};
+use sola_bus::topics::{Activity, ShowTab, Tab, TabActivity, TabWindow, Topic};
 
 struct Entry {
     key: String,
@@ -21,6 +23,9 @@ struct Entry {
     river: Option<u32>,
     /// On screen, per the shell (a window starts shown until it says).
     shown: bool,
+    /// Last [`TabActivity`] sent; `None` until the first, which is always
+    /// sent so a restarted app clears what it left behind.
+    activity: Option<Activity>,
 }
 
 pub struct TabWindows {
@@ -64,6 +69,7 @@ impl TabWindows {
                 background,
                 river: None,
                 shown: true,
+                activity: None,
             },
         );
         (wid, task)
@@ -95,6 +101,30 @@ impl TabWindows {
         };
         if let Ok(mut bus) = crate::app::bus().lock() {
             let _ = bus.retract(Topic::Tab(self.tab(&entry.key, entry.seq, None, false)));
+            if entry.activity.is_some() {
+                let _ = bus.retract(Topic::TabActivity(TabActivity {
+                    key: entry.key.clone(),
+                    activity: Activity::Idle,
+                }));
+            }
+        }
+    }
+
+    /// Say what the tab is doing (its row's mark in the shell's tab bar).
+    /// Sent when it changes; call it as often as is convenient.
+    pub fn set_activity(&mut self, window: window::Id, activity: Activity) {
+        let Some(entry) = self.windows.get_mut(&window) else {
+            return;
+        };
+        if entry.activity == Some(activity) {
+            return;
+        }
+        entry.activity = Some(activity);
+        if let Ok(mut bus) = crate::app::bus().lock() {
+            let key = entry.key.clone();
+            if let Err(e) = bus.emit(Topic::TabActivity(TabActivity { key, activity })) {
+                tracing::warn!(key = %entry.key, "tab activity failed: {e:?}");
+            }
         }
     }
 

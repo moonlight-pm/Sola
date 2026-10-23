@@ -410,6 +410,7 @@ impl App {
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         let task = self.update_msg(msg);
         self.note_selected();
+        self.windows.publish_activity(&self.tabs);
         task
     }
 
