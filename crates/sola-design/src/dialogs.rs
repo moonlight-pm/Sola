@@ -1,7 +1,5 @@
-//! Project rail: sections are projects, items are canvases. Plus the two
-//! small dialogs (Add project, New canvas). Nothing here edits a design.
-
-use std::collections::HashMap;
+//! The two small dialogs (Add project, New canvas) and the body of the
+//! window shown while there is no project. Nothing here edits a design.
 
 use iced::widget::{column, container, mouse_area, row};
 use iced::{Alignment, Color, Element, Length, Theme};
@@ -9,29 +7,12 @@ use sola_kit::components::button as kit_btn;
 use sola_kit::components::card;
 use sola_kit::components::field::field;
 use sola_kit::components::text_input::text_input;
-use sola_kit::components::{DividerColors, SidebarItem, SidebarPanel, SidebarSection};
 
 use crate::app::Msg;
-use crate::canvas;
-use crate::projects::{CanvasRef, Project};
+use crate::projects::Project;
 
-pub const RAIL_W_DEFAULT: f32 = 220.0;
 pub const ADD_INPUT_ID: &str = "design-add-path";
 pub const CANVAS_INPUT_ID: &str = "design-canvas-name";
-
-pub struct RailState {
-    pub width: f32,
-    pub gestures: sola_kit::components::SidebarState,
-}
-
-impl Default for RailState {
-    fn default() -> Self {
-        Self {
-            width: RAIL_W_DEFAULT,
-            gestures: sola_kit::components::SidebarState::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Default)]
 pub struct AddDraft {
@@ -47,61 +28,22 @@ pub struct CanvasDraft {
     pub error: Option<String>,
 }
 
-pub fn view<'a>(
-    state: &'a RailState,
-    projects: &'a [Project],
-    canvases: &'a HashMap<String, Vec<canvas::Entry>>,
-    selected: Option<&CanvasRef>,
-    // Canvases an agent is working in (a dim "agent" on the row).
-    busy: &std::collections::HashSet<String>,
-    theme: &Theme,
-    plane_bg: Color,
-) -> Element<'a, Msg> {
-    let mut sections = Vec::with_capacity(projects.len());
-    for project in projects {
-        let mut items = Vec::new();
-        if !project.collapsed {
-            for entry in canvases.get(&project.id).map(Vec::as_slice).unwrap_or(&[]) {
-                let r = CanvasRef {
-                    project: project.id.clone(),
-                    canvas: entry.name.clone(),
-                };
-                let key = r.key();
-                let mut item = SidebarItem::new(entry.title.clone(), Msg::SelectCanvas(key.clone()))
-                    .active(selected == Some(&r));
-                if busy.contains(&key) {
-                    item = item.secondary("agent");
-                }
-                items.push(item.id(key));
-            }
-        }
-        let mark = if project.collapsed { "▸ " } else { "" };
-        sections.push(
-            SidebarSection::new(format!("{mark}{}", project.name), items)
-                .id(project.id.clone())
-                .on_add(Msg::OpenNewCanvas(project.id.clone())),
-        );
-    }
-
-    let p = theme.extended_palette();
-    let divider = DividerColors {
-        a: p.background.weaker.color,
-        line: p.background.stronger.color,
-        b: plane_bg,
-    };
-    // Canvases drag within their project; project headers drag as blocks.
-    let mut panel = SidebarPanel::new(sections)
-        .controller(&state.gestures, Msg::Sidebar)
-        .reorder_within_sections();
-    if projects.is_empty() {
-        panel = panel.footer(
-            container(kit_btn::labeled_sm("Add project", kit_btn::ghost).on_press(Msg::OpenAdd))
-                .padding(10)
-                .width(Length::Fill)
-                .into(),
-        );
-    }
-    panel.resizable_with(state.width, divider).build()
+/// The no-project window: a word and Add project.
+pub fn no_project<'a>() -> Element<'a, Msg> {
+    container(
+        column![
+            sola_kit::components::text::caption("Add a project folder; its canvases live in design/.")
+                .style(sola_kit::components::text::muted),
+            kit_btn::labeled_sm("Add project", kit_btn::ghost).on_press(Msg::OpenAdd),
+        ]
+        .spacing(12)
+        .align_x(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .center_x(Length::Fill)
+    .center_y(Length::Fill)
+    .into()
 }
 
 /// Dim veil + dialog card, if one is open. Click the veil to dismiss.

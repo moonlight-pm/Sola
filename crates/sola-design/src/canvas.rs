@@ -90,9 +90,8 @@ pub struct Canvas {
 /// A canvas as the rail lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
-    /// Directory name under `design/` (the canvas id).
+    /// Directory name under `design/` (the canvas id, and its tab's label).
     pub name: String,
-    pub title: String,
 }
 
 pub fn design_dir(root: &Path) -> PathBuf {
@@ -206,10 +205,7 @@ pub fn scan(root: &Path) -> Vec<Entry> {
             if name.starts_with('.') {
                 return None;
             }
-            let title = load(&e.path())
-                .map(|c| c.title)
-                .unwrap_or_else(|_| name.clone());
-            Some(Entry { name, title })
+            Some(Entry { name })
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -230,10 +226,10 @@ pub fn locate(path: &Path) -> Option<(PathBuf, String)> {
     })
 }
 
-/// New empty canvas `design/<slug>/canvas.toml`. Returns the dir name.
-pub fn create(root: &Path, title: &str) -> Result<String, String> {
-    let title = title.trim();
-    let name = crate::projects::slug(title);
+/// New empty canvas `design/<slug>/canvas.toml`. Returns the dir name,
+/// which is also its label (no title is written).
+pub fn create(root: &Path, name: &str) -> Result<String, String> {
+    let name = crate::projects::slug(name);
     if name.is_empty() {
         return Err("Use letters or digits in the name.".into());
     }
@@ -242,8 +238,7 @@ pub fn create(root: &Path, title: &str) -> Result<String, String> {
         return Err(format!("design/{name} already exists."));
     }
     std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-    let body = format!("{}title = {}\n", TEMPLATE_HEADER, toml_string(title));
-    std::fs::write(dir.join(CANVAS_FILE), body)
+    std::fs::write(dir.join(CANVAS_FILE), TEMPLATE_HEADER)
         .map_err(|e| format!("write {CANVAS_FILE}: {e}"))?;
     Ok(name)
 }
@@ -280,10 +275,6 @@ const TEMPLATE_HEADER: &str = "\
 # start = \"desktop\"
 
 ";
-
-fn toml_string(s: &str) -> String {
-    toml::Value::String(s.to_string()).to_string()
-}
 
 fn is_web_url(src: &str) -> bool {
     src.starts_with("http://") || src.starts_with("https://")
@@ -477,7 +468,7 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixture");
         let listed = scan(&root);
         assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].title, "Demo");
+        assert_eq!(listed[0].name, "demo");
         let c = load(&canvas_dir(&root, "demo")).unwrap();
         assert_eq!(c.artboards.len(), 3);
         assert!(c.artboards[1].url.ends_with("/fixture/design/demo/settings.html"));
@@ -516,11 +507,12 @@ mod tests {
             listed,
             vec![Entry {
                 name: "settings-redesign".into(),
-                title: "Settings Redesign".into(),
             }]
         );
         let c = load(&canvas_dir(&root, "settings-redesign")).unwrap();
         assert!(c.artboards.is_empty());
+        // No title is written: the label is the folder.
+        assert_eq!(c.title, "settings-redesign");
         let _ = std::fs::remove_dir_all(root);
     }
 }

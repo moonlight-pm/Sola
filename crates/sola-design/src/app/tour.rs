@@ -23,16 +23,6 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// A different canvas came on screen: tours, open notes, and glides
-    /// belong to the one that left.
-    pub(super) fn reset_tour(&mut self) {
-        self.tour = None;
-        self.tween = None;
-        self.open_notes.clear();
-        self.notes_open = false;
-        self.flows_open = false;
-    }
-
     /// After a re-layout of the canvas on screen: a tour keeps only the
     /// boards that are still there, and ends when its step is gone.
     pub(super) fn check_tour(&mut self) {

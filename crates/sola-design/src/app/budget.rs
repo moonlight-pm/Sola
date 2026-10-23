@@ -129,11 +129,11 @@ impl App {
             .collect();
         let mut out = Vec::new();
         for l in self.live.iter().filter(|l| !agents.contains(&l.at.key())) {
-            let shown = self.is_shown(&l.at.key());
+            let screen = self.on_screen(&l.at.key());
             for b in l.boards.iter().filter(|b| !b.discarded) {
                 let tab = b.tab.0;
                 let working = busy.contains(&tab) || waiting.contains(&tab) || held.contains(&tab);
-                if keep.contains(&tab) || working || (shown && self.in_view(b)) {
+                if keep.contains(&tab) || working || Self::board_in_view(screen, b) {
                     continue;
                 }
                 let used = self.used_at(l, tab, now);
@@ -327,7 +327,7 @@ impl App {
                 continue;
             }
             let bytes: u64 = open.iter().map(|b| b.cost()).sum();
-            let why = if self.is_shown(&key) {
+            let why = if self.displayed(&key).is_some() {
                 "on the human's screen".to_string()
             } else if agents.contains(&key) {
                 let ago = l.agent_at.map_or(0, |t| now.duration_since(t).as_secs());

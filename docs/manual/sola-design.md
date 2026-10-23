@@ -17,7 +17,7 @@ live. You look, pan, zoom, point, and try things.
 `canvas.toml`:
 
 ```toml
-title = "Settings"              # optional; defaults to the directory name
+title = "Settings"              # optional; names the share page (Design's tab shows the folder)
 root = "web/public"             # optional: root-absolute URLs look in this project folder first
 
 [[artboard]]
@@ -91,17 +91,30 @@ the last good layout.
 ## Launch
 
 Launcher → **Design**, or `solactl session launch sola-design`. A second
-launch raises the open window.
+launch brings the active window up.
 
 ## Projects and canvases
 
 Projects are your own list (not the Projects app's). **Project → Add Project…**
-(⌘N) takes a folder (`~` ok). The rail lists each project's canvases —
-every `design/<name>/` with a `canvas.toml` — and picks up new ones within
-a couple of seconds. `+` on a project makes an empty canvas
-(**New Canvas…**, ⌘⇧N). Drag a canvas to reorder it within its project;
-drag a project's header to move the whole project. The order is kept.
-**Drop Project** forgets the open canvas's project, and
+(⌘N) takes a folder (`~` ok). Each project is its own window — a row in the
+shell's tab bar, named for the project — and Design opens one for every
+project, the one you used last in front. With no project yet, one window
+offers **Add project**.
+
+A project's canvases — every `design/<name>/` with a `canvas.toml` — run
+along the top of its window, each labelled with its folder name, and new ones
+show up within a couple of seconds. Click one to show it; drag one onto
+another to take its place (the order is kept). `+` (**New Canvas…**, ⌘⇧N)
+makes an empty canvas; its name becomes the folder (`Settings redesign` →
+`settings-redesign`). The window remembers which canvas it shows.
+
+Two Design windows can be on screen at once (Left and Right, say), each with
+its own canvas, view, pick, tour and notes. The one you last touched takes
+the keys and the View and Share menus; moving between them loses nothing.
+
+**Project → Close Window** (⌘⇧W) closes only the window; **Project → Open
+*name*** brings it back. Closing the last window quits Design. **Drop
+Project** forgets the active window's project, and
 `solactl design project.remove --path <folder>` forgets any project. The
 files are untouched.
 
@@ -180,12 +193,15 @@ Agents drive Design with `solactl design` or its MCP tools (see
 project, open a canvas, wait for reloads, screenshot an artboard, export it as
 a PDF, inspect what rendered, and read your selection.
 
-Agents never take your screen. A canvas an agent makes or opens is listed in
-the rail and runs off screen; several agents can work on their own canvases
-at once. While an agent is working in a canvas its rail row says **agent**;
-pick it to watch. An agent puts a canvas on your screen only when you ask it
-to (`--raise`). Canvases nobody has used for 10 minutes are closed in the
-background and reopen on the next call.
+Agents never take your screen. A canvas an agent makes or opens shows up
+along the top of its project's window (a project an agent registers gets a
+window behind yours) and runs off screen; several agents can work on their
+own canvases at once. While an agent is working in a canvas, its tab and its
+project's row in the shell's bar show a spinning ring; click the tab to
+watch. An agent puts a canvas on your screen only when you ask it to
+(`--raise`: the canvas comes up in its project's window). Canvases no window
+shows that nobody has used for 10 minutes are closed in the background and
+reopen on the next call.
 
 Boards nobody is looking at slow down to 1 frame a second: a canvas you are
 not on, and boards panned out of view. They keep painting, so a board you

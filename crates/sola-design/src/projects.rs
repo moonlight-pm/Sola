@@ -14,23 +14,24 @@ pub struct Project {
     pub id: String,
     pub name: String,
     pub root: PathBuf,
-    #[serde(default)]
-    pub collapsed: bool,
-    /// Canvas dir names in rail order (dragged). Canvases not listed
+    /// Canvas dir names in tab order (dragged). Canvases not listed
     /// follow, by name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub canvas_order: Vec<String>,
+    /// The canvas its window shows (a dir name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<String>,
 }
 
 impl Project {
-    /// This project's canvases on disk, in rail order.
+    /// This project's canvases on disk, in tab order.
     pub fn canvases(&self) -> Vec<crate::canvas::Entry> {
         let mut found = crate::canvas::scan(&self.root);
         self.order_canvases(&mut found);
         found
     }
 
-    /// Put `entries` (a scan, by name) in rail order.
+    /// Put `entries` (a scan, by name) in tab order.
     pub fn order_canvases(&self, entries: &mut [crate::canvas::Entry]) {
         let rank = |name: &str| {
             self.canvas_order
@@ -50,7 +51,7 @@ pub struct CanvasRef {
 }
 
 impl CanvasRef {
-    /// Rail item id. Project ids and canvas dir names never contain `/`.
+    /// Its key. Project ids and canvas dir names never contain `/`.
     pub fn key(&self) -> String {
         format!("{}/{}", self.project, self.canvas)
     }
@@ -70,6 +71,7 @@ pub struct Catalog {
     pub version: u32,
     #[serde(default)]
     pub projects: Vec<Project>,
+    /// The canvas last shown: its project's window opens in front.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected: Option<CanvasRef>,
 }
@@ -118,10 +120,19 @@ impl Catalog {
             id: id.clone(),
             name,
             root,
-            collapsed: false,
             canvas_order: Vec::new(),
+            selected: None,
         });
         Ok(id)
+    }
+
+    /// `at` is shown: its project's window shows it from now on, and that
+    /// window opens in front next time.
+    pub fn select(&mut self, at: &CanvasRef) {
+        if let Some(p) = self.projects.iter_mut().find(|p| p.id == at.project) {
+            p.selected = Some(at.canvas.clone());
+        }
+        self.selected = Some(at.clone());
     }
 
     /// The project registered at `root` exactly (not one above it).
@@ -137,31 +148,8 @@ impl Catalog {
         }
     }
 
-    /// Move project `id` in front of `before` (`None` = last).
-    pub fn move_project_before(&mut self, id: &str, before: Option<&str>) -> Result<(), String> {
-        let from = self
-            .projects
-            .iter()
-            .position(|p| p.id == id)
-            .ok_or_else(|| format!("unknown project '{id}'"))?;
-        if before == Some(id) {
-            return Ok(());
-        }
-        if let Some(b) = before {
-            if self.project(b).is_none() {
-                return Err(format!("unknown project '{b}'"));
-            }
-        }
-        let moved = self.projects.remove(from);
-        let at = before
-            .and_then(|b| self.projects.iter().position(|p| p.id == b))
-            .unwrap_or(self.projects.len());
-        self.projects.insert(at, moved);
-        Ok(())
-    }
-
     /// Move canvas `name` in front of `before` (`None` = last) within
-    /// `project`. `listed` is the project's canvases in rail order now; it
+    /// `project`. `listed` is the project's canvases in tab order now; it
     /// becomes the saved order (so deleted canvases fall out of it).
     pub fn move_canvas_before(
         &mut self,
@@ -203,6 +191,18 @@ impl Catalog {
             .map(|n| format!("{base}-{n}"))
             .find(|id| !taken(id))
             .expect("unbounded suffixes")
+    }
+}
+
+/// Where `from` goes when dropped on `onto` in `order`: it takes `onto`'s
+/// place. `Some(before)` (`None`: last); `None` when nothing moves.
+pub fn drop_place(order: &[String], from: &str, onto: &str) -> Option<Option<String>> {
+    let i = order.iter().position(|n| n == from)?;
+    let j = order.iter().position(|n| n == onto)?;
+    match i.cmp(&j) {
+        std::cmp::Ordering::Equal => None,
+        std::cmp::Ordering::Less => Some(order.get(j + 1).cloned()),
+        std::cmp::Ordering::Greater => Some(Some(onto.to_string())),
     }
 }
 
@@ -343,39 +343,49 @@ mod tests {
             id: id.into(),
             name: id.into(),
             root: PathBuf::from(format!("/{id}")),
-            collapsed: false,
             canvas_order: Vec::new(),
+            selected: None,
         }
     }
 
-    fn ids(cat: &Catalog) -> Vec<&str> {
-        cat.projects.iter().map(|p| p.id.as_str()).collect()
+    #[test]
+    fn select_remembers_each_projects_canvas() {
+        let mut cat = Catalog {
+            projects: vec![project("a"), project("b")],
+            ..Catalog::default()
+        };
+        let at = |p: &str, c: &str| CanvasRef {
+            project: p.into(),
+            canvas: c.into(),
+        };
+        cat.select(&at("a", "home"));
+        cat.select(&at("b", "settings"));
+        assert_eq!(cat.projects[0].selected.as_deref(), Some("home"));
+        assert_eq!(cat.projects[1].selected.as_deref(), Some("settings"));
+        assert_eq!(cat.selected, Some(at("b", "settings")));
     }
 
     #[test]
-    fn move_project_before_reorders_rail() {
-        let mut cat = Catalog {
-            projects: vec![project("a"), project("b"), project("c")],
-            ..Catalog::default()
-        };
-        cat.move_project_before("c", Some("a")).unwrap();
-        assert_eq!(ids(&cat), ["c", "a", "b"]);
-        cat.move_project_before("c", None).unwrap();
-        assert_eq!(ids(&cat), ["a", "b", "c"]);
-        cat.move_project_before("b", Some("b")).unwrap();
-        assert_eq!(ids(&cat), ["a", "b", "c"]);
-        assert!(cat.move_project_before("z", None).is_err());
-        assert!(cat.move_project_before("a", Some("z")).is_err());
-        assert_eq!(ids(&cat), ["a", "b", "c"]);
+    fn a_dropped_chip_takes_the_place_it_lands_on() {
+        let order: Vec<String> = ["a", "b", "c"].map(String::from).into();
+        assert_eq!(drop_place(&order, "a", "b"), Some(Some("c".into())));
+        assert_eq!(drop_place(&order, "a", "c"), Some(None));
+        assert_eq!(drop_place(&order, "c", "a"), Some(Some("a".into())));
+        assert_eq!(drop_place(&order, "b", "b"), None);
+        assert_eq!(drop_place(&order, "z", "b"), None);
+    }
+
+    #[test]
+    fn a_catalog_with_collapsed_projects_still_loads() {
+        let json = r#"{"version":1,"projects":[{"id":"a","name":"A","root":"/a","collapsed":true}]}"#;
+        let cat: Catalog = serde_json::from_str(json).unwrap();
+        assert_eq!(cat.projects[0].selected, None);
     }
 
     #[test]
     fn canvas_order_saves_and_sorts_new_canvases_last() {
         use crate::canvas::Entry;
-        let entry = |n: &str| Entry {
-            name: n.into(),
-            title: n.into(),
-        };
+        let entry = |n: &str| Entry { name: n.into() };
         let listed: Vec<String> = ["home", "onboarding", "settings"].map(String::from).into();
         let mut cat = Catalog {
             projects: vec![project("a")],

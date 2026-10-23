@@ -409,3 +409,29 @@ KP_Enter Cinema.
       "looks good". Not checked item by item:
       KP_0 / KP_4 / KP_6, row clicks switching sides, the last Full tab
       closing, the three inks, a shell restart keeping the side.
+
+## Phase 8 — Design: a window per project
+
+Spec: § Design: a window per project. Joshua (2026-10-23): like Projects,
+a project is a window, its canvases tabs along the top, labelled by
+folder name.
+
+- [x] **8a Catalog and canvases:** `Project.selected` (per project),
+      `collapsed` and project reordering gone; `canvas::Entry` without a
+      title; `canvas::create` names the folder and writes no title.
+- [x] **8b Windows:** `windows.rs` (kit `TabWindows`, project ↔ window,
+      each window's plane and scale, the active one); `iced::daemon`;
+      open a window per project; Close Window / Open *name*; the last
+      window quits.
+- [x] **8c Views per window:** the active window's canvas unparks into
+      the app; others draw from their parked view (camera, pick, tour,
+      notes); every message from a window activates it first; pacing,
+      eviction, budget and `shown` count every window's canvas.
+- [x] **8d The top bar:** `topbar.rs` — folder-name chips, agent ring,
+      drag to reorder, `+` New Canvas; the rail goes (`rail.rs` →
+      `dialogs.rs`).
+- [ ] **8e Verify:** tests pass (design 107), release build; applied
+      2026-10-23 (`pkg:sola-design` a296fbfc). Smoked by injection: the
+      window and its top bar, a chip click switching canvases. Not yet:
+      two Design windows on screen at once, drag reorder, New Canvas,
+      Close Window / Open, `--raise`, an agent-registered project.

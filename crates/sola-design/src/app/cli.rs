@@ -233,7 +233,6 @@ impl App {
                     .map(|c| {
                         json!({
                             "name": c.name,
-                            "title": c.title,
                             "path": canvas::canvas_dir(&p.root, &c.name),
                         })
                     })
@@ -291,8 +290,9 @@ impl App {
             "canvas": live.at.canvas,
             "path": live.dir,
             "error": live.error,
-            // On the human's screen; agents' canvases stay off it.
-            "shown": self.is_shown(key),
+            // In a window on the human's screen; agents' canvases stay
+            // off it.
+            "shown": self.displayed(key).is_some(),
             // Live link for the web (while Design runs).
             "share": self.share.as_ref().and_then(|s| s.url(key)),
         });
@@ -323,10 +323,13 @@ impl App {
 
     // ── changes ───────────────────────────────────────────────────
 
+    /// Register a project; its window opens behind.
     fn call_project_add(&mut self, p: &Value) -> Result<Value, String> {
         let id = self.catalog.add(str_param(p, "path")?)?;
         self.persist();
         self.rescan();
+        let open = self.open_window(&id, true);
+        self.later.push(open);
         let project = self.catalog.project(&id).expect("just added");
         Ok(json!({"id": project.id, "name": project.name, "root": project.root}))
     }
@@ -344,7 +347,8 @@ impl App {
             )
         })?;
         tracing::info!(project = %project.id, "call removed design project");
-        self.drop_project(&project.id);
+        let drop = self.drop_project(&project.id);
+        self.later.push(drop);
         Ok(json!({"id": project.id, "name": project.name, "root": project.root}))
     }
 
@@ -364,9 +368,10 @@ impl App {
     }
 
     /// `<project>/design/<slug(name)>/canvas.toml`, then open it. An existing
-    /// canvas of that name is opened, not replaced (`created: false`).
+    /// canvas of that name is opened, not replaced (`created: false`). The
+    /// folder is its label; no title is written.
     fn call_canvas_new(&mut self, p: &Value) -> Result<Value, String> {
-        let title = str_param(p, "name")?;
+        let name = str_param(p, "name")?;
         let raw = projects::expand_home(str_param(p, "path")?);
         let root = raw
             .canonicalize()
@@ -374,20 +379,21 @@ impl App {
         if !root.is_dir() {
             return Err(format!("{} is not a folder", root.display()));
         }
-        let slug = projects::slug(title);
+        let slug = projects::slug(name);
         let exists = canvas::canvas_dir(&root, &slug)
             .join(canvas::CANVAS_FILE)
             .is_file();
         let name = if exists {
             slug
         } else {
-            canvas::create(&root, title)?
+            canvas::create(&root, name)?
         };
         let (project, added) = self.ensure_project(&root)?;
         self.show(p, project, name, added, Some(!exists))
     }
 
-    /// Project id for `root`, registering it if Design does not know it.
+    /// Project id for `root`, registering it if Design does not know it
+    /// (its window opens behind).
     fn ensure_project(&mut self, root: &std::path::Path) -> Result<(String, bool), String> {
         if let Some(p) = self.catalog.at_root(root) {
             return Ok((p.id.clone(), false));
@@ -395,12 +401,16 @@ impl App {
         let id = self.catalog.add(&root.to_string_lossy())?;
         tracing::info!(project = %id, root = %root.display(), "call registered design project");
         self.persist();
+        self.rescan();
+        let open = self.open_window(&id, true);
+        self.later.push(open);
         Ok((id, true))
     }
 
     /// Make `canvas` of `project` live in the background — the human's
-    /// screen stays as it is — or, with `--raise`, show it and raise the
-    /// window. Reports its status. Refused when its boards do not fit.
+    /// screen stays as it is — or, with `--raise`, show it in its project's
+    /// window (opened if closed) and bring that window up. Reports its
+    /// status. Refused when its boards do not fit.
     fn show(
         &mut self,
         p: &Value,
@@ -414,8 +424,12 @@ impl App {
         let key = self.ensure_live_for_agent(&at)?;
         self.agent_touch(&key);
         if bool_param(p, "raise") {
-            self.show_canvas(at);
-            self.raise();
+            let open = self.open_window(&at.project, false);
+            self.later.push(open);
+            self.show_canvas(at.clone());
+            if let Some(window) = self.windows.window_of(&at.project) {
+                self.windows.show(window);
+            }
         }
         let mut v = self.status_json(&key);
         v["project_added"] = json!(added);
@@ -448,7 +462,7 @@ impl App {
         let Some(live) = self.live(&key) else {
             return Ok(json!({"closed": false, "reason": "not open"}));
         };
-        if self.is_shown(&key) {
+        if self.displayed(&key).is_some() {
             return Err("the human has this canvas on screen; it stays open".into());
         }
         let boards = live.boards.len();
@@ -494,19 +508,24 @@ impl App {
         Ok(json!({"zoom": self.camera.zoom, "moved": true, "shown": true}))
     }
 
-    /// `view` for an off-screen canvas: its parked camera.
+    /// `view` for a canvas not shown (another window's, or off screen): its
+    /// parked camera.
     fn view_parked(&mut self, key: &str, p: &Value) -> Result<Value, String> {
         let view = self
-            .plane_size
-            .ok_or("the Design window has not laid out a canvas yet")?;
+            .plane_of(key)
+            .ok_or("no Design window has laid out a canvas yet")?;
         let zoom = p.get("zoom").and_then(Value::as_f64).map(|z| z as f32);
         let mut camera = self.camera_of(key).ok_or(NO_CANVAS)?;
-        let parked = self.live(key).and_then(|l| l.parked).ok_or(NO_CANVAS)?;
-        if parked.human_camera {
+        let human = self
+            .live(key)
+            .and_then(|l| l.parked.as_ref())
+            .map(|p| p.human_camera)
+            .ok_or(NO_CANVAS)?;
+        if human {
             return Ok(json!({
                 "zoom": camera.zoom,
                 "moved": false,
-                "shown": false,
+                "shown": self.displayed(key).is_some(),
                 "reason": "the human framed this canvas; it stays where they put it",
             }));
         }
@@ -529,7 +548,8 @@ impl App {
             p.fit_pending = false;
             p.user_camera = true;
         }
-        Ok(json!({"zoom": camera.zoom, "moved": true, "shown": false}))
+        let shown = self.displayed(key).is_some();
+        Ok(json!({"zoom": camera.zoom, "moved": true, "shown": shown}))
     }
 
     // ── page calls ────────────────────────────────────────────────

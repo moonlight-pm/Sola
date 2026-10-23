@@ -1,7 +1,7 @@
 # Next — one tab list (the bar)
 
 **Date:** 2026-10-21  
-**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 6 (titlebars with menus, gaps, the bar as an island) and slice 5 (desktop workspaces, a browser profile each) applied and committed 2026-10-23; the dark grey base in the kit 2026-10-23; a Full zone (the halves keep their half) applied and committed 2026-10-23; the islands not started.  
+**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 6 (titlebars with menus, gaps, the bar as an island) and slice 5 (desktop workspaces, a browser profile each) applied and committed 2026-10-23; the dark grey base in the kit 2026-10-23; a Full zone (the halves keep their half) applied and committed 2026-10-23; Design a window per project applied 2026-10-23; the islands not started.  
 **Related:** design `design/next/` boards 05 (the master sidebar), 06 (one tab list) and their continued boards; idea [desks](../ideas/2026-10-12-desks.md) (this is its panel model); plan [`plans/2026-10-21-next-tab-bar-plan.md`](../plans/2026-10-21-next-tab-bar-plan.md)
 
 | | |
@@ -465,6 +465,43 @@ header puts a row at the end of the zone before it (the start of Full).
 | Super+KP_Enter | Cinema (toggle): the whole output, menubar and bar included |
 
 The kit Window menu's KP_0 item reads **Full**.
+
+## Design: a window per project (2026-10-23)
+
+The first of the app ports (one app at a time). **Decided (Joshua,
+2026-10-23):** Design works like Projects — a project is one window (one
+row in the shell's bar) and its canvases are tabs along the top. **A tab's
+label is the canvas's folder name** (`design/<name>/`); there is no
+separate title (`canvas.toml`'s `title` is no longer shown or written).
+
+My calls, mirroring Projects:
+
+- **Windows.** At start a window opens for every project (the one last
+  shown in front, the rest behind); none yet → one window with Add
+  Project. Closing a window keeps the project; Project → Open
+  *name* brings it back; the last window closing quits. The window's
+  title is the project's name, so the bar's row says it.
+- **The top bar.** A chip per canvas in the project's saved order: the
+  folder name, the selected one lifted, a working ring while an agent
+  called on it in the last 30 s. A click shows it; dragging a chip onto
+  another takes that place; `+` opens New Canvas (its name becomes the
+  folder, slugged). No `×` (a canvas is a folder on disk) and no rename.
+  The rail goes.
+- **Each window keeps its own canvas and view.** The window last focused
+  or touched is *active*: its canvas takes input, keys and menu actions,
+  agents' default target. Another Design window on screen draws its
+  canvas from that canvas's parked view (camera, pick, tour, open notes),
+  so moving between two windows loses nothing; its boards pace as on
+  screen. A canvas leaving its window (another tab picked, the window
+  closed) drops its pick and tour as before. A window's canvas goes live
+  when the window is first shown.
+- **Menus.** Project: Add Project… (⌘N), New Canvas… (⌘⇧N), Drop
+  Project, Close Window (⌘⇧W), Open *name* per closed project. View and
+  Share act on the active window.
+- **Agents.** Unchanged: calls run in the background; `--raise` selects
+  the canvas in its project's window (opening it if closed) and shows that
+  window. A canvas any window shows counts as on the human's screen
+  (`canvas.close` refuses it; `status.shown`).
 
 ## Not in slice 1
 
