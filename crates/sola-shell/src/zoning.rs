@@ -10,7 +10,13 @@ use tracing::info;
 
 use crate::stacks::HALVES;
 
-pub const MENUBAR_HEIGHT: i32 = 28;
+/// An island of the top row (board 03): the flower, the workspaces, the
+/// instruments, the clock — 28 px pills on the ground.
+pub const ISLAND_H: i32 = 28;
+
+/// The top row's window: a gap above its islands. Tiles and the tab bar
+/// start a gap below it (at 48), so the row is gap + island + gap.
+pub const MENUBAR_HEIGHT: i32 = GAP + ISLAND_H;
 
 /// Iced open size/position for menu, launcher, and switcher: usable area
 /// below the menubar. Matches [`Self::default_app_frame`].
@@ -679,15 +685,17 @@ mod tests {
 
     #[test]
     fn bar_and_two_halves_on_canto() {
-        assert_eq!(rect(&bar_frame(1, 1920, 1080)), (10, 38, 240, 1032));
-        assert_eq!(rect(&tile_frame(1, Zone::Left, 1920, 1080)), (260, 38, 820, 1032));
-        assert_eq!(rect(&tile_frame(1, Zone::Right, 1920, 1080)), (1090, 38, 820, 1032));
+        // Under the top row: gap + island + gap = 48 (board 03).
+        assert_eq!(MENUBAR_HEIGHT + GAP, 48);
+        assert_eq!(rect(&bar_frame(1, 1920, 1080)), (10, 48, 240, 1022));
+        assert_eq!(rect(&tile_frame(1, Zone::Left, 1920, 1080)), (260, 48, 820, 1022));
+        assert_eq!(rect(&tile_frame(1, Zone::Right, 1920, 1080)), (1090, 48, 820, 1022));
     }
 
     #[test]
     fn full_is_the_content_area() {
         let f = tile_frame(1, Zone::Fullscreen, 1920, 1080);
-        assert_eq!((rect(&f), f.fullscreen), ((260, 38, 1650, 1032), false));
+        assert_eq!((rect(&f), f.fullscreen), ((260, 48, 1650, 1022), false));
     }
 
     #[test]
@@ -732,20 +740,20 @@ mod tests {
     fn float_key_shrinks_the_tile_in_place() {
         let mut s = state_with_output(1920, 1080);
         let f = s
-            .float_in_place("sola-terminal", 7, Some((1090, 38, 820, 1032)))
+            .float_in_place("sola-terminal", 7, Some((1090, 48, 820, 1022)))
             .expect("frame");
-        assert_eq!(rect(&f), (1140, 88, 720, 932));
+        assert_eq!(rect(&f), (1140, 98, 720, 922));
         assert!(s.is_floating(7));
         assert_eq!(s.float_geometry["sola-terminal"].x, 1140);
         // Nothing to shrink from: the content area, inset.
         let f = s.float_in_place("other", 8, None).expect("frame");
-        assert_eq!(rect(&f), (310, 88, 1550, 932));
+        assert_eq!(rect(&f), (310, 98, 1550, 922));
     }
 
     #[test]
     fn gamescope_floats_at_the_nest_aspect() {
         let mut s = state_with_output(1920, 1080);
-        let f = s.float_in_place("gamescope", 9, Some((260, 38, 820, 1032))).expect("frame");
+        let f = s.float_in_place("gamescope", 9, Some((260, 48, 820, 1022))).expect("frame");
         let aspect = f.width as f32 / f.height as f32;
         assert!((aspect - 16.0 / 9.0).abs() < 0.01, "{aspect}");
         assert!(s.float("gamescope", 10, false).is_some());

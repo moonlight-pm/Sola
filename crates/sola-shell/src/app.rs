@@ -1890,14 +1890,14 @@ impl Shell {
 
     /// Per-window chrome theme.
     ///
-    /// - Menubar: permanently black background; foreground text/icons follow
-    ///   the real palette.
+    /// - Menubar: no fill — the top row's islands sit on the ground (Next
+    ///   board 03); foreground text/icons follow the real palette.
     /// - Overlays (menu, launcher, switcher): transparent window fill so the
     ///   OS background shows through, but all non-base palette tiers remain
     ///   opaque so kit components (card, popover, button) render correctly.
     pub fn theme(&self, window: iced::window::Id) -> iced::Theme {
         if Some(window) == self.menubar_window_id {
-            return theme::menubar(&self.theme, self.style.menubar_bg);
+            return theme::menubar(&self.theme, iced::Color::TRANSPARENT);
         }
         if Some(window) == self.tabbar_window_id {
             return self.theme.clone();
@@ -1905,56 +1905,33 @@ impl Shell {
         theme::overlay(&self.theme)
     }
 
-    /// Estimate the left-edge X of the system-stat indicator for `metric`.
-    ///
-    /// The stat cluster ([CPU] [GPU?] [MEM] [RX] [TX] [clock]) is right-aligned,
-    /// so we walk it right-to-left from the screen edge. Font-metric math, not a
-    /// post-layout measurement — good enough to drop a panel under its
-    /// indicator (the caller clamps so the card never runs off-screen).
+    /// Where the top row's right-hand items sit ([`crate::menubar::anchors`]).
+    fn right_edges(&self) -> crate::menubar::anchors::Edges {
+        let clock = crate::components::clock::format_clock(&self.menubar.clock_now);
+        crate::menubar::anchors::edges(&crate::menubar::anchors::Right {
+            output_w: self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0),
+            clock: &clock,
+            gpu: self.stats.gpu.is_some(),
+            spectrum: crate::audio::bar_icon(&self.audio.snapshot).is_some(),
+        })
+    }
+
+    /// Left edge of the stat item for `metric`, for hanging its panel.
     pub fn estimate_stat_x(&self, metric: crate::stats::Metric) -> f32 {
         use crate::stats::Metric;
-
-        // Keep in sync with menubar cluster phrases (pad lives inside chip_w).
-        const CLOCK_W: f32 = 166.0; // "%H:%M %a %Y-%m-%d" + MENU_PAD_H
-        let stat_w = crate::menubar::percent_chip_w();
-        let rate_w = crate::menubar::rate_chip_w();
-        let phrase = crate::menubar::PHRASE_GAP;
-
-        let output_w = self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
-        let has_gpu = self.stats.gpu.is_some();
-
-        // Cluster right edge sits at the screen edge; subtract leftward.
-        // Phrases L→R: extras · percents · rates · clock
-        let clock_left = output_w - CLOCK_W;
-        let tx_left = clock_left - phrase - rate_w;
-        let rx_left = tx_left - rate_w;
-        let mem_left = rx_left - phrase - stat_w;
-        let (gpu_left, cpu_left) = if has_gpu {
-            let g = mem_left - stat_w;
-            (g, g - stat_w)
-        } else {
-            (mem_left, mem_left - stat_w)
-        };
-
+        let e = self.right_edges();
         match metric {
-            Metric::Cpu => cpu_left,
-            Metric::Gpu => gpu_left,
-            Metric::Mem => mem_left,
-            Metric::Rx => rx_left,
-            Metric::Tx => tx_left,
+            Metric::Cpu => e.cpu,
+            Metric::Gpu => e.gpu,
+            Metric::Mem => e.mem,
+            Metric::Rx => e.rx,
+            Metric::Tx => e.tx,
         }
     }
 
-    /// Left edge of the Bluetooth chip (left of the spectrum when that
-    /// chip is shown, otherwise immediately left of CPU). Spectrum is its
-    /// own phrase, so a PHRASE_GAP sits between Bluetooth and the bars.
+    /// Left edge of the Bluetooth item (the extras island's last).
     pub fn estimate_bluetooth_x(&self) -> f32 {
-        let chip = crate::menubar::extra_chip_w();
-        if crate::audio::bar_icon(&self.audio.snapshot).is_some() {
-            self.estimate_audio_x() - crate::menubar::PHRASE_GAP - chip
-        } else {
-            self.estimate_stat_x(crate::stats::Metric::Cpu) - crate::menubar::PHRASE_GAP - chip
-        }
+        self.right_edges().bluetooth
     }
 
     /// Card-sized live frame for Super+K (not the full usable area).
@@ -1970,7 +1947,8 @@ impl Shell {
 
     /// Card-sized live frame for the menu overlay (not the full output).
     fn menu_overlay_spec(&self) -> crate::zoning::MenuOverlaySpec {
-        const GUTTER: f32 = 8.0;
+        // A panel at the right edge lines up with the row's islands.
+        const GUTTER: f32 = crate::zoning::GAP as f32;
         let ow = self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
         let clamp_x = |x: f32, w: f32| x.min((ow - w - GUTTER).max(0.0)).max(0.0);
         let (x, width, height) = match self.open_panel {
@@ -2046,11 +2024,9 @@ impl Shell {
         }
     }
 
-    /// Left edge of the spectrum phrase (immediately left of CPU).
+    /// Left edge of the spectrum island.
     pub fn estimate_audio_x(&self) -> f32 {
-        self.estimate_stat_x(crate::stats::Metric::Cpu)
-            - crate::menubar::PHRASE_GAP
-            - crate::menubar::audio_chip_w()
+        self.right_edges().spectrum
     }
 
     /// Change `open_panel`, stopping Bluetooth discovery and clearing the
@@ -2373,8 +2349,8 @@ impl Shell {
                 }
 
                 // Only the flower opens a menubar dropdown now (app menus are
-                // in their windows' titlebars); it is the bar's first element.
-                self.menu_anchor_x = 0.0;
+                // in their windows' titlebars); its island starts a gap in.
+                self.menu_anchor_x = crate::zoning::GAP as f32;
                 self.menu_open = true;
                 self.current_open_index = Some(index);
                 self.current_open_is_system = is_system;
@@ -2392,8 +2368,8 @@ impl Shell {
                     && self.current_open_is_system == is_system;
                 if self.menu_open && !same {
                     // Only the flower opens a menubar dropdown now (app menus are
-                // in their windows' titlebars); it is the bar's first element.
-                self.menu_anchor_x = 0.0;
+                    // in their windows' titlebars); its island starts a gap in.
+                    self.menu_anchor_x = crate::zoning::GAP as f32;
                     self.current_open_index = Some(index);
                     self.current_open_is_system = is_system;
                     self.set_open_panel(None);

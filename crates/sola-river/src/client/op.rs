@@ -67,9 +67,10 @@ pub struct OpState {
 /// collapse it to nothing.
 pub const MIN_DIM: i32 = 100;
 
-/// Top of the usable float area = bottom of the shell menubar.
-/// Keep in sync with `sola_shell::zoning::MENUBAR_HEIGHT` (28).
-pub const MENUBAR_HEIGHT: i32 = 28;
+/// Top of the usable float area = bottom of the shell's top row (a gap,
+/// then its 28 px islands). Keep in sync with
+/// `sola_shell::zoning::MENUBAR_HEIGHT` (38).
+pub const MENUBAR_HEIGHT: i32 = 38;
 
 // --- Pure geometry -------------------------------------------------------
 

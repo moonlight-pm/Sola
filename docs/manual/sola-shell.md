@@ -57,12 +57,20 @@ group reboot and power off without a password (this takes effect after
 
 ## Menubar
 
+The menubar is the top row of the desk: a row of islands on the black
+ground, a gap in from the edges, nothing behind them. On the left, the
+flower (amber, in its own circle) and an island of workspace pills; while
+a message shows, it sits in the middle; on the right, an island per group:
+mail, alerts, mouse and Bluetooth; the spectrum; CPU, GPU and MEM; RX and
+TX; the clock. Click an item for its panel; its island lifts while the
+panel is open. Windows and the tab bar start a gap below the row.
+
 CPU / GPU / MEM / RX / TX in the menubar are fixed dithered pixel graphs
 of the last ~12 seconds. Exact numbers are in the dropdown that opens on
 click.
 
-The volume chip sits right of Bluetooth and left of CPU, with the same gap
-on both sides. It is a 12-band LED spectrum analyzer of what the default
+The volume island sits right of the mail / Bluetooth island and left of
+CPU. It is a 12-band LED spectrum analyzer of what the default
 output is playing; there is no speaker glyph. Click the bars for the
 volume popover. The popover lists outputs and inputs; click a row to make
 it the default (`wpctl set-default`). Media keys change the volume on that

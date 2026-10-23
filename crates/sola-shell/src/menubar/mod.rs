@@ -1,16 +1,17 @@
 //! Menubar window — state, lifecycle, and view entry point.
 //!
-//! The menubar is the first of the four shell windows to open. It provides:
-//! - Left cluster: system-menu button, then a pill per workspace (Next
-//!   slice 5; app menus are in their windows' titlebars).
-//! - Right cluster: phrases, tight within and a breath between —
-//!   extras (mail / bell / mouse battery / bluetooth), spectrum, percents
-//!   (CPU / GPU / MEM), rates (RX / TX), clock.
+//! The top row of the desk (Next board 03, "a bubble per group"): the
+//! shell's islands on the ground, a gap in from every edge, no band behind
+//! them. Left: the flower (system menu), then the workspaces. Center: a
+//! toast while one shows. Right, an island per group: extras (mail / bell
+//! / mouse battery / bluetooth), the spectrum, the meters (CPU / GPU /
+//! MEM), the network (RX / TX), the clock. Only the look of the islands
+//! is here; the surfaces that grow out of them come later.
 //!
-//! Window state lives in [`MenubarState`]; the view is in [`view`].
-//! Density and type live in the view (compact chrome sizes, font roles);
-//! bar height stays fixed so zoning / overlay Y offsets stay stable.
+//! Window state lives in [`MenubarState`]; the view is in [`view`]; where
+//! the right-hand items sit, for hanging their panels, in [`anchors`].
 
+pub mod anchors;
 pub mod pills;
 pub mod view;
 
@@ -18,45 +19,25 @@ use chrono::Local;
 use iced::window;
 use sola_kit::app::window_settings;
 
-/// Height of the menubar window in logical pixels.
-/// Keep in sync with [`crate::zoning::MENUBAR_HEIGHT`] and overlay Y=28.
-pub const WINDOW_HEIGHT: u32 = 28;
-
-/// Horizontal pad for left-side menu titles (macOS menu-title rhythm).
-pub const MENU_PAD_H: f32 = 9.0;
-/// Horizontal pad for icon extras (bell, bluetooth, mail) and the spectrum.
-pub const EXTRA_PAD_H: f32 = 5.0;
-/// Horizontal pad for CPU / GPU / MEM / RX / TX chips.
-pub const STAT_PAD_H: f32 = 6.0;
-/// Breath between right-cluster phrases (extras · percents · rates · clock).
-pub const PHRASE_GAP: f32 = 12.0;
-/// Gap between a stat label and its pixel graph.
-pub const STAT_INNER_SPACING: f32 = 4.0;
-/// Lucide extras in the right cluster.
+/// Height of the menubar window in logical pixels: a gap, then the
+/// islands ([`crate::zoning::MENUBAR_HEIGHT`]).
+pub const WINDOW_HEIGHT: u32 = crate::zoning::MENUBAR_HEIGHT as u32;
+/// An island's height (a pill: its corners are half of it).
+pub const ISLAND_H: f32 = crate::zoning::ISLAND_H as f32;
+/// The ground between the row and the output's edges.
+pub const EDGE: f32 = crate::zoning::GAP as f32;
+/// Between islands.
+pub const ISLAND_GAP: f32 = 6.0;
+/// Inside an island, either side of its content.
+pub const ISLAND_PAD_H: f32 = 12.0;
+/// Between items in one island (CPU · GPU · MEM, the extras).
+pub const ITEM_GAP: f32 = 12.0;
+/// Between a stat label and its pixel graph.
+pub const STAT_INNER_SPACING: f32 = 5.0;
+/// Lucide extras and the flower.
 pub const ICON_SIZE: u16 = 14;
-
-/// Chrome 13pt advance used only for overlay-anchor estimates.
-const CHROME_CHAR_W: f32 = 7.5;
-
-/// Icon extra chip width (glyph + pad). Overlay anchors walk from this.
-pub fn extra_chip_w() -> f32 {
-    ICON_SIZE as f32 + EXTRA_PAD_H * 2.0
-}
-
-/// Volume chip: spectrum analyzer only (the bars are the hit target).
-pub fn audio_chip_w() -> f32 {
-    crate::audio::wave::SPECTRUM_W + EXTRA_PAD_H * 2.0
-}
-
-/// CPU / GPU / MEM chip width (3-letter label + fixed pixel graph).
-pub fn percent_chip_w() -> f32 {
-    3.0 * CHROME_CHAR_W + STAT_INNER_SPACING + crate::stats::pixel::GRAPH_W + STAT_PAD_H * 2.0
-}
-
-/// RX / TX chip width (2-letter label + fixed pixel graph).
-pub fn rate_chip_w() -> f32 {
-    2.0 * CHROME_CHAR_W + STAT_INNER_SPACING + crate::stats::pixel::GRAPH_W + STAT_PAD_H * 2.0
-}
+/// The row's type size (labels, clock, workspace names).
+pub const CHROME_SIZE: f32 = 13.0;
 
 /// Identifies one menubar label for the keyboard-shortcut "flash" feedback,
 /// using the same `(is_system, index)` addressing as the open-menu state:
@@ -184,17 +165,8 @@ mod tests {
     }
 
     #[test]
-    fn cluster_chip_widths_are_tighter_than_old_islands() {
-        // Old cluster was 9+4+9 pad/gap per item (~80px percents, ~115px rates).
-        assert!(extra_chip_w() < 32.0);
-        assert!(percent_chip_w() < 80.0);
-        assert!(rate_chip_w() < 80.0);
-        assert_eq!(percent_chip_w() - rate_chip_w(), CHROME_CHAR_W);
-        assert!(PHRASE_GAP > EXTRA_PAD_H * 2.0);
-        assert_eq!(
-            audio_chip_w(),
-            crate::audio::wave::SPECTRUM_W + EXTRA_PAD_H * 2.0
-        );
-        assert!(crate::audio::wave::SPECTRUM_W > crate::stats::pixel::GRAPH_W * 2.5);
+    fn the_row_is_a_gap_then_an_island() {
+        assert_eq!(WINDOW_HEIGHT as f32, EDGE + ISLAND_H);
+        assert!(ISLAND_GAP < ITEM_GAP);
     }
 }

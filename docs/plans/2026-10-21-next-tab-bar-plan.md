@@ -435,3 +435,24 @@ folder name.
       window and its top bar, a chip click switching canvases. Not yet:
       two Design windows on screen at once, drag reorder, New Canvas,
       Close Window / Open, `--raise`, an agent-registered project.
+
+## Phase 9 — The top row's look (board 03)
+
+Spec: § The top row's look. Joshua (2026-10-23): board 03's bubbles for
+what the bar shows today; no island behavior.
+
+- [x] **9a Geometry:** `zoning::ISLAND_H`, `MENUBAR_HEIGHT` = gap +
+      island (38); the bar and tiles from 48; sola-river's float clamp at
+      38.
+- [x] **9b Islands:** `menubar::view::island` (sheen, lit top edge,
+      open lift) and `item`; flower circle in Sola amber; the workspace
+      island of pills (`pills.rs`); toast island; extras, spectrum,
+      meters, network and clock islands; no window fill.
+- [x] **9c Anchors:** `menubar/anchors.rs` walks the right side with the
+      view's metrics; the flower menu hangs a gap in; right-edge panels
+      line up with the row.
+- [x] **9d Verify:** shell 225, river 69; release build.
+- [x] **9e Apply and look:** applied 2026-10-23 (`pkg:sola` 1e38fcad);
+      a screenshot shows the islands at y 10–38, the edges 10 in, tiles
+      from 48.
+

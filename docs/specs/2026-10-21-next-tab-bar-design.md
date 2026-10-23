@@ -1,7 +1,7 @@
 # Next — one tab list (the bar)
 
 **Date:** 2026-10-21  
-**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 6 (titlebars with menus, gaps, the bar as an island) and slice 5 (desktop workspaces, a browser profile each) applied and committed 2026-10-23; the dark grey base in the kit 2026-10-23; a Full zone (the halves keep their half) applied and committed 2026-10-23; Design a window per project applied 2026-10-23; the islands not started.  
+**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 6 (titlebars with menus, gaps, the bar as an island) and slice 5 (desktop workspaces, a browser profile each) applied and committed 2026-10-23; the dark grey base in the kit 2026-10-23; a Full zone (the halves keep their half) applied and committed 2026-10-23; Design a window per project applied 2026-10-23; the top row's look (board 03) 2026-10-23; the islands not started.  
 **Related:** design `design/next/` boards 05 (the master sidebar), 06 (one tab list) and their continued boards; idea [desks](../ideas/2026-10-12-desks.md) (this is its panel model); plan [`plans/2026-10-21-next-tab-bar-plan.md`](../plans/2026-10-21-next-tab-bar-plan.md)
 
 | | |
@@ -337,9 +337,9 @@ islands of board 03 come later.
 
 | Thing | Rect |
 |--|--|
-| Menubar | 0, 0, 1920 × 28 (unchanged) |
-| Bar | 10, 38, 240 × 1032 |
-| Content area | 260, 38, 1650 × 1032 |
+| Menubar | 0, 0, 1920 × 28 (unchanged; **2026-10-23:** the top row, 38 — § The top row's look) |
+| Bar | 10, 38, 240 × 1032 (**2026-10-23:** 10, 48, 240 × 1022) |
+| Content area | 260, 38, 1650 × 1032 (**2026-10-23:** 260, 48, 1650 × 1022) |
 | Left / Right | 820 × 1032 each, 10 apart (**2026-10-23:** a lone half keeps its 820) |
 | Full (was Fullscreen) | The content area |
 | Cinema | The whole output, no titlebar, no gap |
@@ -465,6 +465,34 @@ header puts a row at the end of the zone before it (the start of Full).
 | Super+KP_Enter | Cinema (toggle): the whole output, menubar and bar included |
 
 The kit Window menu's KP_0 item reads **Full**.
+
+## The top row's look (board 03, 2026-10-23)
+
+**Decided (Joshua, 2026-10-23):** the system top bar takes board 03's look
+— "a bubble per group", the PROPOSED pick — for what is there today. No
+island behavior yet (no surfaces growing from their bubble, no live
+center beyond the toast, no agents on the left).
+
+| Thing | Rect / look |
+|--|--|
+| Top row | 0, 0, output × 38: a 10 px gap, then the islands; no fill (the ground shows) |
+| Islands | 28 px pills from 10 to output − 10, 6 apart, at y 10 |
+| Bar, content area | From y 48 (gap + island + gap), as the board's tiles |
+
+- **An island:** its face between the raised and hover greys with a soft
+  top sheen, a 1 px lit top edge (the face sits 1 px into a lighter pill,
+  so the rim thins down the round ends), 12 px in either side. One whose
+  panel shows lifts a step (the hover grey, a brighter sheen).
+- **Left:** the flower in a 28 px circle, Sola amber; then one island of
+  workspace pills (3 px in, 1 apart; a pill 22 px, 9 px in; the showing
+  one filled at 14% ink; names at 52% ink, numbers at 34%).
+- **Center:** the toast, as an island, while one shows.
+- **Right, an island per group:** extras (mail, bell, mouse battery,
+  Bluetooth), the spectrum, the meters (CPU, GPU, MEM), the network (RX,
+  TX), the clock; items 12 apart, each its own hit target. Panels hang
+  from their item (`menubar::anchors` walks the same metrics).
+- The menubar window is 38 px; sola-river's float clamp follows. The
+  `shell-menubar-bg` token is no longer drawn.
 
 ## Design: a window per project (2026-10-23)
 
