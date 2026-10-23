@@ -1,12 +1,12 @@
 //! sola-paint — default image viewer/editor for Sola.
 //!
-//! THESIS: open images land here, not in a throwaway preview. Left tab
-//! strip of open files, graphite well with a checker stage, crop/rotate/flip
-//! on the picture itself.
-//! OWN-WORLD: sola-kit graphite chrome (`SidebarPanel` Large + chrome strip),
-//! checker well as the only subject texture.
+//! THESIS: open images land here, not in a throwaway preview. A window per
+//! open image (a tab in the shell's bar), graphite well with a checker
+//! stage, crop/rotate/flip on the picture itself.
+//! OWN-WORLD: sola-kit graphite chrome (titlebar + tool strip), checker
+//! well as the only subject texture.
 //! STORY: drop a path or open a file; crop on the canvas; save.
-//! FIRST VIEWPORT: left tabs, top tool strip, image on a dark well.
+//! FIRST VIEWPORT: top tool strip, image on a dark well.
 //! FORM: kit Operate surface inside the established Sola world.
 
 mod app;
@@ -14,6 +14,7 @@ mod doc;
 mod geom;
 mod instance;
 mod stage;
+mod windows;
 
 use iced::keyboard;
 use iced::{Point, Size};
@@ -24,8 +25,13 @@ use sola_bus::Message;
 #[derive(Debug, Clone)]
 enum Msg {
     Bus(Arc<Message>),
-    Select(u64),
-    Close(u64),
+    /// A message from a window: that window is the one acted on.
+    At(iced::window::Id, Box<Msg>),
+    /// A window's focus and close events.
+    Window(iced::window::Id, iced::window::Event),
+    /// Boot has waited for the saved session; open the empty window if
+    /// nothing opened.
+    BootSettled,
     OpenDialog,
     SaveAsDialog,
     Picker(sola_kit::components::file_picker::Message),
@@ -55,7 +61,6 @@ enum Msg {
         select: Option<std::path::PathBuf>,
     },
     KeyPressed(keyboard::Key, keyboard::Modifiers),
-    WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
     TitleClose,

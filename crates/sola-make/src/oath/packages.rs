@@ -48,6 +48,7 @@ pub const PACKAGES: &[Package] = &[
             "sola-session",
             "sola-terminal",
             "sola-projects",
+            "sola-paint",
             "solactl",
             "sola-oath",
             "sola-kvm",

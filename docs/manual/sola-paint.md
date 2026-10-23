@@ -9,17 +9,23 @@ Paint (`sola-paint`) is Sola's default image viewer and editor.
 - `solactl open /path/to/photo.png`
 - `sola-paint /path/to/photo.png`
 
-A second open (MIME, `solactl open`, or `sola-paint path`) hands off to
-the running window and opens another tab.
+Each open image is its own window — a row in the shell's tab bar, named
+for the file. A second open (MIME, `solactl open`, or `sola-paint path`)
+hands off to the running Paint and opens another window; an image that is
+already open comes up instead.
 
 Super+Shift+3/4/5 screenshots copy to the clipboard; they do not open
 Paint.
 
 ## Edit
 
-Open images are tabs on the left. Hover a tab for ×. Tabs (file paths)
-come back after quit; missing files are dropped. Unsaved edits are not
-kept across a restart.
+**Close Window** (⌘W, or the titlebar's close dot) closes the image;
+closing the last window quits Paint. The open images (file paths) come back
+after quit, each in its window and place; missing files are dropped.
+Unsaved edits are not kept across a restart. With nothing open, Paint
+shows one window with **Open image**.
+
+The tools, keys and menus act on the window you are in.
 
 The toolbar has Open, Crop, rotate, flip, Undo, and Save. Hover an icon for
 its name and shortcut.

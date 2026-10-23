@@ -76,7 +76,7 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | `crates/sola-monitor` | System monitor: bus audit + call-plane observer |
 | `crates/sola-kvm` | KVM / input bridge (novus server → Linux or Mac client) |
 | `crates/sola-preview` | Argv / launcher image viewer (shell hotkeys copy screenshots to the clipboard) |
-| `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; tabs in `~/.config/sola/paint.yaml`) |
+| `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; on `next` a window per image, kit `TabWindows` keyed by path; open images in sticky `PaintSession`; ships in `pkg:sola` on Oath) |
 | `crates/sola-scope` | Pixel loupe: magnified grid around the pointer (`compositor.sample`) |
 | `crates/sola-spotify` | Kit Spotify client: Web API + librespot Connect, MPRIS. Catalogue reads (playlists, rootlist, albums, artist top tracks) prefer the librespot session (`session_reads.rs`; no per-app quota) and fall back to the shared Web API app, whose traffic is budgeted (`api/client.rs` cooldown/probe/background slots; `worker.rs` page freshness, single-flight library, incremental liked sync, slow remote poll nudged by Connect cluster pushes). Disk writes from the UI go through one writer thread (`cache.rs`). Tokens + `skipped.json` + `liked.json` + `profile.json` (last profile, so sign-in skips `/me`) under `~/.local/state/sola/spotify/`; settings (last page + last track + last playlist + Back/Forward stack, max 20 back) `~/.config/sola/spotify/settings.json`; page/audio/art cache `~/.cache/sola/spotify/`. |
 | `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |

@@ -456,3 +456,23 @@ what the bar shows today; no island behavior.
       a screenshot shows the islands at y 10–38, the edges 10 in, tiles
       from 48.
 
+## Phase 10 — Paint: a window per image
+
+Spec: § Paint: a window per image. Joshua (2026-10-23).
+
+- [x] **10a Windows:** `windows.rs` (kit `TabWindows` keyed by path, a
+      stage per window, the focused one); `iced::daemon`; the sidebar
+      gone; Close Window closes the image, the last quits; the no-image
+      window after a 400 ms wait for the session.
+- [x] **10b Acting on a window:** every message from a window (and its
+      keys) focuses it; tools, crop, zoom and the file dialog act there.
+- [x] **10c Verify:** paint 12 tests, clippy clean, release build.
+- [x] **10d Apply and smoke:** Paint was not in canto's Oath packages;
+      Joshua added it to `pkg:sola` (`sola-make` `oath/packages.rs`),
+      applied 2026-10-23 (`pkg:sola` ba25bab6, `/bin/sola-paint`). Smoked
+      by injection: two `solactl open`s (the second hands off) open a
+      window each, rows in the bar named for the file; the close dot
+      closes one image and the other stays; Super+Q then a bare launch
+      brings both windows back to their places (Joshua saw both); closing
+      the last window quits.
+
