@@ -111,7 +111,7 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | Binaries | Dev install `/opt/sola/bin/`; images stage from `target/release` |
 | Logs | `paths::log_dir()` (`/opt/sola/log/` on NixOS); stderr too, coloured only on a terminal |
 | Wayland socket | The PM publishes `$XDG_RUNTIME_DIR/sola-wayland`; without it (Oath) sola-river and the session use a live `wayland-*` socket |
-| Persistent stickies | Bus writes `~/.config/sola/state.yaml` (some topics have their own files, e.g. `theme/current.yaml`) |
+| Persistent stickies | Bus writes `~/.config/sola/state.yaml` (some topics have their own files, e.g. `theme/current.yaml`; the shell seeds `Topic::Theme` when that file is missing and, on `next`, re-emits a saved theme still on the retired slate values with their greys) |
 | Browser vault session | `~/.local/share/sola/browser/vault-session.json` (age-encrypted tokens + user key; **Log out** deletes). Prefs `~/.config/sola/browser/vault.json`. |
 | Browser HTTP auth | Per-profile `profiles/<uuid>/http-auth.json` (age-encrypted Basic/Digest; kit Sign in). |
 | Arcade library cache | `~/.config/sola/arcade-library.json` (scan snapshot; bg rescan on open; `steamapps/` watch) |

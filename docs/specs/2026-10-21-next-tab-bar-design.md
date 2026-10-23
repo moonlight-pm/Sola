@@ -1,14 +1,14 @@
 # Next — one tab list (the bar)
 
 **Date:** 2026-10-21  
-**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 6 (titlebars with menus, gaps, the bar as an island) applied 2026-10-23; slice 5 and the islands not started.  
+**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 6 (titlebars with menus, gaps, the bar as an island) and slice 5 (desktop workspaces, a browser profile each) applied and committed 2026-10-23; the dark grey base in the kit 2026-10-23; the islands not started.  
 **Related:** design `design/next/` boards 05 (the master sidebar), 06 (one tab list) and their continued boards; idea [desks](../ideas/2026-10-12-desks.md) (this is its panel model); plan [`plans/2026-10-21-next-tab-bar-plan.md`](../plans/2026-10-21-next-tab-bar-plan.md)
 
 | | |
 |--|--|
-| **Implementation** | On `next`, applied on canto. Slice 1 (2026-10-21): `crates/sola-shell/src/stacks.rs` (model), `tabbar/` (window + view), `zoning.rs` (bar, tile, present frames; floats), `app.rs` / `app/bus.rs` (composition, placement, focus, zone keys, `TabLayout`); sola-bus `Topic::WindowParent` + `Topic::TabLayout`; sola-river forwards River's `parent`. Slice 2: `Topic::Tab` / `Topic::TabWindow`, `pairing.rs`, kit `tabs::TabWindows`; Terminal a window per tab. Slice 4: the browser a window per page, groups and the strip gone (4g). Slice 3 as changed: Projects a window per project with a top bar of tabs; its bar row carries the project's activity (`Topic::TabActivity`, 2026-10-22). |
+| **Implementation** | On `next`, applied on canto. Slice 1 (2026-10-21): `crates/sola-shell/src/stacks.rs` (model), `tabbar/` (window + view), `zoning.rs` (bar, tile, present frames; floats), `app.rs` / `app/bus.rs` (composition, placement, focus, zone keys, `TabLayout`); sola-bus `Topic::WindowParent` + `Topic::TabLayout`; sola-river forwards River's `parent`. Slice 2: `Topic::Tab` / `Topic::TabWindow`, `pairing.rs`, kit `tabs::TabWindows`; Terminal a window per tab. Slice 4: the browser a window per page, groups and the strip gone (4g). Slice 3 as changed: Projects a window per project with a top bar of tabs; its bar row carries the project's activity (`Topic::TabActivity`, 2026-10-22). Slice 6 (`ec059189`): kit `window_frame`, the gap grid, the bar island, `Topic::WindowChrome`. Slice 5 (`388df10c`): `stacks/` a desk per workspace, pills, `Topic::Workspaces` / `Topic::WindowWorkspace`; the browser's router runs every profile's helper, pages reopen under their workspace's profile. Grey base (`ba33fda9`): `Palette::seed` and the kit in neutral greys, `Theme::retire_slate`. |
 | **Dogfood** | canto, branch `next` (rivulet); smoked by injection — detail in `CURRENT.md` and the `shell-desks` capability row. |
-| **Gaps** | Slice 5 (desks of windows, N6); the islands (board 03); slice 6 leftovers (menu folding, titlebar zone glyph); a dialog riding its parent unsmoked; browser ⌘-click, vault, downloads unsmoked; no keyboard tab switching in a project's top bar. |
+| **Gaps** | Apps that still keep their own document list (Paint, Design, Bots, the wrapper's popups) — next, one app at a time; the islands (board 03); a workspace overview; slice 6 leftovers (menu folding, titlebar zone glyph); a dialog riding its parent unsmoked; browser ⌘-click, vault, downloads unsmoked; no keyboard tab switching in a project's top bar. |
 
 ## Intent
 
@@ -32,7 +32,7 @@ shell's list, not to sola-river.
 | N2 | **Two tiled zones, Left and Right, 50 / 50**, plus Floating. canto has a 1920 × 1080 display. The layout is one constant in the shell; it becomes configurable if Next goes back to novus (5120 × 2160, where board 05 drew three columns). |
 | N3 | A new window joins the **focused zone**. |
 | N4 | The bar is **docked**, 240 px, always on. |
-| N8 | The bar comes first, under today's menubar. Titlebars with menus (board 01) arrive as each app moves to a window per tab; gaps (02) and islands (03) after; the dark grey base waits for the kit overhaul. |
+| N8 | The bar comes first, under today's menubar. Titlebars with menus (board 01) arrive as each app moves to a window per tab; gaps (02) and islands (03) after; the dark grey base waits for the kit overhaul (**amended 2026-10-23:** Joshua asked for the grey base now — in the kit on `next`; the choosable accent still waits for the overhaul). |
 
 Proposed on board 06 and accepted for now, confirmed at their slice:
 **N6** a workspace is bound to a project (**dropped for now**, Joshua

@@ -256,10 +256,17 @@ chrome driving it, so the risky half is smoked before the chrome changes:
    (the rail goes). Built and applied 2026-10-21 (`f6ef9cf8`). Its row in
    the shell's bar shows the project's activity (2026-10-22, `2c4b95a4`):
    a diamond when a tab waits on a decision, a ring when one works.
-4. Titlebars with menus, gaps, the bar as an island — Phase 6 below
-   (started 2026-10-22). Islands (board 03) after.
-5. Desktop workspaces with a browser profile each — Phase 5 below
-   (started 2026-10-23).
+4. ~~Titlebars with menus, gaps, the bar as an island~~ — Phase 6 below,
+   committed `ec059189` (2026-10-23). Islands (board 03) after.
+5. ~~Desktop workspaces with a browser profile each~~ — Phase 5 below,
+   committed `388df10c` (2026-10-23).
+6. ~~The dark grey base~~ — Joshua asked for it ahead of the kit overhaul
+   (2026-10-23): seed, kit, apps' own colors and `design/tokens.css` in
+   neutral greys; the shell moves a saved slate theme
+   (`Theme::retire_slate`). Committed `ba33fda9`, applied.
+7. The apps that still keep their own document list move to a window per
+   document, **one app at a time** (Joshua, 2026-10-23; paused before the
+   first). Candidates: Paint, Design, Bots, the wrapper's popups.
 
 ## Phase 5 — Desktop workspaces, a browser profile each (slice 5)
 
