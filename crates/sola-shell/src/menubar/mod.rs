@@ -34,6 +34,9 @@ pub const ISLAND_PAD_H: f32 = 12.0;
 pub const ITEM_GAP: f32 = 12.0;
 /// Between a stat label and its pixel graph.
 pub const STAT_INNER_SPACING: f32 = 5.0;
+/// The spectrum's island: inset the same all round, so the matrix's round
+/// ends sit concentric with the pill's.
+pub const SPECTRUM_PAD_H: f32 = (ISLAND_H - crate::audio::wave::SPECTRUM_H) / 2.0;
 /// Lucide extras and the flower.
 pub const ICON_SIZE: u16 = 14;
 /// The row's type size (labels, clock, workspace names).

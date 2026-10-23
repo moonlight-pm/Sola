@@ -5,7 +5,10 @@
 
 use sola_kit::fonts;
 
-use super::{CHROME_SIZE, EDGE, ICON_SIZE, ISLAND_GAP, ISLAND_PAD_H, ITEM_GAP, STAT_INNER_SPACING};
+use super::{
+    CHROME_SIZE, EDGE, ICON_SIZE, ISLAND_GAP, ISLAND_PAD_H, ITEM_GAP, SPECTRUM_PAD_H,
+    STAT_INNER_SPACING,
+};
 
 /// What the right side shows: the islands and items that come and go.
 pub struct Right<'a> {
@@ -57,7 +60,7 @@ fn edges_with(r: &Right<'_>, text: &dyn Fn(&str) -> f32) -> Edges {
     let cpu = x;
     x -= ISLAND_PAD_H + ISLAND_GAP;
     let spectrum = if r.spectrum {
-        x -= ISLAND_PAD_H + crate::audio::wave::SPECTRUM_W + ISLAND_PAD_H;
+        x -= SPECTRUM_PAD_H + crate::audio::wave::SPECTRUM_W + SPECTRUM_PAD_H;
         let left = x;
         x -= ISLAND_GAP;
         left
@@ -102,7 +105,7 @@ mod tests {
         assert_eq!(e.mem, e.rx - 2.0 * ISLAND_PAD_H - ISLAND_GAP - stat);
         assert_eq!(e.cpu, e.gpu - ITEM_GAP - stat);
         let spectrum_right = e.cpu - ISLAND_PAD_H - ISLAND_GAP;
-        assert_eq!(e.spectrum, spectrum_right - crate::audio::wave::SPECTRUM_W - 2.0 * ISLAND_PAD_H);
+        assert_eq!(e.spectrum, spectrum_right - crate::audio::wave::SPECTRUM_W - 2.0 * SPECTRUM_PAD_H);
         assert_eq!(e.bluetooth, e.spectrum - ISLAND_GAP - ISLAND_PAD_H - ICON_SIZE as f32);
     }
 

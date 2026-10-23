@@ -4,6 +4,8 @@
 //!
 //! Rasterized to a nearest-neighbor RGBA image (same reason as
 //! [`crate::stats::pixel`]: iced canvas 1×1 rectangles drop on GLES2).
+//! The matrix's ends are round — a stadium as tall as the matrix — so in
+//! its island, inset the same all round, they run with the pill's ends.
 
 use iced::widget::image::{self, FilterMethod};
 use iced::{Color, ContentFit, Element, Length, Theme};
@@ -81,7 +83,33 @@ fn raster(muted: bool, theme: &Theme) -> Vec<u8> {
             }
         }
     }
+    round_ends(&mut buf, w, h);
     buf
+}
+
+/// Fade every pixel by how much of it lies inside a stadium of the
+/// matrix's size (ends of radius h/2), so the end columns curve.
+fn round_ends(buf: &mut [u8], w: u32, h: u32) {
+    const SAMPLES: u32 = 4;
+    let (wf, r) = (w as f32, h as f32 / 2.0);
+    let inside = |x: f32, y: f32| {
+        let cx = x.clamp(r, wf - r);
+        (x - cx).powi(2) + (y - r).powi(2) <= r * r
+    };
+    for py in 0..h {
+        for px in 0..w {
+            let mut hits = 0;
+            for sy in 0..SAMPLES {
+                for sx in 0..SAMPLES {
+                    let x = px as f32 + (sx as f32 + 0.5) / SAMPLES as f32;
+                    let y = py as f32 + (sy as f32 + 0.5) / SAMPLES as f32;
+                    hits += u32::from(inside(x, y));
+                }
+            }
+            let i = ((py * w + px) * 4 + 3) as usize;
+            buf[i] = (f32::from(buf[i]) * hits as f32 / (SAMPLES * SAMPLES) as f32).round() as u8;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -96,5 +124,20 @@ mod tests {
         assert_eq!(SPECTRUM_H, GRAPH_H);
         assert_eq!(SPECTRUM_W, 12.0 * 8.0 + 11.0 * 2.0);
         assert_eq!(spectrum_px(), (118, 14));
+    }
+
+    #[test]
+    fn the_ends_curve_and_the_middle_does_not() {
+        let (w, h) = spectrum_px();
+        let mut buf = vec![255u8; (w * h * 4) as usize];
+        round_ends(&mut buf, w, h);
+        let alpha = |x: u32, y: u32| buf[((y * w + x) * 4 + 3) as usize];
+        // Corners go, the middle row of an end stays, the middle is whole.
+        assert_eq!(alpha(0, 0), 0);
+        assert_eq!(alpha(w - 1, h - 1), 0);
+        assert_eq!(alpha(0, h / 2), 255);
+        assert_eq!(alpha(w / 2, 0), 255);
+        // Partly inside: a soft edge.
+        assert!((1..255).contains(&alpha(1, 2)), "{}", alpha(1, 2));
     }
 }

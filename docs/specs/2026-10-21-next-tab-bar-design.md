@@ -487,6 +487,10 @@ center beyond the toast, no agents on the left).
   workspace pills (3 px in, 1 apart; a pill 22 px, 9 px in; the showing
   one filled at 14% ink; names at 52% ink, numbers at 34%).
 - **Center:** the toast, as an island, while one shows.
+- **The spectrum** (Joshua, 2026-10-23): alone in its island, inset 7 px
+  all round, its matrix's ends round (a stadium as tall as the matrix,
+  anti-aliased), so they run concentric with the pill's ends. Content
+  centers on the whole pill, not the face below the rim.
 - **Right, an island per group:** extras (mail, bell, mouse battery,
   Bluetooth), the spectrum, the meters (CPU, GPU, MEM), the network (RX,
   TX), the clock; items 12 apart, each its own hit target. Panels hang

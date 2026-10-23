@@ -24,7 +24,7 @@ use crate::components::clock::clock_widget;
 use crate::components::toast::toast_widget;
 use crate::menubar::{
     CHROME_SIZE, EDGE, FlashTarget, ICON_SIZE, ISLAND_GAP, ISLAND_H, ISLAND_PAD_H, ITEM_GAP,
-    STAT_INNER_SPACING, WINDOW_HEIGHT,
+    SPECTRUM_PAD_H, STAT_INNER_SPACING, WINDOW_HEIGHT,
 };
 
 /// Sola's amber: the flower is the brand mark, not a theme atom.
@@ -42,11 +42,13 @@ pub(super) fn island<'a>(
     open: bool,
     pad_h: f32,
 ) -> Element<'a, Msg> {
+    // The face starts 1 px down (the rim); a pixel off its bottom centers
+    // the content on the whole pill.
     let face = container(content.into())
         .padding(Padding {
             top: 0.0,
             right: pad_h,
-            bottom: 0.0,
+            bottom: 1.0,
             left: pad_h,
         })
         .height(Length::Fill)
@@ -185,17 +187,16 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         islands.push(island(items(extras), extras_open, ISLAND_PAD_H));
     }
 
+    // Alone in its island: centered as is (no lift to a text band), inset
+    // the same all round so its round ends follow the pill's.
     if let Some(icon) = crate::audio::bar_icon(&shell.audio.snapshot) {
-        let bars = container(crate::audio::wave::visualizer(icon.muted, &shell.theme)).padding(
-            Padding {
-                bottom: CHROME_NUDGE_UP,
-                ..Padding::ZERO
-            },
-        );
         islands.push(island(
-            item(bars, Msg::ToggleAudio),
+            item(
+                crate::audio::wave::visualizer(icon.muted, &shell.theme),
+                Msg::ToggleAudio,
+            ),
             panel_active(shell, crate::app::Panel::Audio),
-            ISLAND_PAD_H,
+            SPECTRUM_PAD_H,
         ));
     }
 
