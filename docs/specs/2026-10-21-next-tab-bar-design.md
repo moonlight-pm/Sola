@@ -1,14 +1,14 @@
 # Next — one tab list (the bar)
 
 **Date:** 2026-10-21  
-**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slice 1 in progress on `next`.  
+**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 5 and the visual items not started.  
 **Related:** design `design/next/` boards 05 (the master sidebar), 06 (one tab list) and their continued boards; idea [desks](../ideas/2026-10-12-desks.md) (this is its panel model); plan [`plans/2026-10-21-next-tab-bar-plan.md`](../plans/2026-10-21-next-tab-bar-plan.md)
 
 | | |
 |--|--|
-| **Implementation** | Slice 1 on `next` (built 2026-10-21, not applied): `crates/sola-shell/src/stacks.rs` (model), `tabbar/` (window + view), `zoning.rs` (bar, tile, present frames; floats), `app.rs` / `app/bus.rs` (composition, placement, focus, zone keys, `TabLayout`); sola-bus `Topic::WindowParent` + `Topic::TabLayout`; sola-river forwards River's `parent`. |
-| **Dogfood** | — (canto, branch `next`) |
-| **Gaps** | Everything below. |
+| **Implementation** | On `next`, applied on canto. Slice 1 (2026-10-21): `crates/sola-shell/src/stacks.rs` (model), `tabbar/` (window + view), `zoning.rs` (bar, tile, present frames; floats), `app.rs` / `app/bus.rs` (composition, placement, focus, zone keys, `TabLayout`); sola-bus `Topic::WindowParent` + `Topic::TabLayout`; sola-river forwards River's `parent`. Slice 2: `Topic::Tab` / `Topic::TabWindow`, `pairing.rs`, kit `tabs::TabWindows`; Terminal a window per tab. Slice 4: the browser a window per page, groups and the strip gone (4g). Slice 3 as changed: Projects a window per project with a top bar of tabs; its bar row carries the project's activity (`Topic::TabActivity`, 2026-10-22). |
+| **Dogfood** | canto, branch `next` (rivulet); smoked by injection — detail in `CURRENT.md` and the `shell-desks` capability row. |
+| **Gaps** | Slice 5 (desks of windows, N6); titlebars with menus, gaps, islands; a dialog riding its parent unsmoked; browser ⌘-click, vault, downloads unsmoked; no keyboard tab switching in a project's top bar. |
 
 ## Intent
 
@@ -184,7 +184,7 @@ novus runs River, so how novus gets it is settled before `next` merges.
 | Slice | What | Needs |
 |--|--|--|
 | 2 | Kit helpers for several windows per app; floating per window instead of by title; the `Tabs` topic; menu actions that name the window. Terminal opens a window per tab and drops its strip. | How a window learns its sola-river id (below) |
-| 3 | **Changed (Joshua, 2026-10-21):** each *project* is a window (a tab in the bar, named for the project) and its tabs run along a top bar inside it; the rail goes. Closing a project window keeps the project (Project → Open reopens it). Built 2026-10-21. Marks on the bar's rows are later. | N5 |
+| 3 | **Changed (Joshua, 2026-10-21):** each *project* is a window (a tab in the bar, named for the project) and its tabs run along a top bar inside it; the rail goes. Closing a project window keeps the project (Project → Open reopens it). Built 2026-10-21. The bar's row for a project shows its mark (2026-10-22): sticky `Topic::TabActivity` (key → idle / working / waiting) in the row's icon slot; a tab waiting on a decision beats one working. | N5 |
 | 4 | Browser: a frame slot, page size, and input target per window, as board pages already work; the strip and groups come out. | N7 |
 | 5 | Desks of windows in the OS sense (board 04): the bar heads with the one showing; switching swaps it. | N5 |
 | — | Titlebars with menus (01), gaps (02), islands (03), dark grey base. | N8 |

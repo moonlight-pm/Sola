@@ -245,12 +245,15 @@ chrome driving it, so the risky half is smoked before the chrome changes:
 
 ## Next phases — order (Joshua, 2026-10-21)
 
-1. **Browser pages as tabs** (slice 4) — next; Phase 4 below.
+1. ~~**Browser pages as tabs** (slice 4)~~ — applied 2026-10-21 (Phase 4
+   above); groups and the strip gone (4g).
 2. ~~Rename `sola-workspaces` → **Projects** (`sola-projects`; N5)~~ —
    done 2026-10-21, applied (a workspace inside it is a **tab**: `tab.*`,
    `--tab`; clean break, no `solactl workspaces`). Then OS workspaces
    (board 04, slice 5) with a workspace bound to a project (N6).
 3. ~~Projects sessions as tabs (slice 3)~~ — changed by Joshua
    (2026-10-21): a window per *project*, its tabs on a top bar inside it
-   (the rail goes). Built and applied 2026-10-21 (`f6ef9cf8`).
+   (the rail goes). Built and applied 2026-10-21 (`f6ef9cf8`). Its row in
+   the shell's bar shows the project's activity (2026-10-22, `2c4b95a4`):
+   a diamond when a tab waits on a decision, a ring when one works.
 4. Titlebars with menus, gaps, islands.

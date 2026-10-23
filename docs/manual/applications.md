@@ -14,7 +14,7 @@ do and what it lacks. Applications that offer methods on the
 | Application | Binary | What it is | Notes |
 |-------------|--------|------------|-------|
 | Terminal | `sola-terminal` | A terminal on Alacritty's grid, with tabs | — |
-| Projects | `sola-projects` | Projects and their git worktrees in a rail, one tab per checkout, each with terminal panes; shows whether the coding agent in a pane (Claude Code, Codex, Grok) is working, waiting, or done. Call owner `projects`. | [solactl](solactl.md#projects-solactl-projects) |
+| Projects | `sola-projects` | Each project is its own window with its tabs along the top, one per checkout (the root or a git worktree), each with terminal panes; shows whether the coding agent in a pane (Claude Code, Codex, Grok) is working, waiting, or done, and the project's row in the shell's tab bar shows when one is working or waiting on a decision. Call owner `projects`. | [solactl](solactl.md#projects-solactl-projects) |
 | Browser | `sola-browser` | Chromium's engine (CEF) under Sola's own chrome: a window per page, profiles, a Bitwarden vault, downloads, developer tools. The default for web links. Call owner `browser`. | [notes](sola-browser.md) |
 | Mail | `sola-mail` | IMAP and SMTP for several accounts, with drafts and attachments | [notes](sola-mail.md) |
 | Calendar | `sola-calendar` | Month, week, and day views of local, Google, iCloud, CalDAV, and ICS calendars, with reminders | [notes](sola-calendar.md) |
