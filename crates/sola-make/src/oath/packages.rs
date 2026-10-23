@@ -49,6 +49,7 @@ pub const PACKAGES: &[Package] = &[
             "sola-terminal",
             "sola-projects",
             "sola-paint",
+            "sola-settings",
             "solactl",
             "sola-oath",
             "sola-kvm",
@@ -73,7 +74,8 @@ pub const PACKAGES: &[Package] = &[
     },
     Package {
         name: "sola-browser",
-        bins: &["sola-browser"],
+        // The wrapper runs a site through the browser's CEF engine.
+        bins: &["sola-browser", "sola-wrapper"],
         build: &["rust", "pkgconf", "cef"],
         needs: &["sola", "cef", "libpulse"],
         share: false,

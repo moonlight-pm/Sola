@@ -476,3 +476,49 @@ Spec: § Paint: a window per image. Joshua (2026-10-23).
       brings both windows back to their places (Joshua saw both); closing
       the last window quits.
 
+## Phase 11 — The wrapper: a window per popup; Settings on Oath
+
+Spec: § The wrapper: a window per popup. Joshua (2026-10-23): Bots
+parked; the wrapper working on canto, with Settings to set one up.
+
+- [x] **11a Ship:** `sola-settings` in `pkg:sola`, `sola-wrapper` in
+      `pkg:sola-browser` (`sola-make` `oath/packages.rs`); applied
+      (`/bin/sola-settings`, `/bin/sola-wrapper`). Settings runs.
+- [x] **11b Settings at half width:** the Applications list is a fixed
+      280 px and the detail takes the rest (it was a fixed 380 px detail
+      leaving the list ~150 px in a half tile).
+- [x] **11c Wrapper windows:** `iced::daemon` over the browser's
+      `PageWindows`; the site's window opens at boot; a popup gets a
+      window in front, loses it when it closes; focus sets the active
+      page; the engine paints the pages on screen; dialogs over their
+      page; closing the site's window quits.
+- [x] **11d Verify:** wrapper builds, clippy clean; its tests pass but
+      one (`menu::tests::edit_menu_has_super_chords`), stale since
+      `bd9ae322` (2026-09-03: the shared Edit menu gained Find, which the
+      wrapper lists but does not handle). Applied (`pkg:sola` 506d5835,
+      `pkg:sola-browser` 3d7f7339).
+- [ ] **11e Smoke:** needs a wrapper app (Joshua sets one up in
+      Settings): the site's window, a huddle popup in its own window,
+      closing it, the page closing it.
+
+## Phase 12 — Web apps: wrap a page in the browser
+
+Spec: [`specs/2026-10-23-web-apps-design.md`](../specs/2026-10-23-web-apps-design.md).
+Joshua (2026-10-23): run in the browser (W1), add from the browser (W2),
+own menus and removed from there (W3). Accepted 2026-10-23 ("go ahead").
+
+- [ ] **12a Plumbing:** kit `TabWindows` under another app id;
+      `menu::publish_for`; shell pairing by `(pid, app_id)`.
+- [ ] **12b App windows:** the browser opens a page as an app window (its
+      id, name, icon; no location bar; the app's menus); same-site links
+      stay, others open as pages; popups as app windows; notifications
+      and permissions under the app's name.
+- [ ] **12c Wrap This Page…:** the sheet (name, icon, id); the page turns
+      into the app in place; the catalog entry.
+- [ ] **12d Launch:** `sola-browser --app <id>` and the `OpenApp`
+      handoff; session keeps app windows.
+- [ ] **12e Remove and retire:** Remove Web App…; Settings' wrapper
+      fields go; `sola-wrapper` a shim; existing entries migrate.
+- [ ] **12f Smoke** on canto: wrap a signed-in page, launch it, a huddle
+      popup, remove it.
+

@@ -35,7 +35,7 @@ Menubar **Edit** (Cut / Copy / Paste / Select All) is Super+X / C / V / A. The s
 
 ## Huddles and microphone
 
-Slack huddles open with `window.open('about:blank')` and then write the huddle UI into that popup. The wrapper has no OS window for that, so CEF creates a windowless popup and the wrapper paints it, replacing the channel view until the huddle closes.
+Slack huddles open with `window.open('about:blank')` and then write the huddle UI into that popup. The popup gets a window of its own — a row in the shell's tab bar, named for the page — and comes up in front; the channel stays in the app's window. Closing the popup's window ends the popup (Slack leaves the huddle); when the page closes it, its window goes. Closing the app's own window quits the app.
 
 Starting the huddle then asks for the microphone (and the camera if you turn it on) with an Allow / Block overlay. The choice is stored at `~/.config/sola/wrapper/<id>/media.json` and applied to Chromium’s camera and microphone site settings. Playback of huddle audio does not need this prompt.
 

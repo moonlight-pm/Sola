@@ -1,5 +1,11 @@
 //! Minimal kit chrome + CEF page. Not sola-browser.
+//!
+//! A window per page (Next): the site's page is the app's window; each
+//! popup it opens (a huddle, a same-site `window.open`) gets a window of
+//! its own — a tab in the shell's bar — instead of replacing the view.
+//! Closing a popup's window closes the popup; closing the site's quits.
 
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,14 +13,12 @@ use std::time::Duration;
 use iced::event;
 use iced::keyboard;
 use iced::widget::{Shader, Space, column, container, mouse_area, row, stack, text};
-use iced::{Alignment, Element, Event, Length, Subscription, Task, Theme};
+use iced::{Alignment, Element, Event, Length, Subscription, Task, Theme, window};
 
 use sola_bus::Message;
-use sola_bus::topics::{Application, FocusTarget, Topic, TopicKind};
+use sola_bus::topics::{Application, Topic, TopicKind};
 use sola_core::KeyCode;
-use sola_kit::app::{
-    BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, window_settings_transparent,
-};
+use sola_kit::app::{BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit};
 use sola_kit::components::button as kit_button;
 use sola_kit::components::card;
 use sola_kit::components::style::{SPACE_MD, SPACE_SM};
@@ -23,8 +27,9 @@ use sola_kit::theme::default_theme;
 
 use sola_browser::app::{VIEW_H, VIEW_W};
 use sola_browser::cef::page_ime::page_ime;
-use sola_browser::engine::{Cmd, EditCmd, Engine, FrameSlot, TabId};
-use sola_browser::run::frame_subscription;
+use sola_browser::engine::{Cmd, EditCmd, Engine, FrameSlot, TabId, TabInfo};
+use sola_browser::page_windows::PageWindows;
+use sola_browser::run::frame_subscription_slots;
 use sola_browser::{CefEngine, Msg as BrowserMsg};
 
 use crate::instance;
@@ -37,10 +42,11 @@ pub enum Msg {
     NewFrame,
     WebViewFocused,
     Tick,
-    WindowReady(Option<iced::window::Id>),
-    TitleDrag,
-    TitleResize(iced::window::Direction),
-    TitleClose,
+    /// A page window's focus and close events.
+    Window(window::Id, window::Event),
+    TitleDrag(window::Id),
+    TitleResize(window::Id, window::Direction),
+    TitleClose(window::Id),
     PagePasted(Option<String>),
     PageOffer(sola_kit::clipboard::Offer),
     NotifyAllow,
@@ -61,36 +67,28 @@ pub fn run(app_id: &'static str, spec: Application) -> iced::Result {
         .install();
 
     let url = spec.url.clone().unwrap_or_default();
+    // The engine opens the site at once and names its tab: the main page.
     let engine = CefEngine::spawn(app_id, &url, VIEW_W, VIEW_H);
-    let cmd_tx = engine.cmd_sender();
-    let cursor = engine.cursor_handle();
-    let active = engine.active_tab_handle();
-    let slot = Arc::new(FrameSlot::<CefEngine>::new(
-        cmd_tx.clone(),
-        cursor,
+    let main = TabId(engine.active_tab_handle().load(Ordering::Relaxed));
+    // Page windows take their command channel, cursor and IME from this.
+    let template = Arc::new(FrameSlot::<CefEngine>::new(
+        engine.cmd_sender(),
+        engine.cursor_handle(),
         engine.ime_handle(),
         VIEW_W,
         VIEW_H,
     ));
-    let paint = TabId(active.load(Ordering::Relaxed));
-    if paint.0 != 0 && paint.0 != u64::MAX {
-        slot.present_tab(paint);
-    }
 
     let engine_cell = std::cell::Cell::new(Some(engine));
-    let slot_cell = std::cell::Cell::new(Some(slot));
+    let template_cell = std::cell::Cell::new(Some(template));
     let spec_cell = std::cell::Cell::new(Some(spec));
 
-    let mut settings = window_settings_transparent(app_id);
-    settings.size = iced::Size::new(1100.0, 760.0);
-
-    iced::application(
+    iced::daemon(
         move || {
             let engine = engine_cell.take().expect("wrapper init once");
-            let slot = slot_cell.take().expect("wrapper init once");
+            let template = template_cell.take().expect("wrapper init once");
             let spec = spec_cell.take().expect("wrapper init once");
-            let app = App::new(app_id, spec, engine, slot);
-            (app, sola_kit::window_ready_task(Msg::WindowReady))
+            App::new(app_id, spec, engine, template, main)
         },
         App::update,
         App::view,
@@ -99,7 +97,6 @@ pub fn run(app_id: &'static str, spec: Application) -> iced::Result {
     .subscription(App::subscription)
     .theme(App::theme)
     .default_font(fonts::ui())
-    .window(settings)
     .run()
 }
 
@@ -108,10 +105,21 @@ struct App {
     label: String,
     start_url: String,
     engine: CefEngine,
-    slot: Arc<FrameSlot<CefEngine>>,
+    /// A window per page: the site's, and one per popup.
+    windows: PageWindows<CefEngine>,
+    /// The site's own page. Its window is the app's: closing it quits.
+    main: TabId,
+    /// The engine has listed the main page (until then it may be missing
+    /// from the list without having closed).
+    main_listed: bool,
+    /// The engine's pages, as last read.
+    tabs: Vec<TabInfo>,
+    /// Pages whose window we closed, until the engine stops listing them.
+    closed: HashSet<TabId>,
+    /// The page last brought up (the engine's active page).
+    shown_active: TabId,
     theme: Theme,
     float: sola_kit::FloatState,
-    window_id: Option<iced::window::Id>,
     pending_notify: Option<sola_browser::notify::IpcPerm>,
     pending_media: Option<sola_browser::media::IpcMedia>,
     pending_js_dialog: Option<sola_browser::js_dialog::Ipc>,
@@ -120,48 +128,89 @@ struct App {
 }
 
 impl App {
+    /// Open the site's window at once (its page is loading).
     fn new(
         app_id: &'static str,
         spec: Application,
         engine: CefEngine,
-        slot: Arc<FrameSlot<CefEngine>>,
-    ) -> Self {
-        Self {
+        template: Arc<FrameSlot<CefEngine>>,
+        main: TabId,
+    ) -> (Self, Task<Msg>) {
+        let mut windows = PageWindows::new(app_id, template);
+        let open = windows.open(app_id, main, "main", false).discard();
+        let app = Self {
             app_id,
             label: spec.label,
             start_url: spec.url.clone().unwrap_or_default(),
             engine,
-            slot,
+            windows,
+            main,
+            main_listed: false,
+            tabs: Vec::new(),
+            closed: HashSet::new(),
+            shown_active: main,
             theme: default_theme(),
             float: sola_kit::FloatState::new(app_id),
-            window_id: None,
             pending_notify: None,
             pending_media: None,
             pending_js_dialog: None,
             js_dialog_queue: std::collections::VecDeque::new(),
             js_dialog_prompt: String::new(),
+        };
+        (app, open)
+    }
+
+    /// A window's title: the site's name for its own window, the page's
+    /// title for a popup (the shell's bar row).
+    fn title(&self, window: window::Id) -> String {
+        let tab = self.windows.tab_of(window);
+        if tab == Some(self.main) {
+            return self.label.clone();
         }
+        tab.and_then(|id| self.tabs.iter().find(|t| t.id == id))
+            .map(|t| t.title.trim())
+            .filter(|t| !t.is_empty())
+            .map_or_else(|| self.label.clone(), str::to_string)
     }
 
-    fn title(&self) -> String {
-        self.label.clone()
+    fn theme(&self, window: window::Id) -> Theme {
+        let floating = self
+            .windows
+            .river_id(window)
+            .is_some_and(|id| self.float.is_window_floating(id));
+        sola_kit::theme_for(floating, &self.theme)
     }
 
-    fn theme(&self) -> Theme {
-        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
+    fn chrome(&self, window: window::Id) -> sola_kit::Chrome {
+        self.windows
+            .river_id(window)
+            .map_or(sola_kit::Chrome::Tiled, |id| self.float.chrome(id))
+    }
+
+    /// Engine commands go through the shared channel.
+    fn send(&self, cmd: Cmd<CefEngine>) {
+        let _ = self.engine.cmd_sender().send(cmd);
     }
 
     fn subscription(&self) -> Subscription<Msg> {
         Subscription::batch([
-            frame_subscription::<CefEngine>(
+            frame_subscription_slots::<CefEngine>(
                 self.engine.frames(),
-                self.slot.clone(),
+                self.windows.slots(),
                 self.engine.active_tab_handle(),
             )
             .map(map_browser_msg),
             bus_subscription().map(Msg::Bus),
             iced::time::every(Duration::from_millis(250)).map(|_| Msg::Tick),
-            event::listen_with(|event, _status, _| {
+            event::listen_with(|event, _status, id| {
+                if let Event::Window(
+                    e @ (window::Event::Focused
+                    | window::Event::CloseRequested
+                    | window::Event::Closed),
+                ) = event
+                {
+                    return Some(Msg::Window(id, e));
+                }
                 match &event {
                     Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
                         sola_browser::input::store_modifiers(*m);
@@ -224,42 +273,43 @@ impl App {
                         sola_browser::input::apply_super_chord(false, c.keysym);
                     }
                     Some(Topic::NotificationActivate(a)) if a.app_id == self.app_id => {
-                        return self.raise();
+                        self.raise();
                     }
                     _ => {}
                 }
             }
             Msg::NewFrame => {
-                self.sync_engine_tab();
-                self.slot.redraw_queued.store(false, Ordering::Release);
-                self.slot.pumping.store(true, Ordering::Release);
+                // Every window redraws after an update: serve each page
+                // window's slot that queued a kick.
+                for slot in self.windows.slots().lock().unwrap().iter() {
+                    if slot.redraw_queued.swap(false, Ordering::AcqRel) {
+                        slot.pumping.store(true, Ordering::Release);
+                    }
+                }
+                return self.sync_windows();
             }
-            Msg::WebViewFocused => {
-                let _ = self.slot.cmd_tx.send(Cmd::Focus(true));
-            }
+            Msg::WebViewFocused => self.send(Cmd::Focus(true)),
             Msg::Tick => {
-                self.sync_engine_tab();
+                let sync = self.sync_windows();
                 self.drain_notify_ipc();
                 let js_dlg = self.drain_js_dialogs();
                 self.drain_outbound_links();
                 let clip = self.take_page_clipboard();
                 if instance::try_recv_activate() {
-                    return Task::batch([clip, js_dlg, self.raise()]);
+                    self.raise();
                 }
-                return Task::batch([clip, js_dlg]);
+                return Task::batch([sync, clip, js_dlg]);
             }
-            Msg::WindowReady(id) => self.window_id = id,
-            Msg::TitleDrag => return sola_kit::drag(self.window_id),
-            Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
-            Msg::TitleClose => {
-                sola_kit::close_app(self.app_id);
-            }
+            Msg::Window(window, event) => return self.on_window(window, event),
+            Msg::TitleDrag(window) => return window::drag(window),
+            Msg::TitleResize(window, dir) => return window::drag_resize(window, dir),
+            Msg::TitleClose(window) => return self.close_window(window),
             Msg::PageOffer(offer) => {
                 use sola_kit::clipboard::Offer;
                 return match offer {
                     Offer::Empty => iced::clipboard::read().map(Msg::PagePasted),
                     other => {
-                        sola_browser::page_paste::send(&self.slot.cmd_tx, other);
+                        sola_browser::page_paste::send(&self.engine.cmd_sender(), other);
                         Task::none()
                     }
                 };
@@ -268,7 +318,7 @@ impl App {
                 let Some(s) = sola_browser::util::usable_clipboard_text(text) else {
                     return Task::none();
                 };
-                let _ = self.slot.cmd_tx.send(Cmd::PasteText(s.clone()));
+                self.send(Cmd::PasteText(s.clone()));
                 return iced::clipboard::write(s);
             }
             Msg::NotifyAllow => self.resolve_notify_permission("granted"),
@@ -299,31 +349,108 @@ impl App {
         match cmd {
             EditCmd::Paste => sola_browser::page_paste::read_task().map(Msg::PageOffer),
             EditCmd::Copy | EditCmd::Cut => {
-                let _ = self.slot.cmd_tx.send(Cmd::EvaluateJs(
-                    sola_browser::paste_js::copy_selection_script(),
-                ));
+                self.send(Cmd::EvaluateJs(sola_browser::paste_js::copy_selection_script()));
                 if cmd == EditCmd::Cut {
-                    let _ = self.slot.cmd_tx.send(Cmd::Edit(EditCmd::Cut));
+                    self.send(Cmd::Edit(EditCmd::Cut));
                 }
                 Task::none()
             }
             EditCmd::SelectAll => {
-                let _ = self.slot.cmd_tx.send(Cmd::Edit(EditCmd::SelectAll));
+                self.send(Cmd::Edit(EditCmd::SelectAll));
                 Task::none()
             }
             EditCmd::Undo | EditCmd::Redo => Task::none(),
         }
     }
 
-    fn sync_engine_tab(&mut self) {
-        let id = self.engine.active_tab_handle().load(Ordering::Relaxed);
-        if id == 0 || id == u64::MAX {
+    /// Keep a window per page: a popup the page opened (a huddle, a
+    /// same-site `window.open`) gets its window in front; a popup that
+    /// closed (`window.close`) loses its; the site's page closing ends the
+    /// app. The engine paints the pages on screen. A page the engine
+    /// brings up from outside its window (a popup opening) is shown.
+    fn sync_windows(&mut self) -> Task<Msg> {
+        self.tabs = self.engine.tabs_handle().lock().unwrap().clone();
+        let listed: HashSet<TabId> = self.tabs.iter().map(|t| t.id).collect();
+        self.closed.retain(|id| listed.contains(id));
+        let mut tasks = Vec::new();
+        for id in &listed {
+            if *id == self.main {
+                self.main_listed = true;
+            } else if !self.windows.has(*id) && !self.closed.contains(id) {
+                tracing::info!(tab = id.0, "wrapper: popup gets a window");
+                let key = format!("popup-{}", id.0);
+                tasks.push(self.windows.open(self.app_id, *id, &key, false).discard());
+            }
+        }
+        for id in self.windows.open_tabs() {
+            if id != self.main && !listed.contains(&id) {
+                tracing::info!(tab = id.0, "wrapper: popup closed");
+                tasks.push(self.windows.close(id).discard());
+            }
+        }
+        if self.main_listed && !listed.contains(&self.main) {
+            tracing::info!("wrapper: the site's page closed; quitting");
+            return iced::exit();
+        }
+        for (id, shown) in self.windows.take_shown_changes() {
+            self.send(Cmd::ShowPage { id, shown });
+        }
+        let active = TabId(self.engine.active_tab_handle().load(Ordering::Relaxed));
+        if active != self.shown_active && self.windows.has(active) {
+            self.shown_active = active;
+            self.windows.show(active);
+        }
+        Task::batch(tasks)
+    }
+
+    /// A page window's focus makes its page the active one (keys, edits,
+    /// dialogs); its close button or request closes its page.
+    fn on_window(&mut self, window: window::Id, event: window::Event) -> Task<Msg> {
+        match event {
+            window::Event::Focused => {
+                self.windows.focused = Some(window);
+                if let Some(tab) = self.windows.tab_of(window) {
+                    self.activate(tab);
+                }
+                Task::none()
+            }
+            window::Event::CloseRequested => self.close_window(window),
+            window::Event::Closed => {
+                if self.windows.closed(window) == Some(self.main) {
+                    return iced::exit();
+                }
+                Task::none()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// Page `tab` takes the keys: the engine's active page.
+    fn activate(&mut self, tab: TabId) {
+        let active = self.engine.active_tab_handle();
+        if active.load(Ordering::Relaxed) == tab.0 {
             return;
         }
-        if self.slot.paint_tab.load(Ordering::Relaxed) != id {
-            tracing::info!(tab = id, "wrapper: follow CEF tab (popup/huddle)");
-            self.slot.present_tab(TabId(id));
+        active.store(tab.0, Ordering::Relaxed);
+        self.shown_active = tab;
+        self.send(Cmd::SetActiveTab(tab));
+    }
+
+    /// Close `window`: a popup's closes the popup (the page may say
+    /// goodbye — a huddle leaves); the site's quits the app.
+    fn close_window(&mut self, window: window::Id) -> Task<Msg> {
+        let Some(tab) = self.windows.tab_of(window) else {
+            return window::close(window);
+        };
+        if tab == self.main {
+            return iced::exit();
         }
+        self.closed.insert(tab);
+        self.send(Cmd::CloseTab(tab));
+        if self.engine.active_tab_handle().load(Ordering::Relaxed) == tab.0 {
+            self.activate(self.main);
+        }
+        self.windows.close(tab).discard()
     }
 
     fn drain_outbound_links(&mut self) {
@@ -404,7 +531,7 @@ impl App {
                     );
                     let known = sola_browser::notify::permission_for(&profile, &perm.origin);
                     if known != "default" {
-                        let _ = self.slot.cmd_tx.send(Cmd::EvaluateJs(
+                        self.send(Cmd::EvaluateJs(
                             sola_browser::notify::resolve_script(perm.req_id, &known),
                         ));
                         continue;
@@ -422,7 +549,7 @@ impl App {
         let profile = sola_browser::profiles::active().id;
         let known = sola_browser::media::permission_for(&profile, &m.origin);
         if known != "default" {
-            sola_browser::media::send_resolve(&self.slot.cmd_tx, &m, known == "granted");
+            sola_browser::media::send_resolve(&self.engine.cmd_sender(), &m, known == "granted");
             return;
         }
         if let Some(pending) = self.pending_media.as_mut() {
@@ -432,7 +559,7 @@ impl App {
                 sola_browser::media::merge(pending, &m);
                 return;
             }
-            sola_browser::media::send_resolve(&self.slot.cmd_tx, &m, false);
+            sola_browser::media::send_resolve(&self.engine.cmd_sender(), &m, false);
             return;
         }
         tracing::info!(
@@ -452,7 +579,7 @@ impl App {
         if let Err(e) = sola_browser::media::set_permission(&profile, &perm.origin, result) {
             tracing::warn!(error = %e, "media: persist permission failed");
         }
-        sola_browser::media::send_resolve(&self.slot.cmd_tx, &perm, result == "granted");
+        sola_browser::media::send_resolve(&self.engine.cmd_sender(), &perm, result == "granted");
     }
 
     fn drain_js_dialogs(&mut self) -> Task<Msg> {
@@ -501,8 +628,9 @@ impl App {
         sola_browser::js_dialog::set_kind(Some(dlg.kind));
         self.js_dialog_prompt = dlg.default_prompt.clone();
         let prompt = dlg.kind == sola_browser::js_dialog::Kind::Prompt;
+        // The dialog shows over its page's window: bring that up.
         if dlg.tab_id != 0 {
-            self.slot.present_tab(TabId(dlg.tab_id));
+            self.windows.show(TabId(dlg.tab_id));
         }
         self.pending_js_dialog = Some(dlg);
         if prompt {
@@ -531,7 +659,7 @@ impl App {
         } else {
             String::new()
         };
-        let _ = self.slot.cmd_tx.send(Cmd::JsDialog {
+        self.send(Cmd::JsDialog {
             id: dlg.id,
             success,
             input,
@@ -569,33 +697,47 @@ impl App {
             tracing::warn!(error = %e, "notify: persist permission failed");
         }
         let granted = result == "granted";
-        let _ = self.slot.cmd_tx.send(Cmd::NotifyPermission {
+        self.send(Cmd::NotifyPermission {
             prompt_id: perm.req_id,
             granted,
         });
-        let _ = self
-            .slot
-            .cmd_tx
-            .send(Cmd::EvaluateJs(sola_browser::notify::resolve_script(
-                perm.req_id,
-                result,
-            )));
+        self.send(Cmd::EvaluateJs(sola_browser::notify::resolve_script(
+            perm.req_id,
+            result,
+        )));
     }
 
-    fn raise(&self) -> Task<Msg> {
-        if let Some(window_id) = self.float.any_window_id() {
-            if let Ok(mut b) = bus().lock() {
-                let _ = b.emit(Topic::Focus(FocusTarget { window_id }));
-            }
-        }
-        Task::none()
+    /// A second launch or a notification click: bring the site's window
+    /// up.
+    fn raise(&self) {
+        self.windows.show(self.main);
     }
 
-    fn view(&self) -> Element<'_, Msg> {
-        let webview = Shader::new(CefEngine::make_program(self.slot.clone()))
+    /// The window a dialog shows in: its page's (a JS dialog names it),
+    /// else the active page's.
+    fn dialog_tab(&self) -> TabId {
+        self.pending_js_dialog
+            .as_ref()
+            .map(|d| TabId(d.tab_id))
+            .filter(|t| t.0 != 0 && self.windows.has(*t))
+            .unwrap_or_else(|| TabId(self.engine.active_tab_handle().load(Ordering::Relaxed)))
+    }
+
+    fn view(&self, window: window::Id) -> Element<'_, Msg> {
+        let tab = self.windows.tab_of(window);
+        let Some(slot) = tab.and_then(|t| self.windows.slot_of(t)) else {
+            return Space::new().width(Length::Fill).height(Length::Fill).into();
+        };
+        let dialogs_here = tab == Some(self.dialog_tab())
+            || (tab == Some(self.main) && !self.windows.has(self.dialog_tab()));
+        let webview = Shader::new(CefEngine::make_program(slot.clone()))
             .width(Length::Fill)
             .height(Length::Fill);
-        let webview = page_ime(webview, self.slot.clone(), self.pending_js_dialog.is_none());
+        let webview = page_ime(
+            webview,
+            slot,
+            !(dialogs_here && self.pending_js_dialog.is_some()),
+        );
         let webview = Element::from(webview).map(map_browser_msg);
 
         let canvas = self.theme.extended_palette().background.base.color;
@@ -614,7 +756,9 @@ impl App {
             .height(Length::Fill)
             .into();
 
-        let content: Element<'_, Msg> = if self.pending_js_dialog.is_some() {
+        let content: Element<'_, Msg> = if !dialogs_here {
+            content
+        } else if self.pending_js_dialog.is_some() {
             stack![content, self.view_js_dialog()].into()
         } else if self.pending_media.is_some() {
             stack![content, self.view_media_permission()].into()
@@ -625,11 +769,11 @@ impl App {
         };
 
         sola_kit::window_frame(
-            self.float.chrome_any(),
-            self.label.as_str(),
-            Msg::TitleDrag,
-            Msg::TitleClose,
-            Msg::TitleResize,
+            self.chrome(window),
+            self.title(window),
+            Msg::TitleDrag(window),
+            Msg::TitleClose(window),
+            move |dir| Msg::TitleResize(window, dir),
             content,
         )
     }

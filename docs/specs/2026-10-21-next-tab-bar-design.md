@@ -1,14 +1,14 @@
 # Next — one tab list (the bar)
 
 **Date:** 2026-10-21  
-**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 6 (titlebars with menus, gaps, the bar as an island) and slice 5 (desktop workspaces, a browser profile each) applied and committed 2026-10-23; the dark grey base in the kit 2026-10-23; a Full zone (the halves keep their half) applied and committed 2026-10-23; Design a window per project applied 2026-10-23; the top row's look (board 03) 2026-10-23; Paint a window per image 2026-10-23; the islands not started.  
+**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 6 (titlebars with menus, gaps, the bar as an island) and slice 5 (desktop workspaces, a browser profile each) applied and committed 2026-10-23; the dark grey base in the kit 2026-10-23; a Full zone (the halves keep their half) applied and committed 2026-10-23; Design a window per project applied 2026-10-23; the top row's look (board 03) 2026-10-23; Paint a window per image 2026-10-23; the wrapper a window per popup 2026-10-23; the islands not started.  
 **Related:** design `design/next/` boards 05 (the master sidebar), 06 (one tab list) and their continued boards; idea [desks](../ideas/2026-10-12-desks.md) (this is its panel model); plan [`plans/2026-10-21-next-tab-bar-plan.md`](../plans/2026-10-21-next-tab-bar-plan.md)
 
 | | |
 |--|--|
 | **Implementation** | On `next`, applied on canto. Slice 1 (2026-10-21): `crates/sola-shell/src/stacks.rs` (model), `tabbar/` (window + view), `zoning.rs` (bar, tile, present frames; floats), `app.rs` / `app/bus.rs` (composition, placement, focus, zone keys, `TabLayout`); sola-bus `Topic::WindowParent` + `Topic::TabLayout`; sola-river forwards River's `parent`. Slice 2: `Topic::Tab` / `Topic::TabWindow`, `pairing.rs`, kit `tabs::TabWindows`; Terminal a window per tab. Slice 4: the browser a window per page, groups and the strip gone (4g). Slice 3 as changed: Projects a window per project with a top bar of tabs; its bar row carries the project's activity (`Topic::TabActivity`, 2026-10-22). Slice 6 (`ec059189`): kit `window_frame`, the gap grid, the bar island, `Topic::WindowChrome`. Slice 5 (`388df10c`): `stacks/` a desk per workspace, pills, `Topic::Workspaces` / `Topic::WindowWorkspace`; the browser's router runs every profile's helper, pages reopen under their workspace's profile. Grey base (`ba33fda9`): `Palette::seed` and the kit in neutral greys, `Theme::retire_slate`. Full zone (2026-10-23, § Full): `stacks/desk.rs` (`full`, `landing`, `pick`, `on_screen`, `front`), `zoning::tile_frame` (halves fixed, Full the content area, `cinema_frame`), `TabLayout.full`, kit `SidebarItem::bright`; the Fullscreen toggle is gone. |
 | **Dogfood** | canto, branch `next` (rivulet); smoked by injection — detail in `CURRENT.md` and the `shell-desks` capability row. |
-| **Gaps** | Apps that still keep their own document list (Bots, the wrapper's popups) — one app at a time (Design, Paint done 2026-10-23); the islands' behavior (board 03: surfaces growing from their island, the live center; the look is done); a workspace overview; slice 6 leftovers (menu folding, titlebar zone glyph); a dialog riding its parent unsmoked; browser ⌘-click, vault, downloads unsmoked; no keyboard tab switching in a project's top bar. |
+| **Gaps** | Apps that still keep their own document list (Bots — parked 2026-10-23) — one app at a time (Design, Paint, the wrapper done 2026-10-23); the islands' behavior (board 03: surfaces growing from their island, the live center; the look is done); a workspace overview; slice 6 leftovers (menu folding, titlebar zone glyph); a dialog riding its parent unsmoked; browser ⌘-click, vault, downloads unsmoked; no keyboard tab switching in a project's top bar. |
 
 ## Intent
 
@@ -497,6 +497,24 @@ center beyond the toast, no agents on the left).
   from their item (`menubar::anchors` walks the same metrics).
 - The menubar window is 38 px; sola-river's float clamp follows. The
   `shell-menubar-bg` token is no longer drawn.
+
+## The wrapper: a window per popup (2026-10-23)
+
+The third app port (Joshua, 2026-10-23: "get the wrapper working"; Bots
+parked). A wrapped site's page is the app's window; each popup it opens
+(a huddle, a same-site `window.open`) gets a window of its own instead of
+replacing the view — the browser's `page_windows` (a frame slot per
+window, `Cmd::ShowPage`, focus sets the active page).
+
+- The site's window is keyed `main`, a popup's `popup-<tab>`; a popup's
+  window opens in front and is titled with its page's title.
+- Closing a popup's window closes the popup (`Cmd::CloseTab`); the page
+  closing it closes its window; the site's page closing, or its window
+  closing, quits.
+- JS dialogs show over their page's window; permission prompts over the
+  active page's.
+- On Oath the wrapper ships in `pkg:sola-browser` (beside CEF), and
+  Settings in `pkg:sola`, so a wrapper app can be set up on canto.
 
 ## Paint: a window per image (2026-10-23)
 

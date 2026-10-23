@@ -27,8 +27,11 @@ use sola_kit::components::{Tone, badge, button as kit_btn, card, field, text_inp
 
 use crate::procfs;
 
-/// Fixed width of the right-hand detail panel (px).
-const DETAIL_WIDTH: f32 = 380.0;
+/// Fixed width of the left-hand app list (px), as Mail and Calendar: the
+/// detail panel takes the rest, so a half-width window keeps both usable.
+const LIST_WIDTH: f32 = 280.0;
+/// The detail panel never grows past this (px).
+const DETAIL_MAX_WIDTH: f32 = 560.0;
 /// Vertical pad inside a compact app row (graphite density).
 const ROW_PAD: Padding = Padding {
     top: 8.0,
@@ -438,7 +441,7 @@ fn list_column<'a>(
 
     let mut col = column![list_card]
         .spacing(SPACE_LG)
-        .width(Length::Fill)
+        .width(Length::Fixed(LIST_WIDTH))
         .height(Length::Fill);
 
     let candidates = collect_candidates(apps, running);
@@ -578,7 +581,8 @@ fn detail_panel<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<
     };
 
     container(card(body).width(Length::Fill).height(Length::Fill))
-        .width(Length::Fixed(DETAIL_WIDTH))
+        .width(Length::Fill)
+        .max_width(DETAIL_MAX_WIDTH)
         .height(Length::Fill)
         .into()
 }
