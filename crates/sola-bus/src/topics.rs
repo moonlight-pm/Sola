@@ -267,6 +267,10 @@ pub struct TabLayout {
     /// The id of the workspace showing.
     #[serde(default)]
     pub showing: String,
+    /// The workspaces whose Full zone is on screen (the rest show their
+    /// halves).
+    #[serde(default)]
+    pub full: Vec<String>,
 }
 
 /// A desktop workspace (Next slice 5): a whole desk of windows. The id
@@ -369,7 +373,8 @@ pub enum Zone {
     /// Center + right columns combined (FullMiddle ∪ Right). Full height
     /// under the menubar — Meta+KP_Add.
     MiddleRight,
-    /// Fullscreen *under* the menubar — the standard "max window".
+    /// Fullscreen *under* the menubar — the standard "max window". On
+    /// Next, the tab bar's Full zone: the content area right of the bar.
     Fullscreen,
     /// True fullscreen including the menubar — the cinema / no-chrome
     /// view. The shell skips its menubar offset for this zone so the

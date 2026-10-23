@@ -383,3 +383,29 @@ windows, and the 28 px band kept (2026-10-22).
       hover-switch / Esc, Window → Float and → Right from the titlebar,
       Cinema without a frame and back. Not smoked: the close dot, edge
       resize, a foreign window's rim (none running).
+
+## Phase 7 — A Full zone; halves keep their half
+
+Spec: § Full, and halves that keep their half. Joshua (2026-10-23): Full
+at the top of the bar, Full and the halves take turns on screen, three row
+inks, the first window to Full, KP_0 to Full (Fullscreen retired),
+KP_Enter Cinema.
+
+- [x] **7a Model:** `stacks/`: `FULL` (`Zone::Fullscreen`), `HALVES`,
+      `TILED`, `ZONES` (Full first); per desk `full` (picked last),
+      `last_half`, `cinema`; `landing` / `pick` / `on_screen` / `front`;
+      show, move, place and send pick a side, focus does not.
+      `TabLayout.full` saves the side per workspace.
+- [x] **7b Geometry and composition:** `tile_frame` gives Full the content
+      area and each half its share always; `cinema_frame`; composition is
+      the zones on screen, then floats, then Cinema. `Present` is gone.
+- [x] **7c Keys and focus:** KP_0 / Window → Full moves a tab to Full;
+      a closed or off-screen focused tab hands focus to the tab in front.
+- [x] **7d The bar:** a Full section on top; rows lifted / bright / muted;
+      kit `SidebarItem::bright` with a storybook "Row states" demo.
+- [x] **7e Verify:** tests pass (shell 223, kit 166, bus 110).
+- [x] **7f Apply:** applied 2026-10-23 (`pkg:sola` c0e3656a,
+      `pkg:sola-browser` 1e692e51, `pkg:sola-design` 13ed999c); Joshua:
+      "looks good". Not checked item by item:
+      KP_0 / KP_4 / KP_6, row clicks switching sides, the last Full tab
+      closing, the three inks, a shell restart keeping the side.

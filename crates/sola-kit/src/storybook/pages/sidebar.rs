@@ -533,6 +533,15 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         )
         .style(muted),
         favicon_demo(),
+        heading("Row states"),
+        body(
+            "Three inks for the shell's tab bar. Active lifts the row: it is \
+             on screen. Bright is full ink with no lift: current, but its \
+             zone is not showing (Full while the halves are up). Idle is \
+             muted: behind in its stack."
+        )
+        .style(muted),
+        states_demo(),
         body("Density — Normal vs Large").style(muted),
         density_demo(),
     ]
@@ -596,6 +605,24 @@ fn favicon_demo<'a>() -> Element<'a, Msg> {
         .style(card_style)
         .width(Length::Fixed(260.0))
         .height(Length::Fixed(160.0))
+        .into()
+}
+
+fn states_demo<'a>() -> Element<'a, Msg> {
+    let full = vec![SidebarItem::new("Browser — docs", Msg::Noop).bright(true)];
+    let left = vec![
+        SidebarItem::new("Terminal", Msg::Noop).active(true),
+        SidebarItem::new("Mail", Msg::Noop),
+    ];
+    let panel = SidebarPanel::new(vec![
+        SidebarSection::new("Full · 1", full),
+        SidebarSection::new("Left · 2", left),
+    ])
+    .build();
+    container(panel)
+        .style(card_style)
+        .width(Length::Fixed(260.0))
+        .height(Length::Fixed(200.0))
         .into()
 }
 

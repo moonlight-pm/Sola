@@ -1,6 +1,7 @@
 //! The tab bar (Next): a shell window docked left under the menubar that
-//! lists every window by zone. A row shows its window in its zone; drag a
-//! row to reorder it or move it to another zone. The model is
+//! lists every window by zone (Full, Left, Right, Floating). A row shows
+//! its window in its zone; drag a row to reorder it or move it to another
+//! zone. The model is
 //! [`crate::stacks`]; the spec is `docs/specs/2026-10-21-next-tab-bar-design.md`.
 
 pub mod view;
@@ -31,6 +32,7 @@ pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
 /// The bar's section id for a zone (drop target).
 pub fn section_id(zone: Zone) -> &'static str {
     match zone {
+        Zone::Fullscreen => "zone-full",
         Zone::Left => "zone-left",
         Zone::Right => "zone-right",
         _ => "zone-float",
@@ -39,6 +41,7 @@ pub fn section_id(zone: Zone) -> &'static str {
 
 pub fn zone_of_section(id: &str) -> Option<Zone> {
     match id {
+        "zone-full" => Some(Zone::Fullscreen),
         "zone-left" => Some(Zone::Left),
         "zone-right" => Some(Zone::Right),
         "zone-float" => Some(Zone::Float),
@@ -57,6 +60,7 @@ pub fn window_of_row(id: &str) -> Option<u32> {
 
 pub fn zone_label(zone: Zone) -> &'static str {
     match zone {
+        Zone::Fullscreen => "Full",
         Zone::Left => "Left",
         Zone::Right => "Right",
         _ => "Floating",

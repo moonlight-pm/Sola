@@ -21,9 +21,10 @@ pub(super) struct Slot {
 }
 
 impl Stacks {
-    /// Take the saved layout: its workspaces (when it has any) and which
-    /// shows, and the places windows that come within [`RESTORE_GRACE`]
-    /// take. A zone saved before workspaces belongs to the first one.
+    /// Take the saved layout: its workspaces (when it has any), which
+    /// shows, which have Full up, and the places windows that come within
+    /// [`RESTORE_GRACE`] take. A zone saved before workspaces belongs to
+    /// the first one.
     pub fn load(&mut self, layout: &TabLayout, now: Instant) {
         if !layout.workspaces.is_empty() {
             self.desks = layout
@@ -36,6 +37,9 @@ impl Stacks {
                 .iter()
                 .position(|d| d.id == layout.showing)
                 .unwrap_or(0);
+        }
+        for d in &mut self.desks {
+            d.full = layout.full.contains(&d.id);
         }
         let first = self.desks[0].id.clone();
         self.restore.clear();
@@ -115,6 +119,12 @@ impl Stacks {
                 })
                 .collect(),
             showing: self.desks[self.showing].id.clone(),
+            full: self
+                .desks
+                .iter()
+                .filter(|d| d.full)
+                .map(|d| d.id.clone())
+                .collect(),
         }
     }
 

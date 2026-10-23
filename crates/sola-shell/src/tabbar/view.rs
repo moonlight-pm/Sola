@@ -1,7 +1,9 @@
 //! The tab bar's view: a head with the showing workspace's name and its
-//! tab count, then a section per zone
-//! (name, count) with a row per window (app icon, title). A tiled zone's
-//! shown tab is the active row; the focused float is too. A tab that is
+//! tab count, then a section per zone (name, count) with a row per window
+//! (app icon, title). A tiled zone's shown tab is lifted while its zone is
+//! on screen and bright while it is not (Full while the halves are up, or
+//! the halves while Full is); the tabs behind are muted. The focused float
+//! is lifted. A tab that is
 //! working or waiting on a decision (`Topic::TabActivity`) shows that mark
 //! in the icon's place, so the title does not move.
 
@@ -21,14 +23,16 @@ use crate::stacks::ZONES;
 
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     let hidden = |app: &str| shell.is_app_hidden(app);
+    let on_screen = shell.tabs.on_screen(&hidden);
     let mut count = 0;
     let mut sections = Vec::new();
     for zone in ZONES {
         let tabs = shell.tabs.tabs(zone);
         count += tabs.len();
-        let shown = match zone {
-            Zone::Float => shell.focused_window_id,
-            _ => shell.tabs.visible_shown(zone, &hidden),
+        let (shown, showing) = if zone == Zone::Float {
+            (shell.focused_window_id, true)
+        } else {
+            (shell.tabs.visible_shown(zone, &hidden), on_screen.contains(&zone))
         };
         let items: Vec<SidebarItem<'_, Msg>> = tabs
             .iter()
@@ -51,9 +55,11 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                     Some(indicator) => status_mark(indicator),
                     None => icon(app_icon(shell, &t.app_id), LEADING_SLOT as u16).into(),
                 };
+                let current = shown == Some(t.window_id);
                 let mut item = SidebarItem::new(label, Msg::ShowTab(t.window_id))
                     .id(row_id(t.window_id))
-                    .active(shown == Some(t.window_id))
+                    .active(current && showing)
+                    .bright(current && !showing)
                     .leading(leading);
                 if hidden(&t.app_id) {
                     item = item.secondary("hidden");

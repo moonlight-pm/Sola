@@ -234,8 +234,11 @@ remembers the tab by its key. An app marks a tab's row with sticky
 `TabWindows::set_activity`): the bar draws the mark in the row's icon slot.
 Projects sends each project window's roll-up (a tab waiting on a decision
 beats a tab working). `Topic::Zones` is no
-longer read or written on `next`. Super+KP_4 / KP_6 move a tab, KP_0 /
-KP_Enter show it Fullscreen (content area) / Cinema (output).
+longer read or written on `next`. Zones are Full (`Zone::Fullscreen`, the
+content area) · Left · Right · Floating; each desk remembers whether Full or
+the halves were picked last (`TabLayout.full`) and composes only that side.
+Super+KP_0 / KP_4 / KP_6 move a tab to Full / Left / Right; KP_Enter shows it
+in Cinema (output).
 
 **On `next`, workspaces (slice 5):** the shell keeps a desk of zones per
 desktop workspace (`stacks/`; readers without a window answer for the

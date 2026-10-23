@@ -5,13 +5,15 @@
 //! bar from it.
 //!
 //! A tiled zone shows one tab; the rest stay out of the composition, so
-//! River hides them. Every float shows. Only the showing workspace is
-//! composed. A window with a parent (a dialog) is no tab: it rides above
-//! its parent, on its parent's workspace.
+//! River hides them. Full and the two halves take turns on screen: picking
+//! a tab in one leaves the other out. Every float shows. Only the showing
+//! workspace is composed. A window with a parent (a dialog) is no tab: it
+//! rides above its parent, on its parent's workspace.
 //!
 //! The readers without a window (`tabs`, `shown`, `visible_shown`,
-//! `occupied`, `present`, `float_order`) answer for the showing workspace;
-//! everything given a window finds it on whichever workspace it is.
+//! `on_screen`, `front`, `cinema`, `float_order`) answer for the showing
+//! workspace; everything given a window finds it on whichever workspace it
+//! is.
 
 mod desk;
 mod saved;
@@ -27,13 +29,20 @@ use sola_bus::topics::Zone;
 use desk::Desk;
 use saved::Slot;
 
-/// The tiled zones, left to right, and their share of the content area.
-/// canto (1920 × 1080) has two halves; configurable before Next goes back
-/// to novus.
-pub const TILED: [(Zone, f32); 2] = [(Zone::Left, 0.5), (Zone::Right, 0.5)];
+/// The zone that covers the whole content area. It and [`HALVES`] take
+/// turns on screen.
+pub const FULL: Zone = Zone::Fullscreen;
+
+/// The halves, left to right, and their shares of the content area (they
+/// add up to one). canto (1920 × 1080) has two; configurable before Next
+/// goes back to novus.
+pub const HALVES: [(Zone, f32); 2] = [(Zone::Left, 0.5), (Zone::Right, 0.5)];
+
+/// The zones that show one tab at a time.
+pub const TILED: [Zone; 3] = [FULL, Zone::Left, Zone::Right];
 
 /// Every zone the bar lists, in bar order.
-pub const ZONES: [Zone; 3] = [Zone::Left, Zone::Right, Zone::Float];
+pub const ZONES: [Zone; 4] = [FULL, Zone::Left, Zone::Right, Zone::Float];
 
 /// The workspace a fresh desk starts with.
 pub const FIRST_WORKSPACE: (&str, &str) = ("main", "Main");
@@ -44,15 +53,6 @@ const GHOST_GRACE: Duration = Duration::from_secs(30);
 
 /// How long the saved layout waits for the session to restore its apps.
 const RESTORE_GRACE: Duration = Duration::from_secs(120);
-
-/// Ways to show a tab bigger than its zone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Present {
-    /// The whole content area (both zones), under the menubar.
-    Fullscreen,
-    /// The whole output, menubar and bar included.
-    Cinema,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tab {
@@ -125,8 +125,9 @@ impl Stacks {
 
     /// Place a new window. In order: the place its key just left, its
     /// key's saved place (for a tab with neither, its app's), Floating for
-    /// `floats`, else the end of the showing workspace's last focused tiled
-    /// zone (shown). `returning` windows (the ones present when the shell
+    /// `floats`, else the end of the showing workspace's landing zone
+    /// (shown): Full while it is up or nothing is tiled, else the last
+    /// focused half. `returning` windows (the ones present when the shell
     /// starts) take a remembered place if there is one and otherwise join
     /// without being shown over the zone's tab.
     pub fn place(
@@ -155,9 +156,12 @@ impl Stacks {
             }
         }
         let desk = &mut self.desks[self.showing];
-        let zone = if floats { Zone::Float } else { desk.last_tiled };
+        let zone = if floats { Zone::Float } else { desk.landing() };
         let show = !(returning && desk.column(zone).shown.is_some());
         let shown = desk.push(tab, zone, show);
+        if shown {
+            desk.pick(zone);
+        }
         Placed {
             zone,
             shown,
@@ -282,8 +286,9 @@ impl Stacks {
     // ---------------------------------------------------------------------
 
     /// Show `window_id` in its zone (raise it, for a float; show its
-    /// parent, for a dialog), and its workspace. Returns false when it is
-    /// not placed.
+    /// parent, for a dialog), and its workspace. A tab in Full puts Full on
+    /// screen; one in a half, the halves. Returns false when it is not
+    /// placed.
     pub fn show(&mut self, window_id: u32) -> bool {
         let window_id = self.parent_of(window_id).unwrap_or(window_id);
         let Some(d) = self.desk_of(window_id) else {
@@ -299,27 +304,28 @@ impl Stacks {
             desk.float_z.push(window_id);
         } else {
             desk.column_mut(zone).shown = Some(window_id);
-            desk.last_tiled = zone;
+            desk.pick(zone);
         }
         true
     }
 
-    /// Keyboard focus moved to `window_id`: a new window joins its zone
-    /// from now on.
+    /// Keyboard focus moved to `window_id`: with the halves up, a new
+    /// window joins its half from now on. Focus never switches between
+    /// Full and the halves; only showing a tab does.
     pub fn focus(&mut self, window_id: u32) {
         let window_id = self.parent_of(window_id).unwrap_or(window_id);
         let Some(d) = self.desk_of(window_id) else {
             return;
         };
         let desk = &mut self.desks[d];
-        if let Some(zone) = desk.zone_of(window_id).filter(|z| *z != Zone::Float) {
-            desk.last_tiled = zone;
+        if let Some(zone) = desk.zone_of(window_id).filter(|z| is_half(*z)) {
+            desk.last_half = zone;
         }
     }
 
     /// Move `window_id` to `zone` on its workspace, in front of `before`
-    /// (else at the end), and show it there. Returns false when nothing
-    /// moved.
+    /// (else at the end), and show it there (Full, or the halves, comes on
+    /// screen with it). Returns false when nothing moved.
     pub fn move_to(&mut self, window_id: u32, zone: Zone, before: Option<u32>) -> bool {
         if !ZONES.contains(&zone) || before == Some(window_id) {
             return false;
@@ -340,7 +346,7 @@ impl Stacks {
             desk.float_z.push(window_id);
         } else {
             col.shown = Some(window_id);
-            desk.last_tiled = zone;
+            desk.pick(zone);
         }
         true
     }
@@ -359,15 +365,15 @@ impl Stacks {
         Some(tabs[next].window_id)
     }
 
-    /// Toggle `present` for `window_id`. Returns what it is now.
-    pub fn toggle_present(&mut self, window_id: u32, present: Present) -> Option<Present> {
-        let d = self.desk_of(window_id)?;
-        let desk = &mut self.desks[d];
-        desk.present = match desk.present {
-            Some((w, p)) if w == window_id && p == present => None,
-            _ => Some((window_id, present)),
+    /// Toggle Cinema (the whole output, menubar and bar included) for
+    /// `window_id`. Returns whether it is in Cinema now.
+    pub fn toggle_cinema(&mut self, window_id: u32) -> bool {
+        let Some(d) = self.desk_of(window_id) else {
+            return false;
         };
-        desk.present.map(|(_, p)| p)
+        let desk = &mut self.desks[d];
+        desk.cinema = (desk.cinema != Some(window_id)).then_some(window_id);
+        desk.cinema.is_some()
     }
 
     // ---------------------------------------------------------------------
@@ -387,8 +393,9 @@ impl Stacks {
         &self.desks[self.showing].float_z
     }
 
-    pub fn present(&self) -> Option<(u32, Present)> {
-        self.present_on(self.showing)
+    /// The tab in Cinema on the showing workspace.
+    pub fn cinema(&self) -> Option<u32> {
+        self.cinema_on(self.showing)
     }
 
     /// What a tiled zone of the showing workspace puts on screen: its
@@ -398,9 +405,17 @@ impl Stacks {
         self.desks[self.showing].visible_shown(zone, hidden)
     }
 
-    /// Tiled zones of the showing workspace with something on screen.
-    pub fn occupied(&self, hidden: &dyn Fn(&str) -> bool) -> Vec<Zone> {
-        self.occupied_on(self.showing, hidden)
+    /// The tiled zones of the showing workspace on screen: Full alone, or
+    /// the halves with something to show.
+    pub fn on_screen(&self, hidden: &dyn Fn(&str) -> bool) -> Vec<Zone> {
+        self.desks[self.showing].on_screen(hidden)
+    }
+
+    /// Where focus belongs on the showing workspace when the focused tab
+    /// left the screen: Full's tab, or the last focused half's (else the
+    /// other half's).
+    pub fn front(&self, hidden: &dyn Fn(&str) -> bool) -> Option<u32> {
+        self.desks[self.showing].front(hidden)
     }
 
     // ---------------------------------------------------------------------
@@ -413,14 +428,8 @@ impl Stacks {
             .map_or(&[], |d| d.column(zone).tabs.as_slice())
     }
 
-    pub fn present_on(&self, workspace: usize) -> Option<(u32, Present)> {
-        self.desks.get(workspace).and_then(|d| d.present)
-    }
-
-    pub fn occupied_on(&self, workspace: usize, hidden: &dyn Fn(&str) -> bool) -> Vec<Zone> {
-        self.desks
-            .get(workspace)
-            .map_or_else(Vec::new, |d| d.occupied(hidden))
+    pub fn cinema_on(&self, workspace: usize) -> Option<u32> {
+        self.desks.get(workspace).and_then(|d| d.cinema)
     }
 
     /// The zone `window_id` is in, on whichever workspace.
@@ -449,4 +458,8 @@ impl Stacks {
     fn desk_index(&self, id: &str) -> Option<usize> {
         self.desks.iter().position(|d| d.id == id)
     }
+}
+
+fn is_half(zone: Zone) -> bool {
+    HALVES.iter().any(|(z, _)| *z == zone)
 }

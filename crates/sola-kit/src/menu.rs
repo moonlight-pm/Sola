@@ -195,7 +195,7 @@ pub const WINDOW_MENU_ENTRIES: &[WindowMenuEntry] = &[
     WindowMenuEntry::Divider,
     item(
         ACTION_FULLSCREEN,
-        "Fullscreen",
+        "Full",
         kp(KeyCode::KP_0),
         WindowAction::Zone(Zone::Fullscreen),
     ),

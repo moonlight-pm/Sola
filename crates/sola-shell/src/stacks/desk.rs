@@ -1,10 +1,10 @@
 //! One workspace's zones: each zone's tabs in bar order, what each tiled
-//! zone shows, the floats' stacking, the last focused tiled zone, and the
-//! tab shown bigger than its zone.
+//! zone shows, whether Full or the halves are up, the floats' stacking,
+//! the last focused half, and the tab in Cinema.
 
 use sola_bus::topics::Zone;
 
-use super::{Present, TILED, Tab, ZONES};
+use super::{FULL, HALVES, Tab, ZONES, is_half};
 
 pub(super) struct Column {
     pub zone: Zone,
@@ -19,9 +19,13 @@ pub(super) struct Desk {
     pub columns: Vec<Column>,
     /// Floats bottom → top.
     pub float_z: Vec<u32>,
-    /// Where a new window goes: the last tiled zone that had focus.
-    pub last_tiled: Zone,
-    pub present: Option<(u32, Present)>,
+    /// Full was picked last (else the halves were). See [`Self::on_screen`].
+    pub full: bool,
+    /// Where a new window goes while the halves are up: the last half
+    /// that had focus.
+    pub last_half: Zone,
+    /// The tab shown over the whole output, menubar and bar included.
+    pub cinema: Option<u32>,
 }
 
 impl Desk {
@@ -38,8 +42,9 @@ impl Desk {
                 })
                 .collect(),
             float_z: Vec::new(),
-            last_tiled: TILED[0].0,
-            present: None,
+            full: false,
+            last_half: HALVES[0].0,
+            cinema: None,
         }
     }
 
@@ -78,6 +83,27 @@ impl Desk {
         self.columns.iter().flat_map(|c| c.tabs.iter())
     }
 
+    /// Where a new tiled window goes: Full while it is up, or when no half
+    /// has a tab; else the last focused half.
+    pub fn landing(&self) -> Zone {
+        let has = |z: Zone| !self.column(z).tabs.is_empty();
+        if (self.full && has(FULL)) || !HALVES.iter().any(|(z, _)| has(*z)) {
+            FULL
+        } else {
+            self.last_half
+        }
+    }
+
+    /// A tab in `zone` was shown: Full takes the screen, or the halves do.
+    pub fn pick(&mut self, zone: Zone) {
+        if zone == FULL {
+            self.full = true;
+        } else if is_half(zone) {
+            self.full = false;
+            self.last_half = zone;
+        }
+    }
+
     /// Put `tab` at the end of `zone`; a tiled zone shows it when `show`
     /// (or when it showed nothing).
     pub fn push(&mut self, tab: Tab, zone: Zone, show: bool) -> bool {
@@ -99,8 +125,8 @@ impl Desk {
     /// showed it. The zone then shows the next tab (else the previous).
     pub fn take(&mut self, window_id: u32) -> Option<(Zone, usize, Tab, bool)> {
         self.float_z.retain(|&w| w != window_id);
-        if self.present.is_some_and(|(w, _)| w == window_id) {
-            self.present = None;
+        if self.cinema == Some(window_id) {
+            self.cinema = None;
         }
         let col = self
             .columns
@@ -125,7 +151,7 @@ impl Desk {
             c.shown = None;
         }
         self.float_z.clear();
-        self.present = None;
+        self.cinema = None;
     }
 
     /// What a tiled zone puts on screen: its shown tab, or, when that
@@ -143,12 +169,32 @@ impl Desk {
             .map(|t| t.window_id)
     }
 
-    /// Tiled zones with something on screen, left to right.
-    pub fn occupied(&self, hidden: &dyn Fn(&str) -> bool) -> Vec<Zone> {
-        TILED
+    /// The tiled zones on screen: Full alone when it was picked last (or
+    /// the halves have nothing to show) and has something to show itself;
+    /// else the halves with something to show, left to right.
+    pub fn on_screen(&self, hidden: &dyn Fn(&str) -> bool) -> Vec<Zone> {
+        let halves: Vec<Zone> = HALVES
             .iter()
             .map(|(z, _)| *z)
             .filter(|z| self.visible_shown(*z, hidden).is_some())
-            .collect()
+            .collect();
+        let full = self.visible_shown(FULL, hidden).is_some();
+        if full && (self.full || halves.is_empty()) {
+            vec![FULL]
+        } else {
+            halves
+        }
+    }
+
+    /// The tab focus belongs on: Full's when it is up, else the last
+    /// focused half's (else the other half's).
+    pub fn front(&self, hidden: &dyn Fn(&str) -> bool) -> Option<u32> {
+        let on = self.on_screen(hidden);
+        let zone = if on.contains(&self.last_half) {
+            self.last_half
+        } else {
+            *on.first()?
+        };
+        self.visible_shown(zone, hidden)
     }
 }

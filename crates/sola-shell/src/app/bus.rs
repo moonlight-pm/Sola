@@ -377,7 +377,8 @@ impl Shell {
         // sola-preview sets `suppress_map_focus_for` so the window shows
         // without taking the seat (keyboard stays on the app that was
         // focused when the chord fired). When the focused window closed,
-        // its zone's next tab takes focus, else the most recent app.
+        // its zone's next tab takes focus, else the tab in front (its zone
+        // emptied), else the most recent app.
         let prev_focused = self.focused_window_id;
         if let Some((wid, app_id)) = take_focus.clone() {
             let suppress = self
@@ -396,9 +397,11 @@ impl Shell {
             }
         } else if focused_closed {
             let hidden = |app: &str| self.is_app_hidden(app);
-            let next = focused_zone
-                .filter(|z| *z != Zone::Float)
+            let tiled = focused_zone.filter(|z| *z != Zone::Float);
+            let next = tiled
+                .filter(|z| self.tabs.on_screen(&hidden).contains(z))
                 .and_then(|z| self.tabs.visible_shown(z, &hidden))
+                .or_else(|| tiled.and_then(|_| self.tabs.front(&hidden)))
                 .or_else(|| self.mru_window_on_showing(None));
             let next_app = next.and_then(|w| self.app_id_for_window(w));
             match (next, next_app) {
@@ -634,7 +637,9 @@ impl Shell {
     }
 
     /// Keyboard focus stays on something on screen: a focused tab that is
-    /// now behind another hands focus to its zone's shown tab.
+    /// now behind another hands focus to its zone's shown tab, and one
+    /// whose zone left the screen (Full gave way to the halves, or they to
+    /// Full) to the tab in front.
     fn keep_focus_on_screen(&mut self) {
         let Some(wid) = self.focused_window_id else {
             return;
@@ -644,7 +649,12 @@ impl Shell {
             return;
         };
         let hidden = |app: &str| self.is_app_hidden(app);
-        let Some(shown) = self.tabs.visible_shown(zone, &hidden) else {
+        let shown = if self.tabs.on_screen(&hidden).contains(&zone) {
+            self.tabs.visible_shown(zone, &hidden)
+        } else {
+            self.tabs.front(&hidden)
+        };
+        let Some(shown) = shown else {
             return;
         };
         if shown == tab {
@@ -1542,13 +1552,16 @@ impl Shell {
             .filter(|w| w.app_id != Self::APP_ID)
             .map(|w| WindowChrome {
                 window_id: w.window_id,
-                tiled: matches!(self.tabs.zone_of(w.window_id), Some(Zone::Left | Zone::Right))
+                tiled: self
+                    .tabs
+                    .zone_of(w.window_id)
+                    .is_some_and(|z| crate::stacks::TILED.contains(&z))
                     && !self.zoning.is_floating(w.window_id),
                 cinema: self
                     .tabs
                     .desk_of(w.window_id)
-                    .and_then(|d| self.tabs.present_on(d))
-                    == Some((w.window_id, crate::stacks::Present::Cinema)),
+                    .and_then(|d| self.tabs.cinema_on(d))
+                    == Some(w.window_id),
                 rim: self.menus.get_menu(&w.app_id).is_none(),
             })
             .collect();

@@ -8,7 +8,7 @@ use sola_bus::topics::{FloatGeometry, FrameUpdate, OutputGeometry, WindowGeometr
 use sola_core::KeyCode;
 use tracing::info;
 
-use crate::stacks::{Present, TILED};
+use crate::stacks::HALVES;
 
 pub const MENUBAR_HEIGHT: i32 = 28;
 
@@ -328,72 +328,43 @@ pub fn bar_frame(window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
     }
 }
 
-/// A tiled zone's rectangle. Only the `occupied` zones (and `zone`
-/// itself) share the content area, so an empty zone gives its width away.
-/// Columns sit one [`GAP`] apart.
-pub fn tile_frame(
-    window_id: u32,
-    zone: Zone,
-    occupied: &[Zone],
-    output_w: i32,
-    output_h: i32,
-) -> FrameUpdate {
+/// A tiled zone's rectangle: Full is the content area; a half keeps its
+/// share of it whether or not the other half has a tab. Halves sit one
+/// [`GAP`] apart.
+pub fn tile_frame(window_id: u32, zone: Zone, output_w: i32, output_h: i32) -> FrameUpdate {
     let (cx, cy, cw, ch) = content_rect(output_w, output_h);
-    let columns: Vec<(Zone, f32)> = TILED
-        .iter()
-        .copied()
-        .filter(|(z, _)| *z == zone || occupied.contains(z))
-        .collect();
-    let total: f32 = columns.iter().map(|(_, f)| f).sum();
-    let gaps = GAP * (columns.len() as i32 - 1).max(0);
-    let avail = (cw - gaps).max(1) as f32;
-    let mut before = 0.0;
-    let mut span = (0.0, 1.0);
-    let mut index = 0;
-    for (i, (z, f)) in columns.iter().enumerate() {
-        if *z == zone {
-            span = (before / total, (before + f) / total);
-            index = i as i32;
-            break;
-        }
-        before += f;
-    }
-    let x0 = cx + (avail * span.0).round() as i32 + index * GAP;
-    let x1 = cx + (avail * span.1).round() as i32 + index * GAP;
-    FrameUpdate {
+    let mut frame = FrameUpdate {
         window_id,
-        x: x0,
+        x: cx,
         y: cy,
-        width: (x1 - x0).max(1),
+        width: cw,
         height: ch,
         fullscreen: false,
-    }
+    };
+    let Some(index) = HALVES.iter().position(|(z, _)| *z == zone) else {
+        return frame;
+    };
+    let avail = (cw - GAP * (HALVES.len() as i32 - 1)).max(1) as f32;
+    let before: f32 = HALVES[..index].iter().map(|(_, f)| f).sum();
+    let gaps = index as i32 * GAP;
+    let x0 = cx + (avail * before).round() as i32 + gaps;
+    let x1 = cx + (avail * (before + HALVES[index].1)).round() as i32 + gaps;
+    frame.x = x0;
+    frame.width = (x1 - x0).max(1);
+    frame
 }
 
-/// A tab shown bigger than its zone.
-pub fn present_frame(window_id: u32, present: Present, output_w: i32, output_h: i32) -> FrameUpdate {
-    match present {
-        Present::Fullscreen => {
-            let (x, y, width, height) = content_rect(output_w, output_h);
-            FrameUpdate {
-                window_id,
-                x,
-                y,
-                width,
-                height,
-                fullscreen: false,
-            }
-        }
-        // The compositor's fullscreen state forces clients past their own
-        // max size / work-area assumptions.
-        Present::Cinema => FrameUpdate {
-            window_id,
-            x: 0,
-            y: 0,
-            width: output_w.max(1),
-            height: output_h.max(1),
-            fullscreen: true,
-        },
+/// A tab in Cinema: the whole output, menubar and bar included. The
+/// compositor's fullscreen state forces clients past their own max size /
+/// work-area assumptions.
+pub fn cinema_frame(window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
+    FrameUpdate {
+        window_id,
+        x: 0,
+        y: 0,
+        width: output_w.max(1),
+        height: output_h.max(1),
+        fullscreen: true,
     }
 }
 
@@ -709,22 +680,19 @@ mod tests {
     #[test]
     fn bar_and_two_halves_on_canto() {
         assert_eq!(rect(&bar_frame(1, 1920, 1080)), (10, 38, 240, 1032));
-        let both = [Zone::Left, Zone::Right];
-        assert_eq!(rect(&tile_frame(1, Zone::Left, &both, 1920, 1080)), (260, 38, 820, 1032));
-        assert_eq!(rect(&tile_frame(1, Zone::Right, &both, 1920, 1080)), (1090, 38, 820, 1032));
+        assert_eq!(rect(&tile_frame(1, Zone::Left, 1920, 1080)), (260, 38, 820, 1032));
+        assert_eq!(rect(&tile_frame(1, Zone::Right, 1920, 1080)), (1090, 38, 820, 1032));
     }
 
     #[test]
-    fn a_lone_zone_takes_the_content_area() {
-        assert_eq!(rect(&tile_frame(1, Zone::Left, &[Zone::Left], 1920, 1080)), (260, 38, 1650, 1032));
-        assert_eq!(rect(&tile_frame(1, Zone::Right, &[], 1920, 1080)), (260, 38, 1650, 1032));
-    }
-
-    #[test]
-    fn present_frames() {
-        let f = present_frame(1, Present::Fullscreen, 1920, 1080);
+    fn full_is_the_content_area() {
+        let f = tile_frame(1, Zone::Fullscreen, 1920, 1080);
         assert_eq!((rect(&f), f.fullscreen), ((260, 38, 1650, 1032), false));
-        let f = present_frame(1, Present::Cinema, 1920, 1080);
+    }
+
+    #[test]
+    fn cinema_is_the_whole_output() {
+        let f = cinema_frame(1, 1920, 1080);
         assert_eq!((rect(&f), f.fullscreen), ((0, 0, 1920, 1080), true));
     }
 
@@ -787,6 +755,7 @@ mod tests {
     fn numpad_keys_on_two_zones() {
         assert_eq!(zone_for_keycode(KeyCode::KP_4.raw()), Some(Zone::Left));
         assert_eq!(zone_for_keycode(KeyCode::KP_6.raw()), Some(Zone::Right));
+        assert_eq!(zone_for_keycode(KeyCode::KP_0.raw()), Some(Zone::Fullscreen));
         assert_eq!(zone_for_keycode(KeyCode::KP_MULTIPLY.raw()), Some(Zone::Float));
         assert_eq!(zone_for_keycode(KeyCode::KP_8.raw()), None);
         assert!(ZONING_KEYCODES.contains(&KeyCode::KP_ENTER.raw()));

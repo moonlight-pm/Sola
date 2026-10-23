@@ -4,7 +4,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use sola_bus::topics::{Workspace, Zone};
+use sola_bus::topics::Workspace;
 
 use super::Stacks;
 use super::desk::Desk;
@@ -66,8 +66,8 @@ impl Stacks {
     }
 
     /// Send `window_id` to workspace `index`: the same zone there, at the
-    /// end, shown (a float stays a float). Returns false when nothing
-    /// moved.
+    /// end, shown (a float stays a float; Full or the halves come up with
+    /// it). Returns false when nothing moved.
     pub fn send(&mut self, window_id: u32, index: usize) -> bool {
         let window_id = self.parent_of(window_id).unwrap_or(window_id);
         if index >= self.desks.len() || self.desk_of(window_id) == Some(index) {
@@ -77,9 +77,7 @@ impl Stacks {
             return false;
         };
         self.desks[index].push(tab, zone, true);
-        if zone != Zone::Float {
-            self.desks[index].last_tiled = zone;
-        }
+        self.desks[index].pick(zone);
         true
     }
 

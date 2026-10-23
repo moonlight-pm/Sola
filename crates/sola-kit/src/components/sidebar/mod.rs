@@ -138,6 +138,9 @@ pub struct SidebarHoverAction<Message> {
 pub struct SidebarItem<'a, Message> {
     pub label: String,
     pub active: bool,
+    /// Full ink without the selection lift: the row is current but not on
+    /// screen (the tab bar's selected tab in a zone that is not showing).
+    pub bright: bool,
     pub message: Message,
     /// Right-aligned dim shortcut hint (e.g. the `1`..=`9` access key).
     pub shortcut: Option<u8>,
@@ -195,6 +198,7 @@ impl<'a, Message> SidebarItem<'a, Message> {
         Self {
             label: label.into(),
             active: false,
+            bright: false,
             message,
             shortcut: None,
             on_close: None,
@@ -218,6 +222,12 @@ impl<'a, Message> SidebarItem<'a, Message> {
 
     pub fn active(mut self, active: bool) -> Self {
         self.active = active;
+        self
+    }
+
+    /// Full ink without the selection lift (see [`Self::bright`] field).
+    pub fn bright(mut self, bright: bool) -> Self {
+        self.bright = bright;
         self
     }
 
@@ -1533,6 +1543,7 @@ where
     let SidebarItem {
         label,
         active,
+        bright,
         message,
         shortcut,
         on_close,
@@ -1589,6 +1600,7 @@ where
             leading,
             inline_hover,
             active,
+            bright,
             chrome,
             density,
             section_header,
@@ -1975,15 +1987,17 @@ fn assign_close_id<'a, Message>(
 
 /// Title + optional subtitle (+ leading indicator). Takes `Fill` width.
 ///
-/// List etch: idle muted + regular; active full fg + [`fonts::ui_medium`].
-/// Section headers stay medium with a lucide chevron (folder caption).
-/// Card structured rows keep the historical 14px regular face.
+/// List etch: idle muted + regular; active (and bright) full fg +
+/// [`fonts::ui_medium`]. Section headers stay medium with a lucide chevron
+/// (folder caption). Card structured rows keep the historical 14px regular
+/// face.
 fn item_text_block<'a, Message: 'a>(
     label: &str,
     subtitle: Option<&str>,
     indicator: Option<SidebarIndicator>,
     leading: Option<Element<'a, Message, Theme>>,
     active: bool,
+    bright: bool,
     chrome: SidebarItemChrome,
     density: SidebarDensity,
     section_header: Option<bool>,
@@ -1996,18 +2010,18 @@ fn item_text_block<'a, Message: 'a>(
     let dark_ink = ink.is_some_and(|c| c != Color::WHITE);
     let (title_font, title_size) = match chrome {
         SidebarItemChrome::Row => (
-            title_font_for(active, is_header, dark_ink),
+            title_font_for(active || bright, is_header, dark_ink),
             density.metrics().font,
         ),
         SidebarItemChrome::Card => (fonts::ui(), 14),
     };
-    let title_color = ink.map(|c| {
-        if active || is_header {
-            c
-        } else {
-            well_muted(c)
-        }
-    });
+    let title_color = match ink {
+        Some(c) if active || bright || is_header => Some(c),
+        Some(c) => Some(well_muted(c)),
+        // The row's own ink is muted while idle; bright keeps it full.
+        None if bright && !active => Some(well_ink(row_surface(None))),
+        None => None,
+    };
     let mut title = text(label.to_string())
         .font(title_font)
         .size(title_size)
@@ -2122,6 +2136,7 @@ fn item_content<'a, Message: Clone + 'a>(
     leading: Option<Element<'a, Message, Theme>>,
     hover_action: Option<SidebarHoverAction<Message>>,
     active: bool,
+    bright: bool,
     chrome: SidebarItemChrome,
     density: SidebarDensity,
     section_header: Option<bool>,
@@ -2133,6 +2148,7 @@ fn item_content<'a, Message: Clone + 'a>(
         indicator,
         leading,
         active,
+        bright,
         chrome,
         density,
         section_header,

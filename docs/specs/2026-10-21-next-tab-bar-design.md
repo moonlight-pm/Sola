@@ -1,12 +1,12 @@
 # Next — one tab list (the bar)
 
 **Date:** 2026-10-21  
-**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 6 (titlebars with menus, gaps, the bar as an island) and slice 5 (desktop workspaces, a browser profile each) applied and committed 2026-10-23; the dark grey base in the kit 2026-10-23; the islands not started.  
+**Status:** **Frozen** 2026-10-21 (Joshua: "Proceed"); **Locked models** row in `CURRENT.md`. Slices 1, 2 and 4 applied on `next`; slice 3 changed (a window per project) and applied; slice 6 (titlebars with menus, gaps, the bar as an island) and slice 5 (desktop workspaces, a browser profile each) applied and committed 2026-10-23; the dark grey base in the kit 2026-10-23; a Full zone (the halves keep their half) applied and committed 2026-10-23; the islands not started.  
 **Related:** design `design/next/` boards 05 (the master sidebar), 06 (one tab list) and their continued boards; idea [desks](../ideas/2026-10-12-desks.md) (this is its panel model); plan [`plans/2026-10-21-next-tab-bar-plan.md`](../plans/2026-10-21-next-tab-bar-plan.md)
 
 | | |
 |--|--|
-| **Implementation** | On `next`, applied on canto. Slice 1 (2026-10-21): `crates/sola-shell/src/stacks.rs` (model), `tabbar/` (window + view), `zoning.rs` (bar, tile, present frames; floats), `app.rs` / `app/bus.rs` (composition, placement, focus, zone keys, `TabLayout`); sola-bus `Topic::WindowParent` + `Topic::TabLayout`; sola-river forwards River's `parent`. Slice 2: `Topic::Tab` / `Topic::TabWindow`, `pairing.rs`, kit `tabs::TabWindows`; Terminal a window per tab. Slice 4: the browser a window per page, groups and the strip gone (4g). Slice 3 as changed: Projects a window per project with a top bar of tabs; its bar row carries the project's activity (`Topic::TabActivity`, 2026-10-22). Slice 6 (`ec059189`): kit `window_frame`, the gap grid, the bar island, `Topic::WindowChrome`. Slice 5 (`388df10c`): `stacks/` a desk per workspace, pills, `Topic::Workspaces` / `Topic::WindowWorkspace`; the browser's router runs every profile's helper, pages reopen under their workspace's profile. Grey base (`ba33fda9`): `Palette::seed` and the kit in neutral greys, `Theme::retire_slate`. |
+| **Implementation** | On `next`, applied on canto. Slice 1 (2026-10-21): `crates/sola-shell/src/stacks.rs` (model), `tabbar/` (window + view), `zoning.rs` (bar, tile, present frames; floats), `app.rs` / `app/bus.rs` (composition, placement, focus, zone keys, `TabLayout`); sola-bus `Topic::WindowParent` + `Topic::TabLayout`; sola-river forwards River's `parent`. Slice 2: `Topic::Tab` / `Topic::TabWindow`, `pairing.rs`, kit `tabs::TabWindows`; Terminal a window per tab. Slice 4: the browser a window per page, groups and the strip gone (4g). Slice 3 as changed: Projects a window per project with a top bar of tabs; its bar row carries the project's activity (`Topic::TabActivity`, 2026-10-22). Slice 6 (`ec059189`): kit `window_frame`, the gap grid, the bar island, `Topic::WindowChrome`. Slice 5 (`388df10c`): `stacks/` a desk per workspace, pills, `Topic::Workspaces` / `Topic::WindowWorkspace`; the browser's router runs every profile's helper, pages reopen under their workspace's profile. Grey base (`ba33fda9`): `Palette::seed` and the kit in neutral greys, `Theme::retire_slate`. Full zone (2026-10-23, § Full): `stacks/desk.rs` (`full`, `landing`, `pick`, `on_screen`, `front`), `zoning::tile_frame` (halves fixed, Full the content area, `cinema_frame`), `TabLayout.full`, kit `SidebarItem::bright`; the Fullscreen toggle is gone. |
 | **Dogfood** | canto, branch `next` (rivulet); smoked by injection — detail in `CURRENT.md` and the `shell-desks` capability row. |
 | **Gaps** | Apps that still keep their own document list (Paint, Design, Bots, the wrapper's popups) — next, one app at a time; the islands (board 03); a workspace overview; slice 6 leftovers (menu folding, titlebar zone glyph); a dialog riding its parent unsmoked; browser ⌘-click, vault, downloads unsmoked; no keyboard tab switching in a project's top bar. |
 
@@ -29,7 +29,7 @@ shell's list, not to sola-river.
 | | Decision |
 |--|--|
 | N1 | Write it up as a spec and plan first; code after review. |
-| N2 | **Two tiled zones, Left and Right, 50 / 50**, plus Floating. canto has a 1920 × 1080 display. The layout is one constant in the shell; it becomes configurable if Next goes back to novus (5120 × 2160, where board 05 drew three columns). |
+| N2 | **Two tiled zones, Left and Right, 50 / 50**, plus Floating. canto has a 1920 × 1080 display. The layout is one constant in the shell; it becomes configurable if Next goes back to novus (5120 × 2160, where board 05 drew three columns). **Amended 2026-10-23:** a third tiled zone, **Full**, at the top of the bar; Full and the halves take turns on screen, and a half keeps its half when the other is empty (§ Full). |
 | N3 | A new window joins the **focused zone**. |
 | N4 | The bar is **docked**, 240 px, always on. |
 | N8 | The bar comes first, under today's menubar. Titlebars with menus (board 01) arrive as each app moves to a window per tab; gaps (02) and islands (03) after; the dark grey base waits for the kit overhaul (**amended 2026-10-23:** Joshua asked for the grey base now — in the kit on `next`; the choosable accent still waits for the overhaul). |
@@ -68,7 +68,8 @@ desk (one, implicit, until slice 5)
 - **Tiled zone.** An ordered stack of tabs, one of them shown. The others
   are left out of the composition, so River hides them; they keep running.
 - **Empty zone.** Gives its width to the other. Its header stays in the
-  bar as a drop target.
+  bar as a drop target. (**Amended 2026-10-23:** a half keeps its half;
+  § Full.)
 - **Floating.** Every float shows, stacked most recent on top, as today.
   The bar lists them under Floating.
 - **Child windows.** A window with a River `parent` (a dialog, a file
@@ -78,7 +79,8 @@ desk (one, implicit, until slice 5)
 - **Fullscreen and Cinema** are ways of showing the shown tab, not zones.
   Fullscreen covers the content area (both zones); Cinema covers the whole
   output, menubar and bar included. The tab stays in its stack; leaving
-  puts it back.
+  puts it back. (**Amended 2026-10-23:** Fullscreen is gone — the Full
+  zone took its rectangle and its key; Cinema stays. § Full.)
 
 ## Geometry (canto, 1920 × 1080)
 
@@ -131,7 +133,7 @@ No gaps and no titlebars on tiles yet (N8).
 | Super+\` / Super+Shift+\` | Next / previous tab in the focused zone | Next window of the focused app |
 | Super+KP_4 / KP_6 | Move the focused tab to Left / Right (end of stack, shown) | Snap to the left / right column |
 | Super+KP_* | Move to Floating | Float |
-| Super+KP_0 / KP_Enter | Fullscreen / Cinema the shown tab (toggle) | Same zones |
+| Super+KP_0 / KP_Enter | Fullscreen / Cinema the shown tab (toggle). **Amended 2026-10-23:** KP_0 moves the tab to Full; KP_Enter stays Cinema | Same zones |
 | Super+KP_8, 2, 5, =, ., + | Unbound on the two-zone layout | Other snaps |
 | Super+Tab | Same app list; confirming shows that app's most recent tab in its zone | Raises the app |
 | Super+H | Hides the app as today; its rows stay, dimmed; clicking one unhides it | Hides the app |
@@ -338,8 +340,8 @@ islands of board 03 come later.
 | Menubar | 0, 0, 1920 × 28 (unchanged) |
 | Bar | 10, 38, 240 × 1032 |
 | Content area | 260, 38, 1650 × 1032 |
-| Left / Right | 820 × 1032 each, 10 apart; a lone zone takes 1650 |
-| Fullscreen | The content area |
+| Left / Right | 820 × 1032 each, 10 apart (**2026-10-23:** a lone half keeps its 820) |
+| Full (was Fullscreen) | The content area |
 | Cinema | The whole output, no titlebar, no gap |
 | Floats | Inside the content area as before |
 
@@ -391,6 +393,78 @@ islands of board 03 come later.
 Board 03's islands; titlebar drag to another zone; the zone glyph and
 stack count on the right of the titlebar; menus folding into ··· on a
 narrow tile; server-drawn titlebars for foreign apps; the dark grey base.
+
+## Full, and halves that keep their half (2026-10-23)
+
+**Decided (Joshua, 2026-10-23):** a **Full** zone at the top of the bar;
+its windows cover the content area (everything right of the bar). A half
+no longer widens when the other is empty. Picking a Full tab leaves Left
+and Right off screen; picking a Left or Right tab draws both halves and
+leaves Full off screen. The bar tells three rows apart. The first window
+on an empty workspace goes to Full. Super+KP_0 moves a tab to Full (the
+Fullscreen toggle is gone); Super+KP_Enter stays Cinema, the whole
+output edge to edge.
+
+### Model
+
+```text
+zone Full                 stack: tab · tab        (one shown)
+zone Left · zone Right    stack each              (one shown each)
+zone Floating             every float shows, over either
+```
+
+- Full is `Zone::Fullscreen` on the bus (its old meaning, the content
+  area, is the same rectangle), so `TabLayout`, the Window menu and the
+  zone keys carry it unchanged.
+- **Which is up.** Each workspace remembers whether Full or the halves were
+  picked last. Showing a tab (a row, Super+\`, the switcher, the launcher,
+  a new window that takes the screen, a move, a send to another
+  workspace) picks its side. Focus alone never switches: the pointer only
+  reaches what is on screen. A side with nothing to show (empty, or every
+  tab's app Super+H'd) gives the screen to the other.
+- **On screen** is then Full's shown tab, or each half's shown tab. Every
+  other tiled tab is left out of the composition, so River hides it. Floats
+  stay over either.
+- Saved in `TabLayout.full` (`#[serde(default)]`): the workspaces with Full
+  up. An older file has none, so it comes back with its halves up.
+
+### Where a window lands
+
+- A **new** window joins Full while Full is up, or when no half has a tab
+  (so the first window of a workspace takes Full); else the last focused
+  half. It is shown and focused, and its side comes up.
+- A **returning** window takes its saved place without switching sides.
+
+### Focus
+
+- When the focused tab closes, its zone's next tab takes focus; if the
+  zone emptied, the tab in front (Full's, else the last focused half's,
+  else the other half's); else the most recent app.
+- A focused tab whose side left the screen hands focus to the tab in
+  front.
+
+### The bar
+
+| Row | Look |
+|--|--|
+| A zone's shown tab, zone on screen | Lifted (the kit's active row) |
+| A zone's shown tab, zone off screen | Full ink, no lift (kit `SidebarItem::bright`) |
+| Behind in its stack | Muted (the idle row) |
+| Floating | The focused float lifted, the rest muted (as before) |
+
+Sections run Full · Left · Right · Floating. Dropping above a zone's
+header puts a row at the end of the zone before it (the start of Full).
+
+### Keys and the Window menu
+
+| Chord | Does |
+|--|--|
+| Super+KP_0 | Move the focused tab to Full (end of its stack, shown) |
+| Super+KP_4 / KP_6 | Move it to Left / Right |
+| Super+KP_* | Float it |
+| Super+KP_Enter | Cinema (toggle): the whole output, menubar and bar included |
+
+The kit Window menu's KP_0 item reads **Full**.
 
 ## Not in slice 1
 
