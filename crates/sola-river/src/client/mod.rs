@@ -43,6 +43,7 @@ pub mod output_config;
 pub mod screenshot;
 pub mod screenshot_window;
 pub mod seat;
+pub mod corners;
 pub mod shadow;
 pub mod virtual_keyboard;
 pub mod virtual_pointer;
@@ -174,6 +175,8 @@ pub struct AppData {
     pub call_rx: Option<std::sync::mpsc::Receiver<sola_call::Incoming>>,
     /// Floating-window drop shadows (`get_decoration_below` + SHM silhouette).
     pub shadow: shadow::ShadowState,
+    /// Rounded corners for tiles whose app draws no frame.
+    pub corners: corners::CornerState,
     /// `river_layer_shell_v1` — enables wlr-layer-shell for clients
     /// (sola-kvm edge capture, panels, etc.).
     pub layer_shell: layer_shell::LayerShellState,
@@ -249,6 +252,7 @@ impl AppData {
             screenshot: screenshot::ScreenshotState::default(),
             call_rx: None,
             shadow: shadow::ShadowState::default(),
+            corners: corners::CornerState::default(),
             layer_shell: layer_shell::LayerShellState::default(),
             last_composition: Vec::new(),
         }

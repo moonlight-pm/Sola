@@ -605,3 +605,18 @@ looked at (A5).
       welcome."), Show (the tab selected, the island gone), Esc, a
       restart (no stale islands). Unsmoked: a permission prompt (that
       session ran in auto mode), Codex / Grok sessions, the +N list.
+
+## Phase 15 — Rounded corners for other apps' tiles
+
+Joshua (2026-10-23): Steam's window "to also have the curved corners".
+
+- [x] **15a sola-river `corners.rs`:** for a tiled window whose app draws
+      no frame (`WindowChrome.rim && tiled`, not floating / fullscreen /
+      Cinema), four decorations above it: top and bottom strips (the
+      corners outside 12 px painted the ground, the rim along the curve
+      and the edge), 1 px side strips (the rim); repainted on a size or
+      focus change; River's square border off for it.
+- [x] **15b Smoke** on canto with Steam tiled Right: four corners match a
+      kit tile's, the rim 7% → 18% on focus, sola-river ~0.7% idle.
+- [ ] **Later (Oath tab):** floating foreign windows — rivulet clipping a
+      window's corners (stock wlroots 0.20 scene cannot).

@@ -289,6 +289,7 @@ pub(crate) fn drop_window(state: &mut AppData, window_id: u32) {
         order.retain(|&id| id != window_id);
     }
     crate::client::shadow::destroy_for(state, window_id);
+    crate::client::corners::destroy_for(state, window_id);
     if state.pointer_window == Some(window_id) {
         state.pointer_window = None;
     }

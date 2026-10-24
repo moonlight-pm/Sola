@@ -400,9 +400,12 @@ pub fn handle_render_start(state: &mut AppData) {
     // A hairline around windows whose app draws no frame (the shell's
     // `WindowChrome.rim`), lit while focused; none for the rest (kit apps
     // draw their own rim). Drawn outside the content, so it sits in the gap.
-    // Cheap to send repeatedly — River only diffs the resulting state.
+    // A tiled one gets rounded corners with the rim along them instead
+    // (`corners.rs`), so no square border. Cheap to send repeatedly — River
+    // only diffs the resulting state.
     for (id, proxy) in &state.windows_by_id {
-        let rim = state.chrome.get(id).is_some_and(|c| c.rim && !c.cinema);
+        let rim = state.chrome.get(id).is_some_and(|c| c.rim && !c.cinema)
+            && !crate::client::corners::rounded(state, *id);
         if rim {
             let a = if state.focused_window == Some(*id) {
                 RIM_FOCUSED
@@ -480,6 +483,8 @@ pub fn handle_render_start(state: &mut AppData) {
     // sync_next_commit are render-state). Before render_finish so River
     // can apply the decoration commit atomically with this frame.
     crate::client::shadow::sync_on_render(state);
+    // Rounded corners for frameless tiles: decorations above, same rules.
+    crate::client::corners::sync_on_render(state);
 
     state.pending.render_dirty = false;
     wm.render_finish();

@@ -270,8 +270,10 @@ stay opaque with their corners painted the ground; floats clear them. The
 menubar carries no app menus. The shell publishes sticky
 `Topic::WindowChrome` (window id → tiled, Cinema, rim; `chrome.rs`):
 sola-river sends `set_tiled` on change and a 1 px border on windows whose
-app published no menu (foreign apps); kit apps drop the frame in Cinema
-(`FloatState::chrome`).
+app published no menu (foreign apps) — tiled ones get rounded corners
+instead, four decorations above the window painting the corners the ground
+and the rim along them (`client/corners.rs`); kit apps drop the frame in
+Cinema (`FloatState::chrome`).
 
 **On master:** zoning / floating is coordinated with `sola-river` over the
 bus: unassigned windows **default-float** (client size +

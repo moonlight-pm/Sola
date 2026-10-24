@@ -339,9 +339,10 @@ one 38 px row (close · bold app name · menus · title right-aligned),
 unfocused menus dimmed but clickable, a 10 px gap everywhere, 12 px
 corners, focus as a lit 1 px rim (no accent ring), a black ground. The
 dropdowns are drawn by the kit inside the window, not by the shell.
-Windows that are not ours sit in the grid, square, with a hairline border
-from the compositor, and keep their own title bars (server-drawn titlebars
-later). The top band stays 28 px with the flower and the instruments; the
+Windows that are not ours sit in the grid with a hairline border from the
+compositor, and keep their own title bars (server-drawn titlebars later).
+Since 2026-10-23 (Joshua: Steam "to also have the curved corners") a tiled
+one gets the kit's 12 px corners too; a floating one stays square. The top band stays 28 px with the flower and the instruments; the
 islands of board 03 come later.
 
 ### Geometry (canto, 1920 × 1080, gap 10)
@@ -395,9 +396,18 @@ islands of board 03 come later.
 - The bar is an island: 12 px corners, a 1 px rim, ground-black corners,
   in the grid's left column.
 - Foreign windows (no published menu) get a 1 px hairline border from the
-  compositor while tiled (River `set_borders`, which draws outside the
-  content, in the gap); every tiled window is told it is tiled
-  (`set_tiled`) so clients that draw shadows drop them.
+  compositor (River `set_borders`, which draws outside the content, in the
+  gap); every tiled window is told it is tiled (`set_tiled`) so clients
+  that draw shadows drop them.
+- **Rounded foreign tiles** (2026-10-23): a tiled foreign window gets the
+  kit's corners instead of the square border — four decorations above it
+  (`get_decoration_above`; sola-river `corners.rs`): strips along the top
+  and bottom with the corners outside the 12 px radius painted the ground
+  and the 1 px rim along the curve, and a 1 px rim strip down each side
+  (7%, 18% focused), input regions empty. Painting works because a tile
+  stands on the ground; a float's corners have windows behind them, so
+  floats keep the square border until rivulet can clip a window (stock
+  wlroots 0.20 scene cannot).
 
 ### Not in slice 6
 

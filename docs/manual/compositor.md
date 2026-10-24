@@ -109,7 +109,7 @@ lands in one cycle.
 | Key bindings | Shell (`RegisteredChords`) | Registers them with River, reports presses |
 | Fullscreen | The application, or the Cinema zone | Grants it; ends it when focus moves away |
 | Output mode | sola-river | Picks a mode for each output |
-| Borders and decorations | sola-river | No borders; a shadow under floating windows |
+| Borders and decorations | sola-river | Sola's applications draw their own frame. For other applications' windows, a 1 px rim (brighter while focused); a tiled one gets 12 px rounded corners with the rim along them, a floating one keeps square corners. A shadow under floating windows |
 
 ## Windows
 
