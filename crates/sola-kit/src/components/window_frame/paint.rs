@@ -7,7 +7,7 @@ use iced::{Background, Border, Color, Rectangle, Theme};
 
 use super::RADIUS;
 use crate::components::float_clip;
-use crate::components::style::{alpha, mix_white};
+use crate::components::style::{alpha, lift_in_hue, mix_white};
 
 /// Classic close light (`#FF5F57`), lit only on the focused window.
 pub(crate) const CLOSE_RED: Color = Color::from_rgb(1.0, 0.372_5, 0.341_2);
@@ -52,7 +52,18 @@ pub(super) fn colors(theme: &Theme, focused: bool) -> Colors {
         ink_dim: if focused { ink_dim } else { ink_faint },
         ink_faint,
         pill: alpha(ink, 0.14),
-        rim: alpha(Color::WHITE, if focused { 0.18 } else { 0.07 }),
+        rim: if focused {
+            // The theme's highlight a step lighter, in its hue: white-ish
+            // on the grey theme, tinted on a tinted one.
+            let h = crate::theme::highlight();
+            let [r, g, b] = sola_core::theme::focus_rim([h.r, h.g, h.b]);
+            Color::from_rgb(r, g, b)
+        } else {
+            // Opaque, like the focused rim: the fill's outermost pixel is
+            // only partly covered (antialiasing), and a translucent rim let
+            // the background picture show there.
+            lift_in_hue(face, 0.07)
+        },
         close: if focused {
             CLOSE_RED
         } else {

@@ -1,7 +1,10 @@
 //! Rounded corners for tiled windows whose app draws no frame (Steam, any
 //! foreign app; `WindowChrome.rim`), as the kit draws its own tiles: the
 //! corners outside the 12 px radius painted the ground, and the 1 px rim
-//! along the rounded edge (7%, 18% while focused). A tile always stands on
+//! along the rounded edge, opaque (the theme's base 7% lighter,
+//! `AppData::rim_rest`; focused, its highlight a step lighter,
+//! `rim_focused`) — an XWayland window's edge column can be black, and a
+//! translucent rim showed it as a dark line. A tile always stands on
 //! the ground, so painting the corners what lies under them rounds them:
 //! the black, or the background picture's own pixels there
 //! (`background::sample`), repainted when the window moves or the picture
@@ -29,9 +32,6 @@ use crate::protocol::river_window_management_v1::river_window_v1::RiverWindowV1;
 
 /// The kit frame's corner radius (`window_frame::RADIUS`).
 const RADIUS: i32 = 12;
-/// The rim's white, as the kit frame's (`window_frame::paint::colors`).
-const RIM: f32 = 0.07;
-const RIM_FOCUSED: f32 = 0.18;
 
 #[derive(Default)]
 pub struct CornerState {
@@ -48,6 +48,8 @@ struct Key {
     /// the black) and, on a picture, where the window is.
     ground: u64,
     at: Option<(i32, i32)>,
+    /// The rim's color (8-bit), so a theme change repaints.
+    rim: [u8; 3],
 }
 
 struct Corners {
@@ -127,12 +129,15 @@ pub fn sync_on_render(state: &mut AppData) {
                 None => continue,
             }
         };
+        let focused = state.focused_window == Some(id);
         let key = Key {
             w,
             h,
-            focused: state.focused_window == Some(id),
+            focused,
             ground,
             at,
+            rim: if focused { state.rim_focused } else { state.rim_rest }
+                .map(|c| (c.clamp(0.0, 1.0) * 255.0).round() as u8),
         };
         keep.insert(id);
         let current = state
@@ -179,7 +184,13 @@ fn strips(w: i32, h: i32) -> [(i32, i32, i32, i32); 4] {
 
 fn create(state: &mut AppData, window: &RiverWindowV1, key: Key) -> Result<Corners, String> {
     let Key { w, h, focused, at, .. } = key;
-    let rim = if focused { RIM_FOCUSED } else { RIM };
+    // In the buffer's byte order (B, G, R), straight, and its alpha.
+    let [r, g, b] = if focused {
+        state.rim_focused
+    } else {
+        state.rim_rest
+    };
+    let rim = [b, g, r, 1.0];
     let mut pieces = Vec::new();
     for (x, y, pw, ph) in strips(w, h) {
         if pw <= 0 || ph <= 0 {
@@ -263,7 +274,8 @@ fn piece(
 
 /// Paint the strip at `(ox, oy)`, `pw` × `ph`, of a `w` × `h` window:
 /// the ground outside the rounded edge (`ground(x, y)` in the window's
-/// coordinates, `[b, g, r]`), the rim along it inside, clear within.
+/// coordinates, `[b, g, r]`), the rim along it inside (`rim`: `[b, g, r,
+/// alpha]`, 0–1, straight), clear within.
 /// Premultiplied ARGB8888 (bytes B, G, R, A).
 #[allow(clippy::too_many_arguments)]
 fn paint(
@@ -274,7 +286,7 @@ fn paint(
     ph: i32,
     w: i32,
     h: i32,
-    rim: f32,
+    rim: [f32; 4],
     ground: impl Fn(i32, i32) -> [u8; 3],
 ) {
     let (hw, hh) = (w as f32 / 2.0, h as f32 / 2.0);
@@ -286,7 +298,7 @@ fn paint(
             let d = rounded_box_sdf(px, py, hw, hh, r);
             let inside = (0.5 - d).clamp(0.0, 1.0);
             let inner = (0.5 - (d + 1.0)).clamp(0.0, 1.0);
-            let band = (inside - inner) * rim;
+            let band = (inside - inner) * rim[3];
             let alpha = (1.0 - inside) + band;
             let outside = 1.0 - inside;
             let under = if outside > 0.0 {
@@ -296,7 +308,7 @@ fn paint(
             };
             let i = ((y * pw + x) * 4) as usize;
             for (c, g) in under.iter().enumerate() {
-                let v = *g as f32 * outside + band * 255.0;
+                let v = *g as f32 * outside + band * rim[c] * 255.0;
                 buf[i + c] = v.round().clamp(0.0, 255.0) as u8;
             }
             buf[i + 3] = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -326,7 +338,7 @@ mod tests {
     fn the_top_strip_rounds_its_corners_and_rims_its_edge() {
         let (w, h) = (100, 80);
         let mut buf = vec![0u8; (w * RADIUS * 4) as usize];
-        paint(&mut buf, 0, 0, w, RADIUS, w, h, 0.18, |_, _| [0, 0, 0]);
+        paint(&mut buf, 0, 0, w, RADIUS, w, h, [1.0, 1.0, 1.0, 0.18], |_, _| [0, 0, 0]);
         // The very corner is the ground: opaque black.
         assert_eq!(pixel(&buf, w, 0, 0), [0, 0, 0, 255]);
         // The top edge between the corners is the rim: white at 18%.
@@ -342,7 +354,7 @@ mod tests {
         let (w, h) = (100, 80);
         let ph = h - 2 * RADIUS;
         let mut buf = vec![0u8; (ph * 4) as usize];
-        paint(&mut buf, 0, RADIUS, 1, ph, w, h, 0.07, |_, _| [0, 0, 0]);
+        paint(&mut buf, 0, RADIUS, 1, ph, w, h, [1.0, 1.0, 1.0, 0.07], |_, _| [0, 0, 0]);
         assert_eq!(pixel(&buf, 1, 0, 10), [18, 18, 18, 18]);
     }
 
@@ -352,11 +364,20 @@ mod tests {
         let mut buf = vec![0u8; (w * RADIUS * 4) as usize];
         // The picture: blue at the window's own (0, 0), red elsewhere.
         let ground = |x: i32, y: i32| if (x, y) == (0, 0) { [200, 0, 0] } else { [0, 0, 90] };
-        paint(&mut buf, 0, 0, w, RADIUS, w, h, 0.18, ground);
+        paint(&mut buf, 0, 0, w, RADIUS, w, h, [1.0, 1.0, 1.0, 0.18], ground);
         assert_eq!(pixel(&buf, w, 0, 0), [200, 0, 0, 255]);
         assert_eq!(pixel(&buf, w, 1, 0), [0, 0, 90, 255]);
         // Inside the curve the window shows: clear.
         assert_eq!(pixel(&buf, w, 11, 11), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn a_focused_rim_takes_its_color() {
+        let (w, h) = (100, 80);
+        let mut buf = vec![0u8; (w * RADIUS * 4) as usize];
+        // An opaque rim in B, G, R order: blue-ish.
+        paint(&mut buf, 0, 0, w, RADIUS, w, h, [0.6, 0.4, 0.2, 1.0], |_, _| [0, 0, 0]);
+        assert_eq!(pixel(&buf, w, 50, 0), [153, 102, 51, 255]);
     }
 
     #[test]

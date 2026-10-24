@@ -24,11 +24,27 @@ const X_UNIX_DIR: &str = "/tmp/.X11-unix";
 /// NixOS's GPU driver indirection (`hardware.graphics`).
 const NIXOS_OPENGL_DRIVER_DIR: &str = "/run/opengl-driver";
 
-/// Return `$XDG_RUNTIME_DIR` as a `PathBuf`, or `/tmp` if the variable
-/// is unset. `/tmp` is the historical XDG fallback and is always present.
+/// Return `$XDG_RUNTIME_DIR` as a `PathBuf`. Unset (an SSH login on Oath
+/// sets none), the user's own `/run/user/<uid>` when it exists — where the
+/// session's sockets are (`sola-bus`, `sola-call`, `wayland-1`) — else
+/// `/tmp`, the historical XDG fallback.
 pub fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
+    use std::os::unix::fs::MetadataExt;
+    // `/proc/self` is owned by the process's own uid; no libc needed.
+    let uid = std::fs::metadata("/proc/self").ok().map(|m| m.uid());
+    runtime_dir_from(std::env::var_os("XDG_RUNTIME_DIR"), uid, |p| p.is_dir())
+}
+
+fn runtime_dir_from(
+    xdg: Option<std::ffi::OsString>,
+    uid: Option<u32>,
+    is_dir: impl Fn(&Path) -> bool,
+) -> PathBuf {
+    if let Some(dir) = xdg.filter(|d| !d.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    uid.map(|uid| PathBuf::from(format!("/run/user/{uid}")))
+        .filter(|p| is_dir(p))
         .unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
@@ -307,6 +323,25 @@ pub fn child_wayland_display() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_dir_without_xdg_is_the_users_run_dir() {
+        let have = |p: &Path| p == Path::new("/run/user/1");
+        assert_eq!(
+            runtime_dir_from(Some("/x".into()), Some(1), have),
+            PathBuf::from("/x")
+        );
+        assert_eq!(
+            runtime_dir_from(None, Some(1), have),
+            PathBuf::from("/run/user/1")
+        );
+        assert_eq!(
+            runtime_dir_from(Some("".into()), Some(1), have),
+            PathBuf::from("/run/user/1")
+        );
+        assert_eq!(runtime_dir_from(None, Some(2), have), PathBuf::from("/tmp"));
+        assert_eq!(runtime_dir_from(None, None, have), PathBuf::from("/tmp"));
+    }
 
     #[test]
     fn systemd_private_socket_is_under_runtime_dir() {

@@ -725,3 +725,12 @@ tinted scheme. Spec § Custom colors and highlights.
       (`#8831a1`; selection `#430054`) — the bar's focused row magenta;
       Reset → `#29354b`. The scrollbar sat on the swatches once the page
       scrolled: the page has a right margin.
+- [x] **19e The focus rim follows the highlight** (Joshua: "tint the
+      focus rim too"): `theme::focus_rim` (the highlight 4% lighter in its
+      hue; `#3d3d3d` on grey); kit frames, and sola-river for foreign
+      windows (follows `Topic::Theme`: River's border, the corners' rim).
+      Smoked: `#313d54` on the Blue scheme, Projects and Steam alike.
+      Unfocused and island rims opaque (the picture bled through the
+      edge's partly covered pixel); foreign windows' unfocused rim opaque
+      too (`rest_rim`) — Steam's black XWayland edge showed as a dark line
+      (16× snapshots focused / unfocused: `#121212` → `#131b2d`).

@@ -361,7 +361,9 @@ islands of board 03 come later.
 
 - Every kit window draws it: tiled, floating, and Fullscreen. A 38 px
   titlebar on top, the app's content under it, 12 px corners, a 1 px rim
-  drawn over the edge (18% white focused, 7% not).
+  drawn over the edge (18% white focused, 7% not; **2026-10-24:** focused,
+  the theme's highlight a step lighter — the same on grey, tinted on a
+  scheme; [background spec](2026-10-24-background-design.md)).
 - **Tiled** windows stay opaque (opaque-region scanout, `PERFORMANCE.md`):
   the corners outside the radius are painted the ground's black.
   **Floating** windows stay transparent there, keep the edge resize grips,

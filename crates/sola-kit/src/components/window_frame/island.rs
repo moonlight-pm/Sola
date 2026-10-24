@@ -10,7 +10,7 @@ use iced::advanced::{Clipboard, Shell, Widget, mouse, renderer};
 use iced::{Element, Event, Length, Rectangle, Size, Theme, Vector};
 
 use super::paint;
-use crate::components::style::alpha;
+use crate::components::style::lift_in_hue;
 
 /// `content` on an island card filling the window.
 pub fn island<'a, Message: 'a>(
@@ -76,7 +76,10 @@ impl<Message> Widget<Message, Theme, iced::Renderer> for Island<'_, Message> {
             cursor,
             viewport,
         );
-        paint::over(renderer, bounds, alpha(iced::Color::WHITE, 0.12));
+        // Opaque (see `paint::colors`): the face's outermost pixel is only
+        // partly covered, and the ground would show through a translucent
+        // rim.
+        paint::over(renderer, bounds, lift_in_hue(fill, 0.12));
     }
 
     fn update(

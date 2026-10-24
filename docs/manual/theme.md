@@ -223,7 +223,10 @@ picture's scheme, adapting on or off. Click a swatch for a picker, then
 
 Hover and shown rows in a sidebar are lifts of the column that keep its
 hue, so they follow a tinted or custom panel color instead of turning grey.
-The window's focus rim stays a white lit edge.
+A focused window's rim is the highlight a step lighter, so it takes the
+scheme's or your highlight's hue (on the grey theme it looks as before);
+unfocused rims stay a faint white. Other applications' windows get the
+same rim from the compositor.
 
 Turning it off, or clearing the picture, puts the default greys back on
 those colors. While it is on, a color edited in Kit is replaced by the

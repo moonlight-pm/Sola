@@ -13,8 +13,6 @@ use crate::pending::FocusAction;
 
 /// The rim around a window whose app draws no frame: premultiplied white at
 /// 7%, 18% while focused (the kit frame's rim, board 02).
-const RIM: u32 = (0.07 * u32::MAX as f64) as u32;
-const RIM_FOCUSED: u32 = (0.18 * u32::MAX as f64) as u32;
 
 /// Tell each window whether it is tiled (`WindowChrome.tiled`), so clients
 /// that draw shadows or round corners drop them. Manage sequence. Sent only
@@ -407,12 +405,15 @@ pub fn handle_render_start(state: &mut AppData) {
         let rim = state.chrome.get(id).is_some_and(|c| c.rim && !c.cinema)
             && !crate::client::corners::rounded(state, *id);
         if rim {
-            let a = if state.focused_window == Some(*id) {
-                RIM_FOCUSED
+            // Opaque either way: focused, the theme's highlight a step
+            // lighter; else its base 7% lighter.
+            let color = if state.focused_window == Some(*id) {
+                state.rim_focused
             } else {
-                RIM
+                state.rim_rest
             };
-            proxy.set_borders(Edges::all(), 1, a, a, a, a);
+            let [r, g, b] = color.map(|c| (c.clamp(0.0, 1.0) as f64 * u32::MAX as f64) as u32);
+            proxy.set_borders(Edges::all(), 1, r, g, b, u32::MAX);
         } else {
             proxy.set_borders(Edges::empty(), 0, 0, 0, 0, 0);
         }

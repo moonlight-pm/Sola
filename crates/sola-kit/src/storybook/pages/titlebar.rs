@@ -15,7 +15,7 @@ pub fn view() -> Element<'static, Msg> {
     column![
         lede(
             "Window frame",
-            "Every window's frame: a 38 px titlebar with the close dot, the app's menus (its name in bold first, Window last) and the title right-aligned; 12 px corners; a 1 px rim lit while focused. Tiles and floats clear their corners, so the ground (or the background picture) shows there; a float also resizes from its edges. The body is full-bleed on purpose: the accent band must still meet the curve.",
+            "Every window's frame: a 38 px titlebar with the close dot, the app's menus (its name in bold first, Window last) and the title right-aligned; 12 px corners; a 1 px rim, lit while focused in the theme's highlight (a step lighter, in its hue). Tiles and floats clear their corners, so the ground (or the background picture) shows there; a float also resizes from its edges. The body is full-bleed on purpose: the accent band must still meet the curve.",
         ),
         scene("Tiled · focused, then unfocused"),
         row![

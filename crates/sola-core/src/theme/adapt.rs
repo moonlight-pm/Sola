@@ -343,6 +343,45 @@ pub fn keep_hue(color: [f32; 3], lightness_from: [f32; 3]) -> [f32; 3] {
     Lch::new(l, own.c, own.h).to_rgba(1.0).rgb()
 }
 
+/// A focused window's 1 px rim from the theme's `highlight` (sRGB 0–1):
+/// the highlight a step lighter (4% white), in its own hue — on the grey
+/// theme `#3d3d3d`, the lit edge white-at-18% gave; on a tinted or custom
+/// highlight, that tint.
+pub fn focus_rim(highlight: [f32; 3]) -> [f32; 3] {
+    lifted(highlight, 0.04)
+}
+
+/// An unfocused window's 1 px rim from the theme's base (`bg-primary`):
+/// 7% lighter in its hue, opaque — what white at 7% gave over the window,
+/// without letting what is under the window's edge show (`rest_rim`).
+pub fn rest_rim(base: [f32; 3]) -> [f32; 3] {
+    lifted(base, 0.07)
+}
+
+/// `color` as lightened by mixing `amount` of white in, keeping its hue
+/// and chroma ([`keep_hue`]). sRGB channels, 0–1.
+pub fn lifted(color: [f32; 3], amount: f32) -> [f32; 3] {
+    let lift = color.map(|c| c + (1.0 - c) * amount);
+    keep_hue(color, lift)
+}
+
+/// The color token `name` of `theme` as sRGB 0–1 (the seed's when absent).
+pub fn token_rgb(theme: &Theme, name: &str) -> [f32; 3] {
+    let seed = Palette::seed();
+    theme
+        .palette
+        .tokens
+        .get(name)
+        .and_then(|t| Rgba::parse(&t.value))
+        .or_else(|| seed.tokens.get(name).and_then(|t| Rgba::parse(&t.value)))
+        .map_or([0.0; 3], Rgba::rgb)
+}
+
+/// The `highlight` token of `theme` as sRGB 0–1 (the seed's when absent).
+pub fn highlight_rgb(theme: &Theme) -> [f32; 3] {
+    token_rgb(theme, "highlight")
+}
+
 fn bin_of(h: f32) -> usize {
     ((h.rem_euclid(360.0) / (360.0 / BINS as f32)) as usize).min(BINS - 1)
 }
@@ -722,6 +761,15 @@ mod tests {
         theme.palette.tokens.remove("highlight");
         theme.adapt(&scheme, 0.6);
         assert_ne!(token(&theme, "highlight"), "#353535", "adapted, not just added");
+    }
+
+    #[test]
+    fn the_focus_rim_is_the_highlight_a_step_lighter_in_its_hue() {
+        let grey = focus_rim(highlight_rgb(&Theme::default()));
+        assert_eq!(Rgba { r: grey[0], g: grey[1], b: grey[2], a: 1.0 }.hex(), "#3d3d3d");
+        let magenta = focus_rim(Rgba::parse("#8831a1").unwrap().rgb());
+        let (m, h) = (Lch::from_rgb(magenta), Lch::from_rgb(Rgba::parse("#8831a1").unwrap().rgb()));
+        assert!(m.l > h.l && hue_apart(m.h, h.h) < 2.0);
     }
 
     #[test]

@@ -29,7 +29,10 @@ mod slate;
 mod types;
 mod validate;
 
-pub use adapt::{CUSTOM_COLORS, MAX_VARIATIONS, Scheme, custom_color_token, keep_hue};
+pub use adapt::{
+    CUSTOM_COLORS, MAX_VARIATIONS, Scheme, custom_color_token, focus_rim, highlight_rgb, keep_hue,
+    lifted, rest_rim, token_rgb,
+};
 pub use types::{
     Binding, ComponentBindings, NamedTheme, Palette, SlotName, Theme, Token, TokenKind, TokenName,
     is_valid_theme_name,

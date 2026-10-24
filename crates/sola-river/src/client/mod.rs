@@ -183,6 +183,14 @@ pub struct AppData {
     pub background: background::BackgroundState,
     /// The idle fade (`Appearance.fade_idle`).
     pub fade: fade::FadeState,
+    /// A focused foreign window's rim (sRGB 0–1): the theme's highlight a
+    /// step lighter in its hue (`sola_core::theme::focus_rim`), as kit
+    /// windows draw theirs.
+    pub rim_focused: [f32; 3],
+    /// An unfocused foreign window's rim (sRGB 0–1): the theme's base 7%
+    /// lighter, opaque (`sola_core::theme::rest_rim`) — over an XWayland
+    /// window's black edge a translucent rim showed a dark line.
+    pub rim_rest: [f32; 3],
     /// `river_layer_shell_v1` — enables wlr-layer-shell for clients
     /// (sola-kvm edge capture, panels, etc.).
     pub layer_shell: layer_shell::LayerShellState,
@@ -261,6 +269,13 @@ impl AppData {
             corners: corners::CornerState::default(),
             background: background::BackgroundState::default(),
             fade: fade::FadeState::default(),
+            rim_focused: sola_core::theme::focus_rim(sola_core::theme::highlight_rgb(
+                &sola_core::theme::Theme::default(),
+            )),
+            rim_rest: sola_core::theme::rest_rim(sola_core::theme::token_rgb(
+                &sola_core::theme::Theme::default(),
+                "bg-primary",
+            )),
             layer_shell: layer_shell::LayerShellState::default(),
             last_composition: Vec::new(),
         }
@@ -467,6 +482,15 @@ pub fn bus_tick(state: &mut AppData) {
                     state.pending.queue_close(vec![window_id]);
                 } else {
                     tracing::warn!(window_id, "CloseWindow: no such window");
+                }
+            }
+            sola_bus::topics::Topic::Theme(theme) => {
+                let rim = sola_core::theme::focus_rim(sola_core::theme::highlight_rgb(&theme));
+                let rest = sola_core::theme::rest_rim(sola_core::theme::token_rgb(&theme, "bg-primary"));
+                if (rim, rest) != (state.rim_focused, state.rim_rest) {
+                    state.rim_focused = rim;
+                    state.rim_rest = rest;
+                    state.pending.render_dirty = true;
                 }
             }
             sola_bus::topics::Topic::Appearance(look) => {

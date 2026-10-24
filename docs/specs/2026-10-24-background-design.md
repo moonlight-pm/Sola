@@ -158,7 +158,24 @@ and the window's focus rim is white by the Next decision.
   `theme::keep_hue`; identical on a grey). The column's **active row** is
   a new theme color, **`highlight`** (`#353535`, the old 14% lift; a kit
   atom delivered process-wide like `selection`; adapted like the other
-  surfaces). The focus rim stays white.
+  surfaces).
+- **The focus rim follows the highlight** (Joshua: "tint the focus rim
+  too"): a focused window's 1 px rim is the theme's `highlight` a step
+  lighter (4% white) in its own hue (`theme::focus_rim`) — `#3d3d3d` on
+  the grey theme, where white at 18% gave `#373737`–`#3f3f3f`; tinted on a
+  scheme, your highlight's hue when you set one. Kit frames draw it; for
+  foreign windows sola-river follows `Topic::Theme` (River's border on
+  floats, the rim along a tile's rounded corners). Unfocused rims stay a
+  faint white, now **opaque** — the window's fill lightened 7% in its hue
+  (the bar's island 12%): the fill's outermost pixel is only partly
+  covered (antialiasing), and since tiles' fills went clear for the
+  picture, a translucent rim let the picture brighten every window's edge
+  (`#4c4c4c`–`#767678` on the Cosmic Cliffs). Foreign windows' unfocused
+  rim is opaque too (`theme::rest_rim`: the base 7% lighter; River's
+  border and the corners' rim): Steam (XWayland) has a black outermost
+  column and row, and the translucent rim showed it as a dark line
+  (`#121212`) around the window. Steam's own 1 px grey border inside it
+  stays (its content).
 - **Custom colors:** Settings → Appearance → *Custom colors*: Window,
   Panels, Highlight, Accent (`Appearance.colors`, key → `#rrggbb`), each a
   swatch opening the kit's color picker, **Use** / **Reset**. They apply
