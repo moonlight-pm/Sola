@@ -68,7 +68,7 @@ use iced::{
 use crate::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use crate::components::popover::{popover, popover_anchored};
 use crate::components::style::{
-    CHROME_SURFACE, HAIRLINE_A, RADIUS_LG, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, hairline_on,
+    chrome_surface, HAIRLINE_A, RADIUS_LG, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, hairline_on,
     inset_surface, linear_bg, mix, mix_white, on_color, src_over,
 };
 use crate::fonts;
@@ -887,7 +887,7 @@ pub(crate) const COLLAPSE_BODY_PAD_V: f32 = 2.0;
 /// Default collapsible-pocket fill (inset chrome surface). New groups
 /// start here until the header color swatch picks something else.
 pub fn group_well_fill() -> Color {
-    inset_surface(CHROME_SURFACE, 0.12)
+    inset_surface(chrome_surface(), 0.12)
 }
 
 /// Selected / hover mix toward white (dark pockets) or black (light).
@@ -910,7 +910,7 @@ pub(crate) fn pocket_fill(color: Option<Color>) -> Color {
 
 /// Surface under a list-etch row: the group pocket, or the column.
 fn row_surface(well: Option<Color>) -> Color {
-    well.unwrap_or(CHROME_SURFACE)
+    well.unwrap_or(chrome_surface())
 }
 
 /// Flatten a possibly translucent pocket onto the column.
@@ -918,7 +918,7 @@ pub(crate) fn well_face(c: Color) -> Color {
     if c.a >= 0.999 {
         c
     } else {
-        src_over(c, CHROME_SURFACE)
+        src_over(c, chrome_surface())
     }
 }
 
@@ -3183,7 +3183,7 @@ pub fn style(theme: &Theme) -> container::Style {
     // Full outline is intentionally off — the storybook / shell draws a
     // single right hairline separator against the content column.
     container::Style {
-        background: Some(Background::Color(CHROME_SURFACE)),
+        background: Some(Background::Color(chrome_surface())),
         border: Border::default(),
         ..container::Style::default()
     }
@@ -3192,7 +3192,7 @@ pub fn style(theme: &Theme) -> container::Style {
 /// Background style for a row rendered as a non-pressable `container`
 /// (the reorder / hover-action path).
 ///
-/// - **Row:** idle flat / muted; selected and hover lift [`CHROME_SURFACE`]
+/// - **Row:** idle flat / muted; selected and hover lift [`chrome_surface()`]
 ///   (or the group pocket) with a 1px lip. No selection-teal.
 /// - **Card:** OD session-tab graphite (not selection teal). Idle raised
 ///   wash + hairline; active gradient + stronger border. Same box either way.
@@ -3329,14 +3329,14 @@ mod tests {
     fn row_chrome_is_column_lift_not_selection() {
         let theme = crate::default_theme();
         let row = item_style_chrome(&theme, button::Status::Active, true, SidebarItemChrome::Row);
-        let want = well_lift(CHROME_SURFACE, WELL_SELECT_MIX);
+        let want = well_lift(chrome_surface(), WELL_SELECT_MIX);
         match row.background {
             Some(Background::Color(c)) => assert_eq!(c, want),
             other => panic!("row active should be column lift, got {other:?}"),
         }
         assert_eq!(row.border.width, 0.0);
         assert_ne!(want, crate::theme::selection());
-        assert_ne!(want, inset_surface(CHROME_SURFACE, 0.22));
+        assert_ne!(want, inset_surface(chrome_surface(), 0.22));
     }
 
     #[test]
@@ -3355,7 +3355,7 @@ mod tests {
         match card.background {
             Some(Background::Gradient(_)) => {}
             Some(Background::Color(c)) => {
-                assert_ne!(c, inset_surface(CHROME_SURFACE, 0.22));
+                assert_ne!(c, inset_surface(chrome_surface(), 0.22));
             }
             other => panic!("card active should stay graphite surface, got {other:?}"),
         }
@@ -3563,7 +3563,7 @@ mod tests {
         match s.background {
             Some(Background::Color(c)) => {
                 assert!(c.r > 0.80 && c.r < 1.0, "quiet darken on white, got {c:?}");
-                assert_ne!(c, inset_surface(CHROME_SURFACE, 0.22));
+                assert_ne!(c, inset_surface(chrome_surface(), 0.22));
             }
             other => panic!("expected solid lift, got {other:?}"),
         }

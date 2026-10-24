@@ -25,7 +25,7 @@ use sola_bus::topics::Topic;
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::style::{
-    CHROME_SURFACE, HAIRLINE_A, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, mix_white,
+    chrome_surface, HAIRLINE_A, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, mix_white,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::{swatch_sized, toolbar_icon_tip};
@@ -384,7 +384,7 @@ impl App {
 }
 
 fn chrome_style(_theme: &Theme) -> container::Style {
-    let surface = CHROME_SURFACE;
+    let surface = chrome_surface();
     container::Style {
         background: Some(Background::Color(surface)),
         border: Border {

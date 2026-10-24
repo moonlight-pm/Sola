@@ -22,7 +22,7 @@ use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
 use sola_kit::components::select::{SelectOption, select};
-use sola_kit::components::style::{CHROME_SURFACE, HAIRLINE_A, PAD_CONTROL_SM, mix_white};
+use sola_kit::components::style::{chrome_surface, HAIRLINE_A, PAD_CONTROL_SM, mix_white};
 use sola_kit::components::{
     ColorPicker, SidebarItem, SidebarSection, button as kit_button, sidebar,
     text_input as kit_text_input,
@@ -674,7 +674,7 @@ impl Storybook {
                         // no longer does it as a side effect.
                         self.theme = theme::theme_from_bus(&bus_theme);
                         crate::fonts::install(theme::fonts_from_bus_theme(&bus_theme));
-                        theme::install_selection(theme::atoms_from_bus_theme(&bus_theme).selection);
+                        theme::install_atoms(&theme::atoms_from_bus_theme(&bus_theme));
                         self.last_live_theme = Some(bus_theme);
                         self.resync_active_theme();
                         // A clean storybook re-baselines its Revert target to
@@ -917,7 +917,7 @@ impl Storybook {
     /// sidebar preview reflects a `selection` edit on the next render.
     fn refresh_active_theme(&mut self) {
         self.theme = theme::build_theme(&self.active().atoms);
-        theme::install_selection(self.active().atoms.selection);
+        theme::install_atoms(&self.active().atoms);
     }
 
     /// Write one atom onto the active preset and propagate it live:
@@ -1360,7 +1360,7 @@ impl Storybook {
                 .width(Length::Fill)
                 .style(|_theme: &iced::Theme| {
                     iced::widget::container::Style {
-                        background: Some(iced::Background::Color(CHROME_SURFACE)),
+                        background: Some(iced::Background::Color(chrome_surface())),
                         border: iced::Border::default(),
                         ..Default::default()
                     }

@@ -182,10 +182,43 @@ the default families.
 | A shell token, or a spacing value not in `<number>px` form | That token's default |
 | A `theme/current.yaml` that does not match the theme schema | The bus restores no theme, and the shell publishes none because the file exists; applications draw the compile-time defaults until a theme is published from Kit (by choosing or editing a preset) |
 
+## Colors from the background picture
+
+**Settings → Appearance → Adapt colors to the background** makes the
+theme's colors follow the background picture (set from Paint or
+`solactl background`; [the compositor](compositor.md)). The Shell samples
+the picture and publishes `Theme` with new colors, so every application
+changes at once:
+
+- The surfaces (window fills, titlebars, the tab bar and other sidebars,
+  the top row's islands, borders, the selection) take a faint tint of the
+  picture's dominant hue; the text a fainter one. Each keeps the lightness
+  of its grey, so contrast does not change.
+- The accent takes the picture's most vivid hue, usually one apart from
+  the tint (on the Cosmic Cliffs: an orange-brown tint and a blue accent).
+- Status colors, fonts, sizes and spacing do not change. A grey picture
+  changes nothing.
+
+Below the strength, one scheme per major color in the picture (up to
+four, the dominant first, each named by its hue: on the Cosmic Cliffs the
+cliffs' Ember and the sky's Blue, …). Each is a small window in its colors;
+click one to use it. Its accent is a hue apart from its tint.
+
+**Strength** (0–100%, 60% at first) is how much of the picture's own color
+the tint takes; it applies when you let go of the slider. Near 100% the
+darkest surfaces take the hue fully (a strongly colored picture gives
+strongly colored chrome).
+
+Turning it off, or clearing the picture, puts the default greys back on
+those colors. While it is on, a color edited in Kit is replaced by the
+picture's. Settings → Appearance also shows the picture's file name and
+**Clear**s it.
+
 ## Editing the theme
 
-Kit is the theme editor. Settings does not edit the theme or the fonts; it
-follows the theme like any other application.
+Kit is the theme editor. Settings does not edit the theme or the fonts
+(only **Adapt colors to the background**, above); it follows the theme
+like any other application.
 
 Kit's header holds the theme menu, **New Theme**, and **Delete**. The
 presets are **Default**, the built-in values, which is read-only (edits are
@@ -222,13 +255,14 @@ theme.
 2. Include `TopicKind::Theme` in the `BusSetup` subscription.
 3. Keep an `iced::Theme` in the application state, start it as
    `sola_kit::default_theme()`, and return it from Iced's `theme` callback.
-   An application that floats with a transparent window returns
-   `sola_kit::theme_for(floating, &theme)`, which clears the window fill
-   while floating.
+   A kit window returns `sola_kit::theme_for(chrome, &theme)` (its
+   `FloatState::chrome`), which clears the window fill so the frame's
+   rounded corners show what is under it, except in Cinema.
 4. Map `sola_kit::app::bus_subscription()` into the application's
    subscription and pass each message to `sola_kit::apply_theme_update`.
 5. Draw with kit components. In custom styles, take colours from
-   `theme.extended_palette()` and `sola_kit::theme::selection()`, and fonts
+   `theme.extended_palette()`, `sola_kit::theme::selection()` and
+   `sola_kit::components::style::chrome_surface()`, and fonts
    from the `sola_kit::fonts` role functions. A colour or family written
    into the application's code does not follow the theme.
 

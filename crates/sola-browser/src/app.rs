@@ -22,7 +22,7 @@ use sola_kit::components::button as kit_button;
 use sola_kit::components::card;
 use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 
-use sola_kit::components::style::{CHROME_SURFACE, PAD_CONTROL_SM, RADIUS_MD};
+use sola_kit::components::style::{chrome_surface, PAD_CONTROL_SM, RADIUS_MD};
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar as kit_toolbar;
 use sola_kit::components::{DividerColors, MenuItem, field, horizontal_divider, menu_at};
@@ -3076,7 +3076,7 @@ impl<E: Engine> App<E> {
         .width(Length::Fill)
         .align_y(Alignment::Center)
         .style(|_t: &iced::Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(CHROME_SURFACE)),
+            background: Some(iced::Background::Color(chrome_surface())),
             ..Default::default()
         });
         let webview = Shader::new(E::make_program(slot))
@@ -3418,7 +3418,7 @@ impl<E: Engine> App<E> {
         container(bar)
             .width(Length::Fill)
             .style(|_t: &iced::Theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(CHROME_SURFACE)),
+                background: Some(iced::Background::Color(chrome_surface())),
                 ..Default::default()
             })
             .into()
@@ -3530,9 +3530,9 @@ impl<E: Engine> App<E> {
             .width(Length::Fill)
             .padding(Padding::from([6, 8]))
             .style(move |_t: &iced::Theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(CHROME_SURFACE)),
+                background: Some(iced::Background::Color(chrome_surface())),
                 border: iced::Border {
-                    color: mix_white(CHROME_SURFACE, HAIRLINE_A),
+                    color: mix_white(chrome_surface(), HAIRLINE_A),
                     width: 1.0,
                     radius: iced::border::Radius {
                         top_left: 0.0,
@@ -4575,7 +4575,7 @@ impl<E: Engine> App<E> {
 
     fn view_find_bar(&self) -> Element<'_, Msg> {
         use sola_kit::components::style::{
-            CHROME_SURFACE, HAIRLINE_STRONG_A, RADIUS_MD, SPACE_MD, SPACE_SM, hairline_on,
+            chrome_surface, HAIRLINE_STRONG_A, RADIUS_MD, SPACE_MD, SPACE_SM, hairline_on,
         };
 
         let field = text_input("Find in page", &self.find_query)
@@ -4608,8 +4608,8 @@ impl<E: Engine> App<E> {
         let panel = container(row)
             .padding([SPACE_SM, SPACE_MD])
             .style(move |_t: &iced::Theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(CHROME_SURFACE)),
-                border: hairline_on(CHROME_SURFACE, HAIRLINE_STRONG_A, RADIUS_MD),
+                background: Some(iced::Background::Color(chrome_surface())),
+                border: hairline_on(chrome_surface(), HAIRLINE_STRONG_A, RADIUS_MD),
                 shadow: iced::Shadow {
                     color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.32),
                     offset: iced::Vector::new(0.0, 4.0),

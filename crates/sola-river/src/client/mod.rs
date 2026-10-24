@@ -45,6 +45,7 @@ pub mod screenshot_window;
 pub mod seat;
 pub mod background;
 pub mod corners;
+pub mod fade;
 pub mod shadow;
 pub mod virtual_keyboard;
 pub mod virtual_pointer;
@@ -180,6 +181,8 @@ pub struct AppData {
     pub corners: corners::CornerState,
     /// The background picture (`Topic::Background`).
     pub background: background::BackgroundState,
+    /// The idle fade (`Appearance.fade_idle`).
+    pub fade: fade::FadeState,
     /// `river_layer_shell_v1` — enables wlr-layer-shell for clients
     /// (sola-kvm edge capture, panels, etc.).
     pub layer_shell: layer_shell::LayerShellState,
@@ -257,6 +260,7 @@ impl AppData {
             shadow: shadow::ShadowState::default(),
             corners: corners::CornerState::default(),
             background: background::BackgroundState::default(),
+            fade: fade::FadeState::default(),
             layer_shell: layer_shell::LayerShellState::default(),
             last_composition: Vec::new(),
         }
@@ -327,6 +331,7 @@ pub fn bus_tick(state: &mut AppData) {
     screenshot::poll_results(state);
     crate::call::poll(state);
     background::poll(state);
+    fade::tick(state);
     while let Some(msg) = state.bus.try_recv() {
         let Some(topic) = sola_bus::topics::Topic::parse(&msg) else {
             continue;
@@ -463,6 +468,10 @@ pub fn bus_tick(state: &mut AppData) {
                 } else {
                     tracing::warn!(window_id, "CloseWindow: no such window");
                 }
+            }
+            sola_bus::topics::Topic::Appearance(look) => {
+                // A retraction arrives as the same topic, not sticky.
+                fade::settings(state, msg.sticky.then_some(&look));
             }
             sola_bus::topics::Topic::Background(bg) => {
                 // A retraction arrives as the same topic, not sticky.
@@ -667,6 +676,18 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let output: wl_output::WlOutput = proxy.bind(name, version.min(4), qh, ());
                     info!(%version, "bound wl_output for screencopy");
                     state.screenshot.outputs.push(output);
+                }
+                "ext_idle_notifier_v1" => {
+                    use wayland_protocols::ext::idle_notify::v1::client::ext_idle_notifier_v1::ExtIdleNotifierV1;
+                    let n: ExtIdleNotifierV1 = proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound ext_idle_notifier_v1");
+                    state.fade.notifier = Some(n);
+                }
+                "wp_alpha_modifier_v1" => {
+                    use wayland_protocols::wp::alpha_modifier::v1::client::wp_alpha_modifier_v1::WpAlphaModifierV1;
+                    let a: WpAlphaModifierV1 = proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound wp_alpha_modifier_v1");
+                    state.fade.alpha = Some(a);
                 }
                 "river_layer_shell_v1" => {
                     use crate::protocol::river_layer_shell_v1::river_layer_shell_v1::RiverLayerShellV1;

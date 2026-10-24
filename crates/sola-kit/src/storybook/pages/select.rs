@@ -4,7 +4,7 @@ use iced::widget::{Space, column, container, row, text};
 use iced::{Alignment, Border, Color, Element, Length, Padding};
 
 use sola_kit::components::select::{SelectOption, select};
-use sola_kit::components::style::{CHROME_SURFACE, RADIUS_XL, bevel_frame, stage_fill};
+use sola_kit::components::style::{chrome_surface, RADIUS_XL, bevel_frame, stage_fill};
 use sola_kit::components::text::{body, caption, heading, muted};
 use sola_kit::fonts;
 
@@ -105,7 +105,7 @@ fn chrome_bar(state: &State) -> Element<'_, Msg> {
         .padding(Padding::from([8, 12]))
         .width(Length::Fill)
         .style(|_theme: &iced::Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(CHROME_SURFACE)),
+            background: Some(iced::Background::Color(chrome_surface())),
             ..Default::default()
         }),
     ]

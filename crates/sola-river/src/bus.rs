@@ -29,6 +29,8 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     TopicKind::Shutdown,
     // The background picture. Persistent: replays on a sola-river restart.
     TopicKind::Background,
+    // The idle fade's settings. Persistent.
+    TopicKind::Appearance,
 ];
 
 pub struct BusClient {

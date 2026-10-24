@@ -487,6 +487,8 @@ pub fn handle_render_start(state: &mut AppData) {
     crate::client::background::sync_on_render(state);
     // Rounded corners for frameless tiles: decorations above, same rules.
     crate::client::corners::sync_on_render(state);
+    // The idle fade's overlay: last, so it stays on top.
+    crate::client::fade::sync_on_render(state);
 
     state.pending.render_dirty = false;
     wm.render_finish();

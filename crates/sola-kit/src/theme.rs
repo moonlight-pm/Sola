@@ -214,6 +214,15 @@ pub fn install_selection(color: Color) {
     }
 }
 
+/// Install the process-wide colours that have no iced palette slot from
+/// `atoms`: the selection ([`install_selection`]) and the chrome surface
+/// ([`crate::components::style::chrome_surface`]). Every theme path calls
+/// it (the bus consumer, the storybook, the shell).
+pub fn install_atoms(atoms: &Atoms) {
+    install_selection(atoms.selection);
+    crate::components::style::install_chrome_surface(atoms.bg, atoms.bg_raised);
+}
+
 /// The current selected-row highlight colour. Falls back to the
 /// compile-time default ([`hex::SELECTION`]) if the lock is poisoned.
 pub fn selection() -> Color {

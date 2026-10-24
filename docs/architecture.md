@@ -272,7 +272,19 @@ picture when one is set (persistent `Topic::Background`, Sola's copy under
 `~/.config/sola/background/` via `sola_core::background`; set by Paint or
 `solactl background`): sola-river draws it as a River shell surface at the
 bottom of the render list (`client/background.rs`, decoded and scaled off
-the loop), else the compositor's black. The menubar carries no app menus. The shell publishes sticky
+the loop), else the compositor's black. With Settings → Appearance's
+*Adapt colors to the background* on (persistent `Topic::Appearance`), the
+shell samples the picture (`adapt.rs`, off the UI thread) and rewrites
+`Topic::Theme`'s color tokens from it (`sola_core::theme::Scheme`,
+`Theme::adapt`: the grey's lightness, the picture's hue; `unadapt` when
+off; one scheme per major hue, `Appearance.variation` picks, the shell
+publishes the choices as sticky `Topic::ThemeVariations` for Settings);
+the kit's chrome surface follows the theme (`style::chrome_surface`,
+`theme::install_atoms`). The idle fade is sola-river's (`client/fade.rs`):
+`ext_idle_notifier_v1` says idle / resumed, and a shell surface at the top
+of the render list shows the picture (or black) at an opacity rising over
+30 minutes (`wp_alpha_modifier_v1`), gone on input. The menubar carries no
+app menus. The shell publishes sticky
 `Topic::WindowChrome` (window id → tiled, Cinema, rim; `chrome.rs`):
 sola-river sends `set_tiled` on change and a 1 px border on windows whose
 app published no menu (foreign apps) — tiled ones get rounded corners

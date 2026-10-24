@@ -224,6 +224,8 @@ What `sola-river` does with these is in [Compositor](compositor.md).
 | `AgentIsland` | A session's `key` (its pane), `name`, `project`, `state` (waiting / done), `title`, `body`, `choices`, `reply`, `since` | Projects | Shell (its island in the top row) | Sticky by `key` |
 | `AgentIslandAction` | An island's `key` and what was done: `Choose(index)`, `Reply(text)`, `Show` | Shell | Projects (types it into the session, or shows its tab) | Ephemeral |
 | `Background` | `path` (Sola's copy under `~/.config/sola/background/`), `set_at` (ms) | Paint (Set as Background), `solactl background` | sola-river (draws it behind the windows) | Persistent; retracted for the black ground |
+| `Appearance` | `adapt_theme` (the theme's colors follow the background picture), `strength` (0–100, default 60), `variation` (which scheme), `fade_idle` (default on), `fade_after_min` (default 5) | Settings (Appearance) | Shell (rewrites `Theme`'s colors from the picture, or puts the greys back); sola-river (the idle fade) | Persistent |
+| `ThemeVariations` | `path` (the picture), `choices` (`name`, `base`, `raised`, `accent` per scheme) | Shell | Settings (the scheme cards) | Sticky |
 | `SessionApps` | Open apps: `app_id`, `command` | `sola-session` | `sola-session`, at its next start | Persistent |
 | `Application` | A launcher entry: `app_id`, `label`, `command`, `icon`, `kind`, `url`, `profile` | Settings; Browser (web apps); Arcade (a running game's label, retracted when it stops) | Shell, Settings, Arcade, Browser | Persistent by `app_id` |
 | `Shutdown` | None | Shell (Quit Sola); `sola` on SIGINT, SIGTERM, or SIGHUP | `sola`, `sola-session`, `sola-river` | Ephemeral |

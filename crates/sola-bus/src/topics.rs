@@ -368,6 +368,83 @@ pub struct Background {
     pub set_at: u64,
 }
 
+/// How the desk looks beyond the theme itself (`Topic::Appearance`,
+/// persistent). Settings → Appearance edits it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Appearance {
+    /// The theme's colors follow the background picture: the shell
+    /// rewrites them from its hues (`sola_core::theme::Scheme`), and puts
+    /// the greys back when this goes off or the picture is cleared.
+    pub adapt_theme: bool,
+    /// How strongly the surfaces take the picture's hue, 0–100 (% of the
+    /// picture's own colorfulness).
+    #[serde(default = "Appearance::default_strength")]
+    pub strength: u8,
+    /// Which of the picture's schemes (`Topic::ThemeVariations`), by index;
+    /// past the end, the last.
+    #[serde(default)]
+    pub variation: u8,
+    /// Fade the windows out when there is no input (sola-river draws the
+    /// background over them, rising over [`Self::FADE_MINUTES`]); any input
+    /// brings them back.
+    #[serde(default = "Appearance::default_fade_idle")]
+    pub fade_idle: bool,
+    /// Minutes of no input before the fade starts.
+    #[serde(default = "Appearance::default_fade_after")]
+    pub fade_after_min: u16,
+}
+
+impl Appearance {
+    pub const DEFAULT_STRENGTH: u8 = 60;
+    pub const DEFAULT_FADE_AFTER_MIN: u16 = 5;
+    /// How long the fade takes, from the first sign to fully faded.
+    pub const FADE_MINUTES: u16 = 30;
+
+    fn default_strength() -> u8 {
+        Self::DEFAULT_STRENGTH
+    }
+
+    fn default_fade_idle() -> bool {
+        true
+    }
+
+    fn default_fade_after() -> u16 {
+        Self::DEFAULT_FADE_AFTER_MIN
+    }
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            adapt_theme: false,
+            strength: Self::DEFAULT_STRENGTH,
+            variation: 0,
+            fade_idle: true,
+            fade_after_min: Self::DEFAULT_FADE_AFTER_MIN,
+        }
+    }
+}
+
+/// The color schemes the background picture offers for the adapted theme
+/// (shell → Settings, `Topic::ThemeVariations`, sticky): one per major hue,
+/// the dominant first. `Appearance.variation` picks one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThemeVariations {
+    /// The picture they were sampled from (`Background.path`).
+    pub path: String,
+    pub choices: Vec<ThemeVariation>,
+}
+
+/// One scheme, as Settings shows it: its tint's hue name and three of its
+/// colors at the current strength (`#rrggbb`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThemeVariation {
+    pub name: String,
+    pub base: String,
+    pub raised: String,
+    pub accent: String,
+}
+
 /// Emitted by compositor when pointer enters a different surface/window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEnteredPayload {
@@ -1614,6 +1691,16 @@ define_topics! {
     // it survives a restart; retracted for the plain ground. Appended last.
     #[persistent]
     Background(Background),
+
+    // Appearance settings (Settings → shell, sola-river). Persistent.
+    // Appended last.
+    #[persistent]
+    Appearance(Appearance),
+
+    // The picture's schemes for the adapted theme (shell → Settings).
+    // Sticky. Appended last.
+    #[sticky]
+    ThemeVariations(ThemeVariations),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1638,6 +1725,8 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::AgentIsland
             | TopicKind::AgentIslandAction
             | TopicKind::Background
+            | TopicKind::Appearance
+            | TopicKind::ThemeVariations
     )
 }
 
@@ -1788,6 +1877,26 @@ mod tests {
             other => panic!("expected Background, got {other:?}"),
         }
         assert!(topic_kind_is_after_mail_status(TopicKind::Background));
+        let look = Appearance {
+            adapt_theme: true,
+            strength: 40,
+            ..Appearance::default()
+        };
+        let msg = Topic::Appearance(look.clone()).to_message();
+        assert!(TopicKind::Appearance.behavior().is_persistent());
+        match Topic::parse(&msg) {
+            Some(Topic::Appearance(back)) => assert_eq!(back, look),
+            other => panic!("expected Appearance, got {other:?}"),
+        }
+        assert!(topic_kind_is_after_mail_status(TopicKind::Appearance));
+        // An Appearance saved before the fade settings reads with their
+        // defaults.
+        let old: Appearance = serde_yaml_ng::from_str("adapt_theme: true\nstrength: 30\n").unwrap();
+        assert_eq!(old.strength, 30);
+        assert!(old.fade_idle);
+        assert_eq!(old.fade_after_min, Appearance::DEFAULT_FADE_AFTER_MIN);
+        assert!(TopicKind::ThemeVariations.behavior().is_sticky());
+        assert!(topic_kind_is_after_mail_status(TopicKind::ThemeVariations));
     }
 
     #[test]

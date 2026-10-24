@@ -63,6 +63,10 @@ pub struct Ground {
 struct Shown {
     generation: u64,
     position: (i32, i32),
+    /// Its buffer's size and scale (the pool holds exactly that).
+    w: i32,
+    h: i32,
+    scale: i32,
     shell_surface: RiverShellSurfaceV1,
     node: RiverNodeV1,
     surface: wl_surface::WlSurface,
@@ -184,6 +188,24 @@ pub fn sync_on_render(state: &mut AppData) {
         Ok(shown) => state.background.shown = Some(shown),
         Err(e) => warn!(%e, "background: show"),
     }
+}
+
+/// A second buffer over the shown picture's memory, for the idle fade's
+/// overlay (`fade.rs`): the buffer, its size and scale. `None` without a
+/// picture on screen.
+pub fn overlay_buffer(state: &AppData) -> Option<(wl_buffer::WlBuffer, i32, i32, i32)> {
+    let shown = state.background.shown.as_ref()?;
+    let qh = state.qh.as_ref()?;
+    let buffer = shown.pool.create_buffer(
+        0,
+        shown.w,
+        shown.h,
+        shown.w * 4,
+        wl_shm::Format::Xrgb8888,
+        qh,
+        (),
+    );
+    Some((buffer, shown.w, shown.h, shown.scale))
 }
 
 /// Which ground the corners were painted on (0: none).
@@ -317,6 +339,9 @@ fn show(state: &mut AppData, generation: u64, position: (i32, i32)) -> Result<Sh
     Ok(Shown {
         generation,
         position,
+        w,
+        h,
+        scale: ground.target.scale,
         shell_surface,
         node,
         surface,

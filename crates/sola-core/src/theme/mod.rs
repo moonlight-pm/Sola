@@ -22,12 +22,14 @@
 //! scoped `--sola-<component>-<slot>` vars exclusively; atoms are an
 //! implementation detail of the `:root` block.
 
+mod adapt;
 mod css;
 mod palette;
 mod slate;
 mod types;
 mod validate;
 
+pub use adapt::{MAX_VARIATIONS, Scheme};
 pub use types::{
     Binding, ComponentBindings, NamedTheme, Palette, SlotName, Theme, Token, TokenKind, TokenName,
     is_valid_theme_name,

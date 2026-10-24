@@ -24,7 +24,7 @@ use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use sola_kit::components::popover::{Placement, popover, popover_anchored};
 use sola_kit::components::style::{
-    CHROME_SURFACE, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, alpha, hairline,
+    chrome_surface, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS, alpha, hairline,
     mix_white,
 };
 use sola_kit::components::text as kit_text;
@@ -3271,7 +3271,7 @@ fn canvas_style(theme: &Theme) -> container::Style {
 
 fn chrome_style(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(CHROME_SURFACE)),
+        background: Some(Background::Color(chrome_surface())),
         ..Default::default()
     }
 }

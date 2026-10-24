@@ -24,6 +24,7 @@ use crate::stacks::Stacks;
 use crate::switcher::state::SwitcherState;
 use crate::zoning::ZoningState;
 
+pub mod adapt;
 pub mod agents;
 pub mod bus;
 pub mod workspaces;
@@ -216,6 +217,11 @@ pub enum Msg {
     AgentIslandReply,
     /// The open card's Show: pull the session's tab up.
     AgentIslandShow,
+    /// The background picture was sampled for the adapted theme.
+    AdaptSampled(
+        sola_bus::topics::Background,
+        Result<Vec<sola_core::theme::Scheme>, String>,
+    ),
     /// Open (or close) the workspace menu (the tab bar's head) for the
     /// showing workspace.
     WorkspaceMenu(usize),
@@ -340,6 +346,8 @@ pub struct Shell {
     pub tab_activity: HashMap<String, sola_bus::topics::Activity>,
     /// Agent sessions' islands in the top row and the card open.
     pub agents: crate::agents::AgentIslands,
+    /// The theme's colors following the background picture.
+    pub adapt: crate::adapt::Adapt,
     /// Last on-screen state sent for each tab window (`TabWindow.shown`).
     tab_shown_sent: HashMap<u32, bool>,
     pub tabbar: crate::tabbar::TabBarState,
@@ -512,6 +520,7 @@ impl Shell {
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
             agents: Default::default(),
+            adapt: Default::default(),
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
@@ -2959,6 +2968,7 @@ impl Shell {
                 self.agent_island_act(sola_bus::topics::IslandAction::Reply(text))
             }
             Msg::AgentIslandShow => self.agent_island_act(sola_bus::topics::IslandAction::Show),
+            Msg::AdaptSampled(picture, scheme) => self.adapt_sampled(picture, scheme),
             Msg::CloseWindow(wid) => {
                 // A tab's window: its app closes it (not through the
                 // compositor, whose close requests also mean "quit").
@@ -3053,6 +3063,7 @@ mod pending_launch_tests {
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
             agents: Default::default(),
+            adapt: Default::default(),
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
@@ -3182,6 +3193,7 @@ mod hide_tests {
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
             agents: Default::default(),
+            adapt: Default::default(),
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),

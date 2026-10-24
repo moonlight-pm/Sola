@@ -26,6 +26,7 @@ use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 mod applications;
+mod appearance;
 mod calendar;
 mod calendar_oauth;
 mod edit;
@@ -34,6 +35,7 @@ mod mail_discover;
 mod mail_from_api;
 mod procfs;
 
+use appearance::{AppearanceMsg, AppearanceState};
 use applications::{AppsMsg, AppsState};
 use calendar::{CalMsg, CalendarState};
 use mail::{MailMsg, MailState};
@@ -69,6 +71,7 @@ fn main() -> iced::Result {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Panel {
     Applications,
+    Appearance,
     Mail,
     Calendar,
 }
@@ -94,6 +97,8 @@ struct App {
     apps_ui: AppsState,
     mail_ui: MailState,
     calendar_ui: CalendarState,
+    /// The background picture and the appearance settings.
+    appearance: AppearanceState,
     /// Float tracker + iced window id for CSD while floating.
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
@@ -111,6 +116,7 @@ impl Default for App {
             apps_ui: AppsState::default(),
             mail_ui: MailState::default(),
             calendar_ui: CalendarState::default(),
+            appearance: AppearanceState::default(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
         }
@@ -124,6 +130,7 @@ enum Msg {
     Apps(AppsMsg),
     Mail(MailMsg),
     Calendar(CalMsg),
+    Appearance(AppearanceMsg),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -195,6 +202,16 @@ impl App {
                     Some(Topic::Windows(windows)) => {
                         self.running = windows;
                     }
+                    Some(Topic::Background(b)) => {
+                        // Persistent: sticky=false is the retract.
+                        self.appearance.picture = message.sticky.then_some(b);
+                    }
+                    Some(Topic::Appearance(a)) => {
+                        self.appearance.look = if message.sticky { a } else { Default::default() };
+                    }
+                    Some(Topic::ThemeVariations(v)) => {
+                        self.appearance.variations = message.sticky.then_some(v);
+                    }
                     _ => {}
                 }
             }
@@ -210,6 +227,7 @@ impl App {
                 return calendar::update(m, &mut self.calendar, &mut self.calendar_ui)
                     .map(Msg::Calendar);
             }
+            Msg::Appearance(m) => appearance::update(m, &mut self.appearance),
             Msg::WindowReady(id) => self.window_id = id,
             Msg::TitleDrag => return sola_kit::drag(self.window_id),
             Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
@@ -288,6 +306,8 @@ impl App {
             vec![
                 SidebarItem::new("Applications", Msg::SelectPanel(Panel::Applications))
                     .active(self.panel == Panel::Applications),
+                SidebarItem::new("Appearance", Msg::SelectPanel(Panel::Appearance))
+                    .active(self.panel == Panel::Appearance),
                 SidebarItem::new("Mail", Msg::SelectPanel(Panel::Mail))
                     .active(self.panel == Panel::Mail),
                 SidebarItem::new("Calendar", Msg::SelectPanel(Panel::Calendar))
@@ -297,6 +317,7 @@ impl App {
 
         let title_text = match self.panel {
             Panel::Applications => "Applications",
+            Panel::Appearance => "Appearance",
             Panel::Mail => "Mail",
             Panel::Calendar => "Calendar",
         };
@@ -309,6 +330,14 @@ impl App {
             Panel::Applications => column![
                 kit_text::heading(title_text),
                 applications::view(&self.applications, &self.running, &self.apps_ui).map(Msg::Apps),
+            ]
+            .spacing(page_pad)
+            .padding(Padding::new(page_pad))
+            .height(Length::Fill)
+            .into(),
+            Panel::Appearance => column![
+                kit_text::heading(title_text),
+                appearance::view(&self.appearance).map(Msg::Appearance),
             ]
             .spacing(page_pad)
             .padding(Padding::new(page_pad))

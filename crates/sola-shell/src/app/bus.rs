@@ -30,9 +30,12 @@ impl Shell {
         };
         match topic {
             Topic::Theme(t) => {
-                self.on_theme(t);
-                Task::none()
+                self.on_theme(t.clone());
+                self.adapt.theme = Some(t);
+                self.adapt_step()
             }
+            Topic::Background(b) => self.adapt_picture(message.sticky.then_some(b)),
+            Topic::Appearance(a) => self.adapt_appearance(message.sticky.then_some(a)),
             Topic::OutputGeometry(g) => {
                 self.on_output_geometry(g);
                 Task::none()
@@ -186,7 +189,7 @@ impl Shell {
         self.theme = sola_kit::theme::theme_from_bus(&t);
         self.style = sola_kit::theme::shell_style_from_bus_theme(&t);
         sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(&t));
-        sola_kit::theme::install_selection(sola_kit::theme::atoms_from_bus_theme(&t).selection);
+        sola_kit::theme::install_atoms(&sola_kit::theme::atoms_from_bus_theme(&t));
     }
 
     /// Store output geometry, emit frames for all windows, and emit composition.

@@ -356,7 +356,7 @@ fn apply_theme_topic(topic: &Option<Topic>, theme: &mut iced::Theme) -> bool {
     if let Some(Topic::Theme(bus)) = topic {
         *theme = crate::theme::theme_from_bus(bus);
         crate::fonts::install(crate::theme::fonts_from_bus_theme(bus));
-        crate::theme::install_selection(crate::theme::atoms_from_bus_theme(bus).selection);
+        crate::theme::install_atoms(&crate::theme::atoms_from_bus_theme(bus));
         true
     } else {
         false

@@ -11,7 +11,7 @@ use iced::widget::{Space, button, container, mouse_area, row, scrollable, svg, t
 use iced::{Alignment, Background, Element, Length, Padding, Theme};
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::sidebar::item_style;
-use sola_kit::components::style::{CHROME_SURFACE, SPACE_SM, SPACE_XS};
+use sola_kit::components::style::{chrome_surface, SPACE_SM, SPACE_XS};
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::{status_mark, toolbar_icon_tip};
 use sola_kit::fonts;
@@ -82,7 +82,7 @@ pub fn view<'a>(bar: Bar<'a>) -> Element<'a, Msg> {
     .width(Length::Fill)
     .align_y(Alignment::Center)
     .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(CHROME_SURFACE)),
+        background: Some(Background::Color(chrome_surface())),
         ..container::Style::default()
     })
     .into()

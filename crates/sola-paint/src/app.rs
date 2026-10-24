@@ -22,7 +22,7 @@ use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcom
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::popover;
 use sola_kit::components::style::{
-    CHROME_SURFACE, HAIRLINE_A, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, mix_white,
+    chrome_surface, HAIRLINE_A, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, mix_white,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::toolbar::toolbar_icon;
@@ -1185,10 +1185,10 @@ fn header_style(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(Color {
             a: 0.96,
-            ..CHROME_SURFACE
+            ..chrome_surface()
         })),
         border: Border {
-            color: mix_white(CHROME_SURFACE, HAIRLINE_A),
+            color: mix_white(chrome_surface(), HAIRLINE_A),
             width: 1.0,
             radius: 0.0.into(),
         },

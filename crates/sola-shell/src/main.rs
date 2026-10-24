@@ -6,6 +6,7 @@ use sola_bus::topics::TopicKind;
 use sola_kit::app::{BusSetup, startup};
 use sola_kit::fonts::INTER;
 
+mod adapt;
 mod agents;
 mod app;
 pub mod audio;

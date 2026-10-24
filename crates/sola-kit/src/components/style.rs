@@ -58,10 +58,33 @@ pub const PAD_CONTROL: [u16; 2] = [7, 14];
 /// Compact control padding — toolbar, steppers, dense chrome.
 pub const PAD_CONTROL_SM: [u16; 2] = [5, 11];
 
-/// Grey used for sidebar columns and the full-width chrome strip
-/// (Next `--bg-chrome` `#141414`). One surface so a top bar that spans
-/// the window meets the tab column without a colour step.
-pub const CHROME_SURFACE: Color = Color::from_rgb(0.078, 0.078, 0.078);
+/// The surface of sidebar columns and the full-width chrome strip (Next
+/// `--bg-chrome`, `#141414` on the grey theme). One surface so a top bar
+/// that spans the window meets the tab column without a colour step.
+/// Follows the theme (an adapted theme tints it): nine tenths of the way
+/// from the base to the raised fill, set by [`install_chrome_surface`].
+pub fn chrome_surface() -> Color {
+    CHROME.read().map_or(CHROME_DEFAULT, |c| *c)
+}
+
+/// Set [`chrome_surface`] from the theme's base and raised fills. The
+/// kit's theme paths call it (`theme::install_atoms`).
+pub fn install_chrome_surface(base: Color, raised: Color) {
+    let t = 0.9;
+    let c = Color {
+        r: base.r + (raised.r - base.r) * t,
+        g: base.g + (raised.g - base.g) * t,
+        b: base.b + (raised.b - base.b) * t,
+        a: 1.0,
+    };
+    if let Ok(mut guard) = CHROME.write() {
+        *guard = c;
+    }
+}
+
+/// `#141414`: the grey theme's base and raised fills mixed as above.
+const CHROME_DEFAULT: Color = Color::from_rgb(20.0 / 255.0, 20.0 / 255.0, 20.0 / 255.0);
+static CHROME: std::sync::RwLock<Color> = std::sync::RwLock::new(CHROME_DEFAULT);
 
 /// Soft hairline weight — OD `--hairline` (white 7% in sRGB over surface).
 pub const HAIRLINE_A: f32 = 0.07;

@@ -645,3 +645,61 @@ Paint, Sola keeping its own copy; "pick something from james webb". Spec
       tile and float and Steam's four corners show it (8× crops); clear
       and set again with `solactl`; a sola-river restart brings it back;
       sola-river idle unchanged.
+
+## Phase 17 — The theme adapts to the background (experiment)
+
+Joshua (2026-10-24): a setting to adapt the theme's colors to the
+background picture, sampling its hues for the islands, titlebars and
+sidebars. Spec [`specs/2026-10-24-background-design.md`](../specs/2026-10-24-background-design.md)
+§ Adapting the theme.
+
+- [x] **17a Recipe** (`sola_core::theme::adapt`): OKLab/OKLCH; a hue
+      histogram for the tint and the accent; each adapted token keeps its
+      seed grey's lightness; `Theme::adapt` / `unadapt`, idempotent.
+- [x] **17b Setting:** persistent `Topic::Appearance { adapt_theme }`;
+      Settings → Appearance (the picture's name, Clear, the toggle).
+- [x] **17c Shell** (`adapt.rs`, `app/adapt.rs`): samples the picture
+      off the UI thread and writes the adapted colors into `Topic::Theme`;
+      off or no picture puts the greys back.
+- [x] **17d Chrome surface follows the theme:** `style::chrome_surface()`
+      (was the constant `CHROME_SURFACE`), installed by
+      `theme::install_atoms`.
+- [x] **17e Smoke** on canto (2026-10-24, `pkg:sola` bebed065): toggle on
+      with the Cosmic Cliffs — the bar, titlebars, the top row's islands and
+      sidebars take the tint, the accent the sky's blue; toggle off → greys;
+      clear the picture while on → greys; set it again → adapted.
+- [x] **17f Strength** (Joshua: "everything looks the same"): the first
+      tint (≤ 0.03 chroma) was too faint; `Appearance.strength` (0–100,
+      default 60) scales the picture's mean chroma (≤ 0.08), thinning
+      below L 0.18; Settings' slider sends on release.
+- [x] **17g Smoke** (`pkg:sola` 61da9435): the saved setting took the
+      60% default (`bg-primary #170502`); the slider at 30% → `#120806`,
+      back to 60%.
+
+## Phase 18 — Theme variations; the idle fade
+
+Joshua (2026-10-24): "3-4 variations … switching through the other major
+colors. Let the user pick one"; "a 'fade out' effect … in place of a
+screen saver" (5 minutes configurable, 30 minutes to transparent, any
+input snaps back). Spec [`specs/2026-10-24-background-design.md`](../specs/2026-10-24-background-design.md)
+§ Variations, § The idle fade.
+
+- [x] **18a Variations** (`Scheme::variations`, `name`, `preview`):
+      up to 4 major hues, 30° apart, ≥ 5% weight; each with its accent.
+- [x] **18b Bus:** `Appearance { variation, fade_idle, fade_after_min }`
+      (serde defaults, so a saved one reads); sticky
+      `Topic::ThemeVariations` (shell → Settings).
+- [x] **18c Shell:** keeps every scheme, applies the picked one,
+      publishes the choices (after sampling, on a strength change).
+- [x] **18d Settings:** the scheme cards under Strength; Idle: the toggle
+      and *Start after* 1–60 min (sends on release).
+- [x] **18e sola-river `fade.rs`:** `ext_idle_notifier_v1` +
+      `wp_alpha_modifier_v1`; the picture (or black) over everything,
+      opacity rising over 30 minutes; input → gone at once; not while
+      fullscreen; a failed overlay stops asking for render passes.
+- [x] **18f Smoke** on canto (`pkg:sola` b3e66f22): the Cosmic Cliffs
+      offer Ember, Blue, Amber, Rose (two hue families: 30° spacing, not
+      45°, gives the warm one's shades); Blue picked → `#040a1a` / accent
+      `#fd9f79`. Fade with a 1-minute delay: started at 60 s; a window
+      pixel `#040a1a` → `#0e0f1d` over 2 min (≈7%, on the 30-minute ramp);
+      a pointer move → every pixel back at once.

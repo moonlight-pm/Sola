@@ -19,7 +19,7 @@ use iced::{
     Transformation, Vector, animation::Easing,
 };
 
-use crate::components::style::{CHROME_SURFACE, alpha};
+use crate::components::style::{chrome_surface, alpha};
 
 use super::gesture::{Dest, Drop, Event as SidebarEvent, Msg};
 use super::{
@@ -1265,7 +1265,7 @@ where
                                                 m.group.as_ref().map(|_| pocket_fill(m.color))
                                             })
                                             .map(well_select_plate)
-                                            .unwrap_or_else(|| well_select_plate(CHROME_SURFACE)),
+                                            .unwrap_or_else(|| well_select_plate(chrome_surface())),
                                     ),
                                 );
                             }
