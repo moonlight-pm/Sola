@@ -204,7 +204,7 @@ impl App {
     }
 
     pub fn theme(&self) -> Theme {
-        theme_for(self.float.is_floating_any(), &self.theme)
+        theme_for(self.float.chrome_any(), &self.theme)
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {

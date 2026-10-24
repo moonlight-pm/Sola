@@ -580,7 +580,7 @@ impl Storybook {
     }
 
     pub fn theme(&self) -> iced::Theme {
-        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
+        sola_kit::theme_for(self.float.chrome_any(), &self.theme)
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {

@@ -198,7 +198,7 @@ where
         let state = tree.state.downcast_ref::<State>();
         let colors = paint::colors(theme, self.focused.unwrap_or_else(|| state.is_focused()));
         let bounds = layout.bounds();
-        paint::under(renderer, bounds, self.chrome, colors.face);
+        paint::under(renderer, bounds, colors.face);
         bar::draw(
             renderer,
             bar::DrawBar {
@@ -224,7 +224,7 @@ where
                 );
             });
         }
-        paint::over(renderer, bounds, self.chrome, colors.rim);
+        paint::over(renderer, bounds, colors.rim);
     }
 
     fn update(

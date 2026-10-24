@@ -151,7 +151,7 @@ impl App {
     }
 
     fn theme(&self) -> Theme {
-        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
+        sola_kit::theme_for(self.float.chrome_any(), &self.theme)
     }
 
     fn update(&mut self, msg: Msg) -> Task<Msg> {

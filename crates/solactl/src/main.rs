@@ -6,6 +6,7 @@
 
 use clap::{Parser, Subcommand};
 
+mod background;
 mod bus;
 mod call;
 mod compositor;
@@ -89,6 +90,12 @@ enum Command {
     /// Open a URL in sola-browser, or an image path in sola-paint.
     Open { target: String },
 
+    /// The picture behind the windows: set one (Sola keeps a copy) or clear it.
+    Background {
+        #[command(subcommand)]
+        cmd: background::Command,
+    },
+
     /// Global media-key action (MPRIS / wpctl). Invoked by the shell.
     Media {
         #[arg(value_enum)]
@@ -129,6 +136,7 @@ fn main() {
         Command::Logs { app, follow } => logs::run(app.as_deref(), follow),
         Command::Emit { kind, payload } => emit::run(&kind, &payload),
         Command::Open { target } => open::run(&target),
+        Command::Background { cmd } => background::run(cmd),
         Command::Media { action } => media::run(action),
         Command::External(args) => dynamic::run(args),
     };

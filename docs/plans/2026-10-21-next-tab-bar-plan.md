@@ -620,3 +620,28 @@ Joshua (2026-10-23): Steam's window "to also have the curved corners".
       kit tile's, the rim 7% → 18% on focus, sola-river ~0.7% idle.
 - [ ] **Later (Oath tab):** floating foreign windows — rivulet clipping a
       window's corners (stock wlroots 0.20 scene cannot).
+
+## Phase 16 — The background picture
+
+Joshua (2026-10-24): a background picture that fits the desktop, set from
+Paint, Sola keeping its own copy; "pick something from james webb". Spec
+[`specs/2026-10-24-background-design.md`](../specs/2026-10-24-background-design.md).
+
+- [x] **16a Bus + store:** persistent `Topic::Background { path, set_at }`
+      (retracted: none); `sola_core::background::{adopt, adopt_bytes}` copy
+      into `~/.config/sola/background/`, the one picture there.
+- [x] **16b sola-river `background.rs`:** a shell surface at the bottom,
+      the output's size × integer scale, the picture filled and
+      centre-cropped (decoded off the loop, EXIF-upright, Lanczos3), input
+      region empty; re-decoded when the picture or the output changes.
+- [x] **16c Corners on the picture:** kit frames and the bar clear their
+      corners tiled or floating (`theme_for(chrome)`: overlay unless
+      Cinema; `float_clip` paint mode removed); foreign tiles' corners
+      painted from the picture under them, keyed by position.
+- [x] **16d Setters:** Paint File → Set as Background (the file, or the
+      edited pixels as PNG); `solactl background set <image>` / `clear`.
+- [x] **16e Smoke** on canto (2026-10-24, `pkg:sola` caba6654): the Webb
+      picture set from Paint's menu; the top row, gaps, the bar, a Paint
+      tile and float and Steam's four corners show it (8× crops); clear
+      and set again with `solactl`; a sola-river restart brings it back;
+      sola-river idle unchanged.

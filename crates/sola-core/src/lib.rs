@@ -4,6 +4,7 @@
 //! compositor so we avoid scattered magic numbers.
 
 pub mod applications;
+pub mod background;
 pub mod config;
 pub mod encrypted;
 pub mod env;

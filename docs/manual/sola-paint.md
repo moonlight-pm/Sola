@@ -39,6 +39,13 @@ zoom, and ⌘0 fits. The header shows the zoom next to the pixel size.
 Open and Save As use the kit file picker (Places and a breadcrumb trail).
 The name field is the file name, not the whole path.
 
+**File → Set as Background** makes the image in front the picture behind
+the windows. Sola keeps its own copy in `~/.config/sola/background/`, so
+the picture stays when the file moves or goes: the file as saved, or, with
+unsaved edits (a crop), what is on screen as a PNG. The status line says
+**Set as background**. It fills the screen, centre-cropped. To go back to
+the black ground: `solactl background clear`.
+
 Formats: PNG, JPEG, GIF, WebP, BMP, TIFF.
 
 ## Limits

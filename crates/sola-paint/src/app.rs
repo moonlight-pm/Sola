@@ -14,7 +14,7 @@ use iced::{
     Theme, window,
 };
 
-use sola_bus::topics::{PaintSession, Topic, TopicKind};
+use sola_bus::topics::{MenuDefinition, MenuItem, PaintSession, Topic, TopicKind};
 use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup};
 use sola_kit::components::button as kit_btn;
@@ -60,15 +60,18 @@ pub fn run() -> iced::Result {
     BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
         .app_menu("Paint", [("quit", "Quit Paint", KeyCode::Q.meta())])
-        .app_menu(
-            "File",
-            [
-                ("open", "Open…", KeyCode::O.meta()),
-                ("save", "Save", KeyCode::S.meta()),
-                ("save_as", "Save As…", KeyCode::S.meta().shift()),
-                ("close_tab", "Close Window", KeyCode::W.meta()),
+        .app_menu_definition(MenuDefinition {
+            label: "File".into(),
+            items: vec![
+                item("open", "Open…", Some(KeyCode::O.meta())),
+                item("save", "Save", Some(KeyCode::S.meta())),
+                item("save_as", "Save As…", Some(KeyCode::S.meta().shift())),
+                MenuItem::Divider,
+                item("set_background", "Set as Background", None),
+                MenuItem::Divider,
+                item("close_tab", "Close Window", Some(KeyCode::W.meta())),
             ],
-        )
+        })
         .app_menu(
             "Edit",
             [
@@ -94,6 +97,16 @@ pub fn run() -> iced::Result {
         .theme(App::theme)
         .default_font(fonts::ui())
         .run()
+}
+
+fn item(id: &str, label: &str, shortcut: Option<sola_core::KeyChord>) -> MenuItem {
+    MenuItem::Action {
+        id: id.into(),
+        label: label.into(),
+        shortcut,
+        disabled: false,
+        checked: false,
+    }
 }
 
 struct Icons {
@@ -203,11 +216,7 @@ impl App {
     }
 
     pub fn theme(&self, window: window::Id) -> Theme {
-        let floating = self
-            .windows
-            .river_id(window)
-            .is_some_and(|id| self.float.is_window_floating(id));
-        sola_kit::theme_for(floating, &self.theme)
+        sola_kit::theme_for(self.chrome(window), &self.theme)
     }
 
     fn chrome(&self, window: window::Id) -> sola_kit::Chrome {
@@ -595,6 +604,41 @@ impl App {
         }
     }
 
+    /// Make the focused image the desktop's background: Sola keeps a copy
+    /// (`sola_core::background`) and sola-river draws it.
+    fn set_background(&mut self) {
+        let Some(doc) = self.selected_doc() else {
+            self.set_err("No image open");
+            return;
+        };
+        let path = match doc.background_copy() {
+            Ok(path) => path,
+            Err(e) => {
+                tracing::warn!(error = %e, "set as background failed");
+                self.set_err(e);
+                return;
+            }
+        };
+        let set_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64);
+        let topic = Topic::Background(sola_bus::topics::Background {
+            path: path.to_string_lossy().into_owned(),
+            set_at,
+        });
+        let sent = sola_kit::app::bus()
+            .lock()
+            .map_err(|_| "bus unavailable".to_string())
+            .and_then(|mut bus| bus.emit(topic).map_err(|e| e.to_string()));
+        match sent {
+            Ok(()) => self.set_ok("Set as background"),
+            Err(e) => {
+                tracing::warn!(error = %e, "emit background failed");
+                self.set_err(format!("Could not set the background: {e}"));
+            }
+        }
+    }
+
     fn set_ok(&mut self, msg: impl Into<String>) {
         self.status = Some(msg.into());
     }
@@ -816,6 +860,10 @@ impl App {
             "open" => self.update(Msg::OpenDialog),
             "save" => self.update(Msg::Save),
             "save_as" => self.update(Msg::SaveAsDialog),
+            "set_background" => {
+                self.set_background();
+                Task::none()
+            }
             "close_tab" => self.close_focused(),
             "undo" => self.update(Msg::Undo),
             "crop" => self.update(Msg::ToggleCrop),

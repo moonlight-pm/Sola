@@ -3,9 +3,8 @@
 //!
 //! **Policy:** the shell marks every window without a zone assignment as
 //! floating and emits sticky `Topic::WindowFloating`. Every kit window draws
-//! its frame ([`crate::window_frame`]); the float bit picks how: a tile is
-//! opaque with ground-painted corners, a float is transparent there and
-//! resizes from its edges. Size is the client's requested size unless a zone
+//! its frame ([`crate::window_frame`]); the float bit picks how: both clear
+//! their corners, a float also resizes from its edges and drags. Size is the client's requested size unless a zone
 //! or restored float geometry applies.
 //!
 //! An app doesn't know its own sola-river `window_id`, so we learn it by
@@ -19,9 +18,10 @@
 //! 2. `FloatState::new(APP_ID)` + `window_id: Option<window::Id>`
 //! 3. Boot: `window::latest().map(Msg::WindowReady)`
 //! 4. Bus: `float.update(&message)`
-//! 5. Theme: [`theme_for`] while floating — tiled is an opaque fill, which
-//!    the patched `iced_winit` turns into a Wayland opaque-region (River
-//!    GLES scanout). Float uses [`crate::theme::overlay`] and clears it.
+//! 5. Theme: [`theme_for`] with the window's [`Chrome`] — a tile or a float
+//!    gets [`crate::theme::overlay`] (a clear fill, so its rounded corners
+//!    show what is under it); Cinema keeps the opaque fill, which the
+//!    patched `iced_winit` turns into a Wayland opaque-region (scanout).
 //! 6. View: [`crate::window_frame`] around content
 //! 7. Handlers: [`drag`] / [`drag_resize`] / [`close_app`]
 //!
@@ -138,14 +138,16 @@ impl FloatState {
     }
 }
 
-/// Theme while floating: clear `background.base` so rounded corners show
-/// the desktop (and Wayland opaque-region is cleared). Zoned: the live
-/// theme unchanged (opaque fill → compositor scanout).
-pub fn theme_for(floating: bool, theme: &Theme) -> Theme {
-    if floating {
-        crate::theme::overlay(theme)
-    } else {
-        theme.clone()
+/// The window's theme for how it is shown ([`Chrome`]; a `bool` is
+/// "floating"). Tiled or floating: `background.base` cleared, so the
+/// frame's rounded corners show what is under the window (the ground —
+/// black or the background picture — or other windows); the Wayland
+/// opaque-region is cleared with it. Cinema ([`Chrome::Bare`], square and
+/// full-output): the live theme unchanged (opaque fill → scanout).
+pub fn theme_for(chrome: impl Into<Chrome>, theme: &Theme) -> Theme {
+    match chrome.into() {
+        Chrome::Bare => theme.clone(),
+        Chrome::Tiled | Chrome::Floating => crate::theme::overlay(theme),
     }
 }
 
@@ -200,28 +202,16 @@ mod tests {
     }
 
     #[test]
-    fn theme_for_tiled_is_opaque_float_is_transparent() {
+    fn theme_for_cinema_is_opaque_tiles_and_floats_are_clear() {
         let base = crate::default_theme();
+        let fill = |chrome: Chrome| theme_for(chrome, &base).extended_palette().background.base.color.a;
         assert!(
-            theme_for(false, &base)
-                .extended_palette()
-                .background
-                .base
-                .color
-                .a
-                >= 0.999,
-            "tiled fill must be opaque so iced_winit can set opaque-region"
+            fill(Chrome::Bare) >= 0.999,
+            "Cinema fill must be opaque so iced_winit can set opaque-region"
         );
-        assert_eq!(
-            theme_for(true, &base)
-                .extended_palette()
-                .background
-                .base
-                .color
-                .a,
-            0.0,
-            "float overlay must clear the fill so rounded CSD can punch through"
-        );
+        assert_eq!(fill(Chrome::Tiled), 0.0, "a tile's corners show the ground");
+        assert_eq!(fill(Chrome::Floating), 0.0, "a float's corners show what is under it");
+        assert_eq!(fill(false.into()), 0.0);
     }
 
     #[test]

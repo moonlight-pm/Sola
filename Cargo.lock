@@ -9417,6 +9417,7 @@ dependencies = [
  "bitflags 2.13.1",
  "calloop 0.14.4",
  "calloop-wayland-source 0.4.1",
+ "image",
  "png 0.18.1",
  "rustix 1.1.4",
  "serde_json",

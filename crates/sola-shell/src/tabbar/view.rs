@@ -81,7 +81,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .header(super::head::view(shell))
         .build();
     // An island in the grid's left column (board 06): rounded, rimmed,
-    // its corners the ground's black.
+    // its corners cleared to the ground.
     island(panel)
 }
 

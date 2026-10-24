@@ -5,8 +5,8 @@ use iced::advanced::renderer::Quad;
 use iced::border::Radius;
 use iced::{Background, Border, Color, Rectangle, Theme};
 
-use super::{Chrome, GROUND, RADIUS};
-use crate::components::float_clip::{self, Ears};
+use super::RADIUS;
+use crate::components::float_clip;
 use crate::components::style::{alpha, mix_white};
 
 /// Classic close light (`#FF5F57`), lit only on the focused window.
@@ -79,21 +79,15 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
     }
 }
 
-/// Fill under the content: the ground square (tiles) and the rounded face.
-pub(super) fn under(renderer: &mut iced::Renderer, bounds: Rectangle, chrome: Chrome, face: Color) {
-    if chrome == Chrome::Tiled {
-        fill(renderer, bounds, GROUND, Radius::default());
-    }
+/// Fill under the content: the rounded face.
+pub(super) fn under(renderer: &mut iced::Renderer, bounds: Rectangle, face: Color) {
     fill(renderer, bounds, face, RADIUS.into());
 }
 
-/// Over the content: the corners (painted or cleared), then the rim.
-pub(super) fn over(renderer: &mut iced::Renderer, bounds: Rectangle, chrome: Chrome, rim: Color) {
-    let ears = match chrome {
-        Chrome::Floating => Ears::Clear,
-        _ => Ears::Paint(GROUND),
-    };
-    float_clip::draw_ears(renderer, bounds, RADIUS, ears);
+/// Over the content: the corners cleared (what is under the window shows),
+/// then the rim.
+pub(super) fn over(renderer: &mut iced::Renderer, bounds: Rectangle, rim: Color) {
+    float_clip::draw_ears(renderer, bounds, RADIUS);
     renderer.with_layer(bounds, |renderer| {
         renderer.fill_quad(
             Quad {

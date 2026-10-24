@@ -241,15 +241,15 @@ pub fn window_settings(app_id: &str) -> iced::window::Settings {
     }
 }
 
-/// Like [`window_settings`], but with an alpha surface so a floating kit
-/// app can clear its frame's corners ([`crate::window_frame`]) instead of
-/// showing square opaque ones from the window fill.
+/// Like [`window_settings`], but with an alpha surface so a kit app can
+/// clear its frame's corners ([`crate::window_frame`]) instead of showing
+/// square opaque ones from the window fill.
 ///
-/// While floating, pair with [`crate::theme::overlay`] so `background.base`
-/// is clear and only the rounded frame paints. While zoned/tiled, keep the
-/// normal theme — iced fills the rectangle opaquely and the patched
-/// `iced_winit` sets a full Wayland opaque-region so River can scan out
-/// instead of blending ARGB.
+/// Pair with [`crate::float::theme_for`]: tiled or floating, `background.base`
+/// is clear and only the rounded frame paints. In Cinema it keeps the normal
+/// theme — iced fills the rectangle opaquely and the patched `iced_winit`
+/// sets a full Wayland opaque-region so River can scan out instead of
+/// blending ARGB.
 pub fn window_settings_transparent(app_id: &str) -> iced::window::Settings {
     let mut settings = window_settings(app_id);
     settings.transparent = true;

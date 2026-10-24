@@ -312,7 +312,7 @@ pub const BAR_WIDTH: i32 = 240;
 
 /// The one gap of the grid (board 02): around the output's edges under the
 /// menubar, between the bar and the tiles, and between tiles. What shows
-/// through it is the ground (the compositor's black).
+/// through it is the ground (the background picture, or the black).
 pub const GAP: i32 = 10;
 
 /// Where tiles go: right of the bar, under the menubar, one gap in from

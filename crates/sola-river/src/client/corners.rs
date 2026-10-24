@@ -2,9 +2,11 @@
 //! foreign app; `WindowChrome.rim`), as the kit draws its own tiles: the
 //! corners outside the 12 px radius painted the ground, and the 1 px rim
 //! along the rounded edge (7%, 18% while focused). A tile always stands on
-//! the ground, so painting the corners its colour rounds them; a float's
-//! corners have other windows behind them and stay square (that needs the
-//! compositor to clip).
+//! the ground, so painting the corners what lies under them rounds them:
+//! the black, or the background picture's own pixels there
+//! (`background::sample`), repainted when the window moves or the picture
+//! changes. A float's corners have other windows behind them and stay
+//! square (that needs the compositor to clip).
 //!
 //! Four decorations above the window (`get_decoration_above`): a strip
 //! along the top and the bottom (the corners and the rim between them) and
@@ -36,11 +38,20 @@ pub struct CornerState {
     by_window: HashMap<u32, Corners>,
 }
 
-/// One window's corners, painted for its size and focus.
-struct Corners {
+/// One window's corners, painted for this.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Key {
     w: i32,
     h: i32,
     focused: bool,
+    /// The background picture they show (`background::generation`; 0:
+    /// the black) and, on a picture, where the window is.
+    ground: u64,
+    at: Option<(i32, i32)>,
+}
+
+struct Corners {
+    key: Key,
     pieces: Vec<Piece>,
 }
 
@@ -107,13 +118,28 @@ pub fn sync_on_render(state: &mut AppData) {
         if w < 2 * RADIUS || h < 2 * RADIUS {
             continue;
         }
-        let focused = state.focused_window == Some(id);
+        let ground = crate::client::background::generation(state);
+        let at = if ground == 0 {
+            None
+        } else {
+            match state.registry.get(id).and_then(|e| e.position) {
+                Some(p) => Some(p),
+                None => continue,
+            }
+        };
+        let key = Key {
+            w,
+            h,
+            focused: state.focused_window == Some(id),
+            ground,
+            at,
+        };
         keep.insert(id);
         let current = state
             .corners
             .by_window
             .get(&id)
-            .is_some_and(|c| c.w == w && c.h == h && c.focused == focused);
+            .is_some_and(|c| c.key == key);
         if current {
             for piece in &state.corners.by_window[&id].pieces {
                 piece.decoration.set_offset(piece.x, piece.y);
@@ -124,9 +150,9 @@ pub fn sync_on_render(state: &mut AppData) {
         let Some(window) = state.windows_by_id.get(&id).cloned() else {
             continue;
         };
-        match create(state, &window, w, h, focused) {
+        match create(state, &window, key) {
             Ok(corners) => {
-                debug!(window_id = id, w, h, focused, "corners painted");
+                debug!(window_id = id, w, h, focused = key.focused, ground, "corners painted");
                 state.corners.by_window.insert(id, corners);
             }
             Err(e) => warn!(window_id = id, %e, "corners failed"),
@@ -151,20 +177,21 @@ fn strips(w: i32, h: i32) -> [(i32, i32, i32, i32); 4] {
     ]
 }
 
-fn create(
-    state: &mut AppData,
-    window: &RiverWindowV1,
-    w: i32,
-    h: i32,
-    focused: bool,
-) -> Result<Corners, String> {
+fn create(state: &mut AppData, window: &RiverWindowV1, key: Key) -> Result<Corners, String> {
+    let Key { w, h, focused, at, .. } = key;
     let rim = if focused { RIM_FOCUSED } else { RIM };
     let mut pieces = Vec::new();
     for (x, y, pw, ph) in strips(w, h) {
         if pw <= 0 || ph <= 0 {
             continue;
         }
-        let piece = piece(state, window, x, y, pw, ph, |buf| paint(buf, x, y, pw, ph, w, h, rim))?;
+        let ground = |gx: i32, gy: i32| match at {
+            Some((wx, wy)) => crate::client::background::sample(state, wx + gx, wy + gy),
+            None => [0, 0, 0],
+        };
+        let mut buf = vec![0u8; (pw * ph * 4) as usize];
+        paint(&mut buf, x, y, pw, ph, w, h, rim, ground);
+        let piece = piece(state, window, x, y, pw, ph, |map| map.copy_from_slice(&buf))?;
         piece.decoration.set_offset(x, y);
         piece.decoration.sync_next_commit();
         piece.surface.attach(Some(&piece.buffer), 0, 0);
@@ -172,12 +199,7 @@ fn create(
         piece.surface.commit();
         pieces.push(piece);
     }
-    Ok(Corners {
-        w,
-        h,
-        focused,
-        pieces,
-    })
+    Ok(Corners { key, pieces })
 }
 
 /// A decoration above `window` at `(x, y)`, `pw` × `ph`, its buffer
@@ -240,10 +262,21 @@ fn piece(
 }
 
 /// Paint the strip at `(ox, oy)`, `pw` × `ph`, of a `w` × `h` window:
-/// the ground outside the rounded edge, the rim along it inside, clear
-/// within. Premultiplied ARGB8888 (bytes B, G, R, A).
+/// the ground outside the rounded edge (`ground(x, y)` in the window's
+/// coordinates, `[b, g, r]`), the rim along it inside, clear within.
+/// Premultiplied ARGB8888 (bytes B, G, R, A).
 #[allow(clippy::too_many_arguments)]
-fn paint(buf: &mut [u8], ox: i32, oy: i32, pw: i32, ph: i32, w: i32, h: i32, rim: f32) {
+fn paint(
+    buf: &mut [u8],
+    ox: i32,
+    oy: i32,
+    pw: i32,
+    ph: i32,
+    w: i32,
+    h: i32,
+    rim: f32,
+    ground: impl Fn(i32, i32) -> [u8; 3],
+) {
     let (hw, hh) = (w as f32 / 2.0, h as f32 / 2.0);
     let r = RADIUS as f32;
     for y in 0..ph {
@@ -255,11 +288,17 @@ fn paint(buf: &mut [u8], ox: i32, oy: i32, pw: i32, ph: i32, w: i32, h: i32, rim
             let inner = (0.5 - (d + 1.0)).clamp(0.0, 1.0);
             let band = (inside - inner) * rim;
             let alpha = (1.0 - inside) + band;
-            let white = (band * 255.0).round() as u8;
+            let outside = 1.0 - inside;
+            let under = if outside > 0.0 {
+                ground(ox + x, oy + y)
+            } else {
+                [0, 0, 0]
+            };
             let i = ((y * pw + x) * 4) as usize;
-            buf[i] = white;
-            buf[i + 1] = white;
-            buf[i + 2] = white;
+            for (c, g) in under.iter().enumerate() {
+                let v = *g as f32 * outside + band * 255.0;
+                buf[i + c] = v.round().clamp(0.0, 255.0) as u8;
+            }
             buf[i + 3] = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
         }
     }
@@ -287,7 +326,7 @@ mod tests {
     fn the_top_strip_rounds_its_corners_and_rims_its_edge() {
         let (w, h) = (100, 80);
         let mut buf = vec![0u8; (w * RADIUS * 4) as usize];
-        paint(&mut buf, 0, 0, w, RADIUS, w, h, 0.18);
+        paint(&mut buf, 0, 0, w, RADIUS, w, h, 0.18, |_, _| [0, 0, 0]);
         // The very corner is the ground: opaque black.
         assert_eq!(pixel(&buf, w, 0, 0), [0, 0, 0, 255]);
         // The top edge between the corners is the rim: white at 18%.
@@ -303,8 +342,21 @@ mod tests {
         let (w, h) = (100, 80);
         let ph = h - 2 * RADIUS;
         let mut buf = vec![0u8; (ph * 4) as usize];
-        paint(&mut buf, 0, RADIUS, 1, ph, w, h, 0.07);
+        paint(&mut buf, 0, RADIUS, 1, ph, w, h, 0.07, |_, _| [0, 0, 0]);
         assert_eq!(pixel(&buf, 1, 0, 10), [18, 18, 18, 18]);
+    }
+
+    #[test]
+    fn on_a_picture_the_corner_is_the_picture_under_it() {
+        let (w, h) = (100, 80);
+        let mut buf = vec![0u8; (w * RADIUS * 4) as usize];
+        // The picture: blue at the window's own (0, 0), red elsewhere.
+        let ground = |x: i32, y: i32| if (x, y) == (0, 0) { [200, 0, 0] } else { [0, 0, 90] };
+        paint(&mut buf, 0, 0, w, RADIUS, w, h, 0.18, ground);
+        assert_eq!(pixel(&buf, w, 0, 0), [200, 0, 0, 255]);
+        assert_eq!(pixel(&buf, w, 1, 0), [0, 0, 90, 255]);
+        // Inside the curve the window shows: clear.
+        assert_eq!(pixel(&buf, w, 11, 11), [0, 0, 0, 0]);
     }
 
     #[test]

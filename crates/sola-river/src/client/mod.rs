@@ -43,6 +43,7 @@ pub mod output_config;
 pub mod screenshot;
 pub mod screenshot_window;
 pub mod seat;
+pub mod background;
 pub mod corners;
 pub mod shadow;
 pub mod virtual_keyboard;
@@ -177,6 +178,8 @@ pub struct AppData {
     pub shadow: shadow::ShadowState,
     /// Rounded corners for tiles whose app draws no frame.
     pub corners: corners::CornerState,
+    /// The background picture (`Topic::Background`).
+    pub background: background::BackgroundState,
     /// `river_layer_shell_v1` — enables wlr-layer-shell for clients
     /// (sola-kvm edge capture, panels, etc.).
     pub layer_shell: layer_shell::LayerShellState,
@@ -253,6 +256,7 @@ impl AppData {
             call_rx: None,
             shadow: shadow::ShadowState::default(),
             corners: corners::CornerState::default(),
+            background: background::BackgroundState::default(),
             layer_shell: layer_shell::LayerShellState::default(),
             last_composition: Vec::new(),
         }
@@ -322,6 +326,7 @@ pub fn bus_tick(state: &mut AppData) {
     // Screenshot PNG encode runs off-thread; deliver results here.
     screenshot::poll_results(state);
     crate::call::poll(state);
+    background::poll(state);
     while let Some(msg) = state.bus.try_recv() {
         let Some(topic) = sola_bus::topics::Topic::parse(&msg) else {
             continue;
@@ -458,6 +463,11 @@ pub fn bus_tick(state: &mut AppData) {
                 } else {
                     tracing::warn!(window_id, "CloseWindow: no such window");
                 }
+            }
+            sola_bus::topics::Topic::Background(bg) => {
+                // A retraction arrives as the same topic, not sticky.
+                background::set(state, msg.sticky.then_some(bg));
+                background::poll(state);
             }
             sola_bus::topics::Topic::Shutdown => {
                 info!("shutdown requested via bus");

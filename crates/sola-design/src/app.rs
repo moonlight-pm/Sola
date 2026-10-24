@@ -371,11 +371,7 @@ impl App {
     }
 
     fn theme(&self, window: window::Id) -> Theme {
-        let floating = self
-            .windows
-            .river_id(window)
-            .is_some_and(|id| self.float.is_window_floating(id));
-        sola_kit::theme_for(floating, &self.theme)
+        sola_kit::theme_for(self.chrome(window), &self.theme)
     }
 
     fn chrome(&self, window: window::Id) -> sola_kit::Chrome {

@@ -483,6 +483,8 @@ pub fn handle_render_start(state: &mut AppData) {
     // sync_next_commit are render-state). Before render_finish so River
     // can apply the decoration commit atomically with this frame.
     crate::client::shadow::sync_on_render(state);
+    // The background picture: a shell surface at the bottom.
+    crate::client::background::sync_on_render(state);
     // Rounded corners for frameless tiles: decorations above, same rules.
     crate::client::corners::sync_on_render(state);
 

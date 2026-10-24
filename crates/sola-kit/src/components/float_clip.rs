@@ -4,37 +4,25 @@
 //! rectangle. Full-bleed children (lists, fills, terminal grid, CEF) therefore
 //! paint the AABB "ears" outside a rounded face. [`draw_ears`] runs after the
 //! frame's content, in a **later layer**, so quads, text, images, and shader
-//! primitives (CEF) are all covered: a floating window's ears are cleared to
-//! transparent (dest-out); a tiled window's are painted the ground colour so
-//! the window stays opaque (opaque-region scanout, `PERFORMANCE.md`).
+//! primitives (CEF) are all covered: the ears are cleared to transparent
+//! (dest-out), so what is under the window shows there (the ground under a
+//! tile, other windows under a float).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use iced::advanced::Renderer as _;
 use iced::widget::shader;
-use iced::{Color, Rectangle};
+use iced::Rectangle;
 #[cfg(test)]
 use iced::Point;
 
-/// What the corners outside the radius become.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Ears {
-    /// Transparent: the desktop shows (a floating window's ARGB swapchain).
-    Clear,
-    /// Opaque in this colour: the ground behind a tile.
-    Paint(Color),
-}
-
-/// Cover `bounds`' corners outside a rounded rect of `radius` (logical px).
-/// Call after the content is drawn; opens its own layer.
-pub(crate) fn draw_ears(renderer: &mut iced::Renderer, bounds: Rectangle, radius: f32, ears: Ears) {
+/// Clear `bounds`' corners outside a rounded rect of `radius` (logical
+/// px): they become transparent (the window's ARGB swapchain). Call after
+/// the content is drawn; opens its own layer.
+pub(crate) fn draw_ears(renderer: &mut iced::Renderer, bounds: Rectangle, radius: f32) {
     use iced_wgpu::primitive::Renderer as _;
-    let fill = match ears {
-        Ears::Clear => None,
-        Ears::Paint(c) => Some([c.r, c.g, c.b, c.a]),
-    };
     renderer.with_layer(bounds, |renderer| {
-        renderer.draw_primitive(bounds, FacePunch { radius, fill });
+        renderer.draw_primitive(bounds, FacePunch { radius });
     });
 }
 
@@ -68,15 +56,11 @@ fn length(x: f32, y: f32) -> f32 {
 #[derive(Debug)]
 struct FacePunch {
     radius: f32,
-    /// `None` clears the ears; `Some(rgba)` paints them.
-    fill: Option<[f32; 4]>,
 }
 
 struct FaceClipPipeline {
     /// dest-out: the ears become transparent.
     clear: iced::wgpu::RenderPipeline,
-    /// premultiplied over: the ears take the fill colour.
-    paint: iced::wgpu::RenderPipeline,
     layout: iced::wgpu::BindGroupLayout,
     slots: Vec<ClipSlot>,
     prepared: usize,
@@ -86,7 +70,6 @@ struct FaceClipPipeline {
 struct ClipSlot {
     buffer: iced::wgpu::Buffer,
     bind_group: iced::wgpu::BindGroup,
-    paint: bool,
 }
 
 impl std::fmt::Debug for FaceClipPipeline {
@@ -97,7 +80,7 @@ impl std::fmt::Debug for FaceClipPipeline {
     }
 }
 
-const UNIFORM_SIZE: u64 = 48;
+const UNIFORM_SIZE: u64 = 32;
 
 impl shader::Pipeline for FaceClipPipeline {
     fn new(
@@ -134,17 +117,9 @@ impl shader::Pipeline for FaceClipPipeline {
             dst_factor: iced::wgpu::BlendFactor::OneMinusSrcAlpha,
             operation: iced::wgpu::BlendOperation::Add,
         };
-        // src + dest * (1 - src.a), src premultiplied by the shader.
-        let paint_blend = iced::wgpu::BlendComponent {
-            src_factor: iced::wgpu::BlendFactor::One,
-            dst_factor: iced::wgpu::BlendFactor::OneMinusSrcAlpha,
-            operation: iced::wgpu::BlendOperation::Add,
-        };
         let clear = build_pipeline(device, &pipeline_layout, &shader, format, clear_blend);
-        let paint = build_pipeline(device, &pipeline_layout, &shader, format, paint_blend);
         Self {
             clear,
-            paint,
             layout,
             slots: Vec::new(),
             prepared: 0,
@@ -221,21 +196,14 @@ impl shader::Primitive for FacePunch {
                     resource: buffer.as_entire_binding(),
                 }],
             });
-            pipeline.slots.push(ClipSlot {
-                buffer,
-                bind_group,
-                paint: false,
-            });
+            pipeline.slots.push(ClipSlot { buffer, bind_group });
         }
-        let slot = &mut pipeline.slots[pipeline.prepared];
-        slot.paint = self.fill.is_some();
+        let slot = &pipeline.slots[pipeline.prepared];
         let scale = viewport.scale_factor() as f32;
         let origin = [bounds.x * scale, bounds.y * scale];
         let size = [bounds.width * scale, bounds.height * scale];
         let radius = self.radius * scale;
-        // Clear mode reads only alpha: punch fully.
-        let fill = self.fill.unwrap_or([0.0, 0.0, 0.0, 1.0]);
-        write_uniforms(queue, &slot.buffer, origin, size, radius, fill);
+        write_uniforms(queue, &slot.buffer, origin, size, radius);
         pipeline.prepared += 1;
     }
 
@@ -244,11 +212,7 @@ impl shader::Primitive for FacePunch {
         let Some(slot) = pipeline.slots.get(i) else {
             return true;
         };
-        pass.set_pipeline(if slot.paint {
-            &pipeline.paint
-        } else {
-            &pipeline.clear
-        });
+        pass.set_pipeline(&pipeline.clear);
         pass.set_bind_group(0, &slot.bind_group, &[]);
         pass.draw(0..3, 0..1);
         true
@@ -261,7 +225,6 @@ fn write_uniforms(
     origin: [f32; 2],
     size: [f32; 2],
     radius: f32,
-    fill: [f32; 4],
 ) {
     let mut bytes = [0u8; UNIFORM_SIZE as usize];
     bytes[0..4].copy_from_slice(&origin[0].to_le_bytes());
@@ -269,9 +232,6 @@ fn write_uniforms(
     bytes[8..12].copy_from_slice(&size[0].to_le_bytes());
     bytes[12..16].copy_from_slice(&size[1].to_le_bytes());
     bytes[16..20].copy_from_slice(&radius.to_le_bytes());
-    for (i, c) in fill.iter().enumerate() {
-        bytes[32 + 4 * i..36 + 4 * i].copy_from_slice(&c.to_le_bytes());
-    }
     queue.write_buffer(buffer, 0, &bytes);
 }
 
@@ -279,7 +239,6 @@ const SHADER: &str = r#"
 struct Uniforms {
     origin_size: vec4<f32>,
     radius_pad: vec4<f32>,
-    fill: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -311,9 +270,8 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         radius * 2.0,
     ) / 2.0;
     let inside = clamp(0.5 - dist, 0.0, 1.0);
-    let ear = 1.0 - inside;
-    // Clear reads only alpha (dest-out); paint wants premultiplied colour.
-    return vec4<f32>(u.fill.rgb * u.fill.a * ear, u.fill.a * ear);
+    // dest-out reads only alpha: how much of the ear to punch.
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0 - inside);
 }
 "#;
 

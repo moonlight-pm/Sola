@@ -2,13 +2,13 @@
 //! titlebar carrying the app's menus, 12 px corners, and a 1 px rim that
 //! lights while the window has focus.
 //!
-//! - **Tiled:** opaque. The corners outside the radius are painted the
-//!   ground ([`GROUND`]), so the surface keeps its full opaque region
-//!   (River scanout, `PERFORMANCE.md`).
-//! - **Floating:** the corners are cleared (the swapchain is ARGB and the
-//!   theme is [`crate::theme::overlay`]), the edges resize, the titlebar
-//!   drags.
-//! - **Bare:** content only, square (Cinema).
+//! - **Tiled** and **floating** alike clear the corners outside the radius
+//!   (the swapchain is ARGB and the theme is [`crate::theme::overlay`], see
+//!   [`crate::float::theme_for`]), so what is under the window shows: the
+//!   ground (black, or the background picture) under a tile, other windows
+//!   under a float. A float's edges resize and its titlebar drags.
+//! - **Bare:** content only, square and opaque (Cinema, so it can scan
+//!   out).
 //!
 //! The titlebar row, left to right: the close dot, the app's first menu
 //! under its name in bold, its other menus, the Window menu, then the
@@ -29,7 +29,7 @@ mod paint;
 pub(crate) use paint::{CLOSE_HOVER, CLOSE_RED};
 
 use iced::window::Direction;
-use iced::{Color, Element, Theme};
+use iced::{Element, Theme};
 
 pub use frame::WindowFrame;
 pub use island::island;
@@ -40,14 +40,10 @@ pub const HEIGHT: f32 = 38.0;
 /// Corner radius of a window (and of the shell's bar).
 pub const RADIUS: f32 = 12.0;
 
-/// What shows between windows: the compositor's clear colour. Tiles paint
-/// their corners with it so they can stay opaque.
-pub const GROUND: Color = Color::BLACK;
-
 /// How a window is shown, which decides its frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chrome {
-    /// In a zone: opaque, ground-painted corners.
+    /// In a zone: transparent corners.
     Tiled,
     /// Over the tiles: transparent corners, resize edges, a drag handle.
     Floating,

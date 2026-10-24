@@ -27,6 +27,8 @@ pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
     ));
     settings.resizable = false;
     settings.decorations = false;
+    // The island clears its corners: the ground shows there.
+    settings.transparent = true;
     window::open(settings)
 }
 

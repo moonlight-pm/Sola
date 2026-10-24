@@ -27,6 +27,8 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     TopicKind::CloseApp,
     TopicKind::CloseWindow,
     TopicKind::Shutdown,
+    // The background picture. Persistent: replays on a sola-river restart.
+    TopicKind::Background,
 ];
 
 pub struct BusClient {

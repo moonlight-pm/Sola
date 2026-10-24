@@ -1912,15 +1912,14 @@ impl Shell {
     ///
     /// - Menubar: no fill — the top row's islands sit on the ground (Next
     ///   board 03); foreground text/icons follow the real palette.
+    /// - Tab bar: no fill — the island paints its face and clears its
+    ///   corners, so the ground shows there.
     /// - Overlays (menu, launcher, switcher): transparent window fill so the
     ///   OS background shows through, but all non-base palette tiers remain
     ///   opaque so kit components (card, popover, button) render correctly.
     pub fn theme(&self, window: iced::window::Id) -> iced::Theme {
         if Some(window) == self.menubar_window_id {
             return theme::menubar(&self.theme, iced::Color::TRANSPARENT);
-        }
-        if Some(window) == self.tabbar_window_id {
-            return self.theme.clone();
         }
         theme::overlay(&self.theme)
     }

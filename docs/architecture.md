@@ -177,7 +177,7 @@ always-on vsync pumps** to “fix” a gesture or helper drain.
 | Morph2 drag pump | `sola-kit` `sidebar/strip.rs` | Idle: no vsync chain | While `dragging` / FLIP: `invalidate_layout` on pointer (ghost Y is layout) + `request_redraw` on `RedrawRequested` | Tab/group reorder stutters or ghost stuck; idle vsync if `request_redraw` is left on when not dragging |
 | Browser HTML5 drag | `sola-browser` `FrameSlot.page_drag` + shader `should_pump` | Idle: hangover 50 ms after last paint | While helper `FrameMeta.drag`: `request_redraw` without `Msg::NewFrame` | Kanban ghost lags / smears if overlay full-uploads; idle vsync if `page_drag` sticks after drop |
 | Shell overlays parked 2×2 | `sola-shell` `ensure_overlay_windows` + `zoning::overlay_frame` | Menu / launcher / switcher / shortcuts / selection / **notify** stay mapped after the menubar’s first Composition. **Dismissed = 2×2 swapchain off-output** (`OVERLAY_PARK_X/Y` −10000; winit Wayland min is 2×1 — 1×1 + `resizable=false` is `xdg_toplevel` invalid_size). **Shown = live Frame while hidden, Composition after iced `Resized` ≥64×64** (next-tick hop so view/present run first). Notify live Frame is a tight top-right card stack, not the full usable area. Menu and Super+K live Frames are the card + shadow pad, not the full usable area. | River hides any window not in last Composition; do not stack a parked buffer | GPU spike if a dismissed overlay is left at full output; overlay visible before iced `Resized`; Super+Space hangs if `Resized` never fires; 1920 placeholder jump if live Frame forgets output size; **shell panic-loop if park size is 1×1**; notify overlay covering apps if Frame is full-area instead of card-sized; Super+K / menu filling 1080p on software GL |
-| Tiled kit opaque-region | patched `iced_winit` `State::synchronize` | Kit apps still create an ARGB swapchain (`window_settings_transparent` for float CSD). **Tiled:** `theme_for(false)` opaque `background.base` → `wl_surface.set_opaque_region` (full) so River GLES can scan out. **Float / shell overlay:** transparent base → region cleared | n/a | Idle GPU if tiled windows stay without opaque-region; float CSD square black corners if opaque-region left on while overlay theme is active; overlay launcher dimmed wrong if marked opaque |
+| Kit opaque-region | patched `iced_winit` `State::synchronize` | Kit apps create an ARGB swapchain (`window_settings_transparent`). **Cinema:** `theme_for(Chrome::Bare)` opaque `background.base` → `wl_surface.set_opaque_region` (full) so River GLES can scan out. **Tiled / float / shell overlay:** transparent base (the frame clears its corners so the ground shows) → region cleared | n/a | Cinema without opaque-region cannot scan out; square black corners on a tile or float if opaque-region is left on while the overlay theme is active (the ground hidden); overlay launcher dimmed wrong if marked opaque |
 | Design plane | `sola-design` `subscription` | No idle timers: a 200 ms tick only while a `wait` / `auto` measure is pending, 40 ms while a detail plan is due, frames while a glow animates or the camera glides to a tour step, 60 s while a canvas is live off screen, 5 s while an agent's call in the last 30 s keeps a canvas awake. Board frames wake once per batch; helper queues wake `Poll` via `chrome_wake`; the rail rescan thread messages only when the canvas list changed; the canvas watcher only on file events | Pointer moves message only while right-drag panning or over a live page | Idle presents if a timer creeps in; boards blank if the frame wake is lost |
 | Scope live sample | `sola-scope` `Msg::Tick` | 100 ms `time::every` **only while the loupe process is running** (the job is live pixels). No `window::frames()` | n/a | Scope closed: no extra presents. Open: ~10 Hz is expected |
 
@@ -266,13 +266,19 @@ keeps the app's latest `AppMenuPayload` from `BusSetup` / `menu::publish`;
 a dropdown is an overlay inside the window; a Window item goes on the bus as
 `MenuAction` and the shell acts on its focused window, any other item is
 handed back to the app's own bus stream), 12 px corners, a lit rim. Tiles
-stay opaque with their corners painted the ground; floats clear them. The
-menubar carries no app menus. The shell publishes sticky
+and floats alike clear their corners (`theme_for(chrome)`: a clear fill
+unless Cinema), so the ground shows there. The ground is the background
+picture when one is set (persistent `Topic::Background`, Sola's copy under
+`~/.config/sola/background/` via `sola_core::background`; set by Paint or
+`solactl background`): sola-river draws it as a River shell surface at the
+bottom of the render list (`client/background.rs`, decoded and scaled off
+the loop), else the compositor's black. The menubar carries no app menus. The shell publishes sticky
 `Topic::WindowChrome` (window id → tiled, Cinema, rim; `chrome.rs`):
 sola-river sends `set_tiled` on change and a 1 px border on windows whose
 app published no menu (foreign apps) — tiled ones get rounded corners
 instead, four decorations above the window painting the corners the ground
-and the rim along them (`client/corners.rs`); kit apps drop the frame in
+(the picture's own pixels under them, `background::sample`) and the rim
+along them (`client/corners.rs`); kit apps drop the frame in
 Cinema (`FloatState::chrome`).
 
 **On master:** zoning / floating is coordinated with `sola-river` over the

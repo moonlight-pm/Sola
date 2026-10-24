@@ -3013,7 +3013,7 @@ impl<E: Engine> App<E> {
 
     /// Current iced theme (chrome styling), refreshed from `Topic::Theme`.
     pub fn theme(&self, window: iced::window::Id) -> iced::Theme {
-        sola_kit::theme_for(self.window_floating(window), &self.theme)
+        sola_kit::theme_for(self.window_chrome(window), &self.theme)
     }
 
     pub fn pick_new_active_after_close(&self, closing: TabId) -> Option<TabId> {
@@ -3094,13 +3094,6 @@ impl<E: Engine> App<E> {
             Msg::TitleResize,
             content,
         )
-    }
-
-    /// Is this page window floating (it draws its own titlebar)?
-    fn window_floating(&self, window: iced::window::Id) -> bool {
-        self.windows
-            .river_id(window)
-            .is_some_and(|id| self.float.is_window_floating(id))
     }
 
     /// How to frame `window`: tiled, floating, or bare in Cinema.

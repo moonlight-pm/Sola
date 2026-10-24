@@ -57,8 +57,9 @@ group reboot and power off without a password (this takes effect after
 
 ## Menubar
 
-The menubar is the top row of the desk: a row of islands on the black
-ground, a gap in from the edges, nothing behind them. On the left, the
+The menubar is the top row of the desk: a row of islands on the
+ground (the background picture, or black), a gap in from the edges,
+nothing behind them. On the left, the
 flower (amber, in its own circle); while a message shows, it sits in the
 middle; on the right, an island per group:
 mail, alerts, mouse and Bluetooth; the spectrum; CPU, GPU and MEM; RX and

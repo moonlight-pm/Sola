@@ -379,13 +379,7 @@ impl App {
     }
 
     fn theme(&self, window: window::Id) -> Theme {
-        sola_kit::theme_for(self.is_floating(window), &self.theme)
-    }
-
-    fn is_floating(&self, window: window::Id) -> bool {
-        self.windows
-            .river_id(window)
-            .is_some_and(|id| self.float.is_window_floating(id))
+        sola_kit::theme_for(self.chrome(window), &self.theme)
     }
 
     /// How to frame `window`: tiled, floating, or bare in Cinema.

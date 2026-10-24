@@ -1,8 +1,8 @@
 # solactl
 
 `solactl` is the operator command line. Most of its commands are calls on
-the call plane, `sola-call` ([The call plane](call.md)); `emit` writes to
-the bus; `logs`, `open`, and `media` work locally. It is installed as
+the call plane, `sola-call` ([The call plane](call.md)); `emit` and
+`background` write to the bus; `logs`, `open`, and `media` work locally. It is installed as
 `/opt/sola/bin/solactl`.
 
 ## Synopsis
@@ -29,6 +29,8 @@ solactl mcp [--owner OWNER]…
 solactl logs [APP] [-f]
 solactl emit KIND PAYLOAD
 solactl open TARGET
+solactl background set IMAGE
+solactl background clear
 solactl media play-pause|next|prev|mute|vol-up|vol-down
 solactl help [COMMAND…]
 ```
@@ -38,7 +40,7 @@ solactl help [COMMAND…]
 | `compositor`, `session` | Call plane; flags compiled into `solactl` | `sola-call` and the owner; `--help` needs nothing |
 | `projects`, `browser`, `bots`, `design`, any other name | Call plane; flags read from the owner's advertised methods | `sola-call` and the owner, also for help |
 | `mcp` | Call plane | `sola-call`; tools appear as owners do |
-| `emit` | Bus | `sola-bus` |
+| `emit`, `background` | Bus | `sola-bus` (the picture is drawn by `sola-river`) |
 | `logs` | Files in `/opt/sola/log` | nothing |
 | `open` | Hands off to, or starts, the Browser or Paint | their binaries |
 | `media` | Session D-Bus (MPRIS) and `wpctl` | a player, PipeWire |
@@ -57,8 +59,8 @@ closed pipe (`solactl browser tabs | head`) is not an error.
 |---|---|
 | 0 | Success; also `media` with no player to act on |
 | 1 | The owner or the host answered with an error. This includes `timeout`, and `<owner> is not running` for `compositor` and `session` |
-| 2 | Usage error in a compiled command (`compositor`, `session`, `mcp`, `logs`, `emit`, `open`, `media`): a missing or bad argument or an unknown subcommand; usage is printed |
-| 3 | Local failure: `sola-call` unreachable, a live owner not in the catalog, an unknown method, a flag error, a `SOLA_BOT=1` refusal, a bad chord, or a failed `logs`, `emit`, `open`, or `media` |
+| 2 | Usage error in a compiled command (`compositor`, `session`, `mcp`, `logs`, `emit`, `open`, `background`, `media`): a missing or bad argument or an unknown subcommand; usage is printed |
+| 3 | Local failure: `sola-call` unreachable, a live owner not in the catalog, an unknown method, a flag error, a `SOLA_BOT=1` refusal, a bad chord, or a failed `logs`, `emit`, `open`, `background`, or `media` |
 
 ### When the call host or an owner is down
 
@@ -911,6 +913,23 @@ binary or a failed start is status 3. There is no fallback to another
 browser. In a Sola terminal, `open` is an alias for `xdg-open`; that path
 uses `sola-browser.desktop` (http(s), HTML, XHTML, PDF, `about:`, unknown
 schemes), so for those both paths land in the Browser.
+
+### background
+
+```text
+solactl background set IMAGE
+solactl background clear
+```
+
+`set` copies `IMAGE` into `~/.config/sola/background/` (the one picture
+kept there; the previous copy is removed), makes it the picture behind
+the windows (`Topic::Background`, which survives a restart), and prints the
+copy's path. The original can then move or go. `sola-river` draws it
+filling the output, centre-cropped. `clear` goes back to the plain black
+ground. A file that cannot be read, or no bus connection, is status 3; a
+picture that will not decode is logged by `sola-river` and the ground stays
+as it was. Paint's **File → Set as Background** does the same for the
+image in front.
 
 ### media
 

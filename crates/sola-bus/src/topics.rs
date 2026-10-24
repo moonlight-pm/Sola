@@ -355,6 +355,19 @@ pub enum IslandAction {
     Show,
 }
 
+/// The picture on the ground behind the windows (`Topic::Background`,
+/// persistent). Set by any app (Paint's Set as Background, `solactl
+/// background`); sola-river draws it. Retracted: the plain black ground.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Background {
+    /// Sola's own copy under `~/.config/sola/background/`
+    /// (`sola_core::background`), so the original can move or go.
+    pub path: String,
+    /// When it was set (unix ms): setting a file of the same name again is
+    /// still a change.
+    pub set_at: u64,
+}
+
 /// Emitted by compositor when pointer enters a different surface/window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEnteredPayload {
@@ -1596,6 +1609,11 @@ define_topics! {
 
     // An island's answer, reply or Show (shell → Projects). Appended last.
     AgentIslandAction(AgentIslandAction),
+
+    // The picture behind the windows (any app → sola-river). Persistent so
+    // it survives a restart; retracted for the plain ground. Appended last.
+    #[persistent]
+    Background(Background),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1619,6 +1637,7 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::CloseTab
             | TopicKind::AgentIsland
             | TopicKind::AgentIslandAction
+            | TopicKind::Background
     )
 }
 
@@ -1754,6 +1773,21 @@ mod tests {
             other => panic!("expected AgentIslandAction, got {other:?}"),
         }
         assert!(topic_kind_is_after_mail_status(TopicKind::AgentIsland));
+    }
+
+    #[test]
+    fn background_is_persistent() {
+        let bg = Background {
+            path: "/home/u/.config/sola/background/cliffs.jpg".into(),
+            set_at: 7,
+        };
+        let msg = Topic::Background(bg.clone()).to_message();
+        assert!(TopicKind::Background.behavior().is_persistent());
+        match Topic::parse(&msg) {
+            Some(Topic::Background(back)) => assert_eq!(back, bg),
+            other => panic!("expected Background, got {other:?}"),
+        }
+        assert!(topic_kind_is_after_mail_status(TopicKind::Background));
     }
 
     #[test]
