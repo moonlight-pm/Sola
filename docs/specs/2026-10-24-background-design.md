@@ -144,6 +144,32 @@ one."
   small windows (the raised titlebar over the base, an accent pill, the
   name under it), the picked one ringed in the accent; a click picks.
 
+### Custom colors and highlights (2026-10-24)
+
+**Asked (Joshua):** "allow in that same place some options for the user to
+manually customize certain colors — base backgrounds, highlights, etc.";
+"the tab highlights and focus look grey on this color scheme, did those get
+any influence from the color selection?" — they did only faintly: the
+sidebar's rows were white mixes of the column (a tint washed out to grey),
+and the window's focus rim is white by the Next decision.
+
+- **Highlights keep the hue:** a sidebar row's lift is the white mix's
+  lightness with the column's own hue and chroma (`style::lift_in_hue`,
+  `theme::keep_hue`; identical on a grey). The column's **active row** is
+  a new theme color, **`highlight`** (`#353535`, the old 14% lift; a kit
+  atom delivered process-wide like `selection`; adapted like the other
+  surfaces). The focus rim stays white.
+- **Custom colors:** Settings → Appearance → *Custom colors*: Window,
+  Panels, Highlight, Accent (`Appearance.colors`, key → `#rrggbb`), each a
+  swatch opening the kit's color picker, **Use** / **Reset**. They apply
+  over the greys or the picture's scheme (`Theme::customize`): Window →
+  `bg-primary`; Panels → `bg-secondary` and the switcher's fill; Highlight
+  → `highlight`, and `selection` takes its hue at its own lightness;
+  Accent → `accent`, `text-accent`, `accent-dim` (10%).
+- **The shell makes the managed colors from scratch each time:** the
+  seed's greys, the picture's scheme over them when adapting, your colors
+  over that; with neither, the greys once and then hands off.
+
 ## The idle fade (2026-10-24)
 
 **Asked (Joshua):** "a 'fade out' effect — sort of in place of a screen

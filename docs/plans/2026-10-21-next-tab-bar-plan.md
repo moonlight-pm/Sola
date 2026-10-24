@@ -703,3 +703,25 @@ input snaps back). Spec [`specs/2026-10-24-background-design.md`](../specs/2026-
       `#fd9f79`. Fade with a 1-minute delay: started at 60 s; a window
       pixel `#040a1a` → `#0e0f1d` over 2 min (≈7%, on the 30-minute ramp);
       a pointer move → every pixel back at once.
+
+## Phase 19 — Custom colors; highlights that keep the hue
+
+Joshua (2026-10-24): custom colors in Settings → Appearance ("base
+backgrounds, highlights, etc."); the tab highlights looked grey on a
+tinted scheme. Spec § Custom colors and highlights.
+
+- [x] **19a** `highlight` token / kit atom (`#353535`; storybook Theme
+      page lists it); the column's active row uses it; row lifts keep the
+      column's hue (`lift_in_hue`, `keep_hue`).
+- [x] **19b** `Appearance.colors` + `Theme::customize` (Window, Panels,
+      Highlight, Accent families); the shell's pipeline: greys → scheme →
+      yours.
+- [x] **19c** Settings: *Custom colors* (swatch → picker → Use / Reset);
+      the panel scrolls.
+- [x] **19d Smoke** on canto: a theme saved before `highlight` existed
+      lacked it (the rewrite skipped absent tokens; now the seed's is
+      added first); then the focused row on the Blue scheme `#29354b`
+      (was a grey lift); a custom Highlight picked in the picker
+      (`#8831a1`; selection `#430054`) — the bar's focused row magenta;
+      Reset → `#29354b`. The scrollbar sat on the swatches once the page
+      scrolled: the page has a right margin.

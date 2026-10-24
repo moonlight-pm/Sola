@@ -392,6 +392,11 @@ pub struct Appearance {
     /// Minutes of no input before the fade starts.
     #[serde(default = "Appearance::default_fade_after")]
     pub fade_after_min: u16,
+    /// Colors you set yourself, over the greys or the picture's scheme:
+    /// `window`, `panels`, `highlight`, `accent` → `#rrggbb`
+    /// (`sola_core::theme::Theme::customize`).
+    #[serde(default)]
+    pub colors: std::collections::BTreeMap<String, String>,
 }
 
 impl Appearance {
@@ -421,6 +426,7 @@ impl Default for Appearance {
             variation: 0,
             fade_idle: true,
             fade_after_min: Self::DEFAULT_FADE_AFTER_MIN,
+            colors: Default::default(),
         }
     }
 }

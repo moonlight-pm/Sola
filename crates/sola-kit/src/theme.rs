@@ -78,6 +78,10 @@ pub mod hex {
     /// grids overlay [`ACCENT`] at alpha so the wash stays neon and
     /// scannable (`sola_terminal::term_view::Palette::from_kit_theme`).
     pub const SELECTION: &str = "#292929";
+    /// The active row of a sidebar column (the tab bar's focused window,
+    /// the picked item): a lift above [`BG_RAISED`]'s column, 14% white on
+    /// `#141414` in the grey theme.
+    pub const HIGHLIGHT: &str = "#353535";
 }
 
 /// Build the kit's iced theme from its compile-time default atoms.
@@ -130,8 +134,8 @@ pub fn menubar(base: &Theme, bg: Color) -> Theme {
 /// via `theme.extended_palette()`; no component references `hex::*`
 /// directly unless escape-hatching.
 fn extended_from_atoms(a: &Atoms) -> Extended {
-    // `selection` is intentionally not bound — it has no iced palette
-    // slot and is delivered via the process-wide cell, not this binding.
+    // `selection` and `highlight` are intentionally not bound — they have
+    // no iced palette slot and are delivered via process-wide cells.
     let Atoms {
         bg,
         bg_raised,
@@ -144,6 +148,7 @@ fn extended_from_atoms(a: &Atoms) -> Extended {
         warning,
         danger,
         selection: _,
+        highlight: _,
     } = *a;
     Extended {
         background: Background {
@@ -220,7 +225,22 @@ pub fn install_selection(color: Color) {
 /// it (the bus consumer, the storybook, the shell).
 pub fn install_atoms(atoms: &Atoms) {
     install_selection(atoms.selection);
+    if let Ok(mut guard) = HIGHLIGHT.write() {
+        *guard = atoms.highlight;
+    }
     crate::components::style::install_chrome_surface(atoms.bg, atoms.bg_raised);
+}
+
+static HIGHLIGHT: std::sync::LazyLock<std::sync::RwLock<Color>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(parse(hex::HIGHLIGHT)));
+
+/// A sidebar column's active row (the tab bar's focused window), as the
+/// theme last installed it ([`install_atoms`]).
+pub fn highlight() -> Color {
+    HIGHLIGHT
+        .read()
+        .map(|c| *c)
+        .unwrap_or_else(|_| parse(hex::HIGHLIGHT))
 }
 
 /// The current selected-row highlight colour. Falls back to the
@@ -321,6 +341,9 @@ pub struct Atoms {
     /// `Atoms` so it edits, defaults, and round-trips on the bus like any
     /// other atom.
     pub selection: Color,
+    /// A sidebar column's active row. No iced palette slot either:
+    /// delivered process-wide like `selection` ([`highlight`]).
+    pub highlight: Color,
 }
 
 impl Default for Atoms {
@@ -337,6 +360,7 @@ impl Default for Atoms {
             warning: parse(hex::WARNING),
             danger: parse(hex::DANGER),
             selection: parse(hex::SELECTION),
+            highlight: parse(hex::HIGHLIGHT),
         }
     }
 }
@@ -429,6 +453,13 @@ const ATOM_BINDINGS: &[AtomBinding] = &[
         fallback: hex::SELECTION,
         get: |a| a.selection,
         set: |a, c| a.selection = c,
+    },
+    // No iced palette slot; delivered process-wide ([`highlight`]).
+    AtomBinding {
+        token: "highlight",
+        fallback: hex::HIGHLIGHT,
+        get: |a| a.highlight,
+        set: |a, c| a.highlight = c,
     },
 ];
 
@@ -796,6 +827,7 @@ mod tests {
             warning: parse("#191a1b"),
             danger: parse("#1c1d1e"),
             selection: parse("#1f2021"),
+            highlight: parse("#222324"),
         };
         assert_eq!(atoms_from_bus_theme(&bus_theme_from_atoms(&atoms)), atoms);
     }

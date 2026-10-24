@@ -67,8 +67,8 @@ each in `~/.config/sola/theme/presets/`.
 ## Palette tokens
 
 Iced widgets take their colours from palette slots. The kit fills those
-slots from ten of the tokens below and keeps the eleventh, `selection`,
-beside them. Kit components and application styles read these; a colour an
+slots from ten of the tokens below and keeps the last two, `selection` and
+`highlight`, beside them. Kit components and application styles read these; a colour an
 application writes into its code does not follow the theme.
 
 | Token | Default | Iced palette slots | Used for |
@@ -84,6 +84,7 @@ application writes into its code does not follow the theme.
 | `warning` | `#e8b84a` | `warning` | Status |
 | `danger` | `#f07178` | `danger` | Status |
 | `selection` | `#292929` | None; read with `sola_kit::theme::selection()` | Selected rows and text selection |
+| `highlight` | `#353535` | None; read with `sola_kit::theme::highlight()` | A sidebar column's active row: the tab bar's focused window, Settings' panel |
 
 The base is neutral grey. Until 2026-10-23 it was a blue-tinted slate
 (`#0c0e12`, `#151922`, …). When the shell receives a saved theme that still has
@@ -208,6 +209,21 @@ click one to use it. Its accent is a hue apart from its tint.
 the tint takes; it applies when you let go of the slider. Near 100% the
 darkest surfaces take the hue fully (a strongly colored picture gives
 strongly colored chrome).
+
+**Custom colors** (Settings → Appearance) go over the greys or the
+picture's scheme, adapting on or off. Click a swatch for a picker, then
+**Use**; **Reset** forgets that one.
+
+| Color | Sets |
+|---|---|
+| Window | `bg-primary` |
+| Panels | `bg-secondary` and the switcher's fill (its alpha kept): bars, titlebars, sidebars |
+| Highlight | `highlight` (the tab bar's focused row); `selection` takes its hue at its own lightness |
+| Accent | `accent`, `text-accent`, and `accent-dim` at 10% |
+
+Hover and shown rows in a sidebar are lifts of the column that keep its
+hue, so they follow a tinted or custom panel color instead of turning grey.
+The window's focus rim stays a white lit edge.
 
 Turning it off, or clearing the picture, puts the default greys back on
 those colors. While it is on, a color edited in Kit is replaced by the

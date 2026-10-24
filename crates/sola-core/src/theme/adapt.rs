@@ -64,6 +64,7 @@ const RECIPE: &[(&str, Role)] = &[
     ("bg-tertiary", Role::Surface),
     ("bg-hover", Role::Surface),
     ("selection", Role::Surface),
+    ("highlight", Role::Surface),
     ("border", Role::Surface),
     ("border-subtle", Role::Surface),
     ("text-muted", Role::Surface),
@@ -212,7 +213,70 @@ impl Scheme {
     }
 }
 
+/// The colors Settings lets you set (`Appearance.colors` keys), with their
+/// labels: each sets a family of tokens ([`Theme::customize`]).
+pub const CUSTOM_COLORS: &[(&str, &str)] = &[
+    ("window", "Window"),
+    ("panels", "Panels"),
+    ("highlight", "Highlight"),
+    ("accent", "Accent"),
+];
+
+/// The token a custom color is read back from (for showing it).
+pub fn custom_color_token(key: &str) -> Option<&'static str> {
+    match key {
+        "window" => Some("bg-primary"),
+        "panels" => Some("bg-secondary"),
+        "highlight" => Some("highlight"),
+        "accent" => Some("accent"),
+        _ => None,
+    }
+}
+
 impl Theme {
+    /// Set the custom colors (`key → #rrggbb`, keys of [`CUSTOM_COLORS`];
+    /// others and malformed values are skipped), each on its family:
+    /// `window` the base; `panels` the raised fill and the switcher's
+    /// (keeping its alpha); `highlight` a column's active row, and the
+    /// selection takes its hue at the selection's own lightness; `accent`
+    /// the accent, its text and its 10% wash. Returns true when a token
+    /// changed.
+    pub fn customize(&mut self, colors: &std::collections::BTreeMap<String, String>) -> bool {
+        let seed = Palette::seed();
+        let mut values: Vec<(&str, String)> = Vec::new();
+        for (key, hex) in colors {
+            let Some(c) = Rgba::parse(hex).filter(|c| c.a >= 0.999) else {
+                continue;
+            };
+            match key.as_str() {
+                "window" => values.push(("bg-primary", c.hex())),
+                "panels" => {
+                    values.push(("bg-secondary", c.hex()));
+                    values.push(("shell-switcher-bg", Rgba { a: 0.9, ..c }.hex()));
+                }
+                "highlight" => {
+                    values.push(("highlight", c.hex()));
+                    if let Some(sel) = seed.tokens.get("selection").and_then(|t| Rgba::parse(&t.value)) {
+                        let [r, g, b] = keep_hue(c.rgb(), sel.rgb());
+                        values.push(("selection", Rgba { r, g, b, a: 1.0 }.hex()));
+                    }
+                }
+                "accent" => {
+                    values.push(("accent", c.hex()));
+                    values.push(("text-accent", c.hex()));
+                    values.push(("accent-dim", Rgba { a: 0.10, ..c }.hex()));
+                }
+                _ => {}
+            }
+        }
+        self.rewrite(|name| {
+            values
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| v.clone())
+        })
+    }
+
     /// Rewrite the adapted color tokens from `scheme`, the tint at
     /// `strength` (0–1) of the picture's own colorfulness (each token from
     /// its seed grey, so the result does not depend on what was there).
@@ -244,6 +308,17 @@ impl Theme {
 
     fn rewrite(&mut self, value_for: impl Fn(&str) -> Option<String>) -> bool {
         let mut changed = false;
+        // A theme saved before a managed token existed (`highlight`) gets
+        // it from the seed first.
+        let seed = Palette::seed();
+        for (name, _) in RECIPE {
+            if !self.palette.tokens.contains_key(*name) {
+                if let Some(token) = seed.tokens.get(*name) {
+                    self.palette.tokens.insert((*name).to_string(), token.clone());
+                    changed = true;
+                }
+            }
+        }
         for (name, token) in self.palette.tokens.iter_mut() {
             if token.kind != TokenKind::Color {
                 continue;
@@ -257,6 +332,15 @@ impl Theme {
         }
         changed
     }
+}
+
+/// `color` at the OKLab lightness of `lightness_from`, keeping its own hue
+/// and chroma (lowered to fit the gamut): a lift that does not wash a tint
+/// out the way mixing with white does. sRGB channels, 0–1.
+pub fn keep_hue(color: [f32; 3], lightness_from: [f32; 3]) -> [f32; 3] {
+    let own = Lch::from_rgb(color);
+    let l = Lch::from_rgb(lightness_from).l;
+    Lch::new(l, own.c, own.h).to_rgba(1.0).rgb()
 }
 
 fn bin_of(h: f32) -> usize {
@@ -583,6 +667,61 @@ mod tests {
         assert_eq!(v[1].name(), "Blue");
         let [base, raised, accent] = v[1].preview(0.6);
         assert!(base.starts_with('#') && raised.len() == 7 && accent.len() == 7);
+    }
+
+    #[test]
+    fn keep_hue_lifts_a_grey_as_mixing_white_does_and_keeps_a_tint() {
+        let grey = [20.0 / 255.0; 3];
+        let mixed = [53.0 / 255.0; 3];
+        for (a, b) in keep_hue(grey, mixed).iter().zip(mixed) {
+            assert!((a - b).abs() < 1.0 / 255.0);
+        }
+        let navy = Rgba::parse("#091327").unwrap().rgb();
+        let lifted = keep_hue(navy, Rgba::parse("#1f2838").unwrap().rgb());
+        let (before, after) = (Lch::from_rgb(navy), Lch::from_rgb(lifted));
+        assert!(after.l > before.l);
+        assert!((after.c - before.c).abs() < 0.005, "chroma kept: {before:?} {after:?}");
+    }
+
+    #[test]
+    fn custom_colors_set_their_families() {
+        let mut theme = Theme::default();
+        let colors: std::collections::BTreeMap<String, String> = [
+            ("accent", "#ff8800"),
+            ("panels", "#203040"),
+            ("highlight", "#6040a0"),
+            ("bogus", "#ffffff"),
+            ("window", "not a color"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        assert!(theme.customize(&colors));
+        assert_eq!(token(&theme, "accent"), "#ff8800");
+        assert_eq!(token(&theme, "text-accent"), "#ff8800");
+        assert_eq!(token(&theme, "accent-dim"), "#ff88001a");
+        assert_eq!(token(&theme, "bg-secondary"), "#203040");
+        assert_eq!(token(&theme, "shell-switcher-bg"), "#203040e6");
+        assert_eq!(token(&theme, "highlight"), "#6040a0");
+        // The selection takes the highlight's hue at its own lightness.
+        let sel = Lch::from_rgb(Rgba::parse(&token(&theme, "selection")).unwrap().rgb());
+        let seed = Lch::from_rgb(Rgba::parse("#292929").unwrap().rgb());
+        assert!((sel.l - seed.l).abs() < 0.01 && sel.c > 0.02);
+        assert_eq!(token(&theme, "bg-primary"), "#0b0b0b", "a malformed color is skipped");
+        assert!(theme.unadapt());
+        assert_eq!(theme, Theme::default());
+    }
+
+    #[test]
+    fn a_theme_saved_without_a_managed_token_gets_it() {
+        let mut theme = Theme::default();
+        theme.palette.tokens.remove("highlight");
+        assert!(theme.unadapt());
+        assert_eq!(token(&theme, "highlight"), "#353535");
+        let scheme = Scheme::from_pixels(&fill([30, 60, 160], 100));
+        theme.palette.tokens.remove("highlight");
+        theme.adapt(&scheme, 0.6);
+        assert_ne!(token(&theme, "highlight"), "#353535", "adapted, not just added");
     }
 
     #[test]

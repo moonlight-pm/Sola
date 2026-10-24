@@ -91,6 +91,22 @@ pub const HAIRLINE_A: f32 = 0.07;
 /// Stronger hairline — OD `--hairline-strong` (white 12% in sRGB).
 pub const HAIRLINE_STRONG_A: f32 = 0.12;
 
+/// Lighten `surface` as [`mix_white`] does but keep its hue and chroma
+/// (perceptual lightness from the white mix, `sola_core::theme::keep_hue`):
+/// on a grey the same colour, on a tinted surface (an adapted theme) a
+/// lighter tint instead of a washed-out grey.
+pub fn lift_in_hue(surface: Color, amount: f32) -> Color {
+    let lifted = mix_white(surface, amount);
+    let [r, g, b] =
+        sola_core::theme::keep_hue([surface.r, surface.g, surface.b], [lifted.r, lifted.g, lifted.b]);
+    Color {
+        r,
+        g,
+        b,
+        a: surface.a,
+    }
+}
+
 /// CSS `color-mix(in srgb, #fff amount, surface)` as an **opaque** colour.
 /// Use this for edges instead of `Color { a: amount, ..WHITE }`.
 pub fn mix_white(surface: Color, amount: f32) -> Color {

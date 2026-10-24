@@ -82,6 +82,12 @@ impl Palette {
             "selection".into(),
             Token::new(TokenKind::Color, "#292929", &["surface"]),
         );
+        // A sidebar column's active row (the tab bar's focused window): a
+        // step above `selection` (kit `hex::HIGHLIGHT`).
+        palette.tokens.insert(
+            "highlight".into(),
+            Token::new(TokenKind::Color, "#353535", &["surface"]),
+        );
         palette.tokens.insert(
             "danger".into(),
             Token::new(TokenKind::Color, "#f07178", &["status"]),

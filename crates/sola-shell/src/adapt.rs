@@ -24,6 +24,8 @@ pub struct Adapt {
     pub strength: f32,
     /// `Appearance.variation`: which of the picture's schemes.
     pub variation: usize,
+    /// `Appearance.colors`: your own, over the rest.
+    pub colors: std::collections::BTreeMap<String, String>,
     /// `Topic::Background`.
     pub picture: Option<Background>,
     /// The picture's schemes, once sampled (the dominant first).
@@ -41,6 +43,7 @@ impl Default for Adapt {
             on: false,
             strength: sola_bus::topics::Appearance::DEFAULT_STRENGTH as f32 / 100.0,
             variation: 0,
+            colors: Default::default(),
             picture: None,
             schemes: None,
             sampling: None,
@@ -60,40 +63,49 @@ pub enum Step {
 }
 
 impl Adapt {
-    /// Decide, after any of the inputs changed.
+    /// Decide, after any of the inputs changed. The colors the shell
+    /// manages are made from scratch each time: the seed's greys, the
+    /// picture's scheme over them when adapting, your colors over that.
     pub fn step(&mut self) -> Step {
         let Some(theme) = self.theme.clone() else {
             return Step::Nothing;
         };
-        match (self.on, self.picture.clone()) {
-            (true, Some(picture)) => match &self.schemes {
+        let picture = self.picture.clone().filter(|_| self.on);
+        if picture.is_none() && self.colors.is_empty() {
+            if !self.in_effect {
+                return Step::Nothing;
+            }
+            self.in_effect = false;
+            let mut grey = theme;
+            if grey.unadapt() {
+                self.theme = Some(grey.clone());
+                return Step::Emit(grey);
+            }
+            return Step::Nothing;
+        }
+        let mut desired = theme.clone();
+        desired.unadapt();
+        if let Some(picture) = picture {
+            match &self.schemes {
                 Some((sampled, schemes)) if *sampled == picture && !schemes.is_empty() => {
-                    self.in_effect = true;
                     let scheme = schemes[self.variation.min(schemes.len() - 1)];
-                    let mut adapted = theme;
-                    if adapted.adapt(&scheme, self.strength) {
-                        self.theme = Some(adapted.clone());
-                        return Step::Emit(adapted);
-                    }
-                    Step::Nothing
+                    desired.adapt(&scheme, self.strength);
                 }
                 _ if self.sampling.as_ref() != Some(&picture) => {
                     self.sampling = Some(picture.clone());
-                    Step::Sample(picture)
+                    return Step::Sample(picture);
                 }
-                _ => Step::Nothing,
-            },
-            _ if self.in_effect => {
-                self.in_effect = false;
-                let mut grey = theme;
-                if grey.unadapt() {
-                    self.theme = Some(grey.clone());
-                    return Step::Emit(grey);
-                }
-                Step::Nothing
+                // Sampling (or it failed): wait.
+                _ => return Step::Nothing,
             }
-            _ => Step::Nothing,
         }
+        desired.customize(&self.colors);
+        self.in_effect = true;
+        if desired == theme {
+            return Step::Nothing;
+        }
+        self.theme = Some(desired.clone());
+        Step::Emit(desired)
     }
 
     /// The picture's schemes as Settings shows them, at the current
@@ -228,6 +240,23 @@ mod tests {
         let v = a.variations().unwrap();
         assert_eq!(v.choices.len(), 2);
         assert_eq!(v.choices[1].name, "Blue");
+    }
+
+    #[test]
+    fn your_colors_apply_without_a_picture_and_go_with_them() {
+        let mut a = Adapt {
+            theme: Some(BusTheme::default()),
+            ..Adapt::default()
+        };
+        a.colors.insert("accent".into(), "#ff8800".into());
+        let Step::Emit(t) = a.step() else {
+            panic!("expected an emit");
+        };
+        assert_eq!(t.palette.tokens["accent"].value, "#ff8800");
+        a.theme = Some(t);
+        assert_eq!(a.step(), Step::Nothing);
+        a.colors.clear();
+        assert_eq!(a.step(), Step::Emit(BusTheme::default()));
     }
 
     #[test]

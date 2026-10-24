@@ -131,6 +131,7 @@ const ALL_ATOM_FIELDS: &[AtomField] = &[
     AtomField::Warning,
     AtomField::Danger,
     AtomField::Selection,
+    AtomField::Highlight,
 ];
 
 /// Display metadata for one atom: its `(LABEL, palette-slot)` caption.
@@ -149,6 +150,7 @@ fn atom_meta(field: AtomField) -> (&'static str, &'static str) {
         AtomField::Warning => ("WARNING", "warning.base"),
         AtomField::Danger => ("DANGER", "danger.base"),
         AtomField::Selection => ("SELECTION", "selected-row highlight"),
+        AtomField::Highlight => ("HIGHLIGHT", "a sidebar column's active row"),
     }
 }
 

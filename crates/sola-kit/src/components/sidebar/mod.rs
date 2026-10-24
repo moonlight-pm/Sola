@@ -69,7 +69,7 @@ use crate::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use crate::components::popover::{popover, popover_anchored};
 use crate::components::style::{
     chrome_surface, HAIRLINE_A, RADIUS_LG, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, hairline_on,
-    inset_surface, linear_bg, mix, mix_white, on_color, src_over,
+    inset_surface, lift_in_hue, linear_bg, mix, mix_white, on_color, src_over,
 };
 use crate::fonts;
 
@@ -954,7 +954,7 @@ fn well_muted(ink: Color) -> Color {
 /// Slight lighten or darken of `face`, staying in its hue.
 fn well_lift(face: Color, amount: f32) -> Color {
     if on_color(face) == Color::WHITE {
-        mix_white(face, amount)
+        lift_in_hue(face, amount)
     } else {
         inset_surface(face, amount)
     }
@@ -966,10 +966,21 @@ pub(crate) fn well_select_plate(c: Color) -> Color {
     well_lift(well_face(c), WELL_SELECT_MIX)
 }
 
-fn well_row_colors(well: Color, active: bool, shown: bool, hovered: bool) -> (Color, Color) {
+/// A row's fill and ink on `well`. `column`: the plain column (no pocket
+/// of its own), whose active row is the theme's highlight.
+fn well_row_colors(
+    well: Color,
+    column: bool,
+    active: bool,
+    shown: bool,
+    hovered: bool,
+) -> (Color, Color) {
     let face = well_face(well);
     let ink = on_color(face);
-    if active {
+    if active && column {
+        let fill = crate::theme::highlight();
+        (fill, on_color(fill))
+    } else if active {
         (well_lift(face, WELL_SELECT_MIX), ink)
     } else if hovered {
         (well_lift(face, WELL_HOVER_MIX), ink)
@@ -1045,7 +1056,7 @@ fn tab_item_style(
     well: Option<Color>,
 ) -> button::Style {
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    let (bg, text_color) = well_row_colors(row_surface(well), active, shown, hovered);
+    let (bg, text_color) = well_row_colors(row_surface(well), well.is_none(), active, shown, hovered);
     button::Style {
         background: Some(Background::Color(bg)),
         text_color,
@@ -1073,7 +1084,7 @@ fn tab_close_style(
     if chrome == SidebarItemChrome::Row {
         let face = well_face(row_surface(well));
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-        let (wash, ink) = well_row_colors(face, active, false, hovered);
+        let (wash, ink) = well_row_colors(face, well.is_none(), active, false, hovered);
         let rest = if wash.a <= 0.001 {
             face
         } else if wash.a >= 0.999 {
@@ -3207,7 +3218,7 @@ fn row_container_style(
 ) -> container::Style {
     match chrome {
         SidebarItemChrome::Row => {
-            let (bg, text_color) = well_row_colors(row_surface(well), active, shown, hovered);
+            let (bg, text_color) = well_row_colors(row_surface(well), well.is_none(), active, shown, hovered);
             container::Style {
                 background: Some(Background::Color(bg)),
                 text_color: Some(text_color),
@@ -3326,14 +3337,17 @@ mod tests {
     }
 
     #[test]
-    fn row_chrome_is_column_lift_not_selection() {
+    fn row_chrome_is_the_highlight_not_selection() {
         let theme = crate::default_theme();
         let row = item_style_chrome(&theme, button::Status::Active, true, SidebarItemChrome::Row);
-        let want = well_lift(chrome_surface(), WELL_SELECT_MIX);
+        let want = crate::theme::highlight();
         match row.background {
             Some(Background::Color(c)) => assert_eq!(c, want),
-            other => panic!("row active should be column lift, got {other:?}"),
+            other => panic!("row active should be the highlight, got {other:?}"),
         }
+        // On the grey theme the highlight is the column's 14% lift.
+        let lift = well_lift(chrome_surface(), WELL_SELECT_MIX);
+        assert!((want.r - lift.r).abs() < 1.0 / 255.0);
         assert_eq!(row.border.width, 0.0);
         assert_ne!(want, crate::theme::selection());
         assert_ne!(want, inset_surface(chrome_surface(), 0.22));

@@ -1,15 +1,17 @@
 //! Appearance: the background picture, whether the theme's colors follow
-//! it (and which of its schemes), and the idle fade. The picture is set
+//! it (and which of its schemes), your own colors over them, and the idle
+//! fade. The picture is set
 //! from Paint (File → Set as Background) or `solactl background`; here it
 //! can be cleared. The settings are `Topic::Appearance`: the shell acts on
 //! the colors, sola-river on the fade. The schemes come from the shell
 //! (`Topic::ThemeVariations`).
 
-use iced::widget::{Space, button, column, container, row, slider, text, toggler};
+use iced::widget::{Space, button, column, container, row, scrollable, slider, text, toggler};
 use iced::{Alignment, Background as Fill, Border, Color, Element, Length, Theme};
 use sola_bus::topics::{Appearance, Background, ThemeVariation, ThemeVariations, Topic};
 use sola_kit::app::bus;
 use sola_kit::components::button as kit_btn;
+use sola_kit::components::color_picker::{ColorPicker, Message as PickerMsg};
 use sola_kit::components::form::{form_row, toggle_style};
 use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, alpha};
 use sola_kit::components::text as kit_text;
@@ -32,6 +34,14 @@ pub enum AppearanceMsg {
     FadeAfterDone,
     /// Back to the plain ground.
     ClearPicture,
+    /// Open the picker for a custom color (`CUSTOM_COLORS` key); again
+    /// closes it.
+    Pick(&'static str),
+    Picker(PickerMsg),
+    /// Use the picked color.
+    UsePicked,
+    /// Forget a custom color.
+    ResetColor(&'static str),
 }
 
 /// The picture (`Topic::Background`), the settings (`Topic::Appearance`)
@@ -42,6 +52,10 @@ pub struct AppearanceState {
     pub picture: Option<Background>,
     pub look: Appearance,
     pub variations: Option<ThemeVariations>,
+    /// The live theme (`Topic::Theme`), for showing the colors as they are.
+    pub theme: Option<sola_core::theme::Theme>,
+    /// The custom color being picked, and its picker.
+    picking: Option<(&'static str, ColorPicker)>,
 }
 
 pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) {
@@ -66,6 +80,29 @@ pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) {
             }
             return;
         }
+        AppearanceMsg::Pick(key) => {
+            let open = state.picking.as_ref().is_some_and(|(k, _)| *k == key);
+            state.picking = (!open).then(|| (key, ColorPicker::new(current(state, key))));
+            return;
+        }
+        AppearanceMsg::Picker(m) => {
+            if let Some((_, picker)) = &mut state.picking {
+                picker.update(m);
+            }
+            return;
+        }
+        AppearanceMsg::UsePicked => {
+            let Some((key, picker)) = state.picking.take() else {
+                return;
+            };
+            let c = picker.color();
+            let hex = sola_kit::theme::color_to_hex(iced::Color { a: 1.0, ..c });
+            look.colors.insert(key.to_string(), hex);
+        }
+        AppearanceMsg::ResetColor(key) => {
+            look.colors.remove(key);
+            state.picking = None;
+        }
     }
     let topic = Topic::Appearance(state.look.clone());
     send(|b| b.emit(topic));
@@ -82,11 +119,17 @@ fn send(write: impl FnOnce(&mut sola_bus::BusClient) -> std::io::Result<()>) {
 }
 
 pub fn view(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
-    column![picture(state), colors(state), idle(state)]
+    let page = column![picture(state), colors(state), custom(state), idle(state)]
         .spacing(SPACE_LG + SPACE_MD)
         .width(Length::Fill)
-        .max_width(560)
-        .into()
+        .max_width(560);
+    // Room on the right for the scrollbar, so it never sits on a swatch.
+    scrollable(container(page).padding(iced::Padding {
+        right: SPACE_LG,
+        ..iced::Padding::ZERO
+    }))
+    .height(Length::Fill)
+    .into()
 }
 
 fn heading(label: &str) -> Element<'_, AppearanceMsg> {
@@ -151,6 +194,82 @@ fn colors(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
              how much of the picture's color the tint takes; below it, one \
              scheme per major color in the picture. Off, or with no picture: \
              the greys.",
+        )
+        .style(kit_text::muted),
+    )
+    .into()
+}
+
+/// The color a custom key shows now: the live theme's, else the seed's.
+fn current(state: &AppearanceState, key: &str) -> Color {
+    let token = sola_core::theme::custom_color_token(key).unwrap_or("bg-primary");
+    let from = |t: &sola_core::theme::Theme| {
+        t.palette
+            .tokens
+            .get(token)
+            .and_then(|t| sola_kit::theme::try_parse(&t.value))
+    };
+    state
+        .theme
+        .as_ref()
+        .and_then(from)
+        .or_else(|| from(&sola_core::theme::Theme::default()))
+        .unwrap_or(Color::BLACK)
+}
+
+fn custom(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
+    let mut col = column![heading("Custom colors")].spacing(SPACE_SM);
+    for &(key, label) in sola_core::theme::CUSTOM_COLORS {
+        let color = current(state, key);
+        let set = state.look.colors.contains_key(key);
+        let swatch = button(
+            container(Space::new().width(40).height(18)).style(move |_: &Theme| {
+                container::Style {
+                    background: Some(Fill::Color(color)),
+                    border: Border {
+                        color: alpha(Color::WHITE, 0.2),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    ..container::Style::default()
+                }
+            }),
+        )
+        .padding(0)
+        .style(kit_btn::ghost)
+        .on_press(AppearanceMsg::Pick(key));
+        let mut controls = row![].spacing(SPACE_SM).align_y(Alignment::Center);
+        if set {
+            controls = controls.push(
+                kit_btn::labeled_sm("Reset", kit_btn::ghost).on_press(AppearanceMsg::ResetColor(key)),
+            );
+        }
+        controls = controls.push(swatch);
+        let name = if set {
+            format!("{label} · yours")
+        } else {
+            label.to_string()
+        };
+        col = col.push(form_row(name, controls));
+        if let Some((_, picker)) = state.picking.as_ref().filter(|(k, _)| *k == key) {
+            col = col.push(
+                column![
+                    picker.view().map(AppearanceMsg::Picker),
+                    row![
+                        kit_btn::labeled_sm("Use", kit_btn::primary).on_press(AppearanceMsg::UsePicked),
+                        kit_btn::labeled_sm("Cancel", kit_btn::ghost).on_press(AppearanceMsg::Pick(key)),
+                    ]
+                    .spacing(SPACE_SM),
+                ]
+                .spacing(SPACE_SM),
+            );
+        }
+    }
+    col.push(
+        kit_text::caption(
+            "Your own colors go over the greys or the picture's scheme: the \
+             window, the panels (bars, titlebars, sidebars), the highlight (the \
+             tab bar's focused row; selections take its hue) and the accent.",
         )
         .style(kit_text::muted),
     )

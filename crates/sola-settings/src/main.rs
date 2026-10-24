@@ -209,6 +209,9 @@ impl App {
                     Some(Topic::Appearance(a)) => {
                         self.appearance.look = if message.sticky { a } else { Default::default() };
                     }
+                    Some(Topic::Theme(t)) => {
+                        self.appearance.theme = Some(t);
+                    }
                     Some(Topic::ThemeVariations(v)) => {
                         self.appearance.variations = message.sticky.then_some(v);
                     }

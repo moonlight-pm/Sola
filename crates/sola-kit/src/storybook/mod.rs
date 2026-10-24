@@ -295,6 +295,7 @@ pub enum AtomField {
     Warning,
     Danger,
     Selection,
+    Highlight,
 }
 
 impl AtomField {
@@ -312,6 +313,7 @@ impl AtomField {
             AtomField::Warning => a.warning,
             AtomField::Danger => a.danger,
             AtomField::Selection => a.selection,
+            AtomField::Highlight => a.highlight,
         }
     }
 
@@ -329,6 +331,7 @@ impl AtomField {
             AtomField::Warning => a.warning = c,
             AtomField::Danger => a.danger = c,
             AtomField::Selection => a.selection = c,
+            AtomField::Highlight => a.highlight = c,
         }
     }
 
