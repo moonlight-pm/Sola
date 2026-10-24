@@ -507,18 +507,33 @@ Spec: [`specs/2026-10-23-web-apps-design.md`](../specs/2026-10-23-web-apps-desig
 Joshua (2026-10-23): run in the browser (W1), add from the browser (W2),
 own menus and removed from there (W3). Accepted 2026-10-23 ("go ahead").
 
-- [ ] **12a Plumbing:** kit `TabWindows` under another app id;
-      `menu::publish_for`; shell pairing by `(pid, app_id)`.
-- [ ] **12b App windows:** the browser opens a page as an app window (its
-      id, name, icon; no location bar; the app's menus); same-site links
-      stay, others open as pages; popups as app windows; notifications
-      and permissions under the app's name.
-- [ ] **12c Wrap This Page…:** the sheet (name, icon, id); the page turns
-      into the app in place; the catalog entry.
-- [ ] **12d Launch:** `sola-browser --app <id>` and the `OpenApp`
-      handoff; session keeps app windows.
-- [ ] **12e Remove and retire:** Remove Web App…; Settings' wrapper
-      fields go; `sola-wrapper` a shim; existing entries migrate.
+- [x] **12a Plumbing:** kit `TabWindows` under another app id
+      (`open_as`); `menu::publish_for`; shell pairing by `(pid, app_id)`.
+- [x] **12b App windows:** the browser opens a page as an app window (its
+      id, name, icon; no location bar; the app's menus); a link the user
+      follows to another site opens as a browser page (engine
+      `Cmd::AppSite`; redirects stay); same-site popups join the app;
+      notifications under the app's id and name.
+- [x] **12c Wrap This Page…:** the sheet (name; the favicon as the icon;
+      the id `web-<uuid>`); the page turns into the app in place; the
+      catalog entry (kind `web`, `url`, `profile`).
+- [x] **12d Launch:** `sola-browser --app <id>` and the `@app` handoff
+      (with no browser up, the session is asked for `sola-browser` and the
+      app handed over, so the browser never runs as the app); the session
+      keeps each page's `app`; a restored app page waits up to 2 s for its
+      catalog entry, so it opens as the app in its place.
+- [x] **12e Remove and retire:** Remove Web App…; Settings' wrapper
+      fields go (it lists command apps only); `sola-wrapper` deleted and
+      out of the Oath packages (no migration, W5).
 - [ ] **12f Smoke** on canto: wrap a signed-in page, launch it, a huddle
-      popup, remove it.
+      popup, remove it. *2026-10-23, example.com:* wrap in place, its
+      menus, Reload, Close Window, `--app` launch and a second launch
+      raising it, an off-site link as a browser page, restore in its zone,
+      Remove, a cold `--app` launch — all good. Fixed on the way: the
+      session fingerprint ignored a page's app (wrapping never saved); a
+      page resized several times in a row left dark (no frame at its last
+      size) — page windows open at the last page window size, and a page
+      without a frame at its size 300 ms on is hidden and shown again; a
+      cold `--app` made the session track the browser as the app.
+      Left: a signed-in site and a huddle popup.
 

@@ -54,8 +54,8 @@ cargo make install-cef    # the browser engine, once (about 1.5 GB)
 cargo make install        # build everything, copy it to /opt/sola/bin
 ```
 
-`cargo make install-cef` is required: Browser and website wrappers do not
-build without it. It downloads Chromium Embedded Framework into
+`cargo make install-cef` is required: Browser and Design do not build
+without it. It downloads Chromium Embedded Framework into
 `~/.cache/sola/`. That build of the engine has no H.264 or AAC;
 `scripts/cef-codecs/` builds one that has them, which takes hours.
 

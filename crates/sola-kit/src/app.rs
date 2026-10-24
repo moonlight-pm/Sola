@@ -230,7 +230,7 @@ impl BusSetup {
 /// `winit::with_name` on dragonfly/freebsd/netbsd/openbsd).
 /// Without setting it here, the window has empty app_id and the
 /// shell can't match the menu.
-pub fn window_settings(app_id: &'static str) -> iced::window::Settings {
+pub fn window_settings(app_id: &str) -> iced::window::Settings {
     iced::window::Settings {
         decorations: false,
         platform_specific: iced::window::settings::PlatformSpecific {
@@ -250,7 +250,7 @@ pub fn window_settings(app_id: &'static str) -> iced::window::Settings {
 /// normal theme — iced fills the rectangle opaquely and the patched
 /// `iced_winit` sets a full Wayland opaque-region so River can scan out
 /// instead of blending ARGB.
-pub fn window_settings_transparent(app_id: &'static str) -> iced::window::Settings {
+pub fn window_settings_transparent(app_id: &str) -> iced::window::Settings {
     let mut settings = window_settings(app_id);
     settings.transparent = true;
     settings

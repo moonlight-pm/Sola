@@ -106,7 +106,6 @@ crates/
   sola-kvm/            # KVM / input bridge
   sola-preview/        # Simple image viewer (argv)
   sola-paint/          # Default image viewer/editor (MIME; screenshots stay on preview)
-  sola-wrapper/        # Website wrappers as first-class apps (CEF via sola-browser lib)
   sola-design/         # HTML artboards on a canvas, edited by agents (CEF board tabs)
   sola-scope/          # Pixel loupe (magnified grid under the pointer)
   sola-spotify/        # Kit-native Spotify client (librespot + Web API)

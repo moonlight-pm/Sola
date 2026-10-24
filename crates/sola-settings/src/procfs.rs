@@ -28,7 +28,6 @@ const SYSTEM_APP_IDS: &[&str] = &[
     "sola-paint",
     "sola-projects",
     "sola-arcade",
-    "sola-wrapper",
     "sola-scope",
     "sola-spotify",
     "sola-bots",

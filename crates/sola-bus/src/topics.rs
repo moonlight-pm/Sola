@@ -2057,6 +2057,39 @@ mod tests {
     }
 
     #[test]
+    fn application_parse_accepts_the_record_before_profile() {
+        #[derive(serde::Serialize)]
+        struct ApplicationV2 {
+            app_id: String,
+            label: String,
+            command: String,
+            icon: String,
+            kind: AppKind,
+            url: Option<String>,
+        }
+        let old = ApplicationV2 {
+            app_id: "slack".into(),
+            label: "Slack".into(),
+            command: "/bin/sola-wrapper slack".into(),
+            icon: String::new(),
+            kind: AppKind::Web,
+            url: Some("https://app.slack.com".into()),
+        };
+        let bytes = postcard::to_allocvec(&old).unwrap();
+        let mut msg = crate::Message::with_payload("Application", bytes);
+        msg.keys = vec!["slack".into()];
+        msg.sticky = true;
+        match Topic::parse(&msg) {
+            Some(Topic::Application(a)) => {
+                assert_eq!(a.kind, AppKind::Web);
+                assert_eq!(a.url.as_deref(), Some("https://app.slack.com"));
+                assert_eq!(a.profile, None);
+            }
+            other => panic!("expected Application, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn mail_config_to_json_serializes_object() {
         // Regression: monitor's old hand-written `topic_to_json` had no
         // arm for MailConfig and fell through to Value::Null. The macro-

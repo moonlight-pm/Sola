@@ -69,9 +69,9 @@ pub fn init(name: &str) {
         return;
     }
 
-    // Include the binary's own crate + shared sola libraries. Wrapper
-    // chrome inits as `slack` (app_id), not `sola-wrapper`, so CEF/kit
-    // targets must be listed explicitly or router/helper logs vanish.
+    // Include the binary's own crate + shared sola libraries, listed
+    // explicitly: a process may init under another name than its crate,
+    // and CEF/kit targets must not vanish then.
     let own_crate = name.replace('-', "_");
     let default_filter = format!(
         "{own_crate}=info,sola_core=info,sola_bus=info,sola_kit=info,sola_browser=info,sola_call=info,sola_app=info,sola_assets=info"

@@ -7,7 +7,8 @@
 //! `TopicKind::TabWindow` and feed every bus message to
 //! [`TabWindows::update`]. [`TabWindows::set_activity`] puts a mark on the
 //! tab's row in the bar (`Topic::TabActivity`: working, or waiting on a
-//! decision).
+//! decision). [`TabWindows::open_as`] opens a window as another app — the
+//! browser hosting a web app's windows — under that app's id.
 
 use std::collections::HashMap;
 
@@ -17,6 +18,8 @@ use sola_bus::topics::{Activity, ShowTab, Tab, TabActivity, TabWindow, Topic};
 
 struct Entry {
     key: String,
+    /// The app the window is (the process's own, or one it hosts).
+    app_id: String,
     seq: u32,
     background: bool,
     /// sola-river's id, once the shell has paired it.
@@ -57,14 +60,28 @@ impl TabWindows {
         settings: window::Settings,
         background: bool,
     ) -> (window::Id, Task<window::Id>) {
+        self.open_as(self.app_id, id, settings, background)
+    }
+
+    /// Open tab `id`'s window as app `app_id`: the tab is that app's (its
+    /// key `<app_id>/<id>`), and `settings` should carry the same Wayland
+    /// app id ([`crate::app::window_settings_transparent`]).
+    pub fn open_as(
+        &mut self,
+        app_id: &str,
+        id: &str,
+        settings: window::Settings,
+        background: bool,
+    ) -> (window::Id, Task<window::Id>) {
         self.opened += 1;
-        let key = self.key(id);
-        self.announce(&key, self.opened, None, background);
+        let key = format!("{app_id}/{id}");
+        announce(&tab(&key, app_id, self.opened, None, background));
         let (wid, task) = window::open(settings);
         self.windows.insert(
             wid,
             Entry {
                 key,
+                app_id: app_id.to_string(),
                 seq: self.opened,
                 background,
                 river: None,
@@ -75,32 +92,13 @@ impl TabWindows {
         (wid, task)
     }
 
-    fn tab(&self, key: &str, seq: u32, window_id: Option<u32>, background: bool) -> Tab {
-        Tab {
-            key: key.to_string(),
-            app_id: self.app_id.to_string(),
-            pid: std::process::id(),
-            seq,
-            window_id,
-            background,
-        }
-    }
-
-    fn announce(&self, key: &str, seq: u32, window_id: Option<u32>, background: bool) {
-        if let Ok(mut bus) = crate::app::bus().lock() {
-            if let Err(e) = bus.emit(Topic::Tab(self.tab(key, seq, window_id, background))) {
-                tracing::warn!(%key, "announce tab failed: {e:?}");
-            }
-        }
-    }
-
     /// The tab's window is gone (or going): retract its announcement.
     pub fn close(&mut self, window: window::Id) {
         let Some(entry) = self.windows.remove(&window) else {
             return;
         };
         if let Ok(mut bus) = crate::app::bus().lock() {
-            let _ = bus.retract(Topic::Tab(self.tab(&entry.key, entry.seq, None, false)));
+            let _ = bus.retract(Topic::Tab(tab(&entry.key, &entry.app_id, entry.seq, None, false)));
             if entry.activity.is_some() {
                 let _ = bus.retract(Topic::TabActivity(TabActivity {
                     key: entry.key.clone(),
@@ -162,9 +160,8 @@ impl TabWindows {
         }
         if entry.river != river {
             entry.river = river;
-            let (seq, background) = (entry.seq, entry.background);
             if river.is_some() {
-                self.announce(&key, seq, river, background);
+                announce(&tab(&key, &entry.app_id, entry.seq, river, entry.background));
             }
         }
         shown_changed
@@ -186,5 +183,24 @@ impl TabWindows {
 
     pub fn is_empty(&self) -> bool {
         self.windows.is_empty()
+    }
+}
+
+fn tab(key: &str, app_id: &str, seq: u32, window_id: Option<u32>, background: bool) -> Tab {
+    Tab {
+        key: key.to_string(),
+        app_id: app_id.to_string(),
+        pid: std::process::id(),
+        seq,
+        window_id,
+        background,
+    }
+}
+
+fn announce(tab: &Tab) {
+    if let Ok(mut bus) = crate::app::bus().lock() {
+        if let Err(e) = bus.emit(Topic::Tab(tab.clone())) {
+            tracing::warn!(key = %tab.key, "announce tab failed: {e:?}");
+        }
     }
 }

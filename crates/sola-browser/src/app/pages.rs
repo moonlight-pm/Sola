@@ -85,6 +85,8 @@ impl<E: Engine> App<E> {
             .cached_tabs
             .iter()
             .filter(|t| !t.profile.is_empty())
+            // A web app runs on its own profile, whatever the workspace's.
+            .filter(|t| !self.webapps.tabs.contains_key(&t.id))
             .filter_map(|t| {
                 let window = self.windows.window_of(t.id)?;
                 let river = self.windows.river_id(window)?;
@@ -196,7 +198,13 @@ impl<E: Engine> App<E> {
                 } else {
                     list[0].id
                 };
-                session::session_from_tabs(&list, active, &self.recently_closed, &self.page_ids)
+                session::session_from_tabs(
+                    &list,
+                    active,
+                    &self.recently_closed,
+                    &self.page_ids,
+                    &self.webapps.tabs,
+                )
             };
             let fp = session::fingerprint(&session);
             if self.session_fp.get(&profile) == Some(&fp) {

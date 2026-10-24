@@ -5,7 +5,8 @@
 //! `seq`, how many windows the process had opened) just before the window
 //! opens. sola-river mints window ids in creation order, so a process's
 //! unpaired tabs (by `seq`) and its unpaired windows (by id) pair up in
-//! order. A pair holds while both live; only what is unpaired is paired
+//! order — per app, since one process can hold windows of several (the
+//! browser hosts web apps' windows under their own app ids). A pair holds while both live; only what is unpaired is paired
 //! again, so one late arrival cannot shift the others.
 //!
 //! Once paired, the app announces the tab again with its window's id, so a
@@ -110,30 +111,28 @@ impl Pairing {
             }
         }
 
-        // By order: tabs with no id, or one that is gone (sola-river
-        // restarted and renumbered).
+        // By order, per process and app: tabs with no id, or one that is
+        // gone (sola-river restarted and renumbered).
         let taken: HashSet<&str> = self.paired.values().map(String::as_str).collect();
-        let mut by_pid: BTreeMap<u32, (Vec<&Announced>, Vec<u32>)> = BTreeMap::new();
+        let mut by_app: BTreeMap<(u32, &str), (Vec<&Announced>, Vec<u32>)> = BTreeMap::new();
         for t in self.tabs.values().filter(|t| !taken.contains(t.key.as_str())) {
             let named_live = t
                 .window_id
                 .is_some_and(|w| windows.iter().any(|&(id, _, _)| id == w));
             if !named_live {
-                by_pid.entry(t.pid).or_default().0.push(t);
+                by_app.entry((t.pid, t.app_id.as_str())).or_default().0.push(t);
             }
         }
         for &(wid, app_id, pid) in windows {
             if self.paired.contains_key(&wid) {
                 continue;
             }
-            if let Some((tabs, wins)) = by_pid.get_mut(&pid) {
-                if tabs.iter().any(|t| t.app_id == app_id) {
-                    wins.push(wid);
-                }
+            if let Some((_, wins)) = by_app.get_mut(&(pid, app_id)) {
+                wins.push(wid);
             }
         }
         let mut ordered = Vec::new();
-        for (_, (mut tabs, mut wins)) in by_pid {
+        for (_, (mut tabs, mut wins)) in by_app {
             tabs.sort_by_key(|t| t.seq);
             wins.sort_unstable();
             for (t, w) in tabs.into_iter().zip(wins) {
@@ -214,6 +213,28 @@ mod tests {
         let mut new = p.pair(&wins);
         new.sort();
         assert_eq!(new, vec![(4, "t/x".into()), (5, "t/a".into())]);
+    }
+
+    #[test]
+    fn one_process_pairs_each_apps_windows_with_its_own_tabs() {
+        // The browser hosts a web app: its page and the app's window were
+        // opened in the other order than they were announced.
+        let mut p = Pairing::default();
+        p.announce(Announced {
+            app_id: "sola-browser".into(),
+            ..tab("sola-browser/page-1", 7, 1)
+        });
+        p.announce(Announced {
+            app_id: "web-1".into(),
+            ..tab("web-1/main", 7, 2)
+        });
+        let wins = [(20, "web-1", 7), (21, "sola-browser", 7)];
+        let mut new = p.pair(&wins);
+        new.sort();
+        assert_eq!(
+            new,
+            vec![(20, "web-1/main".into()), (21, "sola-browser/page-1".into())]
+        );
     }
 
     #[test]

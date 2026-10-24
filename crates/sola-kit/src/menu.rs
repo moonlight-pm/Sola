@@ -37,6 +37,21 @@ pub fn publish(payload: AppMenuPayload) {
     }
 }
 
+/// Send the menus of an app this process hosts (a web app's windows in the
+/// browser) to the shell, for its shortcuts. The process's own menus stay;
+/// those windows pass theirs to their titlebars
+/// ([`WindowFrame::menus`](crate::components::window_frame::WindowFrame::menus)).
+pub fn publish_for(payload: AppMenuPayload) {
+    let Some(bus) = crate::app::try_bus() else {
+        return;
+    };
+    if let Ok(mut bus) = bus.lock() {
+        if let Err(e) = bus.emit(Topic::SetAppMenu(payload)) {
+            tracing::warn!("publish hosted app menu failed: {e}");
+        }
+    }
+}
+
 /// Keep `payload` for the titlebars without sending it.
 pub(crate) fn remember(payload: AppMenuPayload) {
     let mut slot = APP_MENU.write().unwrap_or_else(|p| p.into_inner());

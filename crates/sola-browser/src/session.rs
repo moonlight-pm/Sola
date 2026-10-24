@@ -23,6 +23,10 @@ pub struct SessionTab {
     pub history: Vec<SessionHistory>,
     #[serde(default)]
     pub history_index: i32,
+    /// The web app this page is (its app id), when it is one: it comes
+    /// back as the app's window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
 }
 
 impl Default for SessionTab {
@@ -33,6 +37,7 @@ impl Default for SessionTab {
             title: String::new(),
             history: Vec::new(),
             history_index: 0,
+            app: None,
         }
     }
 }
@@ -227,6 +232,7 @@ pub fn session_from_tabs(
     active: crate::engine::TabId,
     closed: &[ClosedTab],
     page_ids: &std::collections::HashMap<crate::engine::TabId, String>,
+    apps: &std::collections::HashMap<crate::engine::TabId, String>,
 ) -> BrowserSession {
     let session_tabs: Vec<SessionTab> = tabs
         .iter()
@@ -250,6 +256,7 @@ pub fn session_from_tabs(
                 })
                 .collect(),
             history_index: t.history_index,
+            app: apps.get(&t.id).cloned(),
         })
         .collect();
     let active_index = tabs
@@ -298,6 +305,8 @@ pub fn fingerprint(session: &BrowserSession) -> String {
             s.push_str(&h.url);
             s.push('\x1d');
         }
+        // Wrapping a page changes only its app.
+        s.push_str(t.app.as_deref().unwrap_or_default());
         s.push('\x1f');
     }
     for c in &session.closed {
@@ -428,10 +437,25 @@ mod tests {
             crate::engine::TabId(1),
             &[closed],
             &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
         );
         assert_eq!(session.tabs[0].title, "badtitle");
         assert_eq!(session.closed[0].title, "closed");
         assert!(!session.tabs[0].title.contains('\0'));
+    }
+
+    #[test]
+    fn wrapping_a_page_changes_the_fingerprint() {
+        let tab = crate::engine::TabInfo::chrome(
+            crate::engine::TabId(1),
+            "https://example.com/",
+            "Example",
+        );
+        let none = std::collections::HashMap::new();
+        let page = session_from_tabs(&[tab.clone()], tab.id, &[], &none, &none);
+        let app = std::collections::HashMap::from([(tab.id, "web-1".to_string())]);
+        let wrapped = session_from_tabs(&[tab.clone()], tab.id, &[], &none, &app);
+        assert_ne!(fingerprint(&page), fingerprint(&wrapped));
     }
 
     #[test]
@@ -457,8 +481,11 @@ mod tests {
             crate::engine::TabId(1),
             &[],
             &std::collections::HashMap::from([(crate::engine::TabId(1), "page-b".to_string())]),
+            &std::collections::HashMap::from([(crate::engine::TabId(1), "web-1".to_string())]),
         );
         assert_eq!(session.tabs[0].id, "page-b");
+        // A web app's page keeps its app.
+        assert_eq!(session.tabs[0].app.as_deref(), Some("web-1"));
         assert_eq!(session.tabs[0].history.len(), 2);
         assert_eq!(session.tabs[0].history_index, 1);
         let (entries, idx) = history_from_session(&session.tabs[0]);

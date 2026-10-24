@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use iced::{Task, window};
+use iced::{Size, Task, window};
 use sola_kit::tabs::TabWindows;
 
 use crate::engine::{Engine, FrameSlot, TabId};
@@ -16,6 +16,8 @@ use crate::run::SlotRegistry;
 struct Page<E: Engine> {
     window: window::Id,
     slot: Arc<FrameSlot<E>>,
+    /// The app the window opened as (the browser's, or a web app's).
+    app_id: String,
     /// The shown state last sent to the engine (`Cmd::ShowPage`).
     shown_sent: Option<bool>,
 }
@@ -30,6 +32,8 @@ pub struct PageWindows<E: Engine> {
     template: Arc<FrameSlot<E>>,
     /// The page window that last had keyboard focus.
     pub focused: Option<window::Id>,
+    /// The size a page window last took: new windows open at it.
+    last_size: Option<Size>,
 }
 
 impl<E: Engine> PageWindows<E> {
@@ -41,6 +45,7 @@ impl<E: Engine> PageWindows<E> {
             slots: Arc::new(std::sync::Mutex::new(Vec::new())),
             template,
             focused: None,
+            last_size: None,
         }
     }
 
@@ -48,11 +53,13 @@ impl<E: Engine> PageWindows<E> {
         self.slots.clone()
     }
 
-    /// Open page `tab`'s window (`page_id` is its stable id, the shell tab
-    /// key). A `background` page joins its zone behind, unfocused.
+    /// Open page `tab`'s window as app `app_id` — the browser's, or a web
+    /// app's it hosts (its Wayland app id and tab key `<app_id>/<page_id>`;
+    /// `page_id` is the page's stable id). A `background` page joins its
+    /// zone behind, unfocused.
     pub fn open(
         &mut self,
-        app_id: &'static str,
+        app_id: &str,
         tab: TabId,
         page_id: &str,
         background: bool,
@@ -63,14 +70,22 @@ impl<E: Engine> PageWindows<E> {
             self.template.ime.clone(),
             tab,
         ));
-        let settings = sola_kit::app::window_settings_transparent(app_id);
-        let (window, task) = self.tabs.open(page_id, settings, background);
+        let mut settings = sola_kit::app::window_settings_transparent(app_id);
+        // At the size the shell gives a window joining a zone, not the
+        // default: a page resized twice in a row (default, then its zone)
+        // can be left with no frame at the last size, dark for good if the
+        // page has stopped painting.
+        if let Some(size) = self.last_size {
+            settings.size = size;
+        }
+        let (window, task) = self.tabs.open_as(app_id, page_id, settings, background);
         self.slots.lock().unwrap().push(slot.clone());
         self.pages.insert(
             tab,
             Page {
                 window,
                 slot,
+                app_id: app_id.to_string(),
                 shown_sent: None,
             },
         );
@@ -113,9 +128,17 @@ impl<E: Engine> PageWindows<E> {
             Page {
                 window: page.window,
                 slot,
+                app_id: page.app_id,
                 shown_sent: None,
             },
         );
+    }
+
+    /// A page window took `size`.
+    pub fn resized(&mut self, window: window::Id, size: Size) {
+        if self.by_window.contains_key(&window) {
+            self.last_size = Some(size);
+        }
     }
 
     /// The window closed under us: forget it.
@@ -150,6 +173,11 @@ impl<E: Engine> PageWindows<E> {
 
     pub fn slot_of(&self, tab: TabId) -> Option<Arc<FrameSlot<E>>> {
         self.pages.get(&tab).map(|p| p.slot.clone())
+    }
+
+    /// The app page `tab`'s window opened as.
+    pub fn app_id_of(&self, tab: TabId) -> Option<&str> {
+        self.pages.get(&tab).map(|p| p.app_id.as_str())
     }
 
     pub fn has(&self, tab: TabId) -> bool {

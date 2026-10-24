@@ -18,13 +18,13 @@ do and what it lacks. Applications that offer methods on the
 | Browser | `sola-browser` | Chromium's engine (CEF) under Sola's own chrome: a window per page, profiles, a Bitwarden vault, downloads, developer tools. The default for web links. Call owner `browser`. | [notes](sola-browser.md) |
 | Mail | `sola-mail` | IMAP and SMTP for several accounts, with drafts and attachments | [notes](sola-mail.md) |
 | Calendar | `sola-calendar` | Month, week, and day views of local, Google, iCloud, CalDAV, and ICS calendars, with reminders | [notes](sola-calendar.md) |
-| Settings | `sola-settings` | Applications in the launcher (website wrappers included), and mail and calendar accounts | — |
+| Settings | `sola-settings` | Applications in the launcher, and mail and calendar accounts | — |
 | Arcade | `sola-arcade` | The Steam library in a window; each game runs in a nested gamescope session sized to it | [notes](sola-arcade.md) |
 | Spotify | `sola-spotify` | Playback through librespot, playlists, the library, and Spotify Connect | [notes](sola-spotify.md) |
 | Paint | `sola-paint` | The default image viewer and editor | [notes](sola-paint.md) |
 | Preview | `sola-preview` | A quick viewer for screenshots and images | [notes](sola-preview.md) |
 | Design | `sola-design` | HTML artboards on a canvas, written and edited by AI agents. Call owner `design`. | [notes](sola-design.md) |
-| Website wrappers | `sola-wrapper <id>` | A website as an application of its own, with a launcher entry and desktop notifications | [notes](sola-wrapper.md) |
+| Web apps | `sola-browser --app <id>` | A website Browser runs as an application of its own, with a launcher entry, its own window and menus, made from a Browser page | [notes](web-apps.md) |
 | Monitor | `sola-monitor` | A live view of bus traffic and of the call plane's methods and calls | [notes](sola-monitor.md) |
 | Scope | `sola-scope` | A pixel loupe: the screen under the pointer, magnified | [notes](sola-scope.md) |
 | KVM | `sola-kvm` | One keyboard and mouse across two machines, with a shared clipboard | [notes](sola-kvm-operator.md) |

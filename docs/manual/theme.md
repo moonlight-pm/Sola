@@ -4,8 +4,8 @@ Every Sola application draws its windows with Iced through one shared
 toolkit, `sola-kit`, and takes its colours, fonts, and shell chrome values
 from one theme published on the bus. When the theme changes, each running
 application applies it on its next frame. The theme styles the
-applications' own controls; web pages shown inside Browser, website
-wrappers, and Design are not restyled.
+applications' own controls; web pages shown inside Browser, web apps,
+and Design are not restyled.
 
 ## sola-kit
 

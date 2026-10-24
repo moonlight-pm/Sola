@@ -11,16 +11,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Installed wrapper binary. Settings synthesizes
-/// `"{wrapper_bin()} {app_id}"` for `kind = wrapper` entries so the
-/// launcher/session path stays “spawn this command”.
-///
-/// Dual-mode: `/bin/sola-wrapper` on Oath, `/opt/sola/bin/sola-wrapper`
-/// on NixOS (`paths::bin_path`).
-pub fn wrapper_bin() -> PathBuf {
-    crate::paths::bin_path("sola-wrapper")
-}
-
 /// How the shell launches this catalog entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -28,9 +18,14 @@ pub enum AppKind {
     /// `command` is a real argv (today's default).
     #[default]
     Command,
-    /// Website wrapped by `sola-wrapper <app_id>`. `url` is required;
-    /// `command` is synthesized as [`wrapper_command`].
-    Wrapper,
+    /// A web app: a page the browser hosts as its own app
+    /// (`docs/specs/2026-10-23-web-apps-design.md`). `url` is where it
+    /// starts, `profile` the browser profile it runs on; `command` is
+    /// [`web_command`]. Records written as `wrapper` (the retired
+    /// `sola-wrapper` process) still read, so one stale entry cannot sink
+    /// the whole catalog.
+    #[serde(alias = "wrapper")]
+    Web,
 }
 
 /// A launchable application known to the shell.
@@ -59,18 +54,23 @@ pub struct Application {
     /// `decode_payload` falls back so Settings still lists those apps.
     #[serde(default)]
     pub kind: AppKind,
-    /// Start URL when [`Self::kind`] is [`AppKind::Wrapper`].
+    /// Start URL when [`Self::kind`] is [`AppKind::Web`].
     #[serde(default)]
     pub url: Option<String>,
+    /// The browser profile a web app runs on (its id).
+    #[serde(default)]
+    pub profile: Option<String>,
 }
 
-/// Synthesized launcher argv for a wrapper id.
-pub fn wrapper_command(app_id: &str) -> String {
-    format!("{} {app_id}", wrapper_bin().display())
+/// A web app's launcher argv: the browser opens (or brings up) its window.
+/// Dual-mode: `/bin/sola-browser` on Oath, `/opt/sola/bin/sola-browser` on
+/// NixOS (`paths::bin_path`).
+pub fn web_command(app_id: &str) -> String {
+    format!("{} --app {app_id}", crate::paths::bin_path("sola-browser").display())
 }
 
 /// True when `url` is a non-empty `http://` or `https://` start URL.
-pub fn is_wrapper_url(url: &str) -> bool {
+pub fn is_web_url(url: &str) -> bool {
     let url = url.trim();
     let rest = url
         .strip_prefix("https://")
@@ -167,14 +167,15 @@ impl Application {
         }
     }
 
-    pub fn is_wrapper(&self) -> bool {
-        self.kind == AppKind::Wrapper
+    pub fn is_web(&self) -> bool {
+        self.kind == AppKind::Web
     }
 
-    /// For wrappers, rewrite `command` to [`wrapper_command`]; then PATH-normalize.
+    /// For web apps, rewrite `command` to [`web_command`]; then
+    /// PATH-normalize.
     pub fn finalize(&mut self) {
-        if self.is_wrapper() {
-            self.command = wrapper_command(&self.app_id);
+        if self.is_web() {
+            self.command = web_command(&self.app_id);
         }
         let _ = self.normalize();
     }
@@ -487,19 +488,20 @@ mod tests {
     }
 
     #[test]
-    fn postcard_roundtrips_command_and_wrapper() {
+    fn postcard_roundtrips_command_and_web() {
         let cmd = sample();
         let bytes = postcard::to_allocvec(&cmd).unwrap();
         let back: Application = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(back, cmd);
 
         let wrap = Application {
-            app_id: "slack".into(),
+            app_id: "web-1".into(),
             label: "Slack".into(),
-            command: wrapper_command("slack"),
+            command: web_command("web-1"),
             icon: "simpleicons/slack".into(),
-            kind: AppKind::Wrapper,
+            kind: AppKind::Web,
             url: Some("https://app.slack.com".into()),
+            profile: Some("p1".into()),
         };
         let bytes = postcard::to_allocvec(&wrap).unwrap();
         let back: Application = postcard::from_bytes(&bytes).unwrap();
@@ -512,7 +514,7 @@ mod tests {
         let a: Application = serde_json::from_str(json).unwrap();
         assert_eq!(a.kind, AppKind::Command);
         assert_eq!(a.url, None);
-        assert!(!a.is_wrapper());
+        assert!(!a.is_web());
     }
 
     #[test]
@@ -525,22 +527,29 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_fields_round_trip() {
+    fn web_fields_round_trip() {
         let a = Application {
-            app_id: "slack".into(),
+            app_id: "web-1".into(),
             label: "Slack".into(),
-            command: wrapper_command("slack"),
+            command: web_command("web-1"),
             icon: "simpleicons/slack".into(),
-            kind: AppKind::Wrapper,
+            kind: AppKind::Web,
             url: Some("https://app.slack.com".into()),
+            profile: Some("p1".into()),
         };
         let json = serde_json::to_string(&a).unwrap();
         let back: Application = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.kind, AppKind::Wrapper);
-        assert_eq!(back.url.as_deref(), Some("https://app.slack.com"));
-        assert_eq!(back.command, a.command);
-        assert!(back.command.ends_with("/sola-wrapper slack"));
-        assert!(json.contains("\"kind\":\"wrapper\""));
+        assert_eq!(back, a);
+        assert!(back.command.ends_with("/sola-browser --app web-1"));
+        assert!(json.contains("\"kind\":\"web\""));
+    }
+
+    #[test]
+    fn a_wrapper_record_still_reads() {
+        let yaml = "app_id: slack\nlabel: Slack\ncommand: x\nicon: ''\nkind: wrapper\nurl: https://app.slack.com\n";
+        let a: Application = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(a.kind, AppKind::Web);
+        assert_eq!(a.profile, None);
     }
 
     #[test]
@@ -553,26 +562,27 @@ mod tests {
     }
 
     #[test]
-    fn finalize_synthesizes_wrapper_command() {
+    fn finalize_synthesizes_web_command() {
         let mut a = Application {
             app_id: "discord".into(),
             label: "Discord".into(),
             command: "whatever".into(),
             icon: String::new(),
-            kind: AppKind::Wrapper,
+            kind: AppKind::Web,
             url: Some("https://discord.com/app".into()),
+            profile: None,
         };
         a.finalize();
-        assert_eq!(a.command, wrapper_command("discord"));
+        assert_eq!(a.command, web_command("discord"));
     }
 
     #[test]
-    fn is_wrapper_url_requires_http_scheme() {
-        assert!(is_wrapper_url("https://app.slack.com"));
-        assert!(is_wrapper_url("http://localhost:3000/"));
-        assert!(!is_wrapper_url(""));
-        assert!(!is_wrapper_url("app.slack.com"));
-        assert!(!is_wrapper_url("https://"));
-        assert!(!is_wrapper_url("ftp://example.com"));
+    fn is_web_url_requires_http_scheme() {
+        assert!(is_web_url("https://app.slack.com"));
+        assert!(is_web_url("http://localhost:3000/"));
+        assert!(!is_web_url(""));
+        assert!(!is_web_url("app.slack.com"));
+        assert!(!is_web_url("https://"));
+        assert!(!is_web_url("ftp://example.com"));
     }
 }

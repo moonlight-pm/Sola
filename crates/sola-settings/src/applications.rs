@@ -11,16 +11,15 @@
 //!
 //! Builtin apps (defined in sola-shell) never appear here — they
 //! are seeded by the shell directly and are not part of the
-//! `Topic::Application` stream.
+//! `Topic::Application` stream. Nor do web apps: the browser makes them
+//! (Wrap This Page…) and each removes itself from its own menu.
 
-use iced::widget::{button, checkbox, column, container, row, scrollable};
+use iced::widget::{button, column, container, row, scrollable};
 use iced::{Alignment, Element, Length, Padding, Task};
 use sola_kit::components::text_input::text_input;
 
 use sola_bus::topics::{AppKind, Application, ApplicationsConfig, Topic, Window as BusWindow};
-use sola_core::applications::{is_wrapper_url, wrapper_command};
 use sola_kit::app::bus;
-use sola_kit::components::form::{checkbox_style, form_row};
 use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::{Tone, badge, button as kit_btn, card, field, text_input as kit_input};
@@ -46,7 +45,6 @@ pub enum AppField {
     Label,
     Command,
     Icon,
-    Url,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -55,8 +53,6 @@ pub struct EditBuffer {
     pub label: String,
     pub command: String,
     pub icon: String,
-    pub kind: AppKind,
-    pub url: String,
 }
 
 impl EditBuffer {
@@ -66,8 +62,6 @@ impl EditBuffer {
             label: a.label.clone(),
             command: a.command.clone(),
             icon: a.icon.clone(),
-            kind: a.kind,
-            url: a.url.clone().unwrap_or_default(),
         }
     }
     pub fn matches(&self, a: &Application) -> bool {
@@ -75,8 +69,6 @@ impl EditBuffer {
             && self.label == a.label
             && self.command == a.command
             && self.icon == a.icon
-            && self.kind == a.kind
-            && self.url.trim() == a.url.as_deref().unwrap_or("").trim()
     }
     pub fn to_application(&self) -> Application {
         let mut a = Application {
@@ -84,15 +76,9 @@ impl EditBuffer {
             label: self.label.trim().to_string(),
             command: self.command.trim().to_string(),
             icon: self.icon.trim().to_string(),
-            kind: self.kind,
-            url: {
-                let u = self.url.trim();
-                if u.is_empty() {
-                    None
-                } else {
-                    Some(u.to_string())
-                }
-            },
+            kind: AppKind::Command,
+            url: None,
+            profile: None,
         };
         a.finalize();
         a
@@ -131,9 +117,10 @@ pub fn sort_key(app: &Application) -> String {
     display_title(app).to_ascii_lowercase()
 }
 
-/// Configured apps sorted by [`sort_key`], then `app_id`.
+/// Configured command apps (not web apps) sorted by [`sort_key`], then
+/// `app_id`.
 pub fn sorted_apps(apps: &ApplicationsConfig) -> Vec<&Application> {
-    let mut v: Vec<&Application> = apps.apps.iter().collect();
+    let mut v: Vec<&Application> = apps.apps.iter().filter(|a| !a.is_web()).collect();
     v.sort_by(|a, b| {
         sort_key(a)
             .cmp(&sort_key(b))
@@ -148,8 +135,6 @@ pub fn draft_is_dirty(buf: &EditBuffer) -> bool {
         || !buf.label.trim().is_empty()
         || !buf.command.trim().is_empty()
         || !buf.icon.trim().is_empty()
-        || !buf.url.trim().is_empty()
-        || buf.kind != AppKind::Command
 }
 
 /// Edit is dirty when the buffer differs from the canonical app.
@@ -214,7 +199,6 @@ pub enum AppsMsg {
         field: AppField,
         value: String,
     },
-    SetWrapper(bool),
     /// Edit: commit; draft: add.
     Save,
     /// Edit: reset buffer; draft: close.
@@ -260,16 +244,6 @@ pub fn update(msg: AppsMsg, apps: &mut ApplicationsConfig, ui: &mut AppsState) -
         AppsMsg::Field { field, value } => {
             if let Some(buf) = open_buffer_mut(&mut ui.detail) {
                 set_field(field, value, buf);
-                ui.error = None;
-            }
-        }
-        AppsMsg::SetWrapper(on) => {
-            if let Some(buf) = open_buffer_mut(&mut ui.detail) {
-                buf.kind = if on {
-                    AppKind::Wrapper
-                } else {
-                    AppKind::Command
-                };
                 ui.error = None;
             }
         }
@@ -392,7 +366,7 @@ fn list_column<'a>(
     let toolbar = row![
         kit_btn::labeled_sm("+ Add application", kit_btn::ghost).on_press(AppsMsg::StartBlank),
         iced::widget::Space::new().width(Length::Fill),
-        kit_text::caption(format!("{} apps", apps.apps.len())).style(kit_text::muted),
+        kit_text::caption(format!("{} apps", sorted_apps(apps).len())).style(kit_text::muted),
     ]
     .spacing(SPACE_MD)
     .align_y(Alignment::Center)
@@ -463,9 +437,6 @@ fn app_row<'a>(app: &'a Application, ui: &'a AppsState) -> Element<'a, AppsMsg> 
     let mut title_row = row![kit_text::body(display_title(app))]
         .spacing(SPACE_SM)
         .align_y(Alignment::Center);
-    if app.is_wrapper() {
-        title_row = title_row.push(badge("web", Tone::Neutral));
-    }
     if missing {
         title_row = title_row.push(badge("not found", Tone::Warning));
     }
@@ -588,49 +559,19 @@ fn detail_panel<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<
 }
 
 fn detail_fields<'a>(buf: &'a EditBuffer, draft_placeholders: bool) -> Element<'a, AppsMsg> {
-    let (ph_id, ph_label, ph_icon, ph_cmd, ph_url) = if draft_placeholders {
-        (
-            "slack",
-            "Slack",
-            "simpleicons/slack",
-            "firefox",
-            "https://app.slack.com",
-        )
+    let (ph_id, ph_label, ph_icon, ph_cmd) = if draft_placeholders {
+        ("firefox", "Firefox", "simpleicons/firefox", "firefox")
     } else {
-        ("", "", "", "", "")
+        ("", "", "", "")
     };
-    let wrapper = buf.kind == AppKind::Wrapper;
-    let mut col = column![
+    column![
         field_input("app_id", &buf.app_id, ph_id, AppField::Id),
         field_input("label", &buf.label, ph_label, AppField::Label),
         field_input("icon", &buf.icon, ph_icon, AppField::Icon),
-        form_row(
-            "Web wrapper",
-            checkbox(wrapper)
-                .on_toggle(AppsMsg::SetWrapper)
-                .style(checkbox_style),
-        ),
+        field_input("command", &buf.command, ph_cmd, AppField::Command),
     ]
-    .spacing(SPACE_LG);
-    if wrapper {
-        let id = buf.app_id.trim();
-        let synthesized = if id.is_empty() {
-            wrapper_command("<id>")
-        } else {
-            wrapper_command(id)
-        };
-        col = col.push(field_input("url", &buf.url, ph_url, AppField::Url));
-        col = col
-            .push(kit_text::caption(format!("Launches as {synthesized}")).style(kit_text::muted));
-    } else {
-        col = col.push(field_input(
-            "command",
-            &buf.command,
-            ph_cmd,
-            AppField::Command,
-        ));
-    }
-    col.into()
+    .spacing(SPACE_LG)
+    .into()
 }
 
 fn field_input<'a>(
@@ -744,18 +685,13 @@ fn required_fields_missing(buf: &EditBuffer) -> bool {
 }
 
 fn required_error(buf: &EditBuffer) -> Option<String> {
-    if buf.app_id.trim().is_empty() || buf.label.trim().is_empty() {
-        return Some("app_id and label are required".into());
+    if buf.app_id.trim().is_empty()
+        || buf.label.trim().is_empty()
+        || buf.command.trim().is_empty()
+    {
+        return Some("app_id, label, and command are required".into());
     }
-    match buf.kind {
-        AppKind::Command if buf.command.trim().is_empty() => {
-            Some("app_id, label, and command are required".into())
-        }
-        AppKind::Wrapper if !is_wrapper_url(&buf.url) => {
-            Some("wrapper needs an http(s) URL".into())
-        }
-        _ => None,
-    }
+    None
 }
 
 fn app_field_id(f: AppField) -> iced::widget::Id {
@@ -764,16 +700,14 @@ fn app_field_id(f: AppField) -> iced::widget::Id {
         AppField::Label => "settings-apps-label",
         AppField::Command => "settings-apps-command",
         AppField::Icon => "settings-apps-icon",
-        AppField::Url => "settings-apps-url",
     })
 }
 
-const APP_FIELDS: [AppField; 5] = [
+const APP_FIELDS: [AppField; 4] = [
     AppField::Id,
     AppField::Label,
     AppField::Command,
     AppField::Icon,
-    AppField::Url,
 ];
 
 pub fn focused_value(ui: &AppsState, id: &iced::widget::Id) -> Option<String> {
@@ -808,7 +742,6 @@ fn app_field_str(buf: &EditBuffer, f: AppField) -> &str {
         AppField::Label => &buf.label,
         AppField::Command => &buf.command,
         AppField::Icon => &buf.icon,
-        AppField::Url => &buf.url,
     }
 }
 
@@ -818,7 +751,6 @@ fn set_field(f: AppField, value: String, buf: &mut EditBuffer) {
         AppField::Label => buf.label = value,
         AppField::Command => buf.command = value,
         AppField::Icon => buf.icon = value,
-        AppField::Url => buf.url = value,
     }
 }
 
@@ -1009,42 +941,29 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_to_application_synthesizes_command() {
-        let buf = EditBuffer {
-            app_id: " slack ".into(),
-            label: "Slack".into(),
-            command: "ignored".into(),
-            icon: "simpleicons/slack".into(),
-            kind: AppKind::Wrapper,
-            url: " https://app.slack.com ".into(),
-        };
-        let a = buf.to_application();
-        assert_eq!(a.kind, AppKind::Wrapper);
-        assert_eq!(a.app_id, "slack");
-        assert_eq!(a.url.as_deref(), Some("https://app.slack.com"));
-        assert_eq!(a.command, wrapper_command("slack"));
-    }
-
-    #[test]
-    fn wrapper_draft_is_dirty_when_kind_set() {
-        assert!(!draft_is_dirty(&EditBuffer::default()));
-        assert!(draft_is_dirty(&EditBuffer {
-            kind: AppKind::Wrapper,
-            ..Default::default()
-        }));
-    }
-
-    #[test]
-    fn wrapper_requires_http_url() {
+    fn an_app_needs_an_id_a_label_and_a_command() {
         let mut buf = EditBuffer {
-            app_id: "slack".into(),
-            label: "Slack".into(),
-            kind: AppKind::Wrapper,
-            url: "app.slack.com".into(),
+            app_id: "firefox".into(),
+            label: "Firefox".into(),
             ..Default::default()
         };
         assert!(required_fields_missing(&buf));
-        buf.url = "https://app.slack.com".into();
+        buf.command = "firefox".into();
         assert!(!required_fields_missing(&buf));
+        assert_eq!(buf.to_application().kind, AppKind::Command);
+    }
+
+    #[test]
+    fn web_apps_are_not_listed() {
+        let mut cfg = ApplicationsConfig::default();
+        cfg.apps = vec![
+            app("firefox", "Firefox"),
+            Application {
+                kind: AppKind::Web,
+                ..app("web-1", "Slack")
+            },
+        ];
+        let ids: Vec<&str> = sorted_apps(&cfg).iter().map(|a| a.app_id.as_str()).collect();
+        assert_eq!(ids, ["firefox"]);
     }
 }

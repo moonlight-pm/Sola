@@ -434,6 +434,10 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             id: TabId(id),
             shown,
         },
+        ToEngine::AppSite { id, start } => Cmd::AppSite {
+            id: TabId(id),
+            start,
+        },
         ToEngine::Shutdown => return None,
     })
 }

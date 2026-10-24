@@ -200,14 +200,14 @@ Settings, Monitor, and others) subscribe to every kind and ignore most.
 | `WindowFloating` | `window_id`, `floating` | Shell; `sola-river` re-sends its set after a bus reconnect | `sola-river`; kit apps with a floating titlebar | Sticky by `window_id` |
 | `Composition` | Window ids to show, bottom to top | Shell | `sola-river` | Ephemeral |
 | `Frame` | One window's position, size, and `fullscreen` flag | Shell | `sola-river` | Ephemeral |
-| `Focus` | The `window_id` to focus | Shell; Paint, Design, website wrappers, Arcade (to raise themselves) | `sola-river` | Ephemeral |
+| `Focus` | The `window_id` to focus | Shell; Paint, Design, Arcade (to raise themselves) | `sola-river` | Ephemeral |
 | `AppHidden` | An `app_id` left out of `Composition` | Shell ([Hide](sola-shell.md#hide)); retracted to show it again | Shell | Sticky by `app_id` |
 | `MouseEntered` | The `window_id` the pointer entered | `sola-river` | Shell | Ephemeral |
 | `MouseLeft` | None | `sola-river` | Shell | Ephemeral |
 | `MouseClicked` | The `window_id` clicked | `sola-river` | Shell | Ephemeral |
 | `RegisteredChords` | Chords (`keysym`, `modifiers`) to route to the bus, not the focused window | Shell | `sola-river` | Sticky |
-| `Chord` | A registered chord was pressed | `sola-river` | Shell, Browser, website wrappers, Design | Ephemeral |
-| `ChordReleased` | A registered chord was released | `sola-river` | Shell, Browser, website wrappers, Design | Ephemeral |
+| `Chord` | A registered chord was pressed | `sola-river` | Shell, Browser, Design | Ephemeral |
+| `ChordReleased` | A registered chord was released | `sola-river` | Shell, Browser, Design | Ephemeral |
 
 What `sola-river` does with these is in [Compositor](compositor.md).
 
@@ -220,7 +220,7 @@ What `sola-river` does with these is in [Compositor](compositor.md).
 | `UserAppExited` | `app_id`, `command`, exit `code` or `signal` | `sola-session` | Shell, Arcade | Ephemeral |
 | `CloseApp` | An `app_id` | Shell, a kit app's floating-titlebar close button, Arcade | `sola-session` (stops it), `sola-river` (closes its windows), the named app (quits) | Ephemeral |
 | `SessionApps` | Open apps: `app_id`, `command` | `sola-session` | `sola-session`, at its next start | Persistent |
-| `Application` | A launcher entry: `app_id`, `label`, `command`, `icon`, `kind`, `url` | Settings; Arcade (a running game's label, retracted when it stops) | Shell, Settings, Arcade; website wrappers read `state.yaml` | Persistent by `app_id` |
+| `Application` | A launcher entry: `app_id`, `label`, `command`, `icon`, `kind`, `url`, `profile` | Settings; Browser (web apps); Arcade (a running game's label, retracted when it stops) | Shell, Settings, Arcade, Browser | Persistent by `app_id` |
 | `Shutdown` | None | Shell (Quit Sola); `sola` on SIGINT, SIGTERM, or SIGHUP | `sola`, `sola-session`, `sola-river` | Ephemeral |
 | `SetAppMenu` | `app_id` and its menus: labels and items (action id, label, shortcut, disabled, checked) or dividers | Each app with a menu, at start | Shell (menubar) | Sticky by `app_id` |
 | `MenuAction` | `app_id`, `action_id` of a chosen item or shortcut | Shell | The app named by `app_id` | Ephemeral |
@@ -254,7 +254,7 @@ their files if they exist.
 | `OpenUrl` | `url`, `activate` | Browser, re-sending a URL handed to it so the shell raises it | Browser (new tab; ignores its own echo); Shell (raises Browser if running and `activate` is set, otherwise starts it with the URL) | Ephemeral |
 | `OpenImage` | `path`, `activate`, optional `app_id` (absent means Paint) | A second Paint launch, handing paths to the running one | Paint, Preview (each only when addressed) | Ephemeral |
 | `AppToast` | `text` | Nothing in Sola; `solactl emit` can | Shell (menubar, 5 seconds) | Ephemeral |
-| `AppNotification` | `id`, `app_id`, `source`, `title`, `body`, optional `tag`, `tab_id`, `url` | Browser, website wrappers, Calendar, Projects | Shell | Ephemeral |
+| `AppNotification` | `id`, `app_id`, `source`, `title`, `body`, optional `tag`, `tab_id`, `url` | Browser (pages and web apps), Calendar, Projects | Shell | Ephemeral |
 | `NotificationActivate` | The clicked notification's `id`, `app_id`, `tab_id`, `url` | Shell | The app named by `app_id` | Ephemeral |
 | `ClientConnected` | An app id | `sola-bus` on `$identify`; replayed as the roster | No app; Monitor shows it | Ephemeral |
 | `ClientDisconnected` | An app id | `sola-bus` when an identified connection closes | No app; Monitor shows it | Ephemeral |

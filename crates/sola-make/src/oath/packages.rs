@@ -74,8 +74,7 @@ pub const PACKAGES: &[Package] = &[
     },
     Package {
         name: "sola-browser",
-        // The wrapper runs a site through the browser's CEF engine.
-        bins: &["sola-browser", "sola-wrapper"],
+        bins: &["sola-browser"],
         build: &["rust", "pkgconf", "cef"],
         needs: &["sola", "cef", "libpulse"],
         share: false,

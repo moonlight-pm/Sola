@@ -4,6 +4,7 @@
 //! adds `App<E>`, its constructor, and all update/view/subscription methods.
 
 mod pages;
+mod webapps;
 
 pub use pages::{boot_pages, count_by_profile};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -105,6 +106,19 @@ pub enum Msg {
     CloseTab(TabId),
     /// ⌘⇧T — pop the recently-closed stack.
     ReopenClosedTab,
+    /// Wrap This Page sheet: open it (the page menu), the name typed, Wrap,
+    /// Cancel.
+    WrapOpen,
+    WrapName(String),
+    WrapSubmit,
+    WrapCancel,
+    /// A web app's Remove Web App… sheet.
+    RemoveAppConfirm,
+    RemoveAppCancel,
+    /// A web app window's titlebar: move, resize, close (by window).
+    WindowDrag(iced::window::Id),
+    WindowResize(iced::window::Id, iced::window::Direction),
+    WindowClose(iced::window::Id),
     /// Drain helper queues (tabs, downloads, copy, menus, vault). Fired
     /// by [`crate::chrome_wake`] or a short-lived 250 ms timer (copy-URL
     /// flash / TOTP / fill wait) — never as an idle vsync pump.
@@ -486,6 +500,8 @@ pub struct App<E: Engine> {
     recently_closed: Vec<crate::session::ClosedTab>,
     /// Each page's stable id ([`crate::session::SessionTab::id`]).
     page_ids: HashMap<TabId, String>,
+    /// Web apps: the pages hosted as their own apps ([`webapps`]).
+    pub(crate) webapps: webapps::WebApps,
     /// Editable contents of the URL bar.
     pub url_field: String,
     /// The URL we last copied from the engine into `url_field`,
@@ -686,6 +702,7 @@ impl<E: Engine> App<E> {
             engine_tabs_seen: false,
             recently_closed,
             page_ids: HashMap::new(),
+            webapps: webapps::WebApps::default(),
             url_field: String::new(),
             last_seen_url: String::new(),
             theme: sola_kit::theme::default_theme(),
@@ -1292,6 +1309,9 @@ impl<E: Engine> App<E> {
         for (profile, tab) in &session_tabs {
             let id = self.engine.alloc_tab_id();
             self.page_ids.insert(id, tab.id.clone());
+            if let Some(app) = &tab.app {
+                self.webapps.tabs.insert(id, app.clone());
+            }
             let url = crate::util::normalize_url(&tab.url);
             let url = if url.is_empty() {
                 BLANK_URL.to_string()
@@ -1466,12 +1486,14 @@ impl<E: Engine> App<E> {
         let mut tasks = Vec::new();
         let ids: Vec<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
         for id in &ids {
-            if !self.windows.has(*id) {
+            if !self.windows.has(*id) && !self.webapps.holds(*id) {
                 let page_id = self.page_id(*id);
                 let background = *id != self.cached_active;
+                // A web app's page opens as the app.
+                let app_id = self.window_app_id(*id);
                 tasks.push(
                     self.windows
-                        .open(self.app_id, *id, &page_id, background)
+                        .open(&app_id, *id, &page_id, background)
                         .map(|_| Msg::Noop),
                 );
             }
@@ -1484,6 +1506,7 @@ impl<E: Engine> App<E> {
         for (id, shown) in self.windows.take_shown_changes() {
             let _ = self.cmd_tx.send(Cmd::ShowPage { id, shown });
         }
+        self.sync_app_sites();
         if self.cached_active != self.shown_active {
             self.shown_active = self.cached_active;
             if !std::mem::take(&mut self.focus_switch) {
@@ -1513,6 +1536,10 @@ impl<E: Engine> App<E> {
                 Some(tab) => self.update_msg(Msg::CloseTab(tab)),
                 None => iced::window::close(window),
             },
+            WE::Resized(size) => {
+                self.windows.resized(window, size);
+                Task::none()
+            }
             WE::Closed => {
                 if let Some(tab) = self.windows.closed(window) {
                     tracing::warn!(tab = tab.0, "page window closed outside the browser");
@@ -1528,10 +1555,16 @@ impl<E: Engine> App<E> {
             Msg::WindowReady(id) => {
                 self.window_id = id;
                 // Iced is connected; open restored tabs now.
+                let mut hold = Task::none();
                 if let Some((tabs, active_index)) = self.pending_session.take() {
                     self.bootstrap_tabs(tabs, active_index);
+                    hold = self.hold_restored_apps();
                 }
-                return Task::none();
+                // `--app`: the web app, once its catalog entry is in.
+                if let Some(id) = self.webapps.launch.clone() {
+                    self.open_app(&id);
+                }
+                return hold;
             }
             Msg::TitleDrag => return sola_kit::drag(self.windows.window_of(self.cached_active)),
             Msg::TitleResize(dir) => {
@@ -1967,6 +2000,26 @@ impl<E: Engine> App<E> {
                 self.profile_name_field = s;
                 self.profile_dialog_error = None;
             }
+            Msg::WrapOpen => {
+                self.context_menu = None;
+                return self.open_wrap_sheet();
+            }
+            Msg::WrapName(name) => {
+                if let Some(draft) = &mut self.webapps.wrap {
+                    draft.name = name;
+                }
+            }
+            Msg::WrapSubmit => return self.wrap_page(),
+            Msg::WrapCancel => self.webapps.wrap = None,
+            Msg::RemoveAppConfirm => return self.remove_app(),
+            Msg::RemoveAppCancel => self.webapps.removing = None,
+            Msg::WindowDrag(window) => return iced::window::drag(window),
+            Msg::WindowResize(window, dir) => return iced::window::drag_resize(window, dir),
+            Msg::WindowClose(window) => {
+                if let Some(tab) = self.windows.tab_of(window) {
+                    return self.update_msg(Msg::CloseTab(tab));
+                }
+            }
             Msg::ProfileDialogCancel => {
                 self.close_profile_dialog();
             }
@@ -2254,7 +2307,11 @@ impl<E: Engine> App<E> {
                     sola_kit::close_app(self.app_id);
                     return iced::exit();
                 }
-                self.remember_closed(id);
+                // A web app's window is not a browser tab to reopen.
+                if self.webapps.tabs.remove(&id).is_none() {
+                    self.remember_closed(id);
+                }
+                self.webapps.favicons.remove(&id);
                 // If closing the active tab, pick a new active tab
                 // first so the engine never sees `active` pointing
                 // at a closed tab.
@@ -2308,6 +2365,7 @@ impl<E: Engine> App<E> {
                             tracing::info!("activate handoff — showing the active page");
                             self.windows.show(self.cached_active);
                         }
+                        crate::instance::Handoff::OpenApp(id) => self.open_app(&id),
                     }
                 }
                 #[cfg(feature = "bitwarden")]
@@ -2366,6 +2424,8 @@ impl<E: Engine> App<E> {
                         .retain(|id| live.iter().any(|t| t.id == *id));
                     let new_popups =
                         place_engine_popup_tabs(&mut self.cached_tabs, &prev_ids, opener);
+                    // A web app's popups (a huddle) are the app's.
+                    self.adopt_popups(opener, &new_popups);
                     if !new_popups.is_empty() {
                         let engine_active = TabId(self.active_handle.load(Ordering::Relaxed));
                         let focus = new_popups
@@ -2459,15 +2519,21 @@ impl<E: Engine> App<E> {
                 self.drain_favicons();
                 self.drain_devtools();
                 for req in bg {
-                    if crate::popup::is_devtools_url(&req.url) {
+                    // The page that asked: the active one (it was clicked).
+                    let opener = self.cached_active;
+                    let url = req.url.clone();
+                    let tab = if crate::popup::is_devtools_url(&req.url) {
                         tracing::info!(url = %req.url, "ignoring DevTools as a strip tab");
+                        continue;
                     } else if req.activate {
                         tracing::info!(url = %req.url, "popup / target=_blank → tab");
-                        self.open_tab_beside(req.url, true, &req.profile);
+                        self.open_tab_beside(req.url, true, &req.profile)
                     } else {
                         tracing::info!(url = %req.url, "cmd-click → background tab");
-                        self.open_tab_beside(req.url, false, &req.profile);
-                    }
+                        self.open_tab_beside(req.url, false, &req.profile)
+                    };
+                    // On a web app's site it stays in the app.
+                    self.adopt_if_same_site(opener, tab, &url);
                 }
                 // Drain any page-selection / in-page copy the engine extracted.
                 // The engine's own clipboard can't reach Wayland; iced's can.
@@ -2818,6 +2884,7 @@ impl<E: Engine> App<E> {
             title: title.clone(),
             history: closed.history,
             history_index: closed.history_index,
+            app: None,
         };
         self.page_ids.insert(id, session_tab.id.clone());
         let (history, history_index) = session::history_from_session(&session_tab);
@@ -2970,7 +3037,9 @@ impl<E: Engine> App<E> {
         let Some(slot) = self.windows.slot_of(tab) else {
             return Space::new().into();
         };
-        if tab == self.cached_active {
+        if let Some(app) = self.webapps.app_of(tab) {
+            self.view_app(window, tab, slot, app)
+        } else if tab == self.cached_active {
             self.view_active(window, slot)
         } else {
             self.view_passive(window, tab, slot)
@@ -3037,12 +3106,13 @@ impl<E: Engine> App<E> {
             .map_or(sola_kit::Chrome::Tiled, |id| self.float.chrome(id))
     }
 
-    /// The window title: the page's title and address.
+    /// The window title: the page's title and address; a web app's name.
     pub fn title(&self, window: iced::window::Id) -> String {
-        let info = self
-            .windows
-            .tab_of(window)
-            .and_then(|tab| self.cached_tabs.iter().find(|t| t.id == tab));
+        let tab = self.windows.tab_of(window);
+        if let Some(app) = tab.and_then(|t| self.webapps.app_of(t)) {
+            return app.label.clone();
+        }
+        let info = tab.and_then(|tab| self.cached_tabs.iter().find(|t| t.id == tab));
         let profile = info
             .and_then(|t| crate::profiles::name_of(&self.profile_of(t.id)))
             .unwrap_or_default();
@@ -3142,14 +3212,10 @@ impl<E: Engine> App<E> {
 
         let content: Element<'_, Msg> = if self.profile_dialog.is_some() {
             stack![content, self.view_profile_dialog()].into()
-        } else if self.pending_http_auth.is_some() {
-            stack![content, self.view_http_auth()].into()
-        } else if self.pending_js_dialog.is_some() {
-            stack![content, self.view_js_dialog()].into()
-        } else if self.pending_media.is_some() {
-            stack![content, self.view_media_permission()].into()
-        } else if self.pending_notify.is_some() {
-            stack![content, self.view_notify_permission()].into()
+        } else if self.webapps.wrap.is_some() {
+            stack![content, self.view_wrap_sheet()].into()
+        } else if let Some(modal) = self.page_modal() {
+            stack![content, modal].into()
         } else {
             content
         };
@@ -3174,9 +3240,38 @@ impl<E: Engine> App<E> {
         )
     }
 
+    /// The page's own dialog, if one is up (sign-in, JS dialog, camera /
+    /// microphone, notifications): over the active page's window, a
+    /// browser page's or a web app's.
+    fn page_modal(&self) -> Option<Element<'_, Msg>> {
+        if self.pending_http_auth.is_some() {
+            Some(self.view_http_auth())
+        } else if self.pending_js_dialog.is_some() {
+            Some(self.view_js_dialog())
+        } else if self.pending_media.is_some() {
+            Some(self.view_media_permission())
+        } else if self.pending_notify.is_some() {
+            Some(self.view_notify_permission())
+        } else {
+            None
+        }
+    }
+
     fn menu_items(&self, target: &CtxTarget) -> Vec<MenuItem<Msg>> {
         match target {
-            CtxTarget::Page(ctx) => page_menu_items(ctx),
+            CtxTarget::Page(ctx) => {
+                let mut items = page_menu_items(ctx);
+                // On a web page in the browser: make it its own app.
+                let wrappable = !self.webapps.tabs.contains_key(&self.cached_active)
+                    && self
+                        .active_tab_info()
+                        .is_some_and(|t| webapps::can_wrap(&t.url));
+                if wrappable {
+                    items.push(MenuItem::separator());
+                    items.push(MenuItem::action("Wrap This Page…", Msg::WrapOpen));
+                }
+                items
+            }
             CtxTarget::History { forward } => {
                 let (entries, current) = self
                     .active_tab_info()
@@ -3239,8 +3334,13 @@ impl<E: Engine> App<E> {
 
     /// Page favicons were for the tab strip; with a window per page nothing
     /// shows them yet, so they are dropped as they arrive.
+    /// Keep each page's latest favicon: a wrapped page's app icon.
     fn drain_favicons(&mut self) {
-        self.engine.favicons_handle().lock().unwrap().clear();
+        let icons: Vec<crate::engine::FaviconIpc> =
+            self.engine.favicons_handle().lock().unwrap().drain(..).collect();
+        for icon in icons {
+            self.webapps.favicons.insert(icon.tab_id, icon.png);
+        }
     }
 
     /// The active page window's top bar: nav, location bar, vault, downloads.
@@ -4272,7 +4372,7 @@ impl<E: Engine> App<E> {
                     );
                     if let Ok(mut bus) = sola_kit::app::bus().lock() {
                         let _ = bus.emit(sola_bus::topics::Topic::AppNotification(
-                            crate::notify::to_bus(&show),
+                            self.notification_for(&show),
                         ));
                     }
                 }

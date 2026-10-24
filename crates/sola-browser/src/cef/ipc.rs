@@ -135,6 +135,11 @@ pub enum ToEngine {
         id: u64,
         shown: bool,
     },
+    /// See `Cmd::AppSite`.
+    AppSite {
+        id: u64,
+        start: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

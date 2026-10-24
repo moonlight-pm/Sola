@@ -41,7 +41,7 @@ pub type SlotRegistry<E> = Arc<std::sync::Mutex<Vec<Arc<FrameSlot<E>>>>>;
 /// worker and hands each to the slot that paints its tab (a page or the
 /// docked inspector), waking the iced renderer.
 ///
-/// With one slot (the single-window chrome, sola-wrapper), frames of other
+/// With one slot (a single-window chrome), frames of other
 /// tabs park in it for instant tab switches; with a slot per page window,
 /// a frame goes to its page's window and nowhere else.
 ///
@@ -228,20 +228,39 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
         return code;
     }
 
+    // `--app <id>`: a web app's launch — its window, in this chrome or the
+    // one running. Its value is not a URL.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let launch_app = args
+        .windows(2)
+        .find(|w| w[0] == "--app")
+        .map(|w| w[1].clone());
     // First non-flag argv token only — never treat `--password-store=…` /
     // CEF switches as open-URL (they become `https://--…` tabs otherwise).
-    let argv = std::env::args()
-        .skip(1)
+    let argv = args
+        .iter()
+        .filter(|a| Some(*a) != launch_app.as_ref())
         .find(|a| crate::session::is_cli_open_url(a))
         // Resolve relative HTML paths against *this* process cwd (xdg-open
         // child) before chrome.sock handoff — the live chrome has another cwd.
         .map(|a| crate::util::normalize_url(&a));
 
+    // A web app's launch with no browser up starts the browser through the
+    // session, as itself, and hands it the app.
+    if let Some(app_id) = launch_app.as_deref() {
+        if !crate::instance::chrome_is_live() && crate::instance::start_browser_for_app(app_id) {
+            return ExitCode::SUCCESS;
+        }
+    }
+
     // One iced window. A second process (MIME / solactl open / launcher)
     // used to reap the live CEF helpers and leave a blank parked frame.
     let _chrome_lock = match crate::instance::claim() {
         Ok(lock) => lock,
-        Err(()) => match crate::instance::handoff(argv.as_deref()) {
+        Err(()) => match launch_app.as_deref().map_or_else(
+            || crate::instance::handoff(argv.as_deref()),
+            crate::instance::handoff_app,
+        ) {
             Ok(()) => {
                 tracing::info!("existing chrome accepted handoff — this process exits");
                 return ExitCode::SUCCESS;
@@ -332,7 +351,7 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
                 .borrow_mut()
                 .take()
                 .expect("browser App init called more than once");
-            let app = App::<E>::new(
+            let mut app = App::<E>::new(
                 engine,
                 slot.clone(),
                 cmd_tx.clone(),
@@ -343,6 +362,8 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
                 boot_active,
                 closed,
             );
+            // A web app's launch opens it once its catalog entry is in.
+            app.webapps.launch = launch_app.clone();
             // Restore the saved pages now; each gets its window.
             (app, iced::Task::done(crate::app::Msg::WindowReady(None)))
         },

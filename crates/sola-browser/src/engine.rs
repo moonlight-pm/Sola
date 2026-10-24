@@ -408,6 +408,12 @@ pub enum Cmd<E: Engine> {
         id: TabId,
         shown: bool,
     },
+    /// Page `id` is a web app's, which starts at `start`: a link the user
+    /// follows to another site opens as a browser page instead.
+    AppSite {
+        id: TabId,
+        start: String,
+    },
     Quit,
 }
 

@@ -2,7 +2,8 @@
 
 **Date:** 2026-10-23
 **Status:** **Accepted** 2026-10-23 (Joshua: "go ahead") — his decisions
-W1–W3 and the calls marked *proposed*. Building as Phase 12.
+W1–W5 and the calls marked *proposed*. Built as Phase 12 on `next`
+(12a–12e); smoked on canto except a signed-in site and a huddle popup.
 **Supersedes:** the separate `sola-wrapper` process (one CEF process and
 profile per app, [wrapper freeze](2026-08-21-sola-wrapper-design.md)) and
 the wrapper form in Settings → Applications.
@@ -25,12 +26,14 @@ make *that* the app.
 | W1 | A web app **runs in the browser**, on the browser profile it was wrapped from: already signed in, one CEF stack instead of one per app. |
 | W2 | You **add one from the browser**: "Wrap This Page…" on the page. |
 | W3 | A web app has **its own menus** (its window's titlebar) and is **removed from there**. Not in Settings; not under the flower. |
+| W4 | **No app id to type:** a new app's id is generated (a UUID). |
+| W5 | **No migration:** existing wrapper apps are not carried over; Joshua starts fresh on his other machine when `next` lands there. |
 
 ## What a web app is (proposed)
 
 - An Applications catalog entry of kind `web` (today's `wrapper` kind,
-  renamed in the UI only): app id, name, icon, start URL, and the browser
-  profile it runs on.
+  renamed in the UI only): a generated app id (`web-<uuid>`), name, icon,
+  start URL, and the browser profile it runs on.
 - **Its windows are the browser's**, with the app's identity: the app's
   Wayland app id, name and icon, so the shell's bar, the launcher, Super+Tab
   and desk cards treat it as its own app. No location bar, no browser
@@ -40,11 +43,11 @@ make *that* the app.
 
 ## Wrap This Page… (proposed)
 
-- In the browser's **File** menu (and the page's right-click menu), on any
+- In the browser's **Browser** menu (and the page's right-click menu), on any
   http(s) page.
 - A small sheet over the page: **Name** (the site's name, from the page
   title), **Icon** (the page's favicon; a monogram when it has none), and
-  **Wrap**. The app id is the name, slugged (shown, editable).
+  **Wrap**. No app id to type: it is generated (W4).
 - **Wrap** turns that page into the app in place: same page, no reload, no
   sign-in — the window changes to the app's (its row in the shell's bar
   now says the app's name with its icon), and the launcher lists it.
@@ -58,8 +61,11 @@ make *that* the app.
 | Edit | Cut · Copy · Paste · Select All |
 | Window | (the kit's) |
 
-- **Links** inside the app's site stay in its window; links to another
-  site open as browser pages.
+- **Links** inside the app's site stay in its window; a link the user
+  follows to another site opens as a browser page. Redirects stay in the
+  window (a sign-in's round trip); a sign-in *started* by a click ("Sign
+  in with Google") opens as a browser page, which signs the app in too —
+  it is the same profile.
 - **Popups** it opens (a huddle, a same-site `window.open`) are more
   windows of the app — its name, its id, a row each in the bar.
 - **Notifications, microphone / camera, dialogs:** as the browser's, under
@@ -77,13 +83,11 @@ make *that* the app.
   browser starts with just that window.
 - The browser's session keeps app windows like pages and restores them.
 
-## Migration (proposed)
+## Retiring the wrapper
 
-- Existing `wrapper` entries run in the browser on the Primary profile.
-  Their old per-app profiles (`~/.config/sola/wrapper/<id>/`) are not
-  carried over: sign in once.
-- `sola-wrapper` retires (its popup windows of 2026-10-23 with it); the
-  binary stays one release as a shim that runs `sola-browser --app <id>`.
+- No migration (W5): existing `wrapper` entries are not converted.
+- `sola-wrapper` retires outright (its popup windows of 2026-10-23 with
+  it) and leaves the Oath packages.
 - Settings → Applications keeps command apps; its wrapper fields go.
 
 ## Mechanics (proposed)
@@ -98,7 +102,7 @@ make *that* the app.
 - **Browser:** a registry of hosted apps (tab → app); page windows open
   with the app's id and chrome; menu actions for hosted ids; notifications
   under the app's id; `--app <id>` and an `OpenApp` handoff; the wrap sheet
-  writes the catalog entry (`Topic::Applications`).
+  writes the catalog entry (`Topic::Application`).
 
 ## Not now
 

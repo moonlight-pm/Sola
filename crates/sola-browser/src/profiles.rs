@@ -48,7 +48,7 @@ impl ActiveProfile {
     }
 }
 
-/// Bind this process to an externally-owned CEF profile (sola-wrapper).
+/// Bind this process to an externally-owned CEF profile (sola-design).
 ///
 /// Does **not** read or write `profiles.json` / [`browser_data_root`].
 /// After this, [`list`] returns only `id`, and engine sockets live under

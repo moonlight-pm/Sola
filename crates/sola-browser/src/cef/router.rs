@@ -72,6 +72,9 @@ struct Shared {
     pages: Mutex<Vec<(String, Vec<TabInfo>)>>,
     /// Pages on screen (`ShowPage`).
     shown: Mutex<HashSet<u64>>,
+    /// Web app pages' start URLs (`AppSite`), told again to a restarted
+    /// helper.
+    sites: Mutex<HashMap<u64, String>>,
     /// Profiles whose helper was last told it is front.
     fronts: Mutex<HashSet<String>>,
 }
@@ -157,6 +160,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         prompts: Mutex::new(HashMap::new()),
         pages: Mutex::new(Vec::new()),
         shown: Mutex::new(HashSet::new()),
+        sites: Mutex::new(HashMap::new()),
         fronts: Mutex::new(HashSet::new()),
     });
 
@@ -319,6 +323,9 @@ fn router_main(
                             set.remove(&id.0);
                         }
                     }
+                    Cmd::AppSite { id, start } => {
+                        shared.sites.lock().unwrap().insert(id.0, start.clone());
+                    }
                     _ => {}
                 }
                 let closed = match &other {
@@ -329,6 +336,7 @@ fn router_main(
                 if let Some(id) = closed {
                     shared.owners.lock().unwrap().remove(&id);
                     shared.shown.lock().unwrap().remove(&id);
+                    shared.sites.lock().unwrap().remove(&id);
                 }
                 refresh_fronts(&helpers, &shared);
             }
@@ -379,6 +387,7 @@ fn route(shared: &Shared, cmd: &Cmd<CefEngine>) -> Option<String> {
     match cmd {
         Cmd::Target { tab, .. }
         | Cmd::ShowPage { id: tab, .. }
+        | Cmd::AppSite { id: tab, .. }
         | Cmd::CloseTab(tab)
         | Cmd::SetActiveTab(tab) => owner(tab.0),
         Cmd::Agent(req) => owner(req.tab),
@@ -536,6 +545,15 @@ fn restore_dead_helper(
                 id: t.id.0,
                 shown: true,
             });
+        }
+        let sites = shared.sites.lock().unwrap();
+        for t in &reopen {
+            if let Some(start) = sites.get(&t.id.0) {
+                let _ = helper.to_engine.send(ToEngine::AppSite {
+                    id: t.id.0,
+                    start: start.clone(),
+                });
+            }
         }
     }
     refresh_fronts(helpers, shared);
@@ -1015,6 +1033,7 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
             cmd: Box::new(to_wire(*cmd)?),
         }),
         Cmd::ShowPage { id, shown } => Some(ToEngine::ShowPage { id: id.0, shown }),
+        Cmd::AppSite { id, start } => Some(ToEngine::AppSite { id: id.0, start }),
         Cmd::InProfile { .. }
         | Cmd::DropParkedProfile { .. }
         | Cmd::CancelDownload { .. }

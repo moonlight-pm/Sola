@@ -54,6 +54,8 @@ pub const ACTION_PROFILE_RENAME: &str = "profile-rename";
 pub const ACTION_PROFILE_DELETE: &str = "profile-delete";
 /// Prefix for per-profile switch actions: `profile-switch:<uuid>`.
 pub const ACTION_PROFILE_SWITCH_PREFIX: &str = "profile-switch:";
+/// Browser → Wrap This Page…: the page becomes a web app.
+pub const ACTION_WRAP_PAGE: &str = "wrap-page";
 /// Topics the browser subscribes to. Theme/MenuAction are the live inputs;
 /// CloseApp is the shell's "quit this app" signal (via `is_self_quit`).
 ///
@@ -80,6 +82,8 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     // workspace's profile (Next slice 5).
     TopicKind::Workspaces,
     TopicKind::WindowWorkspace,
+    // The catalog: web apps this process hosts.
+    TopicKind::Application,
 ];
 
 /// The "Browser" app-menu published to the shell at startup. Each entry is
@@ -121,10 +125,23 @@ pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 7] = [
 /// Full menubar for the browser (Browser + Edit + Profiles). Rebuilt when
 /// the profile list changes so switcher checkmarks stay accurate.
 pub fn browser_app_menu(app_id: &str) -> AppMenuPayload {
+    let mut browser = menu_from_items("Browser", &MENU_ITEMS);
+    // Before Quit: the page becomes its own app.
+    let quit = browser.items.pop();
+    browser.items.push(MenuItem::Divider);
+    browser.items.push(MenuItem::Action {
+        id: ACTION_WRAP_PAGE.into(),
+        label: "Wrap This Page…".into(),
+        shortcut: None,
+        disabled: false,
+        checked: false,
+    });
+    browser.items.push(MenuItem::Divider);
+    browser.items.extend(quit);
     AppMenuPayload {
         app_id: app_id.into(),
         menus: vec![
-            menu_from_items("Browser", &MENU_ITEMS),
+            browser,
             menu_from_items("Edit", &EDIT_MENU_ITEMS),
             profiles_menu(),
         ],
@@ -252,6 +269,8 @@ pub enum BrowserIntent {
     Find,
     FindNext,
     FindPrev,
+    /// The active page becomes a web app (the Wrap sheet).
+    WrapPage,
     Quit,
     None,
 }
@@ -289,6 +308,7 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_BACK => BrowserIntent::Back,
         ACTION_FORWARD => BrowserIntent::Forward,
         ACTION_QUIT => BrowserIntent::Quit,
+        ACTION_WRAP_PAGE => BrowserIntent::WrapPage,
         ACTION_DEVTOOLS => BrowserIntent::ShowDevTools,
         ACTION_EDIT_CUT => BrowserIntent::Edit(EditCmd::Cut),
         ACTION_EDIT_COPY => BrowserIntent::Edit(EditCmd::Copy),
@@ -317,6 +337,10 @@ pub fn handle_bus<E: Engine>(
     if sola_kit::app::is_self_quit(&message, app_id) {
         app.persist_session();
         return iced::exit();
+    }
+    // Web apps: the catalog, and what is addressed to an app hosted here.
+    if let Some(task) = app.on_web_app_bus(&message) {
+        return task;
     }
     match Topic::parse(&message) {
         Some(Topic::OpenUrl(req)) => {
@@ -430,6 +454,7 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             });
             Task::none()
         }
+        BrowserIntent::WrapPage => app.open_wrap_sheet(),
         BrowserIntent::Quit => iced::exit(),
         BrowserIntent::None => Task::none(),
     }

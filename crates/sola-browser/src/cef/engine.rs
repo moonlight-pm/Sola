@@ -597,6 +597,11 @@ struct CefTabState {
     /// A window per page: the page's window is on screen, so it paints
     /// whether or not it is the active tab ([`Cmd::ShowPage`]).
     shown: Cell<bool>,
+    /// A web app's page: the app's start URL ([`Cmd::AppSite`]).
+    app_site: RefCell<Option<String>>,
+    /// Bumped by each resize or show of the page's window: a pending
+    /// [`check_page_size`] for an older one stands down.
+    size_seq: Cell<u64>,
 }
 
 /// Keep a board page zoomed to its raster scale (zoom is per host in
@@ -2242,11 +2247,11 @@ cef::wrap_request_handler! {
     impl RequestHandler {
         fn on_before_browse(
             &self,
-            _browser: Option<&mut cef::Browser>,
-            _frame: Option<&mut cef::Frame>,
+            browser: Option<&mut cef::Browser>,
+            frame: Option<&mut cef::Frame>,
             request: Option<&mut cef::Request>,
-            _user_gesture: ::std::os::raw::c_int,
-            _is_redirect: ::std::os::raw::c_int,
+            user_gesture: ::std::os::raw::c_int,
+            is_redirect: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
             let Some(req) = request else { return 0 };
             use cef::ImplRequest;
@@ -2256,6 +2261,18 @@ cef::wrap_request_handler! {
                 #[cfg(feature = "bitwarden")]
                 handle_webauthn_payload(&payload);
                 return 1;
+            }
+            // A web app's window: a link the user follows to another site
+            // opens as a browser page. Redirects stay in the window.
+            let main = frame.is_some_and(|f| f.is_main() != 0);
+            if main && user_gesture != 0 && is_redirect == 0 {
+                if let Some(b) = browser {
+                    if leaves_app_site(b.identifier(), &url) {
+                        tracing::info!(%url, "web app link opens as a browser page");
+                        request_chrome_tab(&cef_state(), url, true);
+                        return 1;
+                    }
+                }
             }
             0
         }
@@ -3409,6 +3426,11 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             return keep;
         }
         Cmd::ShowPage { id, shown } => show_page(state, id, shown),
+        Cmd::AppSite { id, start } => {
+            if let Some(tab) = tab_state_by_id(state, id) {
+                tab.app_site.replace(Some(start));
+            }
+        }
         Cmd::Resize { width, height, .. } if state.target.get().is_some() => {
             if let Some(id) = state.target.get() {
                 resize_page(state, id, width, height);
@@ -3816,6 +3838,81 @@ fn resize_page(state: &CefThreadState, id: TabId, width: u32, height: u32) {
                 host.invalidate(cef::PaintElementType::VIEW);
             }
         }
+        watch_page_size(&tab);
+    }
+}
+
+/// How long a page window waits for a frame at its size before the page
+/// is nudged, and how many nudges it gets.
+const SIZE_CHECK_MS: i64 = 300;
+const SIZE_CHECK_TRIES: u32 = 3;
+
+/// Check, in a moment, that page `tab` painted at its window's size.
+fn watch_page_size(tab: &CefTabState) {
+    let seq = tab.size_seq.get() + 1;
+    tab.size_seq.set(seq);
+    schedule_size_check(tab.id, seq, 1);
+}
+
+fn schedule_size_check(id: TabId, seq: u64, attempt: u32) {
+    let mut task = PageSizeCheckTask::new(id.0, seq, attempt);
+    cef::post_delayed_task(
+        cef::ThreadId::from(cef::sys::cef_thread_id_t::TID_UI),
+        Some(&mut task),
+        SIZE_CHECK_MS,
+    );
+}
+
+cef::wrap_task! {
+    pub struct PageSizeCheckTask {
+        tab: u64,
+        seq: u64,
+        attempt: u32,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            check_page_size(&cef_state(), TabId(self.tab), self.seq, self.attempt);
+        }
+    }
+}
+
+/// A page window resized (or shown) and still without a frame at its size.
+/// Resized several times in a row — a new window's default size, then its
+/// zone — CEF can be left with no frame at the last size, and a page that
+/// has stopped painting stays dark: `was_resized` and `invalidate` only
+/// re-capture the old picture. Hiding and showing the page has its
+/// renderer draw a new frame, at the size it has now.
+fn check_page_size(state: &CefThreadState, id: TabId, seq: u64, attempt: u32) {
+    let Some(tab) = tab_state_by_id(state, id) else {
+        return;
+    };
+    if tab.size_seq.get() != seq
+        || tab.board.get().is_some()
+        || !state.is_front.get()
+        || !paints(state, &tab)
+    {
+        return;
+    }
+    // A page that has not painted yet is still loading: its first frame
+    // comes at the size it has.
+    let want = page_size(state, &tab);
+    let Some(got) = tab.last_frame.borrow().as_ref().map(|f| (f.width, f.height)) else {
+        return;
+    };
+    if got.0.abs_diff(want.0) <= 1 && got.1.abs_diff(want.1) <= 1 {
+        return;
+    }
+    let Some(host) = tab.browser.host() else {
+        return;
+    };
+    tracing::info!(?id, ?got, ?want, attempt, "page has no frame at its window's size — nudging it");
+    host.was_hidden(1);
+    host.was_hidden(0);
+    host.was_resized();
+    host.invalidate(cef::PaintElementType::VIEW);
+    if attempt < SIZE_CHECK_TRIES {
+        schedule_size_check(id, seq, attempt + 1);
     }
 }
 
@@ -3851,6 +3948,7 @@ fn show_page(state: &CefThreadState, id: TabId, shown: bool) {
         });
         if !replayed {
             host.was_resized();
+            watch_page_size(&tab);
         }
         host.invalidate(cef::PaintElementType::VIEW);
     }
@@ -4182,6 +4280,8 @@ fn attach_devtools(state: &CefThreadState, browser: &cef::Browser) {
         board: Cell::new(None),
         own_size: Cell::new(None),
         shown: Cell::new(false),
+        app_site: RefCell::new(None),
+        size_seq: Cell::new(0),
     };
     if let Some(host) = tab.browser.host() {
         let show = inspected == state.active.get() && state.is_front.get();
@@ -5599,6 +5699,8 @@ fn push_tab(
         board: Cell::new(board),
         own_size: Cell::new(None),
         shown: Cell::new(false),
+        app_site: RefCell::new(None),
+        size_seq: Cell::new(0),
     });
     rebuild_snapshot(state);
     tracing::info!(?id, browser_id, url = %initial_url, active = is_active, "opened tab");
@@ -5701,6 +5803,19 @@ fn handle_link_hit(state: &CefThreadState, href: String) {
         state.cmd_click_opened.set(true);
         request_chrome_tab(state, href, false);
     }
+}
+
+/// Browser `browser_id` is a web app's page and `url` is on another site.
+fn leaves_app_site(browser_id: i32, url: &str) -> bool {
+    let state = cef_state();
+    let tabs = state.tabs.borrow();
+    let Some(tab) = tabs.iter().find(|t| t.browser_id == browser_id) else {
+        return false;
+    };
+    let start = tab.app_site.borrow();
+    start
+        .as_deref()
+        .is_some_and(|start| crate::popup::is_offsite_http(start, url))
 }
 
 fn request_chrome_tab(state: &CefThreadState, url: String, activate: bool) {

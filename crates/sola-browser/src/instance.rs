@@ -14,11 +14,13 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::profiles;
 
 const ACTIVATE: &str = "@activate";
+/// `@app <id>`: open (or bring up) web app `<id>`.
+const OPEN_APP: &str = "@app";
 
 static HANDOFF_TX: OnceLock<Sender<Handoff>> = OnceLock::new();
 static HANDOFF_RX: OnceLock<Mutex<Receiver<Handoff>>> = OnceLock::new();
@@ -27,6 +29,8 @@ static HANDOFF_RX: OnceLock<Mutex<Receiver<Handoff>>> = OnceLock::new();
 pub enum Handoff {
     OpenUrl(String),
     Activate,
+    /// Open web app `<id>`'s window, or bring it up.
+    OpenApp(String),
 }
 
 /// RAII lock: listener stays bound for the chrome lifetime.
@@ -131,19 +135,82 @@ fn read_handoff(stream: UnixStream) -> Option<Handoff> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader.read_line(&mut line).ok()?;
+    parse_line(&line)
+}
+
+/// One handoff line. Connect-only (no line) is a liveness probe —
+/// `chrome_is_running` and `sock_is_live` just connect and drop. Treating
+/// that as Activate made every shell OpenUrl check queue a raise, which
+/// re-probed the sock and flooded the chrome.
+fn parse_line(line: &str) -> Option<Handoff> {
     let line = line.trim();
-    // Connect-only (no line) is a liveness probe — `chrome_is_running`
-    // and `sock_is_live` just connect and drop. Treating that as
-    // Activate made every shell OpenUrl check queue a raise, which
-    // re-probed the sock and flooded the chrome.
     if line.is_empty() {
         return None;
     }
     if line == ACTIVATE {
         Some(Handoff::Activate)
+    } else if let Some(rest) = line
+        .strip_prefix(OPEN_APP)
+        .filter(|r| r.is_empty() || r.starts_with(' '))
+    {
+        let id = rest.trim();
+        (!id.is_empty()).then(|| Handoff::OpenApp(id.to_string()))
     } else {
         Some(Handoff::OpenUrl(line.to_string()))
     }
+}
+
+/// Tell the running chrome to open web app `app_id`.
+pub fn handoff_app(app_id: &str) -> Result<(), String> {
+    let sock = chrome_sock_path();
+    let mut stream =
+        UnixStream::connect(&sock).map_err(|e| format!("connect {}: {e}", sock.display()))?;
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    stream
+        .write_all(format!("{OPEN_APP} {app_id}\n").as_bytes())
+        .map_err(|e| format!("write handoff: {e}"))?;
+    tracing::info!(%app_id, "handed a web app off to the existing chrome");
+    Ok(())
+}
+
+/// A primary chrome is up and listening.
+pub fn chrome_is_live() -> bool {
+    sock_is_live(&chrome_sock_path())
+}
+
+/// How long `--app` waits for the browser it asked the session for.
+const BROWSER_START_WAIT: Duration = Duration::from_secs(20);
+
+/// `--app <id>` with no browser up: have the session start the browser as
+/// itself, then hand it the app once it listens. The session then tracks,
+/// restores and closes the browser as the browser — were this process the
+/// browser, closing the web app would stop every page and app with it, and
+/// the next login would start `--app <id>` instead. False when there is no
+/// session to ask, or the browser did not come up (this process goes on
+/// to claim the chrome itself).
+pub fn start_browser_for_app(app_id: &str) -> bool {
+    use sola_bus::topics::{LaunchAppPayload, Topic};
+    let mut bus = sola_bus::BusClient::new();
+    if bus.connect().is_err() {
+        return false;
+    }
+    let command = sola_core::paths::bin_path("sola-browser").display().to_string();
+    let launch = Topic::LaunchApp(LaunchAppPayload {
+        app_id: "sola-browser".into(),
+        command,
+    });
+    if bus.emit(launch).is_err() {
+        return false;
+    }
+    let deadline = Instant::now() + BROWSER_START_WAIT;
+    while Instant::now() < deadline {
+        if chrome_is_live() {
+            return handoff_app(app_id).is_ok();
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    tracing::warn!(%app_id, "the session's browser did not come up — starting here");
+    false
 }
 
 fn sock_is_live(sock: &std::path::Path) -> bool {
@@ -196,17 +263,10 @@ mod tests {
             Some(Handoff::OpenUrl(u)) => assert_eq!(u, "https://wiki.example"),
             other => panic!("{other:?}"),
         }
-    }
-
-    fn parse_line(line: &str) -> Option<Handoff> {
-        let line = line.trim();
-        if line.is_empty() {
-            return None;
+        match parse_line("@app web-1\n") {
+            Some(Handoff::OpenApp(id)) => assert_eq!(id, "web-1"),
+            other => panic!("{other:?}"),
         }
-        if line == ACTIVATE {
-            Some(Handoff::Activate)
-        } else {
-            Some(Handoff::OpenUrl(line.to_string()))
-        }
+        assert!(parse_line("@app ").is_none());
     }
 }

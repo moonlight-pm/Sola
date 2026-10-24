@@ -136,8 +136,9 @@ ignoring case. Each entry has:
 | `label` | The name in the launcher and the switcher |
 | `command` | What `LaunchApp` carries |
 | `icon` | An icon pack name under `/opt/sola/share/icons` (`lucide/terminal`, `simpleicons/firefox`), or a path to an image |
-| `kind` | `command`, or `wrapper` for a website wrapper |
-| `url` | A wrapper's start page |
+| `kind` | `command`, or `web` for a [web app](web-apps.md) |
+| `url` | A web app's start page |
+| `profile` | The Browser profile a web app runs on |
 
 ### Built-in entries
 
@@ -160,9 +161,8 @@ replays it to the shell and to Settings when they start. Changing an
 entry's app id retracts the old entry and publishes the new one;
 **Remove** retracts it. The launcher shows changes at once.
 
-An entry needs an app id, a name, and a command, or for a wrapper an
-`http://` or `https://` URL. On save, a first word of the command that is
-found on `PATH` is replaced by its absolute path.
+An entry needs an app id, a name, and a command. On save, a first word of
+the command that is found on `PATH` is replaced by its absolute path.
 
 **Running, not configured** lists open windows whose app id has no entry
 (Sola's own applications excepted), with a command guessed from the app id
@@ -173,11 +173,11 @@ Other applications publish entries too. Arcade adds an entry with no
 command so the switcher can name a running game. Entries with no command
 never appear in the launcher.
 
-### Website wrappers
+### Web apps
 
-An entry of kind `wrapper` runs `/opt/sola/bin/sola-wrapper <app_id>`;
-Settings writes that command itself. The wrapper reads its start page from
-the entry. See [Website wrappers](sola-wrapper.md).
+An entry of kind `web` runs `/opt/sola/bin/sola-browser --app <app_id>`.
+Browser writes these entries when you wrap a page and retracts them when
+you remove the app; Settings does not list them. See [Web apps](web-apps.md).
 
 ### Desktop files
 
@@ -265,7 +265,7 @@ the application.
 
 `sola-session` has no notion of a single instance: every launch starts a
 new process. Applications that keep one instance do it themselves:
-Browser, Paint, Arcade, Design, and each website wrapper. A second process
+Browser (with its web apps), Paint, Arcade, and Design. A second process
 hands its request (a URL, an image, or a request to come forward) to the
 running one and exits. `sola-session` reaps it like any other exit.
 

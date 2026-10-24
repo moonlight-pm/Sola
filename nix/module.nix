@@ -79,7 +79,7 @@ in
       jetbrains-mono
     ];
 
-    # CEF (sola-browser / sola-wrapper) needs ~26 transitive native
+    # CEF (sola-browser, sola-design) needs ~26 transitive native
     # libs at runtime. We collate them via nix-ld's dispatch dir and
     # patch libcef.so's DT_RUNPATH to point at it — see
     # docs/vault/Distribution.md. cargo make install-cef patches the
