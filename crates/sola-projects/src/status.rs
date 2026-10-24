@@ -1075,6 +1075,8 @@ mod tests {
         Incoming {
             pane_id: "p".into(),
             cwd: None,
+            ask: None,
+            transcript: None,
             agent: "grok".into(),
             mapped: MappedHook {
                 status: Some(status),
@@ -1093,6 +1095,8 @@ mod tests {
         Incoming {
             pane_id: "p".into(),
             cwd: None,
+            ask: None,
+            transcript: None,
             agent: "grok".into(),
             mapped: MappedHook {
                 status: None,
@@ -1111,6 +1115,8 @@ mod tests {
         Incoming {
             pane_id: "p".into(),
             cwd: None,
+            ask: None,
+            transcript: None,
             agent: "grok".into(),
             mapped: MappedHook {
                 status: Some(AgentStatus::Working),
@@ -1129,6 +1135,8 @@ mod tests {
         Incoming {
             pane_id: "p".into(),
             cwd: None,
+            ask: None,
+            transcript: None,
             agent: "grok".into(),
             mapped: MappedHook {
                 status: Some(AgentStatus::Done),
@@ -1650,6 +1658,8 @@ mod tests {
         let incoming = Incoming {
             pane_id: "p".into(),
             cwd: None,
+            ask: None,
+            transcript: None,
             agent: "codex".into(),
             mapped: MappedHook {
                 status: None,

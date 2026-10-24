@@ -87,6 +87,24 @@ access to the receiver's hidraw node; the NixOS module's udev rule gives
 it to the `input` group. Other Lamzu receivers and the wired cable are not
 read.
 
+## Agent islands
+
+When a Projects session asks you something (a permission, a question) or
+finishes its turn, an island for it appears on the left of the top row,
+after the flower: a diamond for a question, a check for a finished turn,
+the session's name and what it wants. The session you are looking at gets
+none. Past half the row, a **+N** island lists the rest.
+
+Click an island for its card. A question's card shows the question and
+its answers as buttons, with a field for your own answer; a finished
+session's card shows its last message and a field to tell it what to do
+next (Return sends). Your answer is typed into the session, as you would
+type it, and the island goes. **Show** brings up the session's tab
+without answering; Esc closes the card and leaves the island.
+
+An island also goes when the session moves on, or when you look at its
+tab yourself.
+
 ## Tab bar
 
 The tab bar is the column on the left: every window, by the zone it is

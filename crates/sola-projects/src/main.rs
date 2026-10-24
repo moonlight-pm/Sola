@@ -13,7 +13,9 @@ use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard, window};
 
 use sola_bus::Message;
-use sola_bus::topics::{AppNotification, SplitDir, Topic, TopicKind};
+use sola_bus::topics::{
+    AgentIslandAction, AppNotification, IslandAction, IslandState, SplitDir, Topic, TopicKind,
+};
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
 };
@@ -31,6 +33,7 @@ mod cards;
 mod catalog;
 mod cli;
 mod hooks;
+mod islands;
 mod menu;
 mod paths;
 mod presence;
@@ -42,6 +45,22 @@ mod windows;
 
 const APP_ID: &str = "sola-projects";
 const WINDOW_TITLE: &str = "Projects";
+
+/// An island's screen read: first a moment after the ask (the prompt
+/// draws after its hook), then again while no choices show, a few times.
+const ISLAND_SCAN_MS: u64 = 400;
+const ISLAND_RESCAN_MS: u64 = 700;
+const ISLAND_SCAN_TRIES: u8 = 4;
+/// Lines of the screen's end that stand for a body the hook did not give.
+const ISLAND_TAIL_LINES: usize = 14;
+/// Between picking a question's "Type something" and typing the answer.
+const ISLAND_TYPE_SETTLE: Duration = Duration::from_millis(150);
+
+fn island_scan_later(pane: String, ms: u64) -> Task<Msg> {
+    Task::perform(tokio::time::sleep(Duration::from_millis(ms)), move |_| {
+        Msg::IslandScan(pane.clone())
+    })
+}
 
 fn now_millis() -> u128 {
     std::time::SystemTime::now()
@@ -81,6 +100,7 @@ fn main() -> iced::Result {
             TopicKind::TabWindow,
             TopicKind::CloseTab,
             TopicKind::NotificationActivate,
+            TopicKind::AgentIslandAction,
         ])
         .calls(calls::OWNER, calls::methods())
         .install();
@@ -131,6 +151,8 @@ struct App {
     /// One of the app's windows has keyboard focus (desk cards wait).
     window_focused: bool,
     pending_waits: Vec<PendingWait>,
+    /// What each session needs from you: its island in the top row.
+    islands: islands::Islands,
 }
 
 struct PendingWait {
@@ -201,6 +223,9 @@ enum Msg {
     SplitDividerPress(String),
     Ignore,
     Hook(hooks::Incoming),
+    /// Read a session's screen for its island (the prompt's choices, or a
+    /// body), a moment after it began to need you.
+    IslandScan(String),
     Osc(String, sola_terminal::osc9999::OscStatus),
     PresenceTick,
     Call(sola_call::Incoming),
@@ -336,6 +361,7 @@ impl App {
             startup: cards::StartupDraft::default(),
             window_focused: true,
             pending_waits: Vec::new(),
+            islands: islands::Islands::default(),
         };
         app.sync_all_rows();
         let reap = app.reap_missing_worktrees();
@@ -420,7 +446,8 @@ impl App {
         let task = self.update_msg(msg);
         self.note_selected();
         self.windows.publish_activity(&self.tabs);
-        task
+        let scans = self.sync_islands();
+        Task::batch([task, scans])
     }
 
     /// Remember the selected tab as its project's, so each project window
@@ -451,6 +478,8 @@ impl App {
                     );
                     return Task::none();
                 };
+                self.islands
+                    .note_hook(&id, incoming.ask.clone(), incoming.transcript.clone());
                 let prev = self
                     .pane_status
                     .get(&id)
@@ -475,6 +504,7 @@ impl App {
                 self.flush_waits();
                 Task::none()
             }
+            Msg::IslandScan(id) => self.scan_island(&id),
             Msg::Osc(id, payload) => {
                 if let Some(id) = self.resolve_pane(&id) {
                     let prev = self
@@ -959,6 +989,9 @@ impl App {
                 }
             }
             return Task::none();
+        }
+        if let Some(Topic::AgentIslandAction(a)) = Topic::parse(m) {
+            return self.on_island_action(a);
         }
         if apply_theme_update(m, &mut self.theme) {
             if let Some(Topic::Theme(bus)) = Topic::parse(m) {
@@ -1681,6 +1714,138 @@ impl App {
         catalog::apply_spawn_focus(&mut self.selected, &mut self.focused, &id, select);
         self.persist_catalog();
         Ok((id, startup_err))
+    }
+
+    /// Follow every session's status into its island; send the islands.
+    /// Returns screen reads for sessions that newly need you.
+    fn sync_islands(&mut self) -> Task<Msg> {
+        let now = now_millis() as u64;
+        let mut scans = Vec::new();
+        for (id, st) in &self.pane_status {
+            // A status restored from before a restart says nothing yet.
+            let status = (!st.restored_unconfirmed).then_some(st.status);
+            if self.islands.track(id, status, now) {
+                scans.push(id.clone());
+            }
+        }
+        let known: Vec<String> = self.pane_status.keys().cloned().collect();
+        let live: HashSet<String> = known
+            .iter()
+            .filter(|p| self.tab_for_pane(p).is_some())
+            .cloned()
+            .collect();
+        self.islands.retain(|p| live.contains(p));
+        let mut looked = HashMap::new();
+        let mut place = HashMap::new();
+        for pane in self.islands.panes() {
+            looked.insert(pane.clone(), self.looked_at(&pane));
+            let (project, name) = self.toast_place(&pane);
+            place.insert(pane, (project.unwrap_or_default(), name));
+        }
+        self.islands.sync(&looked, &place, &known);
+        Task::batch(scans.into_iter().map(|id| island_scan_later(id, ISLAND_SCAN_MS)))
+    }
+
+    /// You are looking at pane `pane`: its tab is the one its project
+    /// window shows, and that window has the keyboard.
+    fn looked_at(&self, pane: &str) -> bool {
+        let Some(tab) = self.tab_for_pane(pane) else {
+            return false;
+        };
+        let window = self.windows.window_of(&tab.project_id);
+        self.window_focused
+            && window.is_some()
+            && self.windows.focused == window
+            && self.selected_of(&tab.project_id) == Some(tab.id.as_str())
+    }
+
+    /// The prompt draws a moment after its hook: read its choices (a
+    /// question's, a permission's) or, with nothing from the hook, the end
+    /// of the screen as the body. Tries again while the prompt is not up.
+    fn scan_island(&mut self, id: &str) -> Task<Msg> {
+        let screen = tmux::capture_scrollback(&tmux::session_name(id)).unwrap_or_default();
+        let Some(need) = self.islands.need_mut(id) else {
+            return Task::none();
+        };
+        need.scans += 1;
+        if need.state == IslandState::Waiting {
+            // The prompt is at the bottom; an older list further up is not it.
+            need.choices = islands::choices_on_screen(&islands::screen_tail(&screen, 40));
+            if need.choices.is_empty() && need.scans < ISLAND_SCAN_TRIES {
+                return island_scan_later(id.to_string(), ISLAND_RESCAN_MS);
+            }
+        }
+        if need.state == IslandState::Done && !need.asked {
+            // The transcript may not have had the last message yet.
+            let message = self.islands.last_message(id);
+            let Some(need) = self.islands.need_mut(id) else {
+                return Task::none();
+            };
+            match message {
+                Some(m) => {
+                    need.body = m;
+                    need.asked = true;
+                }
+                None if need.scans < ISLAND_SCAN_TRIES => {
+                    need.body = islands::screen_tail(&screen, ISLAND_TAIL_LINES);
+                    return island_scan_later(id.to_string(), ISLAND_RESCAN_MS);
+                }
+                None => need.body = islands::screen_tail(&screen, ISLAND_TAIL_LINES),
+            }
+            return Task::none();
+        }
+        if need.body.is_empty() {
+            need.body = islands::screen_tail(&screen, ISLAND_TAIL_LINES);
+        }
+        Task::none()
+    }
+
+    /// The shell's island: an answer typed into the session, a reply, or
+    /// its tab pulled up.
+    fn on_island_action(&mut self, a: AgentIslandAction) -> Task<Msg> {
+        let pane = a.key;
+        let session = tmux::session_name(&pane);
+        match a.action {
+            IslandAction::Show => {
+                self.islands.answer(&pane);
+                let Some(tab) = self.tab_for_pane(&pane).map(|t| t.id.clone()) else {
+                    return Task::none();
+                };
+                let task = self.show_tab(&tab);
+                self.set_focus(&tab, &pane);
+                task
+            }
+            IslandAction::Choose(i) => {
+                let Some(need) = self.islands.answer(&pane) else {
+                    return Task::none();
+                };
+                let Some(choice) = need.offered().get(i as usize).copied().cloned() else {
+                    return Task::none();
+                };
+                tracing::info!(%pane, choice = %choice.label, "island answer");
+                if let Err(e) = tmux::send_literal(&session, &choice.key.to_string()) {
+                    tracing::warn!(%pane, "island answer failed: {e}");
+                }
+                Task::none()
+            }
+            IslandAction::Reply(text) => {
+                let Some(need) = self.islands.answer(&pane) else {
+                    return Task::none();
+                };
+                // A question's own answer: pick its "Type something" first.
+                if need.state == IslandState::Waiting {
+                    if let Some(own) = need.choices.iter().find(|c| islands::is_free_text(&c.label)) {
+                        let _ = tmux::send_literal(&session, &own.key.to_string());
+                        std::thread::sleep(ISLAND_TYPE_SETTLE);
+                    }
+                }
+                tracing::info!(%pane, "island reply");
+                if let Err(e) = self.write_pane(&pane, &text, true) {
+                    tracing::warn!(%pane, "island reply failed: {e}");
+                }
+                Task::none()
+            }
+        }
     }
 
     fn toast_place(&self, pane_id: &str) -> (Option<String>, String) {

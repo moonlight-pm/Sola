@@ -24,6 +24,7 @@ use crate::stacks::Stacks;
 use crate::switcher::state::SwitcherState;
 use crate::zoning::ZoningState;
 
+pub mod agents;
 pub mod bus;
 pub mod workspaces;
 
@@ -204,6 +205,17 @@ pub enum Msg {
     ShowTab(u32),
     /// A tab bar row's stoplight: close that window, as its own close would.
     CloseWindow(u32),
+    /// Open (or close) an agent island's card.
+    AgentIslandOpen(String),
+    /// The +N island: the agent islands that did not fit.
+    AgentIslandList,
+    /// The open card's choice, by index.
+    AgentIslandChoose(u32),
+    /// The open card's reply field changed / was sent.
+    AgentIslandReplyInput(String),
+    AgentIslandReply,
+    /// The open card's Show: pull the session's tab up.
+    AgentIslandShow,
     /// Open (or close) the workspace menu (the tab bar's head) for the
     /// showing workspace.
     WorkspaceMenu(usize),
@@ -275,6 +287,10 @@ pub enum Panel {
     Workspace(usize),
     /// Renaming a workspace (`workspace.renaming`).
     RenameWorkspace,
+    /// An agent island's card (`agents.open`).
+    AgentIsland,
+    /// The agent islands that did not fit (the +N island).
+    AgentIslands,
 }
 
 /// In-flight launcher spawn waiting for a first matching window (or timeout).
@@ -322,6 +338,8 @@ pub struct Shell {
     /// What each tab is doing (`Topic::TabActivity`), by tab key: the
     /// mark on its bar row.
     pub tab_activity: HashMap<String, sola_bus::topics::Activity>,
+    /// Agent sessions' islands in the top row and the card open.
+    pub agents: crate::agents::AgentIslands,
     /// Last on-screen state sent for each tab window (`TabWindow.shown`).
     tab_shown_sent: HashMap<u32, bool>,
     pub tabbar: crate::tabbar::TabBarState,
@@ -493,6 +511,7 @@ impl Shell {
             tabs: Stacks::new(),
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
+            agents: Default::default(),
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
@@ -2002,6 +2021,20 @@ impl Shell {
                     height: crate::menu::workspace::menu_height(self).round() as i32,
                 };
             }
+            Some(Panel::AgentIsland) => {
+                let w = crate::agents::view::CARD_WIDTH;
+                let x = crate::agents::view::anchor_x(self, self.agents.open.as_deref());
+                let h = self
+                    .agents
+                    .opened()
+                    .map_or(200.0, crate::agents::view::card_height);
+                (clamp_x(x, w), w, h)
+            }
+            Some(Panel::AgentIslands) => {
+                let w = crate::agents::view::CARD_WIDTH;
+                let x = crate::agents::view::anchor_x(self, None);
+                (clamp_x(x, w), w, crate::agents::view::list_height(self))
+            }
             Some(Panel::RenameWorkspace) => {
                 let (x, y) = crate::tabbar::head::menu_anchor();
                 return crate::zoning::MenuOverlaySpec {
@@ -2898,6 +2931,35 @@ impl Shell {
                 self.emit_registered_chords();
                 iced::Task::none()
             }
+            Msg::AgentIslandOpen(key) => self.open_agent_island(key),
+            Msg::AgentIslandList => {
+                if self.menu_open && self.open_panel == Some(Panel::AgentIslands) {
+                    let _ = self.dismiss_open_menu();
+                } else {
+                    let _ = self.dismiss_open_menu();
+                    self.menu_open = true;
+                    self.set_open_panel(Some(Panel::AgentIslands));
+                }
+                self.emit_overlay_frames();
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::AgentIslandChoose(i) => {
+                self.agent_island_act(sola_bus::topics::IslandAction::Choose(i))
+            }
+            Msg::AgentIslandReplyInput(text) => {
+                self.agents.reply = text;
+                iced::Task::none()
+            }
+            Msg::AgentIslandReply => {
+                let text = std::mem::take(&mut self.agents.reply);
+                if text.trim().is_empty() {
+                    return iced::Task::none();
+                }
+                self.agent_island_act(sola_bus::topics::IslandAction::Reply(text))
+            }
+            Msg::AgentIslandShow => self.agent_island_act(sola_bus::topics::IslandAction::Show),
             Msg::CloseWindow(wid) => {
                 // A tab's window: its app closes it (not through the
                 // compositor, whose close requests also mean "quit").
@@ -2991,6 +3053,7 @@ mod pending_launch_tests {
             tabs: Stacks::new(),
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
+            agents: Default::default(),
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
@@ -3119,6 +3182,7 @@ mod hide_tests {
             tabs: Stacks::new(),
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
+            agents: Default::default(),
             tab_shown_sent: HashMap::new(),
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),

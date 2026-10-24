@@ -20,6 +20,10 @@ pub struct Incoming {
     /// `X-Sola-Pane-Id` can name the wrong tab. Callers retarget
     /// when this path disagrees with that pane.
     pub cwd: Option<String>,
+    /// What the hook says the session asks (its island's title and body).
+    pub ask: Option<crate::islands::Ask>,
+    /// Claude's transcript (a finished turn's last message).
+    pub transcript: Option<String>,
 }
 
 pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
@@ -194,6 +198,8 @@ fn incoming_from_json(
         agent,
         mapped,
         cwd,
+        ask: crate::islands::ask_from_hook(&event),
+        transcript: crate::islands::transcript_of(&event),
     }))
 }
 

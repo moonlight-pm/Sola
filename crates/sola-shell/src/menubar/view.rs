@@ -37,7 +37,7 @@ const CHROME_NUDGE_UP: f32 = 2.0;
 /// An island of the top row: a pill on the ground with a lit top edge,
 /// lifted a step while `open` (its panel shows). `pad_h` either side of
 /// its content.
-pub(super) fn island<'a>(
+pub(crate) fn island<'a>(
     content: impl Into<Element<'a, Msg>>,
     open: bool,
     pad_h: f32,
@@ -100,7 +100,7 @@ fn island_fill(theme: &Theme, open: bool) -> Color {
 
 /// An item inside an island: its full height is the hit target, nothing
 /// drawn (the island shows open).
-pub(super) fn item<'a>(content: impl Into<Element<'a, Msg>>, on_press: Msg) -> Element<'a, Msg> {
+pub(crate) fn item<'a>(content: impl Into<Element<'a, Msg>>, on_press: Msg) -> Element<'a, Msg> {
     let centered = container(content.into())
         .height(Length::Fill)
         .align_y(Alignment::Center);
@@ -149,7 +149,11 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         index: 0,
         is_system: true,
     });
-    let left = row![flower].align_y(Alignment::Center);
+    // Then an island per agent session that asks or has finished.
+    let left = row![flower]
+        .extend(crate::agents::view::row_islands(shell))
+        .spacing(ISLAND_GAP)
+        .align_y(Alignment::Center);
 
     // ── Right: an island per group ───────────────────────────────────
     let mut islands: Vec<Element<'_, Msg>> = Vec::new();

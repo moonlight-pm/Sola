@@ -299,6 +299,62 @@ pub struct WindowWorkspace {
     pub workspace: String,
 }
 
+/// What a Projects session needs from you, as an island in the top row
+/// (Projects → shell; `docs/specs/2026-10-23-agent-islands-design.md`).
+/// Carried by the sticky `Topic::AgentIsland`, keyed by `key` (the
+/// session); Projects retracts it when the session works again, closes,
+/// is answered, or is looked at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentIsland {
+    /// The session (Projects' pane id).
+    pub key: String,
+    /// The session's name, as its tab shows it.
+    pub name: String,
+    /// Its project's name.
+    pub project: String,
+    pub state: IslandState,
+    /// After the name on the island: "wants to run cargo make build",
+    /// "asks: Which layout?", "finished".
+    pub title: String,
+    /// The card's body: the whole ask, the question, or the last message.
+    pub body: String,
+    /// The answers to offer, in the prompt's order
+    /// ([`IslandAction::Choose`] names one by index).
+    pub choices: Vec<String>,
+    /// A text field: a reply to a finished session, or a question's own
+    /// answer ([`IslandAction::Reply`]).
+    pub reply: bool,
+    /// When it started to need you (unix ms).
+    pub since: u64,
+}
+
+/// An [`AgentIsland`]'s mark.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IslandState {
+    /// Asks: a permission or a question.
+    Waiting,
+    /// Finished its turn.
+    Done,
+}
+
+/// What you did with an island (shell → Projects): Projects types it into
+/// the session, or pulls its tab up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentIslandAction {
+    pub key: String,
+    pub action: IslandAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IslandAction {
+    /// One of [`AgentIsland::choices`], by index.
+    Choose(u32),
+    /// Text for the session, then Return.
+    Reply(String),
+    /// Select the session's tab and bring its window up (no answer).
+    Show,
+}
+
 /// Emitted by compositor when pointer enters a different surface/window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEnteredPayload {
@@ -1531,6 +1587,15 @@ define_topics! {
     // compositor: an app quitting gets close requests for every window,
     // which must not close its tabs one by one. Appended last.
     CloseTab(String),
+
+    // What a Projects session needs from you, for its island in the top
+    // row (Projects → shell). Sticky, keyed by key; retracted when it no
+    // longer does. Appended last.
+    #[sticky(keys = [key])]
+    AgentIsland(AgentIsland),
+
+    // An island's answer, reply or Show (shell → Projects). Appended last.
+    AgentIslandAction(AgentIslandAction),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1552,6 +1617,8 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::WindowWorkspace
             | TopicKind::CloseWindow
             | TopicKind::CloseTab
+            | TopicKind::AgentIsland
+            | TopicKind::AgentIslandAction
     )
 }
 
@@ -1654,6 +1721,39 @@ mod tests {
             other => panic!("expected TabActivity, got {other:?}"),
         }
         assert!(topic_kind_is_after_mail_status(TopicKind::TabActivity));
+    }
+
+    #[test]
+    fn agent_island_is_sticky_per_session() {
+        let island = AgentIsland {
+            key: "pane-7".into(),
+            name: "menubar-pass".into(),
+            project: "Sola".into(),
+            state: IslandState::Waiting,
+            title: "wants to run cargo make build".into(),
+            body: "cargo make build sola-shell".into(),
+            choices: vec!["Yes".into(), "No".into()],
+            reply: false,
+            since: 1,
+        };
+        let msg = Topic::AgentIsland(island.clone()).to_message();
+        assert!(TopicKind::AgentIsland.behavior().is_sticky());
+        assert_eq!(msg.keys, vec!["pane-7".to_string()]);
+        match Topic::parse(&msg) {
+            Some(Topic::AgentIsland(back)) => assert_eq!(back, island),
+            other => panic!("expected AgentIsland, got {other:?}"),
+        }
+        let act = AgentIslandAction {
+            key: "pane-7".into(),
+            action: IslandAction::Reply("go on".into()),
+        };
+        let msg = Topic::AgentIslandAction(act.clone()).to_message();
+        assert!(!TopicKind::AgentIslandAction.behavior().is_sticky());
+        match Topic::parse(&msg) {
+            Some(Topic::AgentIslandAction(back)) => assert_eq!(back, act),
+            other => panic!("expected AgentIslandAction, got {other:?}"),
+        }
+        assert!(topic_kind_is_after_mail_status(TopicKind::AgentIsland));
     }
 
     #[test]

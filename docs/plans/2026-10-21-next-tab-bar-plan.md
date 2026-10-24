@@ -571,3 +571,37 @@ space. Spec § The bar (head, rows), § The switcher (the tab bar's head).
       browser page (closed, not reopened) and a Paint image (Paint quit
       with its last window). The diamond showed for a waiting Projects
       tab on its row; by the head (another workspace) unsmoked.
+
+## Phase 14 — Agent islands
+
+Spec: [`specs/2026-10-23-agent-islands-design.md`](../specs/2026-10-23-agent-islands-design.md).
+Joshua (2026-10-23): one island per session, left after the flower (A1);
+answers as keystrokes (A2); a finished session shows its last message and
+a reply box, no jump (A3); a separate Show (A4); gone when answered or
+looked at (A5).
+
+- [x] **14a Projects keeps the ask** (`islands.rs`): what it asks from
+      the hook (Claude `tool_name` / `tool_input`, `AskUserQuestion`'s
+      first question, a notification's message); the choices read off the
+      pane's last 40 lines (numbered lines → label + key; "Type something"
+      left to the reply field); the last message on done from Claude's
+      transcript — the turn's own answer, read again while Claude has not
+      flushed it — else the screen's end without the input box. A need
+      comes only from a status change seen live: a status first seen
+      (restored after a restart) makes none.
+- [x] **14b Bus:** sticky `Topic::AgentIsland` (keyed by pane) and
+      `Topic::AgentIslandAction { key, Choose | Reply | Show }`.
+- [x] **14c Shell islands** (`agents/`): left after the flower, newest
+      first, +N past the room (a list card); the card under its island
+      (head, body, choices / reply, Show; Esc closes).
+- [x] **14d Projects acts:** a choice's key (`tmux send-keys -l`), a reply
+      pasted then Return (a question's "Type something" first), Show
+      selects the tab and shows its window; retracted on working / closed
+      / answered / looked at (its tab shown in its focused window), and
+      on start for any left from a previous run.
+- [x] **14e Smoke** on canto with a throwaway Claude tab (removed after):
+      a question (its card, Blue picked → "Which color? → Blue"), a
+      finished turn (its last message), a reply ("thanks" → "You're
+      welcome."), Show (the tab selected, the island gone), Esc, a
+      restart (no stale islands). Unsmoked: a permission prompt (that
+      session ran in auto mode), Codex / Grok sessions, the +N list.

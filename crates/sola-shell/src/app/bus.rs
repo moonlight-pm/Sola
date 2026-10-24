@@ -76,6 +76,10 @@ impl Shell {
                 self.on_tab(t, message.sticky);
                 Task::none()
             }
+            Topic::AgentIsland(_) => {
+                self.on_agent_island(&message);
+                Task::none()
+            }
             Topic::TabActivity(a) => {
                 if message.sticky {
                     self.tab_activity.insert(a.key, a.activity);

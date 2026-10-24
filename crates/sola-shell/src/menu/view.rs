@@ -55,6 +55,12 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         Some(crate::app::Panel::RenameWorkspace) => {
             return crate::menu::host_card(super::workspace::rename(shell));
         }
+        Some(crate::app::Panel::AgentIsland) => {
+            return crate::menu::host_card(crate::agents::view::card(shell));
+        }
+        Some(crate::app::Panel::AgentIslands) => {
+            return crate::menu::host_card(crate::agents::view::list(shell));
+        }
         None => {}
     }
 
