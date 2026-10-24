@@ -79,6 +79,7 @@ fn main() -> iced::Result {
             TopicKind::WindowFloating,
             TopicKind::WindowChrome,
             TopicKind::TabWindow,
+            TopicKind::CloseTab,
             TopicKind::NotificationActivate,
         ])
         .calls(calls::OWNER, calls::methods())
@@ -944,6 +945,10 @@ impl App {
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
         self.float.update(m);
         self.windows.update(m);
+        // The tab bar's stoplight: as the window's own close.
+        if let Some(window) = self.windows.close_request(m) {
+            return self.on_window(window, window::Event::CloseRequested);
+        }
         if let Some(Topic::NotificationActivate(a)) = Topic::parse(m) {
             if a.app_id == APP_ID {
                 if let Some(tab) = cli::notice_pane(&a.id)

@@ -10,8 +10,8 @@ use crate::components::float_clip::{self, Ears};
 use crate::components::style::{alpha, mix_white};
 
 /// Classic close light (`#FF5F57`), lit only on the focused window.
-const CLOSE_RED: Color = Color::from_rgb(1.0, 0.372_5, 0.341_2);
-const CLOSE_HOVER: Color = Color::from_rgb(1.0, 0.45, 0.42);
+pub(crate) const CLOSE_RED: Color = Color::from_rgb(1.0, 0.372_5, 0.341_2);
+pub(crate) const CLOSE_HOVER: Color = Color::from_rgb(1.0, 0.45, 0.42);
 
 /// The frame's colours for one focus state, from the live theme.
 pub(super) struct Colors {

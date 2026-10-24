@@ -2,17 +2,17 @@
 //!
 //! The top row of the desk (Next board 03, "a bubble per group"): the
 //! shell's islands on the ground, a gap in from every edge, no band behind
-//! them. Left: the flower (system menu), then the workspaces. Center: a
-//! toast while one shows. Right, an island per group: extras (mail / bell
-//! / mouse battery / bluetooth), the spectrum, the meters (CPU / GPU /
-//! MEM), the network (RX / TX), the clock. Only the look of the islands
-//! is here; the surfaces that grow out of them come later.
+//! them. Left: the flower (system menu; the workspaces are the tab bar's
+//! head). Center: a toast while one shows. Right, an island per group:
+//! extras (mail / bell / mouse battery / bluetooth), the spectrum, the
+//! meters (CPU / GPU / MEM), the network (RX / TX), the clock. Only the
+//! look of the islands is here; the surfaces that grow out of them come
+//! later.
 //!
 //! Window state lives in [`MenubarState`]; the view is in [`view`]; where
 //! the right-hand items sit, for hanging their panels, in [`anchors`].
 
 pub mod anchors;
-pub mod pills;
 pub mod view;
 
 use chrono::Local;
@@ -39,7 +39,7 @@ pub const STAT_INNER_SPACING: f32 = 5.0;
 pub const SPECTRUM_PAD_H: f32 = (ISLAND_H - crate::audio::wave::SPECTRUM_H) / 2.0;
 /// Lucide extras and the flower.
 pub const ICON_SIZE: u16 = 14;
-/// The row's type size (labels, clock, workspace names).
+/// The row's type size (labels, the clock).
 pub const CHROME_SIZE: f32 = 13.0;
 
 /// Identifies one menubar label for the keyboard-shortcut "flash" feedback,

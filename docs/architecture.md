@@ -245,8 +245,10 @@ showing one) and composes only the showing workspace; windows elsewhere
 are hidden by River and keep running. The workspaces (id, name, order) and
 which one shows persist inside `TabLayout` and go out as sticky
 `Topic::Workspaces`; each window's workspace as sticky
-`Topic::WindowWorkspace`. The switcher is pills in the menubar
-(`menubar/pills.rs`); Super+1…9 / Super+Ctrl+1…9 / Super+Ctrl+Tab. The
+`Topic::WindowWorkspace`. The switcher is the tab bar's head and its
+menu (`tabbar/head.rs`, `menu/workspace.rs`; the menu overlay hangs under
+the head, `MenuOverlaySpec.y`); Super+1…9 / Super+Ctrl+1…9 /
+Super+Ctrl+Tab. The
 browser runs one CEF helper per profile, all live: its router keeps a page
 → profile map and routes commands by page (the rest to the active page's
 helper), merges every helper's pages, and makes a helper front only while

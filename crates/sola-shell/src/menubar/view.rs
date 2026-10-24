@@ -126,7 +126,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // same face/size as the value, just lower opacity (not a second size).
     let muted = Color { a: 0.62, ..fg };
 
-    // ── Left: the flower, then the workspaces ────────────────────────
+    // ── Left: the flower ─────────────────────────────────────────────
     let system_open =
         (shell.menu_open && shell.current_open_is_system) || flashing(shell, true, 0);
     let flower = mouse_area(
@@ -149,9 +149,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         index: 0,
         is_system: true,
     });
-    let left = row![flower, super::pills::view(shell)]
-        .spacing(ISLAND_GAP)
-        .align_y(Alignment::Center);
+    let left = row![flower].align_y(Alignment::Center);
 
     // ── Right: an island per group ───────────────────────────────────
     let mut islands: Vec<Element<'_, Msg>> = Vec::new();

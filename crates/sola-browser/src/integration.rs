@@ -78,6 +78,7 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::NotificationActivate,
     // Which window each page is, and whether it is on screen (Next).
     TopicKind::TabWindow,
+    TopicKind::CloseTab,
     // Which workspace shows and where each window is: a page runs its
     // workspace's profile (Next slice 5).
     TopicKind::Workspaces,

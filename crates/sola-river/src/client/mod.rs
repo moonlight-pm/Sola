@@ -447,6 +447,14 @@ pub fn bus_tick(state: &mut AppData) {
                 tracing::info!(%app_id, count = to_close.len(), "CloseApp: queuing close");
                 state.pending.queue_close(to_close);
             }
+            sola_bus::topics::Topic::CloseWindow(window_id) => {
+                if state.windows_by_id.contains_key(&window_id) {
+                    tracing::info!(window_id, "CloseWindow: queuing close");
+                    state.pending.queue_close(vec![window_id]);
+                } else {
+                    tracing::warn!(window_id, "CloseWindow: no such window");
+                }
+            }
             sola_bus::topics::Topic::Shutdown => {
                 info!("shutdown requested via bus");
                 std::process::exit(0);

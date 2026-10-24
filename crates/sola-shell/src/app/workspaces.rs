@@ -22,9 +22,10 @@ pub struct WorkspaceState {
     pub renaming: Option<(usize, String)>,
 }
 
-/// What a workspace pill's menu can do.
+/// What the workspace menu can do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkspaceAction {
+    Show(usize),
     New,
     Rename(usize),
     MoveLeft(usize),
@@ -33,8 +34,8 @@ pub enum WorkspaceAction {
 }
 
 impl Shell {
-    /// Show workspace `index` (Super+1…9, a pill): its last focused window
-    /// takes focus.
+    /// Show workspace `index` (Super+1…9, the workspace menu): its last
+    /// focused window takes focus.
     pub(crate) fn show_workspace(&mut self, index: usize) {
         self.remember_workspace_focus();
         if !self.tabs.show_workspace(index) {
@@ -65,9 +66,13 @@ impl Shell {
         self.emit_all_frames();
     }
 
-    /// A workspace pill's menu.
+    /// The workspace menu.
     pub(crate) fn workspace_action(&mut self, action: WorkspaceAction) {
         match action {
+            WorkspaceAction::Show(index) => {
+                self.show_workspace(index);
+                return;
+            }
             WorkspaceAction::New => {
                 self.remember_workspace_focus();
                 let n = self.tabs.workspace_count() + 1;
@@ -100,7 +105,7 @@ impl Shell {
         self.sync_workspaces();
     }
 
-    /// A workspace pill's menu row. Rename swaps the menu for the rename
+    /// A workspace menu row. Rename swaps the menu for the rename
     /// card and gives it the keyboard; the rest close the menu.
     pub(crate) fn on_workspace_menu(&mut self, action: WorkspaceAction) -> iced::Task<super::Msg> {
         let rename = matches!(action, WorkspaceAction::Rename(_));

@@ -59,8 +59,8 @@ group reboot and power off without a password (this takes effect after
 
 The menubar is the top row of the desk: a row of islands on the black
 ground, a gap in from the edges, nothing behind them. On the left, the
-flower (amber, in its own circle) and an island of workspace pills; while
-a message shows, it sits in the middle; on the right, an island per group:
+flower (amber, in its own circle); while a message shows, it sits in the
+middle; on the right, an island per group:
 mail, alerts, mouse and Bluetooth; the spectrum; CPU, GPU and MEM; RX and
 TX; the clock. Click an item for its panel; its island lifts while the
 panel is open. Windows and the tab bar start a gap below the row.
@@ -86,6 +86,27 @@ disappears when the receiver is unplugged. The Shell needs read/write
 access to the receiver's hidraw node; the NixOS module's udev rule gives
 it to the `input` group. Other Lamzu receivers and the wired cable are not
 read.
+
+## Tab bar
+
+The tab bar is the column on the left: every window, by the zone it is
+in (Full, Left, Right, Floating). Click a row to show that window in its
+zone and focus it; drag a row to reorder it or move it to another zone.
+Hovering a row shows a red close dot, the same as a window's own: it
+closes that window as the window's own close dot would.
+
+- The focused window's row is the bright pill.
+- The window a zone is showing is lifted a step while it is on screen,
+  and in full ink without a lift while its zone is not (Full while the
+  halves are up, or the halves while Full is).
+- The windows behind are muted.
+
+The head names the workspace you are on. Click it for the workspace
+menu: every workspace (the current one checked; Super+1…9 shows one),
+then **New Workspace**, **Rename…**, **Move Left** / **Move Right**, and
+**Delete** for the current one. A diamond beside the name means a tab on
+another workspace waits on a decision; a dot, that a Mail window on
+another workspace has unread mail.
 
 ## Window menu
 

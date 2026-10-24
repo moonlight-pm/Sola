@@ -537,3 +537,37 @@ own menus and removed from there (W3). Accepted 2026-10-23 ("go ahead").
       cold `--app` made the session track the browser as the app.
       Left: a signed-in site and a huddle popup.
 
+
+## Phase 13 — The bar's head is the workspace switcher; the focused row
+
+Joshua (2026-10-23): the bar did not show which window has focus; drop
+the tab counts (total and per zone); move workspace switching from the
+top row's pills into the bar's head as a menu, to save the top row's
+space. Spec § The bar (head, rows), § The switcher (the tab bar's head).
+
+- [x] **13a Rows:** board 05's three looks — the focused window is the
+      pill (`active`), a shown tab without focus a step (kit
+      `SidebarItem::shown`, 5% lift), the rest muted; a dialog's focus is
+      its tab's. Kit storybook's Row states shows all four.
+- [x] **13b Counts:** gone from the head and the zone headers.
+- [x] **13c Switcher:** the head (name, chevron) opens the workspace menu
+      under it — every workspace (checked, Super+1…9), New, Rename, Move,
+      Delete for the showing one; a diamond / dot right of the name when
+      another workspace waits / has unread mail. The menu overlay takes a
+      `y` (`MenuOverlaySpec`). The top row's pills are gone.
+- [x] **13d Close from a row** (Joshua: "an on hover close button … make
+      it a stoplight"): kit `SidebarItem::stoplight` (the hover close as
+      the titlebar's red dot). A tab's window: `Topic::CloseTab(key)` to
+      its app (kit `TabWindows::close_request`; the browser, Paint, Design,
+      Projects and Terminal handle it as that window's `CloseRequested`).
+      Any other window: `Topic::CloseWindow(window_id)` → sola-river
+      `river_window_v1.close`. (A first cut sent tabs through the
+      compositor too, which iced closed under the app — the browser
+      reopened the page; letting apps take compositor close requests
+      instead would have closed every tab one by one on quit.)
+- [x] **13e Smoke** on canto: the focused row against a shown one
+      (pixels 53 vs 32 vs 20 idle), the menu under the head, New
+      Workspace, Delete, the rename card; the stoplight on hover closing a
+      browser page (closed, not reopened) and a Paint image (Paint quit
+      with its last window). The diamond showed for a waiting Projects
+      tab on its row; by the head (another workspace) unsmoked.

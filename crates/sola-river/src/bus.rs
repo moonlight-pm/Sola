@@ -25,6 +25,7 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     TopicKind::WindowChrome,
     TopicKind::RegisteredChords,
     TopicKind::CloseApp,
+    TopicKind::CloseWindow,
     TopicKind::Shutdown,
 ];
 

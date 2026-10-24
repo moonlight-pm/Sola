@@ -2563,6 +2563,10 @@ impl<E: Engine> App<E> {
             }
             Msg::Bus(message) => {
                 self.windows.update(&message);
+                // The tab bar's stoplight: as the window's own close.
+                if let Some(window) = self.windows.close_request(&message) {
+                    return self.on_page_window(window, iced::window::Event::CloseRequested);
+                }
                 let rebind = self.on_workspace_message(&message);
                 return Task::batch([
                     rebind,

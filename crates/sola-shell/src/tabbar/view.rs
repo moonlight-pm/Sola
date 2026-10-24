@@ -1,21 +1,19 @@
-//! The tab bar's view: a head with the showing workspace's name and its
-//! tab count, then a section per zone (name, count) with a row per window
-//! (app icon, title). A tiled zone's shown tab is lifted while its zone is
-//! on screen and bright while it is not (Full while the halves are up, or
-//! the halves while Full is); the tabs behind are muted. The focused float
-//! is lifted. A tab that is
+//! The tab bar's view: a head with the showing workspace's name (its menu
+//! switches workspaces, [`super::head`]), then a section per zone with a
+//! row per window (app icon, title). Board 05's rows: the focused window
+//! is the pill; a tiled zone's shown tab is lifted a step while its zone
+//! is on screen and bright while it is not (Full while the halves are up,
+//! or the halves while Full is); the tabs behind are muted. A tab that is
 //! working or waiting on a decision (`Topic::TabActivity`) shows that mark
-//! in the icon's place, so the title does not move.
+//! in the icon's place, so the title does not move. Hovering a row shows
+//! the titlebar's red stoplight: it closes the window (`Topic::CloseWindow`).
 
-use iced::widget::{Space, container, row, text};
-use iced::{Element, Length, Padding};
+use iced::Element;
 use sola_bus::topics::{Activity, Zone};
-use sola_kit::components::style::SPACE_MD;
 use sola_kit::components::{
     LEADING_SLOT, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection, icon, island,
     status_mark,
 };
-use sola_kit::fonts;
 
 use super::{row_id, section_id, zone_label};
 use crate::app::{Msg, Shell};
@@ -24,11 +22,13 @@ use crate::stacks::ZONES;
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     let hidden = |app: &str| shell.is_app_hidden(app);
     let on_screen = shell.tabs.on_screen(&hidden);
-    let mut count = 0;
+    // A dialog's focus is its tab's.
+    let focused = shell
+        .focused_window_id
+        .map(|w| shell.tabs.parent_of(w).unwrap_or(w));
     let mut sections = Vec::new();
     for zone in ZONES {
         let tabs = shell.tabs.tabs(zone);
-        count += tabs.len();
         let (shown, showing) = if zone == Zone::Float {
             (shell.focused_window_id, true)
         } else {
@@ -56,10 +56,14 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                     None => icon(app_icon(shell, &t.app_id), LEADING_SLOT as u16).into(),
                 };
                 let current = shown == Some(t.window_id);
+                let has_focus = focused == Some(t.window_id);
                 let mut item = SidebarItem::new(label, Msg::ShowTab(t.window_id))
                     .id(row_id(t.window_id))
-                    .active(current && showing)
+                    .active(current && showing && has_focus)
+                    .shown(current && showing && !has_focus)
                     .bright(current && !showing)
+                    .on_close(Msg::CloseWindow(t.window_id))
+                    .stoplight(true)
                     .leading(leading);
                 if hidden(&t.app_id) {
                     item = item.secondary("hidden");
@@ -67,46 +71,14 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                 item
             })
             .collect();
-        sections.push(
-            SidebarSection::new(format!("{} · {}", zone_label(zone), tabs.len()), items)
-                .id(section_id(zone)),
-        );
+        sections.push(SidebarSection::new(zone_label(zone), items).id(section_id(zone)));
     }
 
-    // The head names the showing workspace (board 06), its tab count right.
-    let noun = if count == 1 { "tab" } else { "tabs" };
-    let name = shell
-        .tabs
-        .workspaces()
-        .get(shell.tabs.showing())
-        .map(|w| w.name.clone())
-        .unwrap_or_default();
-    let muted = iced::Color {
-        a: 0.55,
-        ..shell.theme.palette().text
-    };
-    let head = container(
-        row![
-            text(name)
-                .font(iced::Font {
-                    weight: iced::font::Weight::Semibold,
-                    ..fonts::chrome()
-                })
-                .size(13),
-            Space::new().width(Length::Fill),
-            text(format!("{count} {noun}"))
-                .font(fonts::chrome())
-                .size(11)
-                .color(muted),
-        ]
-        .align_y(iced::Alignment::Center),
-    )
-    .padding(Padding::from([SPACE_MD, SPACE_MD]));
     let panel = SidebarPanel::new(sections)
         .controller(&shell.tabbar.gestures, Msg::TabBar)
         .reorderable()
         .fill_width()
-        .header(head.into())
+        .header(super::head::view(shell))
         .build();
     // An island in the grid's left column (board 06): rounded, rimmed,
     // its corners the ground's black.

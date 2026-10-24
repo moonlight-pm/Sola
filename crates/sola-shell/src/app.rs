@@ -202,9 +202,10 @@ pub enum Msg {
     CycleTabs { back: bool },
     /// A tab bar row was clicked: show that window in its zone.
     ShowTab(u32),
-    /// A workspace pill was clicked: show that workspace.
-    ShowWorkspace(usize),
-    /// Open (or close) a workspace pill's menu.
+    /// A tab bar row's stoplight: close that window, as its own close would.
+    CloseWindow(u32),
+    /// Open (or close) the workspace menu (the tab bar's head) for the
+    /// showing workspace.
     WorkspaceMenu(usize),
     /// The rename field changed.
     WorkspaceRenameInput(String),
@@ -270,7 +271,7 @@ pub enum Panel {
     NotifyPile,
     Bluetooth,
     Audio,
-    /// A workspace pill's menu.
+    /// The workspace menu, under the tab bar's head.
     Workspace(usize),
     /// Renaming a workspace (`workspace.renaming`).
     RenameWorkspace,
@@ -1991,22 +1992,24 @@ impl Shell {
                     crate::audio::view::CARD_HEIGHT,
                 )
             }
-            Some(Panel::Workspace(i)) => {
-                let w = crate::menu::view::MENU_WIDTH;
-                (
-                    clamp_x(crate::menubar::pills::x_of(self, i), w),
-                    w,
-                    crate::menu::workspace::MENU_HEIGHT,
-                )
+            // Under the tab bar's head, not the menubar.
+            Some(Panel::Workspace(_)) => {
+                let (x, y) = crate::tabbar::head::menu_anchor();
+                return crate::zoning::MenuOverlaySpec {
+                    x: x.round() as i32,
+                    y: y.round() as i32,
+                    width: crate::tabbar::head::MENU_WIDTH.round() as i32,
+                    height: crate::menu::workspace::menu_height(self).round() as i32,
+                };
             }
             Some(Panel::RenameWorkspace) => {
-                let w = crate::menu::workspace::RENAME_WIDTH;
-                let i = self.workspace.renaming.as_ref().map_or(0, |(i, _)| *i);
-                (
-                    clamp_x(crate::menubar::pills::x_of(self, i), w),
-                    w,
-                    crate::menu::workspace::RENAME_HEIGHT,
-                )
+                let (x, y) = crate::tabbar::head::menu_anchor();
+                return crate::zoning::MenuOverlaySpec {
+                    x: x.round() as i32,
+                    y: y.round() as i32,
+                    width: crate::tabbar::head::MENU_WIDTH.round() as i32,
+                    height: crate::menu::workspace::RENAME_HEIGHT.round() as i32,
+                };
             }
             None => {
                 let w = crate::menu::view::MENU_WIDTH;
@@ -2019,6 +2022,7 @@ impl Shell {
         };
         crate::zoning::MenuOverlaySpec {
             x: x.round() as i32,
+            y: crate::zoning::MENUBAR_HEIGHT,
             width: width.round() as i32,
             height: height.round() as i32,
         }
@@ -2867,14 +2871,6 @@ impl Shell {
                 }
                 iced::Task::none()
             }
-            Msg::ShowWorkspace(index) => {
-                if self.dismiss_open_menu() {
-                    self.emit_overlay_frames();
-                    self.emit_registered_chords();
-                }
-                self.show_workspace(index);
-                iced::Task::none()
-            }
             Msg::WorkspaceMenu(index) => {
                 if self.menu_open && self.open_panel == Some(Panel::Workspace(index)) {
                     let _ = self.dismiss_open_menu();
@@ -2900,6 +2896,19 @@ impl Shell {
                 self.emit_overlay_frames();
                 self.emit_composition();
                 self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::CloseWindow(wid) => {
+                // A tab's window: its app closes it (not through the
+                // compositor, whose close requests also mean "quit").
+                let close = match self.pairing.key_of(wid) {
+                    Some(key) => Topic::CloseTab(key.to_string()),
+                    None => Topic::CloseWindow(wid),
+                };
+                tracing::info!(window_id = wid, ?close, "close window from the tab bar");
+                with_bus(|bus| {
+                    let _ = bus.emit(close);
+                });
                 iced::Task::none()
             }
             Msg::ShowTab(wid) => {

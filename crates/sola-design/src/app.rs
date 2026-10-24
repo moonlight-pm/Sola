@@ -160,6 +160,7 @@ pub fn run() -> iced::Result {
             TopicKind::WindowChrome,
             // Which project window the shell paired and shows.
             TopicKind::TabWindow,
+            TopicKind::CloseTab,
             // River delivers a bare Super press as a chord: Super+click.
             TopicKind::Chord,
             TopicKind::ChordReleased,
@@ -603,6 +604,10 @@ impl App {
             self.windows.update(message);
             self.wake_windows();
             return Task::none();
+        }
+        // The tab bar's stoplight: as the window's own close.
+        if let Some(window) = self.windows.close_request(message) {
+            return self.on_window(window, window::Event::CloseRequested);
         }
         match Topic::parse(message) {
             Some(Topic::MenuAction(m)) if m.app_id == APP_ID => return self.on_menu(&m.action_id),

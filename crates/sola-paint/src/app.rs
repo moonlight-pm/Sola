@@ -608,6 +608,10 @@ impl App {
             Msg::Bus(message) => {
                 self.float.update(&message);
                 self.windows.update(&message);
+                // The tab bar's stoplight: as the window's own close.
+                if let Some(window) = self.windows.close_request(&message) {
+                    return self.update(Msg::Window(window, window::Event::CloseRequested));
+                }
                 if apply_theme_update(&message, &mut self.theme) {
                     for win in self.windows.iter_mut() {
                         win.cache.clear();

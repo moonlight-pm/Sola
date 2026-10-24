@@ -172,6 +172,8 @@ pub fn notify_overlay_frame(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MenuOverlaySpec {
     pub x: i32,
+    /// Its top: the menubar's bottom edge for the menubar's menus.
+    pub y: i32,
     pub width: i32,
     pub height: i32,
 }
@@ -185,14 +187,14 @@ pub fn menu_live_frame(
     output_h: i32,
     spec: MenuOverlaySpec,
 ) -> FrameUpdate {
-    let usable_h = (output_h - MENUBAR_HEIGHT).max(64);
+    let usable_h = (output_h - spec.y).max(64);
     let w = spec.width.max(64).min(output_w.max(64));
     let h = (spec.height + MENU_SHADOW_PAD).max(64).min(usable_h);
     let x = spec.x.clamp(0, (output_w - w).max(0));
     FrameUpdate {
         window_id,
         x,
-        y: MENUBAR_HEIGHT,
+        y: spec.y,
         width: w,
         height: h,
         fullscreen: false,
@@ -823,6 +825,7 @@ mod tests {
     fn menu_live_frame_is_the_card_not_the_output() {
         let spec = MenuOverlaySpec {
             x: 40,
+            y: MENUBAR_HEIGHT,
             width: 220,
             height: 360,
         };
@@ -840,12 +843,28 @@ mod tests {
             800,
             MenuOverlaySpec {
                 x: 1200,
+                y: MENUBAR_HEIGHT,
                 width: 220,
                 height: 900,
             },
         );
         assert_eq!(clamped.x, 1280 - 220);
         assert_eq!(clamped.height, 800 - MENUBAR_HEIGHT);
+
+        // The workspace menu hangs under the tab bar's head.
+        let under = menu_live_frame(
+            3,
+            1280,
+            800,
+            MenuOverlaySpec {
+                x: 20,
+                y: 100,
+                width: 240,
+                height: 900,
+            },
+        );
+        assert_eq!(under.y, 100);
+        assert_eq!(under.height, 800 - 100);
         assert!(menu_overlay_frame(3, false, None, spec).is_some());
         assert!(menu_overlay_frame(3, true, None, spec).is_none());
     }

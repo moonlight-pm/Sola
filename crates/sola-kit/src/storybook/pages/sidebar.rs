@@ -535,10 +535,13 @@ pub fn view<'a>(state: &'a State, theme: &Theme) -> Element<'a, Msg> {
         favicon_demo(),
         heading("Row states"),
         body(
-            "Three inks for the shell's tab bar. Active lifts the row: it is \
-             on screen. Bright is full ink with no lift: current, but its \
+            "Four looks for the shell's tab bar. Active is the pill: the \
+             focused window. Shown lifts the row a step: on screen, without \
+             the keyboard. Bright is full ink with no lift: current, but its \
              zone is not showing (Full while the halves are up). Idle is \
-             muted: behind in its stack."
+             muted: behind in its stack. A row closes its window with the \
+             titlebar's stoplight on hover (`stoplight`; always shown here, \
+             as this panel does not track hover)."
         )
         .style(muted),
         states_demo(),
@@ -611,18 +614,23 @@ fn favicon_demo<'a>() -> Element<'a, Msg> {
 fn states_demo<'a>() -> Element<'a, Msg> {
     let full = vec![SidebarItem::new("Browser — docs", Msg::Noop).bright(true)];
     let left = vec![
-        SidebarItem::new("Terminal", Msg::Noop).active(true),
+        SidebarItem::new("Terminal", Msg::Noop)
+            .active(true)
+            .on_close(Msg::Noop)
+            .stoplight(true),
         SidebarItem::new("Mail", Msg::Noop),
     ];
+    let right = vec![SidebarItem::new("Projects", Msg::Noop).shown(true)];
     let panel = SidebarPanel::new(vec![
-        SidebarSection::new("Full · 1", full),
-        SidebarSection::new("Left · 2", left),
+        SidebarSection::new("Full", full),
+        SidebarSection::new("Left", left),
+        SidebarSection::new("Right", right),
     ])
     .build();
     container(panel)
         .style(card_style)
         .width(Length::Fixed(260.0))
-        .height(Length::Fixed(200.0))
+        .height(Length::Fixed(260.0))
         .into()
 }
 

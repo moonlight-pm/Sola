@@ -219,6 +219,8 @@ What `sola-river` does with these is in [Compositor](compositor.md).
 | `LaunchResult` | `app_id`, `command`, `ok`, `error` | `sola-session` | Shell, Arcade | Ephemeral |
 | `UserAppExited` | `app_id`, `command`, exit `code` or `signal` | `sola-session` | Shell, Arcade | Ephemeral |
 | `CloseApp` | An `app_id` | Shell, a kit app's floating-titlebar close button, Arcade | `sola-session` (stops it), `sola-river` (closes its windows), the named app (quits) | Ephemeral |
+| `CloseWindow` | A `window_id` | Shell (a tab bar row's stoplight, for a window that is not a tab) | `sola-river`: asks that window to close, as its own close button would | Ephemeral |
+| `CloseTab` | A tab's `key` | Shell (a tab bar row's stoplight) | The app that opened the tab: closes its window as its own close button would | Ephemeral |
 | `SessionApps` | Open apps: `app_id`, `command` | `sola-session` | `sola-session`, at its next start | Persistent |
 | `Application` | A launcher entry: `app_id`, `label`, `command`, `icon`, `kind`, `url`, `profile` | Settings; Browser (web apps); Arcade (a running game's label, retracted when it stops) | Shell, Settings, Arcade, Browser | Persistent by `app_id` |
 | `Shutdown` | None | Shell (Quit Sola); `sola` on SIGINT, SIGTERM, or SIGHUP | `sola`, `sola-session`, `sola-river` | Ephemeral |

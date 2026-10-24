@@ -141,6 +141,10 @@ pub struct SidebarItem<'a, Message> {
     /// Full ink without the selection lift: the row is current but not on
     /// screen (the tab bar's selected tab in a zone that is not showing).
     pub bright: bool,
+    /// Lifted a step, lighter than [`Self::active`]: the row is on screen
+    /// but does not have the keyboard (the tab bar's shown tab in a zone
+    /// without focus; Next board 05). `active` is the focused row.
+    pub shown: bool,
     pub message: Message,
     /// Right-aligned dim shortcut hint (e.g. the `1`..=`9` access key).
     pub shortcut: Option<u8>,
@@ -150,6 +154,9 @@ pub struct SidebarItem<'a, Message> {
     /// next row under a stationary cursor still shows the chip). `id` is
     /// auto-assigned from the row index when missing.
     pub on_close: Option<Message>,
+    /// The hover close as the titlebar's red stoplight, not ×: the row
+    /// stands for a window (the shell's tab bar).
+    pub stoplight: bool,
     /// Hover-only stacked pencil (same overlay as [`Self::on_close`]).
     /// Used for inline rename on a collapsible header. Hidden while
     /// [`SidebarSection::header_content`] is set.
@@ -199,9 +206,11 @@ impl<'a, Message> SidebarItem<'a, Message> {
             label: label.into(),
             active: false,
             bright: false,
+            shown: false,
             message,
             shortcut: None,
             on_close: None,
+            stoplight: false,
             on_edit: None,
             secondary: None,
             subtitle: None,
@@ -228,6 +237,19 @@ impl<'a, Message> SidebarItem<'a, Message> {
     /// Full ink without the selection lift (see [`Self::bright`] field).
     pub fn bright(mut self, bright: bool) -> Self {
         self.bright = bright;
+        self
+    }
+
+    /// Lifted a step, lighter than active (see [`Self::shown`] field).
+    pub fn shown(mut self, shown: bool) -> Self {
+        self.shown = shown;
+        self
+    }
+
+    /// The hover close (see [`Self::on_close`]) as the titlebar's red
+    /// stoplight (see [`Self::stoplight`] field).
+    pub fn stoplight(mut self, stoplight: bool) -> Self {
+        self.stoplight = stoplight;
         self
     }
 
@@ -872,6 +894,9 @@ pub fn group_well_fill() -> Color {
 /// Enough to read, still the group colour — not a grey slab.
 const WELL_SELECT_MIX: f32 = 0.14;
 const WELL_HOVER_MIX: f32 = 0.07;
+/// A shown row ([`SidebarItem::shown`]): a step, under hover so a hover
+/// still reads on it (board 05: 4% white; the focused pill 14%).
+const WELL_SHOWN_MIX: f32 = 0.05;
 /// 1px selected rim (same job as the ungrouped etch lip). Stronger
 /// than the fill so it reads as a border.
 const WELL_SELECT_LIP: f32 = 0.24;
@@ -941,13 +966,15 @@ pub(crate) fn well_select_plate(c: Color) -> Color {
     well_lift(well_face(c), WELL_SELECT_MIX)
 }
 
-fn well_row_colors(well: Color, active: bool, hovered: bool) -> (Color, Color) {
+fn well_row_colors(well: Color, active: bool, shown: bool, hovered: bool) -> (Color, Color) {
     let face = well_face(well);
     let ink = on_color(face);
     if active {
         (well_lift(face, WELL_SELECT_MIX), ink)
     } else if hovered {
         (well_lift(face, WELL_HOVER_MIX), ink)
+    } else if shown {
+        (well_lift(face, WELL_SHOWN_MIX), well_muted(ink))
     } else {
         (Color::TRANSPARENT, well_muted(ink))
     }
@@ -1014,10 +1041,11 @@ fn tab_item_style(
     _theme: &Theme,
     status: button::Status,
     active: bool,
+    shown: bool,
     well: Option<Color>,
 ) -> button::Style {
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    let (bg, text_color) = well_row_colors(row_surface(well), active, hovered);
+    let (bg, text_color) = well_row_colors(row_surface(well), active, shown, hovered);
     button::Style {
         background: Some(Background::Color(bg)),
         text_color,
@@ -1045,7 +1073,7 @@ fn tab_close_style(
     if chrome == SidebarItemChrome::Row {
         let face = well_face(row_surface(well));
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-        let (wash, ink) = well_row_colors(face, active, hovered);
+        let (wash, ink) = well_row_colors(face, active, false, hovered);
         let rest = if wash.a <= 0.001 {
             face
         } else if wash.a >= 0.999 {
@@ -1544,9 +1572,11 @@ where
         label,
         active,
         bright,
+        shown,
         message,
         shortcut,
         on_close,
+        stoplight,
         on_edit,
         secondary,
         subtitle,
@@ -1615,7 +1645,7 @@ where
         let row_el: Element<'a, Message> = container(body)
             .width(Length::Fill)
             .padding(pad)
-            .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered, well))
+            .style(move |theme: &Theme| row_container_style(theme, active, shown, chrome, hovered, well))
             .into();
         return finish_list_row(
             row_el,
@@ -1623,6 +1653,7 @@ where
             active,
             on_close,
             on_edit,
+            stoplight,
             hover_tracked,
             density,
             well,
@@ -1639,7 +1670,7 @@ where
         // enter/exit when moving across rows).
         let row_el: Element<'a, Message> = if hover_action.is_some() {
             let mut select = mouse_area(container(body).width(Length::Fill).padding(pad).style(
-                move |theme: &Theme| row_container_style(theme, active, chrome, hovered, well),
+                move |theme: &Theme| row_container_style(theme, active, shown, chrome, hovered, well),
             ))
             .interaction(mouse::Interaction::Pointer)
             .on_press(message);
@@ -1673,7 +1704,7 @@ where
             }
         } else if on_double_click.is_some() || on_context.is_some() {
             let mut area = mouse_area(container(body).width(Length::Fill).padding(pad).style(
-                move |theme: &Theme| row_container_style(theme, active, chrome, false, well),
+                move |theme: &Theme| row_container_style(theme, active, shown, chrome, false, well),
             ))
             .interaction(mouse::Interaction::Pointer)
             .on_press(message);
@@ -1687,7 +1718,7 @@ where
         } else {
             button(body)
                 .style(move |t, status| match chrome {
-                    SidebarItemChrome::Row => tab_item_style(t, status, active, well),
+                    SidebarItemChrome::Row => tab_item_style(t, status, active, shown, well),
                     SidebarItemChrome::Card => item_style_chrome(t, status, active, chrome),
                 })
                 .padding(pad)
@@ -1701,6 +1732,7 @@ where
             active,
             on_close,
             on_edit,
+            stoplight,
             hover_tracked,
             density,
             well,
@@ -1720,7 +1752,7 @@ where
         container(body)
             .width(Length::Fill)
             .padding(pad)
-            .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered, well)),
+            .style(move |theme: &Theme| row_container_style(theme, active, shown, chrome, hovered, well)),
     )
     // Pointer at rest; grabbing while this row is the one in flight.
     .interaction(if is_dragged {
@@ -1744,6 +1776,7 @@ where
         active,
         on_close,
         on_edit,
+        stoplight,
         hover_tracked,
         density,
         well,
@@ -1762,6 +1795,7 @@ fn finish_list_row<'a, Message: Clone + 'a>(
     active: bool,
     on_close: Option<Message>,
     on_edit: Option<Message>,
+    stoplight: bool,
     hover_tracked: bool,
     density: SidebarDensity,
     well: Option<Color>,
@@ -1792,7 +1826,11 @@ fn finish_list_row<'a, Message: Clone + 'a>(
             HoverChip::Close => on_close.clone().expect("close chip"),
             HoverChip::Edit => on_edit.clone().expect("edit chip"),
         };
-        chips = chips.push(hover_chip_button(kind, msg, active, chrome, density, well));
+        chips = if stoplight && kind == HoverChip::Close {
+            chips.push(stoplight_button(msg, active, chrome, well))
+        } else {
+            chips.push(hover_chip_button(kind, msg, active, chrome, density, well))
+        };
     }
     let chip = container(chips)
         .align_x(iced::alignment::Horizontal::Right)
@@ -1828,6 +1866,47 @@ fn hover_chip_kinds(on_close: bool, on_edit: bool) -> Vec<HoverChip> {
         (false, true) => vec![HoverChip::Edit],
         (false, false) => Vec::new(),
     }
+}
+
+/// The titlebar's close dot as a row's hover close, on a pad of the
+/// hovered row's face so a long title does not show around it.
+const STOPLIGHT: f32 = 12.0;
+
+fn stoplight_button<'a, Message: Clone + 'a>(
+    msg: Message,
+    active: bool,
+    chrome: SidebarItemChrome,
+    well: Option<Color>,
+) -> Element<'a, Message> {
+    use crate::components::window_frame::{CLOSE_HOVER, CLOSE_RED};
+    let dot = button(Space::new())
+        .width(Length::Fixed(STOPLIGHT))
+        .height(Length::Fixed(STOPLIGHT))
+        .padding(0)
+        .style(|_theme: &Theme, status| button::Style {
+            background: Some(Background::Color(match status {
+                button::Status::Hovered | button::Status::Pressed => CLOSE_HOVER,
+                _ => CLOSE_RED,
+            })),
+            border: Border {
+                radius: (STOPLIGHT / 2.0).into(),
+                ..Border::default()
+            },
+            ..button::Style::default()
+        })
+        .on_press(msg);
+    container(dot)
+        .padding(Padding::from([4, 6]))
+        .style(move |theme: &Theme| container::Style {
+            background: tab_close_style(theme, button::Status::Hovered, active, chrome, well)
+                .background,
+            border: Border {
+                radius: RADIUS_SM.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
 }
 
 fn hover_chip_button<'a, Message: Clone + 'a>(
@@ -3076,6 +3155,7 @@ where
 {
     let number = item.shortcut.unwrap_or((index + 1) as u8);
     let active = item.active;
+    let shown = item.shown;
     let chrome = item.chrome;
     let well = item.well;
     match reorder {
@@ -3084,7 +3164,7 @@ where
                 .width(Length::Fill)
                 .padding(Padding::from([6, 4]))
                 .style(move |theme: &Theme| {
-                    row_container_style(theme, active, chrome, false, well)
+                    row_container_style(theme, active, shown, chrome, false, well)
                 }),
         )
         .on_press((cfg.on_press)(index))
@@ -3120,13 +3200,14 @@ pub fn style(theme: &Theme) -> container::Style {
 fn row_container_style(
     theme: &Theme,
     active: bool,
+    shown: bool,
     chrome: SidebarItemChrome,
     hovered: bool,
     well: Option<Color>,
 ) -> container::Style {
     match chrome {
         SidebarItemChrome::Row => {
-            let (bg, text_color) = well_row_colors(row_surface(well), active, hovered);
+            let (bg, text_color) = well_row_colors(row_surface(well), active, shown, hovered);
             container::Style {
                 background: Some(Background::Color(bg)),
                 text_color: Some(text_color),
@@ -3212,7 +3293,7 @@ pub fn item_style_chrome(
 ) -> button::Style {
     let p = theme.extended_palette();
     match chrome {
-        SidebarItemChrome::Row => tab_item_style(theme, status, active, None),
+        SidebarItemChrome::Row => tab_item_style(theme, status, active, false, None),
         SidebarItemChrome::Card => {
             let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
             let s = card_surface_style(theme, active, hovered);
@@ -3465,7 +3546,7 @@ mod tests {
     fn grouped_select_stays_in_pocket_hue() {
         let theme = crate::default_theme();
         let blue = Color::from_rgb(0.15, 0.35, 0.70);
-        let s = row_container_style(&theme, true, SidebarItemChrome::Row, false, Some(blue));
+        let s = row_container_style(&theme, true, false, SidebarItemChrome::Row, false, Some(blue));
         match s.background {
             Some(Background::Color(c)) => {
                 assert!((c.a - 1.0).abs() < 1e-6);
@@ -3478,7 +3559,7 @@ mod tests {
             other => panic!("expected solid lift, got {other:?}"),
         }
         let white = Color::WHITE;
-        let s = row_container_style(&theme, true, SidebarItemChrome::Row, false, Some(white));
+        let s = row_container_style(&theme, true, false, SidebarItemChrome::Row, false, Some(white));
         match s.background {
             Some(Background::Color(c)) => {
                 assert!(c.r > 0.80 && c.r < 1.0, "quiet darken on white, got {c:?}");

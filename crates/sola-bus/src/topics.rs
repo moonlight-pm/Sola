@@ -1519,6 +1519,18 @@ define_topics! {
     // window_id; retracted on close. Appended last.
     #[sticky(keys = [window_id])]
     WindowWorkspace(WindowWorkspace),
+
+    // Close one window (by its sola-river id) as its own close would:
+    // sola-river sends `river_window_v1.close`, so the app gets a close
+    // request (shell → sola-river; the tab bar's stoplight on a window
+    // that is not a tab). Appended last.
+    CloseWindow(u32),
+
+    // Close a tab's window (by its key) as its own close would (shell →
+    // the app that opened it; the tab bar's stoplight). Not through the
+    // compositor: an app quitting gets close requests for every window,
+    // which must not close its tabs one by one. Appended last.
+    CloseTab(String),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1538,6 +1550,8 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::WindowChrome
             | TopicKind::Workspaces
             | TopicKind::WindowWorkspace
+            | TopicKind::CloseWindow
+            | TopicKind::CloseTab
     )
 }
 

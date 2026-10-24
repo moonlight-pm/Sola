@@ -8,7 +8,10 @@
 //! [`TabWindows::update`]. [`TabWindows::set_activity`] puts a mark on the
 //! tab's row in the bar (`Topic::TabActivity`: working, or waiting on a
 //! decision). [`TabWindows::open_as`] opens a window as another app — the
-//! browser hosting a web app's windows — under that app's id.
+//! browser hosting a web app's windows — under that app's id. Subscribe
+//! to `TopicKind::CloseTab` too: [`TabWindows::close_request`] names the
+//! window whose tab the shell asks to close (the tab bar's stoplight), to
+//! handle as that window's `CloseRequested`.
 
 use std::collections::HashMap;
 
@@ -165,6 +168,19 @@ impl TabWindows {
             }
         }
         shown_changed
+    }
+
+    /// The window `msg` asks to close (`Topic::CloseTab`, the tab bar's
+    /// stoplight), when it is one of ours: close it as its own close dot
+    /// would (the app's `window::Event::CloseRequested` path).
+    pub fn close_request(&self, msg: &Message) -> Option<window::Id> {
+        let Some(Topic::CloseTab(key)) = Topic::parse(msg) else {
+            return None;
+        };
+        self.windows
+            .iter()
+            .find(|(_, e)| e.key == key)
+            .map(|(id, _)| *id)
     }
 
     /// sola-river's id for this window, once paired.

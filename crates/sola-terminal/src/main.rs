@@ -246,6 +246,7 @@ const SESSION_TOPICS: &[TopicKind] = &[
     TopicKind::WindowFloating,
     TopicKind::WindowChrome,
     TopicKind::TabWindow,
+    TopicKind::CloseTab,
     TopicKind::TerminalSession,
 ];
 
@@ -1069,6 +1070,10 @@ impl App {
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
         self.float.update(m);
         self.tab_windows.update(m);
+        // The tab bar's stoplight: as the window's own close.
+        if let Some(window) = self.tab_windows.close_request(m) {
+            return self.on_window(window, window::Event::CloseRequested);
+        }
         // 1. Live theme reload — rebuild widget theme + palette + cell metrics,
         //    then reflow every pane.
         if apply_theme_update(m, &mut self.theme) {

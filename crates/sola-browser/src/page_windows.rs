@@ -198,6 +198,12 @@ impl<E: Engine> PageWindows<E> {
         self.tabs.update(msg)
     }
 
+    /// The window the shell asks to close (`Topic::CloseTab`, the tab
+    /// bar's stoplight), if it is one of ours.
+    pub fn close_request(&self, msg: &sola_bus::Message) -> Option<window::Id> {
+        self.tabs.close_request(msg)
+    }
+
     /// sola-river's id for a page window, once the shell paired it.
     pub fn river_id(&self, window: window::Id) -> Option<u32> {
         self.tabs.river_id(window)

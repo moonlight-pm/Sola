@@ -103,8 +103,9 @@ No gaps and no titlebars on tiles yet (N8).
   relies on it).
 - Built on the kit sidebar (`components/sidebar`), in today's theme tokens.
   Board 06's look; the dark grey base comes with the kit overhaul.
-- **Head:** the tab count. (The workspace name joins in slice 5.)
-- **Zone header:** zone glyph, name, count.
+- **Head:** the showing workspace's name, the workspace menu
+  (§ The switcher). No tab count (Joshua, 2026-10-23).
+- **Zone header:** zone glyph, name. No count (Joshua, 2026-10-23).
 - **Row:** app icon and window title, truncated. Three states, as on
   board 05: shown (lifted a step), focused (the pill), behind (tertiary
   ink). Agent marks join in slice 3.
@@ -112,8 +113,15 @@ No gaps and no titlebars on tiles yet (N8).
   raises and focuses its float.
 - **Drag a row:** within a zone to reorder; onto another zone's header or
   rows to move it there (it becomes that zone's shown tab).
-- Not in slice 1: the `+` on a zone header (it needs tab kinds, slice 2),
-  closing from a row (there is no per-window close on the bus yet).
+- **Close from a row** (Joshua, 2026-10-23): hovering a row shows the
+  titlebar's red stoplight, which closes the window as its own close dot
+  would. A tab's window goes to its app (`Topic::CloseTab { key }`; kit
+  `TabWindows::close_request`, handled as that window's
+  `CloseRequested`); any other window through sola-river
+  (`Topic::CloseWindow`, `river_window_v1.close`). Not tabs through the
+  compositor: quitting an app also sends a close request per window, which
+  must not close its tabs one by one.
+- Not in slice 1: the `+` on a zone header (it needs tab kinds, slice 2).
 
 ## Where a window lands
 
@@ -255,7 +263,7 @@ workspaces (ordered, named, kept; one showing)
   and place.
 - **Super+Ctrl+1…9** sends the focused window to workspace N (end of the
   same zone's stack there, shown); the showing workspace focuses its next
-  window. The tab bar's rows can be dragged onto a workspace pill.
+  window.
 
 ### Switching
 
@@ -269,17 +277,20 @@ workspaces (ordered, named, kept; one showing)
 - Focus fallbacks (a window closes, Super+H) stay on the showing
   workspace.
 
-### The switcher (top band)
+### The switcher (the tab bar's head)
 
-- Right of the flower, a pill per workspace: its number and name; the
-  showing one lifted. Marks roll up from the workspace's windows: a
-  **diamond** when a tab waits on a decision (`TabActivity::Waiting`), a
+Joshua (2026-10-23): the workspace pills leave the top row, to save its
+space; the tab bar's head is the switcher.
+
+- The head: the showing workspace's name and a chevron. Click it for the
+  menu: every workspace (the showing one checked, Super+1…9 beside each)
+  to show it, then **New Workspace**, **Rename…**, **Move Left / Right**,
+  **Delete** for the showing one (its windows go to the previous
+  workspace). Rename puts a card in the menu's place.
+- Right of the name, what needs you on another workspace: a **diamond**
+  when a tab there waits on a decision (`TabActivity::Waiting`), else a
   **dot** when a Mail window there has unread mail. Working marks nothing.
-- Click a pill to show it. Its menu (right-click, or click the showing
-  one): **New Workspace**, **Rename…**, **Move Left / Right**, **Delete**
-  (its windows go to the previous workspace). Board 04's overview of live
-  thumbnails comes later.
-- The tab bar's head names the showing workspace.
+- Board 04's overview of live thumbnails comes later.
 
 ### The browser
 
@@ -447,7 +458,8 @@ zone Floating             every float shows, over either
 
 | Row | Look |
 |--|--|
-| A zone's shown tab, zone on screen | Lifted (the kit's active row) |
+| The focused window | The pill (kit `SidebarItem::active`) |
+| A zone's shown tab, zone on screen, not focused | Lifted a step (kit `SidebarItem::shown`; board 05's 4% white, 5% here) |
 | A zone's shown tab, zone off screen | Full ink, no lift (kit `SidebarItem::bright`) |
 | Behind in its stack | Muted (the idle row) |
 | Floating | The focused float lifted, the rest muted (as before) |
@@ -483,9 +495,8 @@ center beyond the toast, no agents on the left).
   top sheen, a 1 px lit top edge (the face sits 1 px into a lighter pill,
   so the rim thins down the round ends), 12 px in either side. One whose
   panel shows lifts a step (the hover grey, a brighter sheen).
-- **Left:** the flower in a 28 px circle, Sola amber; then one island of
-  workspace pills (3 px in, 1 apart; a pill 22 px, 9 px in; the showing
-  one filled at 14% ink; names at 52% ink, numbers at 34%).
+- **Left:** the flower in a 28 px circle, Sola amber. (The workspace
+  pills that followed it moved to the tab bar's head, 2026-10-23.)
 - **Center:** the toast, as an island, while one shows.
 - **The spectrum** (Joshua, 2026-10-23): alone in its island, inset 7 px
   all round, its matrix's ends round (a stadium as tall as the matrix,

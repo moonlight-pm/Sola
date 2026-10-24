@@ -4,6 +4,7 @@
 //! zone. The model is
 //! [`crate::stacks`]; the spec is `docs/specs/2026-10-21-next-tab-bar-design.md`.
 
+pub mod head;
 pub mod view;
 
 use iced::window;

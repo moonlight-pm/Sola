@@ -24,6 +24,10 @@ mod grips;
 mod island;
 mod paint;
 
+/// The close dot's red (the titlebar's stoplight), for a sidebar row's
+/// hover close.
+pub(crate) use paint::{CLOSE_HOVER, CLOSE_RED};
+
 use iced::window::Direction;
 use iced::{Color, Element, Theme};
 
