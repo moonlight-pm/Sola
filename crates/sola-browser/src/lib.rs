@@ -33,6 +33,7 @@ pub mod util;
 #[cfg(feature = "bitwarden")]
 pub mod vault;
 pub mod visit_history;
+pub mod wallpaper;
 
 pub use app::Msg;
 pub use cef::CefEngine;

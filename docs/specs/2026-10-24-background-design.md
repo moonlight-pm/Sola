@@ -287,9 +287,48 @@ transparent. On any user input, it snaps back to full opacity."
   alpha; the overlay needs no compositor change and costs one composite a
   second while idle.
 
+## From the browser (2026-10-24)
+
+Joshua: "make a right click menu. If its a picture, we say 'Use as desktop
+background'… first see if the picture links to a higher-res version… if
+the aspect ratio is not identical to the desktop, show a lightbox… with the
+aspect ratio overlaying the image… Save the image. Set as desktop
+background."
+
+- **The menu.** Right-click a picture on a page: **Use as Desktop
+  Background** heads the browser's page menu (CEF's media type is an image
+  and it has a source).
+- **The largest version.** The browser fetches, with the page as referrer,
+  the link the picture sits in, Wikimedia's original behind a thumbnail
+  (`{upload,thumb}.wikimedia.org/…/thumb/a/ab/Name.jpg/640px-…?…` →
+  `upload.wikimedia.org/…/a/ab/Name.jpg`), and the picture
+  itself; a link to a page (`text/*`) is skipped; the most pixels win
+  (`sola-browser` `wallpaper.rs`). Up to 150 MB; decoding may use 1 GB.
+- **The lightbox.** When the picture's shape differs from the output's
+  (`Topic::OutputGeometry`; more than 1%), the page window shows it on a
+  near-black veil with a frame in the output's shape: the largest such part,
+  centered. Drag to move it; scroll to take less (down to a fifth) or more;
+  outside it is dimmed; Return or **Use as Desktop Background** uses it,
+  Esc or Cancel leaves. The same shape skips the lightbox.
+- **Saved.** The chosen part as a JPEG (quality 92) — or the file as
+  fetched when nothing was cut — in `~/Pictures/Backgrounds/`
+  (`$XDG_PICTURES_DIR`), then adopted as the background
+  (`sola_core::background::adopt`, `Topic::Background`); the shell
+  whispers "Set as desktop background".
+- **Drawn** as an overlay over the page window, below its titlebar and
+  inside its rim (the bottom corners round with the window's): a
+  translucent veil does not cover the page under it, so it is opaque; the
+  picture and the frame are two canvases (in one, iced draws the frame's
+  fills under the picture).
+- **The page menu itself** never showed until now: the engine emptied CEF's
+  menu model so CEF would draw nothing, and an empty model means CEF never
+  asks `run_context_menu` either.
+
 ## Not now
 
-A picture picker in Settings (recent pictures), a picture per
+From the browser: a picture's `srcset`, CSS backgrounds, a page's own
+full-size viewer (Flickr, Unsplash) — only the link, Wikimedia, and the
+picture are tried. A picture picker in Settings (recent pictures), a picture per
 workspace or per output (Sola frames one output), slideshows, dimming or
 blurring the picture under the windows, a default picture shipped with
 Sola, rounding floating foreign windows (still needs rivulet to clip).

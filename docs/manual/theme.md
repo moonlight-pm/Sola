@@ -210,7 +210,7 @@ picture still gives colorful schemes. Each is a small window in its
 colors, with the picture's color beside its name; click one to use it.
 
 **Strength** (0–100%, 60% at first) is how much of the picture's own color
-the tint takes; it applies when you let go of the slider. Near 100% the
+the tint takes; every window follows as you drag the slider. Near 100% the
 darkest surfaces take the hue fully (a strongly colored picture gives
 strongly colored chrome).
 

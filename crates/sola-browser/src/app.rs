@@ -4,6 +4,7 @@
 //! adds `App<E>`, its constructor, and all update/view/subscription methods.
 
 mod pages;
+mod wallpaper;
 mod webapps;
 
 pub use pages::{boot_pages, count_by_profile};
@@ -109,6 +110,8 @@ pub enum Msg {
     /// Wrap This Page sheet: open it (the page menu), the name typed, Wrap,
     /// Cancel.
     WrapOpen,
+    /// Use as Desktop Background: its lightbox (`app/wallpaper.rs`).
+    Wallpaper(wallpaper::Event),
     WrapName(String),
     WrapSubmit,
     WrapCancel,
@@ -354,6 +357,9 @@ pub enum PageMenuAction {
     Reload,
     DevTools,
     InspectElement { x: i32, y: i32 },
+    /// The picture `src` (inside link `link`, if any) as the desktop's
+    /// background.
+    UseAsBackground { src: String, link: Option<String> },
 }
 
 #[derive(Debug, Clone)]
@@ -512,6 +518,11 @@ pub struct App<E: Engine> {
     pub theme: iced::Theme,
     pub(crate) agent: crate::agent::AgentState,
     context_menu: Option<(iced::Point, CtxTarget)>,
+    /// Use as Desktop Background, while it runs.
+    wallpaper: Option<wallpaper::Lightbox>,
+    /// The output's size (`Topic::OutputGeometry`): the shape a desktop
+    /// background is cut to.
+    screen_size: Option<(u32, u32)>,
     nav_hold: Option<NavHold>,
     page_menus: PageMenusHandle,
     /// Float tracker + iced window id for CSD while floating.
@@ -708,6 +719,8 @@ impl<E: Engine> App<E> {
             theme: sola_kit::theme::default_theme(),
             agent: crate::agent::AgentState::default(),
             context_menu: None,
+            wallpaper: None,
+            screen_size: None,
             nav_hold: None,
             page_menus,
             float: sola_kit::FloatState::new(app_id),
@@ -2000,6 +2013,7 @@ impl<E: Engine> App<E> {
                 self.profile_name_field = s;
                 self.profile_dialog_error = None;
             }
+            Msg::Wallpaper(event) => return self.on_wallpaper(event),
             Msg::WrapOpen => {
                 self.context_menu = None;
                 return self.open_wrap_sheet();
@@ -2563,6 +2577,12 @@ impl<E: Engine> App<E> {
             }
             Msg::Bus(message) => {
                 self.windows.update(&message);
+                use sola_bus::topics::Topic;
+                if let Some(Topic::OutputGeometry(g)) = Topic::parse(&message) {
+                    if g.width > 0 && g.height > 0 {
+                        self.screen_size = Some((g.width as u32, g.height as u32));
+                    }
+                }
                 // The tab bar's stoplight: as the window's own close.
                 if let Some(window) = self.windows.close_request(&message) {
                     return self.on_page_window(window, iced::window::Event::CloseRequested);
@@ -3128,6 +3148,7 @@ impl<E: Engine> App<E> {
             && !self.find_field_focused
             && self.profile_dialog.is_none()
             && self.pending_js_dialog.is_none()
+            && self.wallpaper.is_none()
             && !self.downloads_panel_open
             && {
                 #[cfg(feature = "bitwarden")]
@@ -3211,6 +3232,8 @@ impl<E: Engine> App<E> {
             stack![content, self.view_profile_dialog()].into()
         } else if self.webapps.wrap.is_some() {
             stack![content, self.view_wrap_sheet()].into()
+        } else if let Some(lightbox) = self.view_wallpaper() {
+            stack![content, lightbox].into()
         } else if let Some(modal) = self.page_modal() {
             stack![content, modal].into()
         } else {
@@ -3841,6 +3864,7 @@ impl<E: Engine> App<E> {
                 });
                 Task::none()
             }
+            PageMenuAction::UseAsBackground { src, link } => self.wallpaper_start(src, link),
         }
     }
 
@@ -6495,6 +6519,14 @@ impl<E: Engine> App<E> {
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Escape),
                         ..
+                    }) if crate::wallpaper::is_open() => Some(Msg::Wallpaper(wallpaper::Event::Cancel)),
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: keyboard::Key::Named(keyboard::key::Named::Enter),
+                        ..
+                    }) if crate::wallpaper::is_open() => Some(Msg::Wallpaper(wallpaper::Event::Use)),
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        key: keyboard::Key::Named(keyboard::key::Named::Escape),
+                        ..
                     }) if crate::http_auth::is_open() => Some(Msg::HttpAuthCancel),
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Escape),
@@ -6690,6 +6722,13 @@ fn page_menu_items(ctx: &PageContext) -> Vec<MenuItem<Msg>> {
             PageMenuKind::InspectElement => MenuItem::action(
                 "Inspect Element",
                 Msg::PageMenu(PageMenuAction::InspectElement { x: ctx.x, y: ctx.y }),
+            ),
+            PageMenuKind::UseAsBackground => MenuItem::action(
+                "Use as Desktop Background",
+                Msg::PageMenu(PageMenuAction::UseAsBackground {
+                    src: ctx.src_url.clone().unwrap_or_default(),
+                    link: ctx.link_url.clone(),
+                }),
             ),
             PageMenuKind::Separator => MenuItem::separator(),
         })

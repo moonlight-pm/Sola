@@ -26,9 +26,10 @@ pub use looks::settle;
 pub enum AppearanceMsg {
     /// Adapt colors to the background on / off.
     Adapt(bool),
-    /// The strength slider moved (shown, not yet sent).
+    /// The strength slider moved: sent as it moves (at most every
+    /// [`LIVE_EVERY`]), so the theme follows the drag.
     Strength(u8),
-    /// The strength slider was let go: send it.
+    /// The strength slider was let go: send where it stopped.
     StrengthDone,
     /// One of the picture's schemes, by index, as it is.
     Variation(u8),
@@ -67,7 +68,13 @@ pub struct AppearanceState {
     pub theme: Option<sola_core::theme::Theme>,
     /// The custom color being picked, and its picker.
     picking: Option<(&'static str, ColorPicker)>,
+    /// When a strength drag last sent the settings.
+    strength_sent: Option<std::time::Instant>,
 }
+
+/// While the strength slider moves, the settings go out at most this
+/// often (each one re-tints every app); letting go sends the last value.
+const LIVE_EVERY: std::time::Duration = std::time::Duration::from_millis(40);
 
 pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) {
     let look = &mut state.look;
@@ -75,7 +82,11 @@ pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) {
         AppearanceMsg::Adapt(on) => look.adapt_theme = on,
         AppearanceMsg::Strength(v) => {
             look.strength = v;
-            return;
+            let now = std::time::Instant::now();
+            if state.strength_sent.is_some_and(|at| now - at < LIVE_EVERY) {
+                return;
+            }
+            state.strength_sent = Some(now);
         }
         AppearanceMsg::StrengthDone | AppearanceMsg::FadeDone => {}
         AppearanceMsg::Variation(i) => {

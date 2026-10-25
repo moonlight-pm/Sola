@@ -152,6 +152,10 @@ pub struct PageContext {
     /// The page right-clicked (a window per page shows the menu there).
     #[serde(default)]
     pub tab_id: u64,
+    /// The click is on a picture (`src_url` is it): Use as Desktop
+    /// Background.
+    #[serde(default)]
+    pub image: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

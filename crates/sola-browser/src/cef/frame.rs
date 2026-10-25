@@ -183,6 +183,8 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                                 ctrl = mods_now.control(),
                                 "page left-press (iced)"
                             );
+                        } else {
+                            tracing::debug!(x, y, button, "page press (iced)");
                         }
                         state.held_button_mods |= input::button_to_modifier(button);
                         let prev = state.last_press.map(|(pb, px, py, at, count)| {

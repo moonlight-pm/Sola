@@ -85,6 +85,8 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::WindowWorkspace,
     // The catalog: web apps this process hosts.
     TopicKind::Application,
+    // The output's size: the shape Use as Desktop Background cuts to.
+    TopicKind::OutputGeometry,
 ];
 
 /// The "Browser" app-menu published to the shell at startup. Each entry is

@@ -2334,13 +2334,13 @@ cef::wrap_context_menu_handler! {
             _browser: Option<&mut cef::Browser>,
             _frame: Option<&mut cef::Frame>,
             _params: Option<&mut cef::ContextMenuParams>,
-            model: Option<&mut cef::MenuModel>,
+            _model: Option<&mut cef::MenuModel>,
         ) {
-            // Empty model + run_context_menu=1: no native popup (OSR would
-            // otherwise paint a thin empty strip).
-            if let Some(model) = model {
-                let _ = model.clear();
-            }
+            // Leave CEF's model alone: an empty one means no menu at all,
+            // and `run_context_menu` never comes (the page menu never
+            // showed). That returns 1 and cancels, so CEF draws nothing of
+            // its own; the chrome draws the menu.
+            tracing::debug!("page context menu: before");
         }
 
         fn run_context_menu(
@@ -2366,6 +2366,7 @@ cef::wrap_context_menu_handler! {
             let Some(params) = params else {
                 return 1;
             };
+            tracing::debug!("page context menu: run");
             let nonempty = |s: cef::CefStringUserfree| {
                 let t = cef_string_userfree_display(&s);
                 if t.is_empty() { None } else { Some(t) }
@@ -2380,6 +2381,7 @@ cef::wrap_context_menu_handler! {
                 x: params.xcoord(),
                 y: params.ycoord(),
                 tab_id: 0,
+                image: params.media_type() == cef::ContextMenuMediaType::IMAGE,
             };
             if let Some(b) = browser {
                 ctx.can_go_back = b.can_go_back() != 0;

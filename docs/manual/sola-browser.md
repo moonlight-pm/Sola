@@ -193,6 +193,13 @@ you return to the inspected tab.
 
 Right-click the page:
 
+- **Use as Desktop Background** (on a picture): the browser fetches the
+  largest version it can find — the link the picture sits in, Wikimedia's
+  original behind a thumbnail, or the picture — and, when its shape is not
+  the screen's, shows it with a frame in the screen's shape: drag the frame
+  to choose what fills the screen, scroll for less or more, Return to use
+  it, Esc to leave. The part is saved in `~/Pictures/Backgrounds/` and
+  becomes the desktop's background.
 - **Open Developer Tools**: console, docked.
 - **Inspect Element**: elements, with the node under the pointer selected.
 
@@ -348,9 +355,10 @@ Chromium expects. The location bar and vault fields stay text-only.
 
 `⌘`-click (or Ctrl-click) a link to open it in a **page window behind**
 the current one.
-A right-click on the page opens a small kit menu (open and copy link;
-cut, copy, and paste when editing; back, forward, and reload) instead of
-Chromium's empty off-screen popup. Click back or forward to go one step;
+A right-click on the page opens a small kit menu (on a picture, **Use as
+Desktop Background**; open and copy link; cut, copy, and paste when
+editing; back, forward, and reload) instead of Chromium's off-screen
+popup. Click back or forward to go one step;
 **hold** the button for a menu of that tab's session history. That list
 is saved with the session, so it survives a browser restart.
 
