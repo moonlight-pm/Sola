@@ -3,15 +3,15 @@
 //! topic: any edit emits a new `Topic::MailConfig` and the bus replay
 //! is what refreshes our canonical state.
 //!
-//! Account is explicit-Save. Rules are list + one detail (edit or
-//! draft), matching Applications: dirty state locks selection until
-//! Save or Discard.
+//! Account is explicit-Save. Accounts and rules are lists whose open row
+//! has its editor under it ([`crate::page`]), as Applications: dirty
+//! state locks selection until Save or Discard.
 //!
 //! Chrome density inherits kit helpers (`button::labeled`, type roles,
 //! `SPACE_*`, field + text_input + select) — no local pad/size snowflakes.
 
-use iced::widget::{button, checkbox, column, container, row, scrollable};
-use iced::{Alignment, Element, Length, Padding, Task};
+use iced::widget::{checkbox, column, container, row};
+use iced::{Alignment, Element, Length, Task};
 use sola_kit::components::text_input::text_input;
 
 use crate::mail_discover;
@@ -22,20 +22,11 @@ use sola_core::Encrypted;
 use sola_kit::app::bus;
 use sola_kit::components::form::{checkbox_style, form_row};
 use sola_kit::components::select::{SelectOption, select};
-use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS};
+use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM};
 use sola_kit::components::text as kit_text;
-use sola_kit::components::{button as kit_btn, card, field, text_input as kit_input};
+use sola_kit::components::{button as kit_btn, field, text_input as kit_input};
 
-/// Fixed width of the rules list (px). Detail takes the rest so the
-/// condition editor has room.
-const LIST_WIDTH: f32 = 280.0;
-/// Vertical pad inside a compact rule row (graphite density).
-const ROW_PAD: Padding = Padding {
-    top: 8.0,
-    bottom: 8.0,
-    left: 12.0,
-    right: 8.0,
-};
+use crate::page;
 
 const ACTION_MOVE: &str = "move";
 const ACTION_SMART: &str = "smart_mailbox";
@@ -1266,14 +1257,68 @@ pub fn update(msg: MailMsg, cfg: &mut MailConfig, ui: &mut MailState) -> Task<Ma
 // ── View ──────────────────────────────────────────────────────────
 
 pub fn view<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailMsg> {
-    column![accounts_section(cfg, ui), rules_section(cfg, ui)]
-        .spacing(SPACE_XL + SPACE_MD)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    page::page(vec![
+        accounts_section(cfg, ui),
+        sending_section(cfg, ui),
+        rules_section(cfg, ui),
+    ])
 }
 
+/// The accounts: the first receives (IMAP), the rest are addresses to send
+/// from; the open one's editor under its row.
 fn accounts_section<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailMsg> {
+    let mut rows: Vec<Element<'a, MailMsg>> = Vec::new();
+    for idx in 0..account_count(cfg) {
+        let Some(d) = account_at(cfg, idx) else {
+            continue;
+        };
+        let open = matches!(ui.account, AccountDetail::Edit { idx: at, .. } if at == idx);
+        let mark = if idx == 0 { "lucide/inbox" } else { "lucide/send" };
+        rows.push(
+            page::item(account_title(&d))
+                .subtitle(account_caption(cfg, idx, &d))
+                .leading(page::glyph(page::icon(mark), 16, 0.7))
+                .open(open)
+                .on_press(if open {
+                    MailMsg::CloseAccount
+                } else {
+                    MailMsg::SelectAccount(idx)
+                })
+                .into(),
+        );
+        if let (true, AccountDetail::Edit { draft, .. }) = (open, &ui.account) {
+            let dirty = account_is_dirty(&ui.account, cfg);
+            rows.push(page::editor(account_editor(draft, ui, dirty, /* is_draft */ false, idx)));
+        }
+    }
+    if let AccountDetail::Draft(d) = &ui.account {
+        rows.push(
+            page::item(account_title(d))
+                .subtitle("New account")
+                .leading(page::glyph(page::icon("lucide/mail"), 16, 0.7))
+                .open(true)
+                .on_press(MailMsg::AccountRevert)
+                .into(),
+        );
+        rows.push(page::editor(account_editor(d, ui, true, /* is_draft */ true, 0)));
+    }
+    if rows.is_empty() {
+        rows.push(page::empty("No accounts yet."));
+    }
+    page::section(
+        "Accounts",
+        Some(page::add("Add account", MailMsg::StartNewAccount)),
+        page::group(rows),
+        Some(
+            "The first account receives your mail. The others are addresses to send \
+             from — replies go out from the address they were sent to."
+                .into(),
+        ),
+    )
+}
+
+/// The address new messages go out from.
+fn sending_section<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailMsg> {
     let primary_open = ui.open_menu == Some(OpenMenu::PrimaryFrom);
     let identities = cfg.from_addresses();
     let primary = cfg.primary_from_address();
@@ -1287,131 +1332,24 @@ fn accounts_section<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, M
         .mark(addr.clone())
     });
     let primary_label = if primary.is_empty() {
-        "Choose a default From".to_string()
+        "Choose an address".to_string()
     } else {
         primary.clone()
     };
-    let primary_select = select(
+    let primary_select = container(select(
         primary_label,
         primary_opts,
         primary_open,
         MailMsg::ToggleMenu(OpenMenu::PrimaryFrom),
         MailMsg::DismissMenu,
-    );
-
-    let header = column![
-        kit_text::subheading("Accounts"),
-        kit_text::caption("Inbox receives mail. Extra accounts are send identities for replies.")
-            .style(kit_text::muted),
-        field(
-            "Default From",
-            primary_select,
-            Some("New messages use this address."),
-            None,
-        ),
-    ]
-    .spacing(SPACE_XS);
-
-    let split = row![accounts_list(cfg, ui), accounts_detail(cfg, ui)]
-        .spacing(SPACE_XL)
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-    column![header, split]
-        .spacing(SPACE_LG)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-}
-
-fn accounts_list<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailMsg> {
-    let n = account_count(cfg);
-    let toolbar = row![
-        kit_btn::labeled_sm("+ Add account", kit_btn::ghost).on_press(MailMsg::StartNewAccount),
-        iced::widget::Space::new().width(Length::Fill),
-        kit_text::caption(format!(
-            "{n} {}",
-            if n == 1 { "account" } else { "accounts" }
-        ))
-        .style(kit_text::muted),
-    ]
-    .spacing(SPACE_MD)
-    .align_y(Alignment::Center)
-    .width(Length::Fill);
-
-    let mut rows = column![].spacing(0).width(Length::Fill);
-    for idx in 0..n {
-        if let Some(d) = account_at(cfg, idx) {
-            let selected =
-                matches!(ui.account, AccountDetail::Edit { idx: open, .. } if open == idx);
-            rows = rows.push(account_row(
-                idx,
-                account_title(&d),
-                account_caption(cfg, idx, &d),
-                selected,
-            ));
-        }
-    }
-    if let AccountDetail::Draft(d) = &ui.account {
-        let label = column![
-            kit_text::body(account_title(d)),
-            kit_text::caption("New account").style(kit_text::muted),
-        ]
-        .spacing(SPACE_XS);
-        rows = rows.push(
-            button(label)
-                .on_press(MailMsg::StartNewAccount)
-                .padding(ROW_PAD)
-                .width(Length::Fill)
-                .style(kit_btn::list_item(true)),
-        );
-    }
-
-    let list_card = card(
-        column![
-            toolbar,
-            scrollable(rows).height(Length::Fill).width(Length::Fill)
-        ]
-        .spacing(SPACE_MD)
-        .width(Length::Fill)
-        .height(Length::Fill),
+    ))
+    .width(Length::Fixed(280.0));
+    page::section(
+        "Sending",
+        None,
+        page::group(vec![page::plain(form_row("New messages from", primary_select))]),
+        None,
     )
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    container(list_card)
-        .width(Length::Fixed(LIST_WIDTH))
-        .height(Length::Fill)
-        .into()
-}
-
-fn accounts_detail<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailMsg> {
-    let body: Element<'a, MailMsg> = match &ui.account {
-        AccountDetail::Closed => container(
-            column![
-                kit_text::subheading("No selection").style(kit_text::muted),
-                kit_text::caption("Select an account, or add one.").style(kit_text::muted),
-            ]
-            .spacing(SPACE_SM)
-            .align_x(Alignment::Center),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into(),
-        AccountDetail::Edit { idx, draft } => {
-            let dirty = account_is_dirty(&ui.account, cfg);
-            account_editor(draft, ui, dirty, /* is_draft */ false, *idx)
-        }
-        AccountDetail::Draft(draft) => {
-            account_editor(draft, ui, true, /* is_draft */ true, 0)
-        }
-    };
-    container(card(body).width(Length::Fill).height(Length::Fill))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
 }
 
 fn send_from_editor<'a>(
@@ -1525,12 +1463,7 @@ fn account_editor<'a>(
     is_draft: bool,
     idx: usize,
 ) -> Element<'a, MailMsg> {
-    let title = if is_draft {
-        "New account".to_string()
-    } else {
-        account_title(draft)
-    };
-    let subtitle = if is_draft || idx > 0 {
+    let about = if is_draft || idx > 0 {
         "Uncheck IMAP for send-only (mail forwarded into another inbox)."
     } else {
         "IMAP receive + SMTP send. Extra addresses on this SMTP go under Send from."
@@ -1552,53 +1485,39 @@ fn account_editor<'a>(
     let hosts = row![
         account_input("IMAP host", &draft.imap_host, AccountField::ImapHost),
         container(account_input(
-            "IMAP port",
+            "Port",
             &draft.imap_port,
             AccountField::ImapPort,
         ))
-        .width(Length::Fixed(120.0)),
+        .width(Length::Fixed(96.0)),
     ]
     .spacing(SPACE_MD);
 
     let smtp = row![
         account_input("SMTP host", &draft.smtp_host, AccountField::SmtpHost),
         container(account_input(
-            "SMTP port",
+            "Port",
             &draft.smtp_port,
             AccountField::SmtpPort,
         ))
-        .width(Length::Fixed(120.0)),
+        .width(Length::Fixed(96.0)),
     ]
     .spacing(SPACE_MD);
 
     let aliases = send_from_editor(draft, ui, idx, is_draft);
 
-    let mut footer = row![].spacing(SPACE_SM).align_y(Alignment::Center);
+    let mut left: Vec<Element<'a, MailMsg>> = Vec::new();
+    let mut right: Vec<Element<'a, MailMsg>> = Vec::new();
     if is_draft {
-        footer = footer
-            .push(kit_btn::labeled_sm("Add", kit_btn::primary).on_press(MailMsg::AccountSave))
-            .push(kit_btn::labeled_sm("Discard", kit_btn::ghost).on_press(MailMsg::AccountRevert));
+        left.push(page::action("Add", kit_btn::primary, MailMsg::AccountSave));
+        left.push(page::action("Discard", kit_btn::ghost, MailMsg::AccountRevert));
     } else {
         if dirty {
-            footer = footer
-                .push(kit_btn::labeled_sm("Save", kit_btn::primary).on_press(MailMsg::AccountSave))
-                .push(
-                    kit_btn::labeled_sm("Discard", kit_btn::ghost).on_press(MailMsg::AccountRevert),
-                );
+            left.push(page::action("Save", kit_btn::primary, MailMsg::AccountSave));
+            left.push(page::action("Discard", kit_btn::ghost, MailMsg::AccountRevert));
         }
         if idx > 0 {
-            footer = footer
-                .push(iced::widget::Space::new().width(Length::Fill))
-                .push(
-                    kit_btn::labeled_sm("Remove", kit_btn::danger_outline)
-                        .on_press(MailMsg::AccountRemove),
-                );
-        } else {
-            footer = footer.push(iced::widget::Space::new().width(Length::Fill));
-        }
-        if !dirty {
-            footer = footer
-                .push(kit_btn::labeled_sm("Close", kit_btn::ghost).on_press(MailMsg::CloseAccount));
+            right.push(page::action("Remove", kit_btn::danger_outline, MailMsg::AccountRemove));
         }
     }
 
@@ -1612,181 +1531,72 @@ fn account_editor<'a>(
     };
 
     let mut fields = column![
+        kit_text::caption(about).style(kit_text::muted),
         account_input_help("Email", &draft.email, AccountField::Email, email_help),
+        row![
+            account_input("Username", &draft.username, AccountField::Username),
+            password_input("Password", &draft.password, password_help),
+        ]
+        .spacing(SPACE_MD),
         imap_row,
         hosts,
         smtp_row,
         smtp,
-        account_input("Username", &draft.username, AccountField::Username),
-        password_input("Password", &draft.password, password_help),
         aliases,
     ]
     .spacing(SPACE_LG);
     if let Some(err) = ui.account_error.as_deref() {
         fields = fields.push(kit_text::caption(err).style(kit_text::danger));
     }
-
-    column![
-        kit_text::subheading(title),
-        kit_text::caption(subtitle).style(kit_text::muted),
-        scrollable(fields).width(Length::Fill).height(Length::Fill),
-        footer,
-    ]
-    .spacing(SPACE_MD)
-    .height(Length::Fill)
-    .into()
+    fields.push(page::footer(left, right)).into()
 }
 
-fn account_row<'a>(
-    idx: usize,
-    title: String,
-    caption: String,
-    selected: bool,
-) -> Element<'a, MailMsg> {
-    let label = column![
-        kit_text::body(title),
-        kit_text::caption(caption).style(kit_text::muted),
-    ]
-    .spacing(SPACE_XS);
-    button(label)
-        .on_press(MailMsg::SelectAccount(idx))
-        .padding(ROW_PAD)
-        .width(Length::Fill)
-        .style(kit_btn::list_item(selected))
-        .into()
-}
-
+/// The rules, in order; the open one's editor under its row.
 fn rules_section<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailMsg> {
-    let header = column![
-        kit_text::subheading("Rules"),
-        kit_text::caption("Matching incoming mail is filed automatically.").style(kit_text::muted),
-    ]
-    .spacing(SPACE_XS);
-
-    let split = row![rules_list(cfg, ui), rules_detail(cfg, ui)]
-        .spacing(SPACE_XL)
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-    column![header, split]
-        .spacing(SPACE_LG)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-}
-
-fn rules_list<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailMsg> {
-    let toolbar = row![
-        kit_btn::labeled_sm("+ Add rule", kit_btn::ghost).on_press(MailMsg::StartNew),
-        iced::widget::Space::new().width(Length::Fill),
-        kit_text::caption(format!(
-            "{} {}",
-            cfg.rules.len(),
-            if cfg.rules.len() == 1 {
-                "rule"
-            } else {
-                "rules"
-            }
-        ))
-        .style(kit_text::muted),
-    ]
-    .spacing(SPACE_MD)
-    .align_y(Alignment::Center)
-    .width(Length::Fill);
-
-    let list_body: Element<'a, MailMsg> =
-        if cfg.rules.is_empty() && matches!(ui.detail, Detail::Closed) {
-            container(
-                column![
-                    kit_text::body("No rules yet").style(kit_text::muted),
-                    kit_text::caption("Add one to file incoming mail.").style(kit_text::muted),
-                ]
-                .spacing(SPACE_SM),
-            )
-            .padding(SPACE_LG)
-            .width(Length::Fill)
-            .into()
-        } else if cfg.rules.is_empty() {
-            container(iced::widget::Space::new())
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else {
-            let mut rows = column![].spacing(0).width(Length::Fill);
-            for (idx, rule) in cfg.rules.iter().enumerate() {
-                rows = rows.push(rule_row(idx, rule, ui));
-            }
-            scrollable(rows)
-                .height(Length::Fill)
-                .width(Length::Fill)
-                .into()
-        };
-
-    let list_card = card(
-        column![toolbar, list_body]
-            .spacing(SPACE_MD)
-            .width(Length::Fill)
-            .height(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    container(list_card)
-        .width(Length::Fixed(LIST_WIDTH))
-        .height(Length::Fill)
-        .into()
-}
-
-fn rule_row<'a>(idx: usize, rule: &'a MailRule, ui: &'a MailState) -> Element<'a, MailMsg> {
-    let selected = matches!(ui.detail, Detail::Edit { idx: open, .. } if open == idx);
-    let draft = RuleDraft::from_rule(rule);
-    let title = display_title(&draft);
-    let caption = action_caption(&draft);
-
-    let label = column![
-        kit_text::body(title.to_string()),
-        kit_text::caption(caption).style(kit_text::muted),
-    ]
-    .spacing(SPACE_XS);
-
-    button(label)
-        .on_press(MailMsg::SelectRule(idx))
-        .padding(ROW_PAD)
-        .width(Length::Fill)
-        .style(kit_btn::list_item(selected))
-        .into()
-}
-
-fn rules_detail<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, MailMsg> {
-    let body: Element<'a, MailMsg> = match &ui.detail {
-        Detail::Closed => container(
-            column![
-                kit_text::subheading("No selection").style(kit_text::muted),
-                kit_text::caption("Select a rule, or add one.").style(kit_text::muted),
-            ]
-            .spacing(SPACE_SM)
-            .align_x(Alignment::Center),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into(),
-        Detail::Edit { idx, draft } => {
-            let dirty = cfg
-                .rules
-                .get(*idx)
-                .map(|canonical| !draft.matches(canonical))
-                .unwrap_or(true);
-            editor_body(draft, ui, dirty, /* is_draft */ false)
+    let mut rows: Vec<Element<'a, MailMsg>> = Vec::new();
+    for (idx, rule) in cfg.rules.iter().enumerate() {
+        let open = matches!(ui.detail, Detail::Edit { idx: at, .. } if at == idx);
+        let draft = RuleDraft::from_rule(rule);
+        rows.push(
+            page::item(display_title(&draft).to_string())
+                .subtitle(action_caption(&draft))
+                .leading(page::glyph(page::icon("lucide/list-filter"), 16, 0.7))
+                .open(open)
+                .on_press(if open {
+                    MailMsg::CloseDetail
+                } else {
+                    MailMsg::SelectRule(idx)
+                })
+                .into(),
+        );
+        if let (true, Detail::Edit { draft, .. }) = (open, &ui.detail) {
+            let dirty = !draft.matches(rule);
+            rows.push(page::editor(editor_body(draft, ui, dirty, /* is_draft */ false)));
         }
-        Detail::Draft(draft) => editor_body(draft, ui, true, /* is_draft */ true),
-    };
-
-    container(card(body).width(Length::Fill).height(Length::Fill))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    }
+    if let Detail::Draft(draft) = &ui.detail {
+        rows.push(
+            page::item("New rule")
+                .leading(page::glyph(page::icon("lucide/list-filter"), 16, 0.7))
+                .open(true)
+                .on_press(MailMsg::Discard)
+                .into(),
+        );
+        rows.push(page::editor(editor_body(draft, ui, true, /* is_draft */ true)));
+    }
+    if rows.is_empty() {
+        rows.push(page::empty("No rules yet."));
+    }
+    page::section(
+        "Rules",
+        Some(page::add("Add rule", MailMsg::StartNew)),
+        page::group(rows),
+        Some(
+            "Incoming mail that matches a rule is filed by it — moved to a mailbox, \
+             or gathered in a smart mailbox. Every condition must match."
+                .into(),
+        ),
+    )
 }
 
 fn editor_body<'a>(
@@ -1795,50 +1605,24 @@ fn editor_body<'a>(
     dirty: bool,
     is_draft: bool,
 ) -> Element<'a, MailMsg> {
-    let title = if is_draft {
-        "New rule".to_string()
-    } else {
-        display_title(draft).to_string()
-    };
-    let subtitle = if is_draft {
-        "Name the rule, pick an action, then the conditions."
-    } else {
-        "Every condition must match for the rule to fire."
-    };
-
-    let mut footer = row![].spacing(SPACE_SM).align_y(Alignment::Center);
+    let mut left: Vec<Element<'a, MailMsg>> = Vec::new();
+    let mut right: Vec<Element<'a, MailMsg>> = Vec::new();
     if is_draft {
-        footer = footer
-            .push(kit_btn::labeled_sm("Add", kit_btn::primary).on_press(MailMsg::Save))
-            .push(kit_btn::labeled_sm("Discard", kit_btn::ghost).on_press(MailMsg::Discard));
+        left.push(page::action("Add", kit_btn::primary, MailMsg::Save));
+        left.push(page::action("Discard", kit_btn::ghost, MailMsg::Discard));
     } else {
         if dirty {
-            footer = footer
-                .push(kit_btn::labeled_sm("Save", kit_btn::primary).on_press(MailMsg::Save))
-                .push(kit_btn::labeled_sm("Discard", kit_btn::ghost).on_press(MailMsg::Discard));
+            left.push(page::action("Save", kit_btn::primary, MailMsg::Save));
+            left.push(page::action("Discard", kit_btn::ghost, MailMsg::Discard));
         }
-        footer = footer
-            .push(iced::widget::Space::new().width(Length::Fill))
-            .push(kit_btn::labeled_sm("Remove", kit_btn::danger_outline).on_press(MailMsg::Remove));
-        if !dirty {
-            footer = footer
-                .push(kit_btn::labeled_sm("Close", kit_btn::ghost).on_press(MailMsg::CloseDetail));
-        }
+        right.push(page::action("Remove", kit_btn::danger_outline, MailMsg::Remove));
     }
 
-    let mut col = column![
-        kit_text::subheading(title),
-        kit_text::caption(subtitle).style(kit_text::muted),
-        editor_fields(draft, ui),
-    ]
-    .spacing(SPACE_MD);
+    let mut col = column![editor_fields(draft, ui)].spacing(SPACE_LG);
     if let Some(err) = ui.error.as_deref() {
         col = col.push(kit_text::caption(err).style(kit_text::danger));
     }
-    col = col
-        .push(iced::widget::Space::new().height(Length::Fill))
-        .push(footer);
-    col.height(Length::Fill).into()
+    col.push(page::footer(left, right)).into()
 }
 
 fn editor_fields<'a>(draft: &'a RuleDraft, ui: &'a MailState) -> Element<'a, MailMsg> {
@@ -1909,12 +1693,7 @@ fn editor_fields<'a>(draft: &'a RuleDraft, ui: &'a MailState) -> Element<'a, Mai
     conds = conds.push(
         kit_btn::labeled_sm("+ Add condition", kit_btn::ghost).on_press(MailMsg::AddCondition),
     );
-    col = col.push(conds);
-
-    scrollable(col)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    col.push(conds).into()
 }
 
 fn condition_row<'a>(

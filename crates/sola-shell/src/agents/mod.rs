@@ -9,7 +9,7 @@
 pub mod view;
 
 use sola_bus::Message;
-use sola_bus::topics::{AgentIsland, Topic};
+use sola_bus::topics::{AgentIsland, IdleKeep, Topic};
 
 /// The islands and the card open.
 #[derive(Default)]
@@ -20,6 +20,8 @@ pub struct AgentIslands {
     pub open: Option<String>,
     /// The card's reply field.
     pub reply: String,
+    /// What the idle fade was last told to keep in sight.
+    pub keep_sent: Option<IdleKeep>,
 }
 
 impl AgentIslands {

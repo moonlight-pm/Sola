@@ -1,10 +1,18 @@
 //! Colors that follow the background picture ("adapt the theme to the
-//! background", `Topic::Appearance`): [`Scheme::from_pixels`] samples the
-//! picture's hues, and [`Theme::adapt`] rewrites the color tokens from it —
-//! every surface, border and text color keeps the **lightness** of its
-//! grey in the seed palette (so contrast is the grey theme's) and takes a
-//! little of the picture's hue, and the accent takes the picture's most
-//! vivid hue. [`Theme::unadapt`] puts the seed's greys back.
+//! background", `Topic::Appearance`): [`Scheme::variations`] finds the
+//! picture's own colors, and [`Theme::adapt`] rewrites the color tokens
+//! from one — every surface, border and text color keeps the **lightness**
+//! of its grey in the seed palette (so contrast is the grey theme's) and
+//! takes the color's hue and some of its chroma, and the accent takes
+//! another of the picture's colors. [`Theme::unadapt`] puts the seed's
+//! greys back.
+//!
+//! The colors are modes, not averages: the pixels are counted in narrow
+//! cells (a color each), and a cell is scored as Material Color
+//! Utilities' `Score` does — the share of the picture its hue family
+//! covers, and how vivid it is. A mean over a whole picture drifts to grey
+//! (the dark sky of a space picture thins every color in it); a cell's
+//! mean is the color its pixels share.
 //!
 //! Colors are worked in OKLab / OKLCH (Björn Ottosson), where lightness
 //! and chroma are perceptual, so a tint reads the same strength in every
@@ -17,28 +25,49 @@ use super::types::{Palette, Theme, TokenKind};
 /// What a picture gives the theme.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Scheme {
-    /// The surfaces' hue (degrees), the picture's dominant hue, and their
-    /// chroma at full strength: as strong as the picture is colorful (0: a
+    /// The surfaces' hue (degrees), the picture's color's, and their
+    /// chroma at full strength: the color's own, up to [`TINT_MAX`] (0: a
     /// grey picture).
     pub tint_hue: f32,
     pub tint_chroma: f32,
     /// The accent's hue (degrees) and chroma.
     pub accent_hue: f32,
     pub accent_chroma: f32,
+    /// The picture's color itself (sRGB 0–1), as it is there.
+    pub source: [f32; 3],
 }
 
-/// Hue bins of the histogram (10° each).
-const BINS: usize = 36;
 /// The most schemes a picture offers.
 pub const MAX_VARIATIONS: usize = 4;
-/// A major hue is at least this far from the others, and has at least this
-/// share of the dominant one's weight.
-const HUES_APART: f32 = 30.0;
-const HUE_WEIGHT: f32 = 0.05;
-/// Pixels below this chroma are grey: they vote for no hue.
+/// Pixels below this chroma are grey: they count for no color.
 const GREY: f32 = 0.02;
+/// The cells the pixels are counted in (hue degrees, chroma, lightness):
+/// narrow enough that a cell's mean is the color its pixels share.
+const CELL_HUE: f32 = 10.0;
+const CELL_CHROMA: f32 = 0.02;
+const CELL_L: f32 = 0.1;
+/// A cell is one of the picture's colors with at least this share of its
+/// pixels (and two of them), and at least this chroma.
+const CELL_SHARE: f32 = 0.002;
+const SOURCE_CHROMA: f32 = 0.03;
+/// A color's hue family: the colored pixels within this of its hue. A
+/// color counts only when its family covers more than [`FAMILY_SHARE`] of
+/// the picture.
+const FAMILY: f32 = 15.0;
+const FAMILY_SHARE: f32 = 0.01;
+/// The score (Material Color Utilities' `Score`, its CAM16 chroma scaled to
+/// OKLCH's): the family's share of the picture, plus chroma against a
+/// target — a dull color loses a little, a vivid one gains more.
+const WEIGHT_SHARE: f32 = 70.0;
+const TARGET_CHROMA: f32 = 0.11;
+const WEIGHT_DULL: f32 = 44.0;
+const WEIGHT_VIVID: f32 = 132.0;
+/// The schemes' colors are at first this far apart in hue, closer (down to
+/// [`HUES_APART`]) only until there are [`MAX_VARIATIONS`].
+const HUES_APART_FIRST: f32 = 90.0;
+const HUES_APART: f32 = 30.0;
 /// The strongest tint a surface takes at full strength (OKLCH chroma); up
-/// to it, the picture's mean chroma.
+/// to it, the picture's color's own chroma.
 const TINT_MAX: f32 = 0.08;
 /// Text takes this much of the surfaces' tint.
 const TEXT_SHARE: f32 = 0.3;
@@ -51,10 +80,9 @@ const TINT_FULL_L: f32 = 0.18;
 const ACCENT_L: f32 = 0.82;
 const ACCENT_L_MIN: f32 = 0.68;
 const ACCENT_C: f32 = 0.14;
-/// An accent hue at least this far from the tint, when the picture has
-/// one with enough weight; else the tint's own hue.
+/// The accent is the best of the picture's colors at least this far
+/// from the tint; with none, the tint's own hue.
 const ACCENT_APART: f32 = 60.0;
-const ACCENT_WEIGHT: f32 = 0.2;
 
 /// How each adapted token is made: the seed token whose lightness (and
 /// alpha) it keeps, and what it takes from the picture.
@@ -94,55 +122,34 @@ impl Scheme {
         Self::variations(rgb)[0]
     }
 
-    /// The picture's schemes, one per major hue (at most
-    /// [`MAX_VARIATIONS`], the dominant first): each tints with its hue and
-    /// takes the most vivid hue apart from it as the accent. A grey
-    /// picture gives one, grey.
+    /// The picture's schemes, one per color it is made of (at most
+    /// [`MAX_VARIATIONS`], the best first, as far apart in hue as they
+    /// can be): each tints with its color and takes the best color apart
+    /// from it as the accent. A grey picture gives one, grey.
     pub fn variations(rgb: &[u8]) -> Vec<Self> {
-        let mut tint_bins = [0.0f32; BINS];
-        let mut vivid_bins = [0.0f32; BINS];
-        let mut chroma_sum = 0.0f32;
-        let mut count = 0usize;
         let pixels: Vec<Lch> = rgb
             .chunks_exact(3)
             .map(|p| Lch::from_srgb8(p[0], p[1], p[2]))
             .collect();
-        for px in &pixels {
-            count += 1;
-            chroma_sum += px.c;
-            if px.c < GREY {
-                continue;
-            }
-            let bin = bin_of(px.h);
-            // Area × colorfulness for the tint; vivid and bright for the
-            // accent.
-            tint_bins[bin] += px.c;
-            vivid_bins[bin] += px.c * px.c * px.l;
-        }
-        let mean_chroma = if count == 0 { 0.0 } else { chroma_sum / count as f32 };
-        let tint_bins = smooth(&tint_bins);
-        let vivid_bins = smooth(&vivid_bins);
-        let tints = major_hues(&tint_bins);
-        if tints.is_empty() {
+        let sources = sources(&pixels);
+        let chosen = apart(&sources);
+        if chosen.is_empty() {
             return vec![Self::grey()];
         }
-        tints
+        chosen
             .into_iter()
-            .map(|bin| {
-                let tint_hue = mean_hue(&pixels, centre(bin));
-                let accent_hue = accent_for(&pixels, &vivid_bins, tint_hue);
-                // The accent as vivid as the picture's own color there
-                // allows.
-                let accent_peak = pixels
+            .map(|tint| {
+                let accent_hue = sources
                     .iter()
-                    .filter(|p| hue_apart(p.h, accent_hue) < 15.0)
-                    .map(|p| p.c)
-                    .fold(0.0f32, f32::max);
+                    .find(|s| hue_apart(s.color.h, tint.color.h) >= ACCENT_APART)
+                    .map_or(tint.color.h, |s| s.color.h);
                 Self {
-                    tint_hue,
-                    tint_chroma: mean_chroma.min(TINT_MAX),
+                    tint_hue: tint.color.h,
+                    tint_chroma: tint.color.c.min(TINT_MAX),
                     accent_hue,
-                    accent_chroma: accent_peak.clamp(0.06, ACCENT_C),
+                    // As vivid as the picture's own color there allows.
+                    accent_chroma: peak_chroma(&pixels, accent_hue).clamp(0.06, ACCENT_C),
+                    source: tint.color.to_rgba(1.0).rgb(),
                 }
             })
             .collect()
@@ -178,6 +185,12 @@ impl Scheme {
         ]
     }
 
+    /// [`Self::source`] as `#rrggbb`.
+    pub fn source_hex(&self) -> String {
+        let [r, g, b] = self.source;
+        Rgba { r, g, b, a: 1.0 }.hex()
+    }
+
     /// A grey picture: no tint, the seed accent's hue.
     fn grey() -> Self {
         Self {
@@ -185,6 +198,7 @@ impl Scheme {
             tint_chroma: 0.0,
             accent_hue: 210.0,
             accent_chroma: ACCENT_C,
+            source: [0.5; 3],
         }
     }
 
@@ -382,58 +396,119 @@ pub fn highlight_rgb(theme: &Theme) -> [f32; 3] {
     token_rgb(theme, "highlight")
 }
 
-fn bin_of(h: f32) -> usize {
-    ((h.rem_euclid(360.0) / (360.0 / BINS as f32)) as usize).min(BINS - 1)
+/// One of the picture's colors, and its score.
+#[derive(Debug, Clone, Copy)]
+struct Source {
+    color: Lch,
+    score: f32,
 }
 
-fn centre(bin: usize) -> f32 {
-    (bin as f32 + 0.5) * (360.0 / BINS as f32)
+/// A cell's pixels: how many, and their sums (hue as a unit vector).
+#[derive(Default)]
+struct Cell {
+    count: u32,
+    l: f32,
+    c: f32,
+    x: f32,
+    y: f32,
 }
 
-/// Circular [1, 2, 1] smoothing, so a hue on a bin edge still counts.
-fn smooth(bins: &[f32; BINS]) -> [f32; BINS] {
-    let mut out = [0.0; BINS];
-    for i in 0..BINS {
-        out[i] = bins[(i + BINS - 1) % BINS] + 2.0 * bins[i] + bins[(i + 1) % BINS];
+impl Cell {
+    fn add(&mut self, p: &Lch) {
+        let (y, x) = p.h.to_radians().sin_cos();
+        self.count += 1;
+        self.l += p.l;
+        self.c += p.c;
+        self.x += x;
+        self.y += y;
     }
+
+    fn mean(&self) -> Lch {
+        let n = self.count as f32;
+        let h = self.y.atan2(self.x).to_degrees().rem_euclid(360.0);
+        Lch::new(self.l / n, self.c / n, h)
+    }
+}
+
+/// The picture's colors, the best scored first.
+fn sources(pixels: &[Lch]) -> Vec<Source> {
+    let n = pixels.len() as f32;
+    // Colored pixels per degree of hue, for the families.
+    let mut by_degree = [0u32; 360];
+    let mut cells: std::collections::BTreeMap<(u16, u16, u16), Cell> = Default::default();
+    for p in pixels.iter().filter(|p| p.c >= GREY) {
+        by_degree[(p.h as usize) % 360] += 1;
+        let key = (
+            (p.h / CELL_HUE) as u16,
+            (p.c / CELL_CHROMA) as u16,
+            (p.l.max(0.0) / CELL_L) as u16,
+        );
+        cells.entry(key).or_default().add(p);
+    }
+    let family = |h: f32| {
+        let at = h.round() as i32;
+        let reach = FAMILY as i32;
+        let count: u32 = (-reach..=reach)
+            .map(|d| by_degree[(at + d).rem_euclid(360) as usize])
+            .sum();
+        count as f32 / n
+    };
+    let least = (CELL_SHARE * n).max(2.0);
+    let mut out: Vec<Source> = cells
+        .values()
+        .filter(|cell| cell.count as f32 >= least)
+        .map(Cell::mean)
+        .filter(|color| color.c >= SOURCE_CHROMA)
+        .filter_map(|color| {
+            let share = family(color.h);
+            (share > FAMILY_SHARE).then(|| Source {
+                color,
+                score: score(share, color.c),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| b.score.total_cmp(&a.score));
     out
 }
 
-/// The heaviest bins, each [`HUES_APART`] from those before it, down to
-/// [`HUE_WEIGHT`] of the heaviest; at most [`MAX_VARIATIONS`].
-fn major_hues(bins: &[f32; BINS]) -> Vec<usize> {
-    let mut order: Vec<usize> = (0..BINS).filter(|&b| bins[b] > 0.0).collect();
-    order.sort_by(|&a, &b| bins[b].total_cmp(&bins[a]));
-    let Some(&top) = order.first() else {
-        return Vec::new();
+fn score(share: f32, chroma: f32) -> f32 {
+    let weight = if chroma < TARGET_CHROMA {
+        WEIGHT_DULL
+    } else {
+        WEIGHT_VIVID
     };
-    let mut chosen: Vec<usize> = Vec::new();
-    for b in order {
-        if chosen.len() == MAX_VARIATIONS || bins[b] < HUE_WEIGHT * bins[top] {
-            break;
-        }
-        if chosen
-            .iter()
-            .all(|&c| hue_apart(centre(b), centre(c)) >= HUES_APART)
-        {
-            chosen.push(b);
-        }
-    }
-    chosen
+    share * WEIGHT_SHARE + (chroma - TARGET_CHROMA) * weight
 }
 
-/// The accent for a tint: the most vivid hue at least [`ACCENT_APART`]
-/// from it with enough weight, else the tint's own hue.
-fn accent_for(pixels: &[Lch], vivid_bins: &[f32; BINS], tint_hue: f32) -> f32 {
-    let best = vivid_bins.iter().cloned().fold(0.0f32, f32::max);
-    let bin = (0..BINS)
-        .filter(|&b| hue_apart(centre(b), tint_hue) >= ACCENT_APART)
-        .filter(|&b| vivid_bins[b] >= ACCENT_WEIGHT * best)
-        .max_by(|&a, &b| vivid_bins[a].total_cmp(&vivid_bins[b]));
-    match bin {
-        Some(b) => mean_hue(pixels, centre(b)),
-        None => tint_hue,
+/// Up to [`MAX_VARIATIONS`] of `sources` (best first), each at least
+/// `apart` in hue from those before it — starting far apart, closing in
+/// only as far as it takes to find enough.
+fn apart(sources: &[Source]) -> Vec<Source> {
+    let mut apart = HUES_APART_FIRST;
+    loop {
+        let mut chosen: Vec<Source> = Vec::new();
+        for s in sources {
+            if chosen.len() == MAX_VARIATIONS {
+                break;
+            }
+            if chosen.iter().all(|c| hue_apart(c.color.h, s.color.h) >= apart) {
+                chosen.push(*s);
+            }
+        }
+        if chosen.len() == MAX_VARIATIONS || apart <= HUES_APART {
+            return chosen;
+        }
+        apart -= 1.0;
     }
+}
+
+/// The most chroma among the picture's pixels in `hue`'s family.
+fn peak_chroma(pixels: &[Lch], hue: f32) -> f32 {
+    pixels
+        .iter()
+        .filter(|p| p.c >= GREY && hue_apart(p.h, hue) <= FAMILY)
+        .map(|p| p.c)
+        .fold(0.0, f32::max)
 }
 
 /// A hue (OKLCH degrees) in a word.
@@ -458,23 +533,6 @@ fn hue_name(h: f32) -> &'static str {
 fn hue_apart(a: f32, b: f32) -> f32 {
     let d = (a - b).rem_euclid(360.0);
     d.min(360.0 - d)
-}
-
-/// The chroma-weighted circular mean of the colored pixels within half of
-/// [`HUES_APART`] of `around` (so neighbouring variations stay apart).
-fn mean_hue(pixels: &[Lch], around: f32) -> f32 {
-    let (mut x, mut y) = (0.0f32, 0.0f32);
-    for p in pixels {
-        if p.c >= GREY && hue_apart(p.h, around) <= HUES_APART / 2.0 {
-            let r = p.h.to_radians();
-            x += p.c * r.cos();
-            y += p.c * r.sin();
-        }
-    }
-    if x == 0.0 && y == 0.0 {
-        return around;
-    }
-    y.atan2(x).to_degrees().rem_euclid(360.0)
 }
 
 /// An sRGB color with alpha, 0–1.
@@ -687,6 +745,19 @@ mod tests {
         };
         assert!(chroma(0.0) < 0.002, "no strength: grey");
         assert!(chroma(1.0) > chroma(0.5) && chroma(0.5) > chroma(0.2));
+    }
+
+    #[test]
+    fn a_dark_picture_keeps_its_colors_vivid() {
+        // A space picture: mostly black sky, a little vivid nebula. A mean
+        // over the picture would thin the orange to almost grey.
+        let mut px = fill([5, 5, 8], 900);
+        px.extend(fill([200, 90, 40], 100));
+        let scheme = Scheme::from_pixels(&px);
+        assert!(hue_apart(scheme.tint_hue, 45.0) < 20.0, "{scheme:?}");
+        assert_eq!(scheme.tint_chroma, TINT_MAX, "{scheme:?}");
+        // The source is the nebula's own color.
+        assert_eq!(scheme.source_hex(), "#c85a28");
     }
 
     #[test]

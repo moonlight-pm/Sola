@@ -385,16 +385,38 @@ pub struct Appearance {
     #[serde(default)]
     pub variation: u8,
     /// Fade the windows out when there is no input (sola-river draws the
-    /// background over them, rising over [`Self::FADE_MINUTES`]); any input
+    /// background over them, rising over `fade_over_min`); any input
     /// brings them back.
     #[serde(default = "Appearance::default_fade_idle")]
     pub fade_idle: bool,
     /// Minutes of no input before the fade starts.
     #[serde(default = "Appearance::default_fade_after")]
     pub fade_after_min: u16,
+    /// Minutes the fade takes, from the first sign to fully faded.
+    #[serde(default = "Appearance::default_fade_over")]
+    pub fade_over_min: u16,
     /// Colors you set yourself, over the greys or the picture's scheme:
     /// `window`, `panels`, `highlight`, `accent` → `#rrggbb`
-    /// (`sola_core::theme::Theme::customize`).
+    /// (`sola_core::theme::Theme::customize`). Those of the custom look in
+    /// use (`custom`); empty with none.
+    #[serde(default)]
+    pub colors: std::collections::BTreeMap<String, String>,
+    /// The looks you made (Settings → Appearance): each your colors over
+    /// one of the picture's schemes. Kept when another look is picked.
+    #[serde(default)]
+    pub customs: Vec<CustomLook>,
+    /// The one of `customs` in use, by index; `variation` and `colors` are
+    /// then its own. `None`: the scheme alone.
+    #[serde(default)]
+    pub custom: Option<u8>,
+}
+
+/// A look you made: your colors (`Appearance.colors`' keys) over one of the
+/// picture's schemes (`Appearance.variation`'s index).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomLook {
+    #[serde(default)]
+    pub variation: u8,
     #[serde(default)]
     pub colors: std::collections::BTreeMap<String, String>,
 }
@@ -402,8 +424,9 @@ pub struct Appearance {
 impl Appearance {
     pub const DEFAULT_STRENGTH: u8 = 60;
     pub const DEFAULT_FADE_AFTER_MIN: u16 = 5;
-    /// How long the fade takes, from the first sign to fully faded.
-    pub const FADE_MINUTES: u16 = 30;
+    pub const DEFAULT_FADE_OVER_MIN: u16 = 30;
+    /// The most looks you can keep.
+    pub const MAX_CUSTOMS: usize = 6;
 
     fn default_strength() -> u8 {
         Self::DEFAULT_STRENGTH
@@ -416,6 +439,10 @@ impl Appearance {
     fn default_fade_after() -> u16 {
         Self::DEFAULT_FADE_AFTER_MIN
     }
+
+    fn default_fade_over() -> u16 {
+        Self::DEFAULT_FADE_OVER_MIN
+    }
 }
 
 impl Default for Appearance {
@@ -426,14 +453,17 @@ impl Default for Appearance {
             variation: 0,
             fade_idle: true,
             fade_after_min: Self::DEFAULT_FADE_AFTER_MIN,
+            fade_over_min: Self::DEFAULT_FADE_OVER_MIN,
             colors: Default::default(),
+            customs: Vec::new(),
+            custom: None,
         }
     }
 }
 
 /// The color schemes the background picture offers for the adapted theme
-/// (shell → Settings, `Topic::ThemeVariations`, sticky): one per major hue,
-/// the dominant first. `Appearance.variation` picks one.
+/// (shell → Settings, `Topic::ThemeVariations`, sticky): one per color the
+/// picture is made of, the best first. `Appearance.variation` picks one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThemeVariations {
     /// The picture they were sampled from (`Background.path`).
@@ -441,14 +471,29 @@ pub struct ThemeVariations {
     pub choices: Vec<ThemeVariation>,
 }
 
-/// One scheme, as Settings shows it: its tint's hue name and three of its
-/// colors at the current strength (`#rrggbb`).
+/// One scheme, as Settings shows it: its tint's hue name, three of its
+/// colors at the current strength, and the picture's color it comes from
+/// (`#rrggbb`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ThemeVariation {
     pub name: String,
     pub base: String,
     pub raised: String,
     pub accent: String,
+    #[serde(default)]
+    pub source: String,
+}
+
+/// Where the idle fade stops short (shell → sola-river, `Topic::IdleKeep`,
+/// sticky): the top row's left group — the flower and the agent islands,
+/// what you may want to answer — stays at least a fifth in sight however
+/// far the fade goes. Output-local logical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdleKeep {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
 }
 
 /// Emitted by compositor when pointer enters a different surface/window.
@@ -1707,6 +1752,11 @@ define_topics! {
     // Sticky. Appended last.
     #[sticky]
     ThemeVariations(ThemeVariations),
+
+    // What the idle fade keeps in sight (shell → sola-river). Sticky.
+    // Appended last.
+    #[sticky]
+    IdleKeep(IdleKeep),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1733,6 +1783,7 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::Background
             | TopicKind::Appearance
             | TopicKind::ThemeVariations
+            | TopicKind::IdleKeep
     )
 }
 
@@ -1901,8 +1952,36 @@ mod tests {
         assert_eq!(old.strength, 30);
         assert!(old.fade_idle);
         assert_eq!(old.fade_after_min, Appearance::DEFAULT_FADE_AFTER_MIN);
+        assert_eq!(old.fade_over_min, Appearance::DEFAULT_FADE_OVER_MIN);
+        assert!(old.customs.is_empty() && old.custom.is_none());
+        let mine = Appearance {
+            variation: 1,
+            colors: [("accent".to_string(), "#ff8800".to_string())].into(),
+            customs: vec![CustomLook {
+                variation: 1,
+                colors: [("accent".to_string(), "#ff8800".to_string())].into(),
+            }],
+            custom: Some(0),
+            ..Appearance::default()
+        };
+        match Topic::parse(&Topic::Appearance(mine.clone()).to_message()) {
+            Some(Topic::Appearance(back)) => assert_eq!(back, mine),
+            other => panic!("expected Appearance, got {other:?}"),
+        }
         assert!(TopicKind::ThemeVariations.behavior().is_sticky());
         assert!(topic_kind_is_after_mail_status(TopicKind::ThemeVariations));
+        let keep = IdleKeep {
+            x: 0,
+            y: 0,
+            w: 180,
+            h: 40,
+        };
+        match Topic::parse(&Topic::IdleKeep(keep).to_message()) {
+            Some(Topic::IdleKeep(back)) => assert_eq!(back, keep),
+            other => panic!("expected IdleKeep, got {other:?}"),
+        }
+        assert!(TopicKind::IdleKeep.behavior().is_sticky());
+        assert!(topic_kind_is_after_mail_status(TopicKind::IdleKeep));
     }
 
     #[test]

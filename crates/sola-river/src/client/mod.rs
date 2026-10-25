@@ -497,6 +497,9 @@ pub fn bus_tick(state: &mut AppData) {
                 // A retraction arrives as the same topic, not sticky.
                 fade::settings(state, msg.sticky.then_some(&look));
             }
+            sola_bus::topics::Topic::IdleKeep(keep) => {
+                fade::keep(state, msg.sticky.then_some(keep));
+            }
             sola_bus::topics::Topic::Background(bg) => {
                 // A retraction arrives as the same topic, not sticky.
                 background::set(state, msg.sticky.then_some(bg));

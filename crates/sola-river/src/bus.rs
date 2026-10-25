@@ -33,6 +33,9 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     TopicKind::Appearance,
     // The focus rim's color (the theme's highlight). Persistent.
     TopicKind::Theme,
+    // What the idle fade keeps in sight (the top row's left islands).
+    // Sticky.
+    TopicKind::IdleKeep,
 ];
 
 pub struct BusClient {

@@ -190,6 +190,8 @@ impl Shell {
         self.style = sola_kit::theme::shell_style_from_bus_theme(&t);
         sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(&t));
         sola_kit::theme::install_atoms(&sola_kit::theme::atoms_from_bus_theme(&t));
+        // The islands' widths follow the fonts.
+        self.emit_idle_keep(false);
     }
 
     /// Store output geometry, emit frames for all windows, and emit composition.
@@ -205,6 +207,7 @@ impl Shell {
         self.emit_all_frames();
         self.emit_composition();
         self.emit_registered_chords();
+        self.emit_idle_keep(true);
     }
 
     /// Receive the full window list from sola-river.

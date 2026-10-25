@@ -23,9 +23,9 @@ password**. SMTP port 465 uses implicit TLS; other ports use STARTTLS.
 **Send from** on the inbox lists the addresses configured on that server
 (Wicket `/api/auth/me`); check the ones Mail should offer. Extra SMTP
 accounts still take typed aliases. Catch-alls (`*@moonlight.pm`) are
-omitted. The picker is sorted A–Z. **Default From** is the address new
-messages use. Reply picks the identity that appears in the original
-To/Cc, or Default From.
+omitted. The picker is sorted A–Z. **Sending → New messages from** is the
+address new messages use. Reply picks the identity that appears in the
+original To/Cc, or that one.
 
 Editing rules in Settings keeps every connection open; only an account
 whose IMAP login changed reconnects.

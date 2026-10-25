@@ -992,6 +992,11 @@ impl App {
                 self.palette = Palette::from_kit_theme(&atoms_from_bus_theme(&bus));
                 self.metrics = CellMetrics::for_font(self.metrics.font_size, fonts::mono_metrics());
                 self.resize_all_panes();
+                // The grids are cached in the old colors (a resize clears
+                // only the panes whose size changed).
+                for rt in self.runtimes.values() {
+                    rt.cache.clear();
+                }
             }
             return Task::none();
         }

@@ -1,14 +1,19 @@
 //! The idle fade (Settings → Appearance, `Appearance.fade_idle`): after
 //! `fade_after_min` minutes with no input, the windows fade into the
-//! background over [`Appearance::FADE_MINUTES`]; any input brings them
-//! back at once.
+//! background over `fade_over_min`; input brings them back over a second
+//! ([`RETURN`]).
 //!
 //! Fading every window toward the picture looks exactly like the picture
 //! rising over every window (`a·window + (1−a)·picture` either way), so
-//! that is what is drawn: a shell surface at the top of the render list
-//! showing the picture (the background's own memory; black without a
-//! picture), its opacity raised by `wp_alpha_modifier_v1` — a number per
-//! step, no repaint. Its input region is empty.
+//! that is what is drawn: shell surfaces at the top of the render list
+//! showing the picture (buffers over the background's own memory; black
+//! without a picture), their opacity raised by `wp_alpha_modifier_v1` — a
+//! number per step, no repaint. Their input regions are empty.
+//!
+//! The overlay is cut in pieces around what the shell keeps in sight
+//! (`Topic::IdleKeep`: the top row's flower and agent islands, what you
+//! may want to answer); the piece over it stops short, so they never fade
+//! below [`KEEP`].
 //!
 //! Idle comes from `ext_idle_notifier_v1.get_idle_notification`, which
 //! honors idle inhibitors (a video player keeping the screen awake); and
@@ -18,7 +23,7 @@ use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
 use rustix::fs::{MemfdFlags, ftruncate, memfd_create};
-use sola_bus::topics::Appearance;
+use sola_bus::topics::{Appearance, IdleKeep};
 use tracing::{debug, info, warn};
 use wayland_client::protocol::{wl_buffer, wl_shm, wl_shm_pool, wl_surface};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
@@ -33,8 +38,13 @@ use crate::client::AppData;
 use crate::protocol::river_window_management_v1::river_node_v1::RiverNodeV1;
 use crate::protocol::river_window_management_v1::river_shell_surface_v1::RiverShellSurfaceV1;
 
-/// The opacity changes at most this often (a step of 1/1800 of the way).
+/// While fading, the opacity changes at most this often (over 30
+/// minutes, a step of 1/1800 of the way).
 const STEP: Duration = Duration::from_secs(1);
+/// Input came back: the windows return over this, a step every bus tick.
+const RETURN: Duration = Duration::from_secs(1);
+/// What stays in sight of the kept part however far the fade goes.
+const KEEP: f64 = 0.2;
 
 pub struct FadeState {
     /// `ext_idle_notifier_v1`, `wp_alpha_modifier_v1`.
@@ -42,10 +52,16 @@ pub struct FadeState {
     pub alpha: Option<WpAlphaModifierV1>,
     /// The idle delay asked for (ms); `None` while the fade is off.
     wanted: Option<u32>,
+    /// How long the fade takes.
+    over: Duration,
     /// The notification for `wanted`, and its delay.
     notification: Option<(ExtIdleNotificationV1, u32)>,
     /// When the fade began (idle, and no fullscreen window).
     since: Option<Instant>,
+    /// Input came back: the level the return started from, and when.
+    returning: Option<(u32, Instant)>,
+    /// What stays in sight (`Topic::IdleKeep`, output-local logical).
+    keep: Option<IdleKeep>,
     overlay: Option<Overlay>,
     /// Making the overlay failed this idle: stop asking for render passes.
     failed: bool,
@@ -62,37 +78,67 @@ impl Default for FadeState {
             wanted: look
                 .fade_idle
                 .then(|| u32::from(look.fade_after_min) * 60_000),
+            over: over(&look),
             notification: None,
             since: None,
+            returning: None,
+            keep: None,
             overlay: None,
             failed: false,
         }
     }
 }
 
-/// The picture over everything, at some opacity.
+/// The picture over everything, in pieces, at some opacity.
 struct Overlay {
+    pieces: Vec<Piece>,
+    /// The black buffers' own memory (none over the picture's).
+    black: Option<(rustix::fd::OwnedFd, wl_shm_pool::WlShmPool)>,
+    /// What it was cut around.
+    keep: Option<IdleKeep>,
+    /// The fade's level (the kept piece's is capped, [`piece_level`]).
+    level: u32,
+    set_at: Instant,
+}
+
+/// One rectangle of the overlay.
+struct Piece {
     shell_surface: RiverShellSurfaceV1,
     node: RiverNodeV1,
     surface: wl_surface::WlSurface,
     opacity: WpAlphaModifierSurfaceV1,
     buffer: wl_buffer::WlBuffer,
-    /// A black buffer's own memory (none over the picture's).
-    black: Option<(rustix::fd::OwnedFd, wl_shm_pool::WlShmPool)>,
-    multiplier: u32,
-    set_at: Instant,
+    /// Over the kept part.
+    kept: bool,
+}
+
+impl Overlay {
+    fn set(&mut self, level: u32) {
+        for p in &self.pieces {
+            p.opacity.set_multiplier(piece_level(level, p.kept));
+            p.surface.commit();
+        }
+        self.level = level;
+        self.set_at = Instant::now();
+    }
 }
 
 impl Drop for Overlay {
+    fn drop(&mut self) {
+        // Buffers outlive their pool; the pieces go after this.
+        if let Some((_, pool)) = &self.black {
+            pool.destroy();
+        }
+    }
+}
+
+impl Drop for Piece {
     fn drop(&mut self) {
         self.opacity.destroy();
         self.node.destroy();
         self.shell_surface.destroy();
         self.surface.destroy();
         self.buffer.destroy();
-        if let Some((_, pool)) = &self.black {
-            pool.destroy();
-        }
     }
 }
 
@@ -102,6 +148,8 @@ pub fn settings(state: &mut AppData, look: Option<&Appearance>) {
     let wanted = look
         .fade_idle
         .then(|| u32::from(look.fade_after_min.max(1)) * 60_000);
+    // A new length takes from the next step: the fade so far keeps going.
+    state.fade.over = over(&look);
     if wanted == state.fade.wanted {
         return;
     }
@@ -114,10 +162,35 @@ pub fn settings(state: &mut AppData, look: Option<&Appearance>) {
     ensure(state);
 }
 
-/// Run every bus tick: ask for the idle notification, and raise the
-/// overlay's opacity as the fade goes.
+/// `Topic::IdleKeep` (`None`: retracted). An overlay up is cut again in
+/// the next render sequence.
+pub fn keep(state: &mut AppData, keep: Option<IdleKeep>) {
+    if state.fade.keep == keep {
+        return;
+    }
+    debug!(?keep, "idle fade keeps");
+    state.fade.keep = keep;
+    if state.fade.overlay.is_some() {
+        state.pending.render_dirty = true;
+    }
+}
+
+/// Run every bus tick: ask for the idle notification, raise the overlay's
+/// opacity as the fade goes, and lower it as the windows return.
 pub fn tick(state: &mut AppData) {
     ensure(state);
+    if let Some((from, at)) = state.fade.returning {
+        let t = at.elapsed().as_secs_f64() / RETURN.as_secs_f64();
+        if t >= 1.0 || state.fade.overlay.is_none() {
+            drop_overlay(state);
+            return;
+        }
+        if let Some(overlay) = &mut state.fade.overlay {
+            overlay.set(returning_level(from, t));
+        }
+        flush(state);
+        return;
+    }
     let Some(since) = state.fade.since else {
         return;
     };
@@ -129,7 +202,7 @@ pub fn tick(state: &mut AppData) {
         state.fade.since = Some(Instant::now());
         return;
     }
-    let target = multiplier(since.elapsed());
+    let target = multiplier(since.elapsed(), state.fade.over);
     let Some(overlay) = &mut state.fade.overlay else {
         // Made in the next render sequence (it must be placed on top).
         if !state.fade.failed {
@@ -137,35 +210,42 @@ pub fn tick(state: &mut AppData) {
         }
         return;
     };
-    if overlay.multiplier == target || overlay.set_at.elapsed() < STEP {
+    if overlay.level == target || overlay.set_at.elapsed() < STEP {
         return;
     }
-    overlay.opacity.set_multiplier(target);
-    overlay.surface.commit();
-    overlay.multiplier = target;
-    overlay.set_at = Instant::now();
-    if let Some(conn) = &state.conn {
-        let _ = conn.flush();
-    }
+    overlay.set(target);
+    flush(state);
 }
 
 /// Run during every render sequence, last: make the overlay when the fade
-/// needs it, and keep it on top.
+/// needs it (again when what it keeps moved), and keep it on top.
 pub fn sync_on_render(state: &mut AppData) {
-    if state.fade.since.is_none() || state.fade.wanted.is_none() {
+    let fading = state.fade.since.is_some() || state.fade.returning.is_some();
+    if !fading || state.fade.wanted.is_none() {
         state.fade.overlay = None;
         return;
     }
     if let Some(overlay) = &state.fade.overlay {
-        overlay.node.place_top();
-        return;
+        // Cut again only while fading out; a return is over in a second.
+        if overlay.keep == state.fade.keep || state.fade.returning.is_some() {
+            for p in &overlay.pieces {
+                p.node.place_top();
+            }
+            return;
+        }
     }
     if !state.currently_fullscreen.is_empty() || state.fade.failed {
         return;
     }
-    match make_overlay(state) {
+    let level = match (&state.fade.overlay, state.fade.since) {
+        (Some(overlay), _) => overlay.level,
+        (None, Some(since)) => multiplier(since.elapsed(), state.fade.over),
+        (None, None) => 0,
+    };
+    match make_overlay(state, level) {
         Ok(overlay) => {
-            debug!(multiplier = overlay.multiplier, "idle fade overlay");
+            debug!(level, pieces = overlay.pieces.len(), "idle fade overlay");
+            // The old one, if any, goes now: the new is already on top.
             state.fade.overlay = Some(overlay);
         }
         Err(e) => {
@@ -175,11 +255,63 @@ pub fn sync_on_render(state: &mut AppData) {
     }
 }
 
-/// The opacity `elapsed` into the fade.
-fn multiplier(elapsed: Duration) -> u32 {
-    let total = f64::from(Appearance::FADE_MINUTES) * 60.0;
-    let t = (elapsed.as_secs_f64() / total).clamp(0.0, 1.0);
+/// The opacity `elapsed` into a fade that takes `over`.
+fn multiplier(elapsed: Duration, over: Duration) -> u32 {
+    let t = (elapsed.as_secs_f64() / over.as_secs_f64().max(1.0)).clamp(0.0, 1.0);
     (t * f64::from(u32::MAX)) as u32
+}
+
+/// The opacity `t` (0–1) into a return from `from`: quick at first, then
+/// settling.
+fn returning_level(from: u32, t: f64) -> u32 {
+    (f64::from(from) * (1.0 - t.clamp(0.0, 1.0)).powi(2)) as u32
+}
+
+/// A piece's opacity at the fade's `level`: the kept piece stops at
+/// `1 − KEEP`.
+fn piece_level(level: u32, kept: bool) -> u32 {
+    if kept {
+        level.min(((1.0 - KEEP) * f64::from(u32::MAX)) as u32)
+    } else {
+        level
+    }
+}
+
+fn over(look: &Appearance) -> Duration {
+    Duration::from_secs(u64::from(look.fade_over_min.max(1)) * 60)
+}
+
+/// A rectangle of the output, logical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Rect {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+}
+
+/// The output (`w` × `h`) in pieces that cover it once: the part kept
+/// (`true`; inside the output), and the up to four around it.
+fn cut(w: i32, h: i32, keep: Option<IdleKeep>) -> Vec<(Rect, bool)> {
+    let full = Rect { x: 0, y: 0, w, h };
+    let Some(k) = keep else {
+        return vec![(full, false)];
+    };
+    let (x0, y0) = (k.x.clamp(0, w), k.y.clamp(0, h));
+    let x1 = k.x.saturating_add(k.w as i32).clamp(0, w);
+    let y1 = k.y.saturating_add(k.h as i32).clamp(0, h);
+    if x1 <= x0 || y1 <= y0 {
+        return vec![(full, false)];
+    }
+    let around = [
+        Rect { x: 0, y: 0, w, h: y0 },
+        Rect { x: 0, y: y1, w, h: h - y1 },
+        Rect { x: 0, y: y0, w: x0, h: y1 - y0 },
+        Rect { x: x1, y: y0, w: w - x1, h: y1 - y0 },
+    ];
+    let mut out = vec![(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, true)];
+    out.extend(around.into_iter().filter(|r| r.w > 0 && r.h > 0).map(|r| (r, false)));
+    out
 }
 
 /// Ask for the idle notification when the fade is on and it is missing.
@@ -201,7 +333,21 @@ fn ensure(state: &mut AppData) {
     state.fade.notification = Some((n, timeout));
 }
 
-/// Input (or the fade turned off): the windows back at once.
+/// Input: the windows come back over [`RETURN`].
+fn resume(state: &mut AppData) {
+    state.fade.since = None;
+    state.fade.failed = false;
+    match state.fade.overlay.as_ref().map(|o| o.level) {
+        Some(level) if level > 0 => {
+            if state.fade.returning.is_none() {
+                state.fade.returning = Some((level, Instant::now()));
+            }
+        }
+        _ => drop_overlay(state),
+    }
+}
+
+/// The fade turned off or changed: the windows back at once.
 fn wake(state: &mut AppData) {
     state.fade.since = None;
     state.fade.failed = false;
@@ -209,18 +355,22 @@ fn wake(state: &mut AppData) {
 }
 
 fn drop_overlay(state: &mut AppData) {
-    let Some(overlay) = state.fade.overlay.take() else {
+    state.fade.returning = None;
+    let Some(mut overlay) = state.fade.overlay.take() else {
         return;
     };
-    overlay.opacity.set_multiplier(0);
-    overlay.surface.commit();
+    overlay.set(0);
     drop(overlay);
+    flush(state);
+}
+
+fn flush(state: &AppData) {
     if let Some(conn) = &state.conn {
         let _ = conn.flush();
     }
 }
 
-fn make_overlay(state: &mut AppData) -> Result<Overlay, String> {
+fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
     let wm = state.wm.clone().ok_or("window manager not bound")?;
     let alpha = state.fade.alpha.clone().ok_or("wp_alpha_modifier_v1 not bound")?;
     let compositor = state
@@ -229,46 +379,62 @@ fn make_overlay(state: &mut AppData) -> Result<Overlay, String> {
         .clone()
         .ok_or("wl_compositor not bound")?;
     let qh = state.qh.clone().ok_or("queue handle missing")?;
-    let (buffer, w, h, scale, black) = match crate::client::background::overlay_buffer(state) {
-        Some((buffer, w, h, scale)) => (buffer, w, h, scale, None),
+    let (ow, oh) = state.output_size.ok_or("output size unknown")?;
+    let (pool, bw, bh, scale, black) = match crate::client::background::overlay_pool(state) {
+        Some((pool, w, h, scale)) => (pool, w, h, scale.max(1), None),
         None => {
-            let (w, h) = state.output_size.ok_or("output size unknown")?;
             let shm = state.screenshot.shm.clone().ok_or("wl_shm not bound")?;
-            let size = w.checked_mul(h).and_then(|p| p.checked_mul(4)).ok_or("size")?;
+            let size = ow.checked_mul(oh).and_then(|p| p.checked_mul(4)).ok_or("size")?;
             // A fresh memfd reads as zeros: black.
             let memfd = memfd_create("sola-fade", MemfdFlags::CLOEXEC)
                 .map_err(|e| format!("memfd_create: {e}"))?;
             ftruncate(&memfd, size as u64).map_err(|e| format!("ftruncate: {e}"))?;
             let pool = shm.create_pool(memfd.as_fd(), size, &qh, ());
-            let buffer = pool.create_buffer(0, w, h, w * 4, wl_shm::Format::Xrgb8888, &qh, ());
-            (buffer, w, h, 1, Some((memfd, pool)))
+            (pool.clone(), ow, oh, 1, Some((memfd, pool)))
         }
     };
-    let surface = compositor.create_surface(&qh, ());
-    let region = compositor.create_region(&qh, ());
-    surface.set_input_region(Some(&region));
-    region.destroy();
-    let opacity = alpha.get_surface(&surface, &qh, ());
-    let start = state.fade.since.map_or(0, |s| multiplier(s.elapsed()));
-    opacity.set_multiplier(start);
-    let shell_surface = wm.get_shell_surface(&surface, &qh, ());
-    let node = shell_surface.get_node(&qh, ());
-    node.place_top();
     let (x, y) = state.output_origin.unwrap_or((0, 0));
-    node.set_position(x, y);
-    shell_surface.sync_next_commit();
-    surface.set_buffer_scale(scale);
-    surface.attach(Some(&buffer), 0, 0);
-    surface.damage_buffer(0, 0, w, h);
-    surface.commit();
+    let mut pieces = Vec::new();
+    for (r, kept) in cut(ow, oh, state.fade.keep) {
+        // The piece in the buffer's pixels, inside it, whole logical pixels.
+        let (px, py) = (r.x * scale, r.y * scale);
+        let pw = (r.w * scale).min(bw - px);
+        let ph = (r.h * scale).min(bh - py);
+        let (pw, ph) = (pw - pw % scale, ph - ph % scale);
+        if pw <= 0 || ph <= 0 {
+            continue;
+        }
+        let offset = (py * bw + px) * 4;
+        let buffer = pool.create_buffer(offset, pw, ph, bw * 4, wl_shm::Format::Xrgb8888, &qh, ());
+        let surface = compositor.create_surface(&qh, ());
+        let region = compositor.create_region(&qh, ());
+        surface.set_input_region(Some(&region));
+        region.destroy();
+        let opacity = alpha.get_surface(&surface, &qh, ());
+        opacity.set_multiplier(piece_level(level, kept));
+        let shell_surface = wm.get_shell_surface(&surface, &qh, ());
+        let node = shell_surface.get_node(&qh, ());
+        node.place_top();
+        node.set_position(x + r.x, y + r.y);
+        shell_surface.sync_next_commit();
+        surface.set_buffer_scale(scale);
+        surface.attach(Some(&buffer), 0, 0);
+        surface.damage_buffer(0, 0, pw, ph);
+        surface.commit();
+        pieces.push(Piece {
+            shell_surface,
+            node,
+            surface,
+            opacity,
+            buffer,
+            kept,
+        });
+    }
     Ok(Overlay {
-        shell_surface,
-        node,
-        surface,
-        opacity,
-        buffer,
+        pieces,
         black,
-        multiplier: start,
+        keep: state.fade.keep,
+        level,
         set_at: Instant::now(),
     })
 }
@@ -285,14 +451,15 @@ impl Dispatch<ExtIdleNotificationV1, ()> for AppData {
         match event {
             ext_idle_notification_v1::Event::Idled => {
                 info!("idle: the fade starts");
+                state.fade.returning = None;
                 state.fade.since = Some(Instant::now());
                 state.pending.render_dirty = true;
             }
             ext_idle_notification_v1::Event::Resumed => {
                 if state.fade.since.is_some() {
-                    info!("input: the windows back");
+                    info!("input: the windows come back");
                 }
-                wake(state);
+                resume(state);
             }
             _ => {}
         }
@@ -341,9 +508,65 @@ mod tests {
 
     #[test]
     fn the_fade_rises_over_its_minutes() {
-        assert_eq!(multiplier(Duration::ZERO), 0);
-        let half = multiplier(Duration::from_secs(u64::from(Appearance::FADE_MINUTES) * 30));
+        let over = over(&Appearance::default());
+        assert_eq!(over, Duration::from_secs(30 * 60));
+        assert_eq!(multiplier(Duration::ZERO, over), 0);
+        let half = multiplier(over / 2, over);
         assert!((half as f64 / u32::MAX as f64 - 0.5).abs() < 0.001);
-        assert_eq!(multiplier(Duration::from_secs(3 * 3600)), u32::MAX);
+        assert_eq!(multiplier(Duration::from_secs(3 * 3600), over), u32::MAX);
+        let quick = Duration::from_secs(5 * 60);
+        assert_eq!(multiplier(quick, quick), u32::MAX);
+    }
+
+    #[test]
+    fn the_return_starts_quick_and_ends_clear() {
+        let from = u32::MAX;
+        assert_eq!(returning_level(from, 0.0), from);
+        let half = returning_level(from, 0.5) as f64 / f64::from(from);
+        assert!((half - 0.25).abs() < 0.001, "{half}");
+        assert_eq!(returning_level(from, 1.0), 0);
+    }
+
+    #[test]
+    fn the_kept_part_stays_a_fifth_in_sight() {
+        let full = piece_level(u32::MAX, true) as f64 / f64::from(u32::MAX);
+        assert!((full - 0.8).abs() < 0.001, "{full}");
+        // Until then it fades with the rest.
+        assert_eq!(piece_level(1000, true), 1000);
+        assert_eq!(piece_level(u32::MAX, false), u32::MAX);
+    }
+
+    #[test]
+    fn the_cut_covers_the_output_once() {
+        let keep = IdleKeep {
+            x: 0,
+            y: 0,
+            w: 240,
+            h: 40,
+        };
+        let pieces = cut(1920, 1080, Some(keep));
+        let area: i32 = pieces.iter().map(|(r, _)| r.w * r.h).sum();
+        assert_eq!(area, 1920 * 1080);
+        let kept: Vec<_> = pieces.iter().filter(|(_, k)| *k).collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0, Rect { x: 0, y: 0, w: 240, h: 40 });
+        // In the middle: four around it.
+        let mid = IdleKeep {
+            x: 100,
+            y: 100,
+            w: 50,
+            h: 50,
+        };
+        assert_eq!(cut(400, 300, Some(mid)).len(), 5);
+        // Off the output, or none: one piece.
+        let off = IdleKeep {
+            x: 5000,
+            y: 0,
+            w: 10,
+            h: 10,
+        };
+        let whole = Rect { x: 0, y: 0, w: 400, h: 300 };
+        assert_eq!(cut(400, 300, Some(off)), vec![(whole, false)]);
+        assert_eq!(cut(400, 300, None).len(), 1);
     }
 }

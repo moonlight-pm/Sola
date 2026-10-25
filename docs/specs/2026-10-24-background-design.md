@@ -6,7 +6,9 @@ that fits this desktop resolution and set it … perhaps in the paint app we
 can have a menu item to set it as background image … copied into the
 users sola settings"; "pick something from james webb"). Built on `next`, applied and smoked
 on canto 2026-10-24 (plan [`plans/2026-10-21-next-tab-bar-plan.md`](../plans/2026-10-21-next-tab-bar-plan.md)
-Phase 16).
+Phases 16–21: the picture; the theme following it; variations and the idle
+fade; custom colors and rims; modal colors, your looks, the fade's length;
+the fade's return and what it keeps).
 **Related:** [Next](2026-10-21-next-tab-bar-design.md) (board 02, the
 ground; slice 6, rounded foreign tiles).
 
@@ -99,18 +101,17 @@ default window title and sidebar colors and such." Settings or the kit.
   `unadapt`; OKLab / OKLCH):
   - **Lightness is the grey theme's.** Each adapted token keeps its seed
     grey's OKLab lightness (and alpha), so contrast is unchanged.
-  - **Tint:** the picture's dominant hue (a chroma-weighted hue
-    histogram, 10° bins, smoothed; greys do not vote), at a chroma of
-    *strength* × the picture's mean chroma (at most 0.08), thinning toward
-    black (below L 0.18, in proportion), on the surfaces (`bg-*`, `selection`,
-    `border*`, `text-muted`, `shell-menubar-bg`, `shell-switcher-bg`);
-    text takes 30% of it.
-  - **Accent:** the most vivid bright hue at least 60° from the tint when
-    it has a fifth of the best weight (a complement, e.g. the Cosmic
-    Cliffs' blue sky against their orange), else the tint's hue; at the
-    seed cyan's lightness (0.82), stepped down to 0.68 for a hue that
-    cannot be vivid that light (blue); chroma up to 0.14 (`accent`,
-    `text-accent`, `accent-dim` at 10%).
+  - **Tint:** one of the picture's colors (see *Modes, not averages*):
+    its hue, at a chroma of *strength* × its own chroma (at most 0.08),
+    thinning toward black (below L 0.18, in proportion), on the surfaces
+    (`bg-*`, `selection`, `border*`, `text-muted`, `shell-menubar-bg`,
+    `shell-switcher-bg`); text takes 30% of it.
+  - **Accent:** the best-scored of the picture's colors at least 60° from
+    the tint (a complement, e.g. the Cosmic Cliffs' blue sky against
+    their orange), else the tint's hue; as vivid as the picture is in that
+    hue family (its peak chroma, 0.06–0.14), at the seed cyan's lightness
+    (0.82), stepped down to 0.68 for a hue that cannot be vivid that light
+    (blue) (`accent`, `text-accent`, `accent-dim` at 10%).
   - Status colors (danger, success, warning) stay.
   - A grey picture changes nothing.
 - **The sidebar's surface follows the theme:** the kit's chrome surface
@@ -129,20 +130,60 @@ algorithm for this picture chose the brown tone — but we should make
 variations by switching through the other major colors. Let the user pick
 one."
 
-- **One scheme per major hue** (`Scheme::variations`, at most 4): the
-  heaviest bins of the tint histogram, each at least 30° from those
-  before it and with at least 5% of the heaviest's weight, the dominant
-  first. Each tints with its hue (at the picture's one strength) and takes
-  as accent the most vivid hue at least 60° from it (else its own). A grey
-  picture offers one, grey. Each is named by its hue (Rose, Ember, Amber,
-  Gold, Olive, Green, Teal, Sky, Blue, Violet, Magenta).
+- **One scheme per color the picture is made of** (`Scheme::variations`,
+  at most 4, the best first; see *Modes, not averages*). Each tints with
+  its color and takes as accent the best color at least 60° from it (else
+  its own). A grey picture offers one, grey. Each is named by its hue
+  (Rose, Ember, Amber, Gold, Olive, Green, Teal, Sky, Blue, Violet,
+  Magenta).
 - **The shell publishes them** (sticky `Topic::ThemeVariations { path,
-  choices: [{ name, base, raised, accent }] }`, the colors at the current
-  strength) after sampling and on a strength change; `Appearance.variation`
-  picks one (past the end: the last).
+  choices: [{ name, base, raised, accent, source }] }`, the colors at the
+  current strength, `source` the picture's color itself) after sampling
+  and on a strength change; `Appearance.variation` picks one (past the
+  end: the last).
 - **Settings** shows them under the strength while adapting is on, as
   small windows (the raised titlebar over the base, an accent pill, the
-  name under it), the picked one ringed in the accent; a click picks.
+  name under it after a dot of the picture's color), the picked one
+  ringed in the accent; a click picks.
+
+### Modes, not averages (2026-10-24)
+
+**Asked (Joshua):** "It looks like you may be taking 'averages' of pixel
+tones to determine your color options? I feel like more of a sample from
+the modes would offer more interesting options. Averages have a tendency
+to be dull."
+
+- **What it was:** the hues were already peaks of a histogram (modes),
+  but every scheme's strength was the picture's **mean chroma** — over all
+  of it, grey and black included. On the Cosmic Cliffs that is 0.071 (near
+  the cap, so it hardly showed); on darker pictures it thins every scheme
+  toward grey (Webb's Cartwheel 0.025, another Webb nebula 0.016), and
+  every scheme had the same strength whatever its own color. Hue bins 30°
+  apart also gave near twins (Ember and Amber; Teal twice on a forest).
+- **Now (`sola_core::theme::adapt`):** colored pixels are counted in
+  narrow OKLCH **cells** (10° × 0.02 chroma × 0.1 lightness); a cell with
+  at least 0.2% of the pixels (and two) and chroma ≥ 0.03 is one of the
+  picture's colors, its pixels' mean (a cell is narrow, so that is the
+  color they share — a mode). Each is **scored as Material Color
+  Utilities' `Score` does** (Material You's wallpaper colors): 70 × the
+  share of the picture its hue family (±15°) covers, plus its chroma
+  against a target of 0.11 (× 44 below, × 132 above; CAM16's 48 and
+  weights scaled to OKLCH), families under 1% dropped. The schemes are
+  the best colors **as far apart in hue as they can be** — 90° first,
+  closing in (to 30°) only until there are four. Each tint is as colorful
+  as its own color (to 0.08).
+- **Measured** (eight pictures, 96 px samples, cards at 60%): more
+  distinct schemes and stronger tints where the picture is dark (the
+  Cartwheel's 0.025 → 0.03–0.08 per scheme); on the Cosmic Cliffs Ember /
+  Blue / Rose (Amber, a near twin of Ember, gone). Lightness stays the
+  grey theme's — the near-black surfaces are still the main reason a
+  scheme reads darker than the picture's color.
+- **Research:** Heckbert's popularity and median-cut quantizers (1982)
+  and k-means all represent a group by its mean, which drifts to grey
+  when the group spans hues; Material Color Utilities quantizes (Wu, then
+  weighted k-means) and scores by hue-family proportion and chroma; Lin &
+  Hanrahan, *Modeling How People Extract Color Themes from Images* (CHI
+  2013): people pick salient, diverse colors, not the most frequent.
 
 ### Custom colors and highlights (2026-10-24)
 
@@ -176,9 +217,20 @@ and the window's focus rim is white by the Next decision.
   column and row, and the translucent rim showed it as a dark line
   (`#121212`) around the window. Steam's own 1 px grey border inside it
   stays (its content).
-- **Custom colors:** Settings → Appearance → *Custom colors*: Window,
+- **Custom colors:** Settings → Appearance → *Your colors*: Window,
   Panels, Highlight, Accent (`Appearance.colors`, key → `#rrggbb`), each a
-  swatch opening the kit's color picker, **Use** / **Reset**. They apply
+  swatch opening the kit's color picker, **Use** / **Reset**.
+- **Your looks** (Joshua: "there needs to be a way to distinguish that
+  edit from the original choice and be able to reset it … a 'Custom'
+  swatch … or a copy or customize button that creates a new user
+  swatch"): changing a color while a scheme is in use makes a **look of
+  your own** from it (`Appearance.customs: [{ variation, colors }]`, up to
+  6, shown as cards *Custom*, *Custom 2*, … after the schemes) and puts it
+  in use (`Appearance.custom`); the scheme is untouched — click it to go
+  back, the card to return. While a look of yours is in use, changes go to
+  it; **Reset** gives one color back to its scheme, **Remove Custom**
+  forgets the look. `variation` and `colors` stay the look in use's, so
+  the shell is unchanged; colors saved before looks become one. They apply
   over the greys or the picture's scheme (`Theme::customize`): Window →
   `bg-primary`; Panels → `bg-secondary` and the switcher's fill; Highlight
   → `highlight`, and `selection` takes its hue at its own lightness;
@@ -195,9 +247,11 @@ saver. After about 5 minutes (configurable) of no user input, start
 transparent. On any user input, it snaps back to full opacity."
 
 - **Setting:** Settings → Appearance → Idle: *Fade the windows when idle*
-  (on by default) and *Start after* 1–60 minutes (5); the fade itself takes
-  30 minutes (`Appearance::FADE_MINUTES`). Persistent in
-  `Topic::Appearance { fade_idle, fade_after_min }`.
+  (on by default), *Start after* 1–60 minutes (5) and *Fade over* 1–120
+  minutes (30; Joshua: "add a slider also for the 30 minute part").
+  Persistent in `Topic::Appearance { fade_idle, fade_after_min,
+  fade_over_min }`; a new length takes from the next step of a fade
+  already under way.
 - **How (sola-river `client/fade.rs`):** fading every window toward the
   picture is the same image as the picture rising over every window
   (`a·window + (1−a)·picture`), so sola-river puts a shell surface at the
@@ -205,11 +259,27 @@ transparent. On any user input, it snaps back to full opacity."
   the background's own memory; black without a picture — and raises its
   opacity with **`wp_alpha_modifier_v1`** (`set_multiplier`, a number per
   step, about once a second; no repaint, no upload). Its input region is
-  empty. It covers the top row and the bar too ("all the windows").
+  empty. It covers the top row and the bar too ("all the windows") —
+  except as below.
+- **The top row's left group stays in sight** (Joshua: "the flower menu
+  icon and any islands — things the user may want to respond to, the ones
+  aligned to the left — should never go below 20%"): the shell publishes
+  the group's extent (sticky `Topic::IdleKeep { x, y, w, h }`, output-local:
+  from the left edge to a gap past the last agent island or +N, the row's
+  full height; again when the islands, fonts or output change). sola-river
+  cuts the overlay around it — the kept rectangle and up to four around
+  it, each its own surface over a buffer that is a sub-rectangle of the
+  picture's memory (an offset and the full stride; nothing copied) — and
+  the kept piece's opacity stops at 80%. An island that appears while
+  idle (an agent finishing) cuts it again, the new pieces placed before
+  the old go.
 - **Idle** comes from **`ext_idle_notifier_v1.get_idle_notification`**
   (rivulet's wlroots idle notifier; any pointer or key input, real or
-  virtual, is activity): `idled` starts the fade, `resumed` takes the
-  overlay away at once (opacity 0, then destroyed). The notification
+  virtual, is activity): `idled` starts the fade; `resumed` brings the
+  windows back **over a second** (Joshua: "animate the return over a
+  second"), the overlay's opacity stepped down every bus tick (20 ms) as
+  `from × (1 − t)²` — quick at first, then settling — and then destroyed.
+  Turning the fade off still clears it at once. The notification
   honors **idle inhibitors** (an app keeping the screen awake), and no fade
   runs while a window is **fullscreen** (Cinema; it starts over after).
 - **Why not real window opacity:** River's window-management protocol

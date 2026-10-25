@@ -276,14 +276,20 @@ the loop), else the compositor's black. With Settings → Appearance's
 *Adapt colors to the background* on (persistent `Topic::Appearance`), the
 shell samples the picture (`adapt.rs`, off the UI thread) and rewrites
 `Topic::Theme`'s color tokens from it (`sola_core::theme::Scheme`,
-`Theme::adapt`: the grey's lightness, the picture's hue; `unadapt` when
-off; one scheme per major hue, `Appearance.variation` picks, the shell
-publishes the choices as sticky `Topic::ThemeVariations` for Settings);
+`Theme::adapt`: the grey's lightness, one of the picture's modal colors —
+narrow OKLCH cells scored as Material Color Utilities' `Score`; `unadapt`
+when off; a scheme per color, `Appearance.variation` picks, the shell
+publishes the choices as sticky `Topic::ThemeVariations` for Settings;
+your colors over it, `Appearance.colors`, kept as looks in
+`Appearance.customs`);
 the kit's chrome surface follows the theme (`style::chrome_surface`,
 `theme::install_atoms`). The idle fade is sola-river's (`client/fade.rs`):
 `ext_idle_notifier_v1` says idle / resumed, and a shell surface at the top
 of the render list shows the picture (or black) at an opacity rising over
-30 minutes (`wp_alpha_modifier_v1`), gone on input. The menubar carries no
+`fade_over_min` (`wp_alpha_modifier_v1`), stepped back down over a second
+on input. It is cut in pieces (sub-buffers of the picture's memory) around
+the shell's sticky `Topic::IdleKeep` — the top row's flower and agent
+islands — whose piece stops at 80%. The menubar carries no
 app menus. The shell publishes sticky
 `Topic::WindowChrome` (window id → tiled, Cinema, rim; `chrome.rs`):
 sola-river sends `set_tiled` on change and a 1 px border on windows whose

@@ -18,21 +18,21 @@ Month is the default view (Sunday-start, the same as the menubar clock). Week an
 
 ## Google
 
-**Settings → Calendar → + Google → Sign in with Google.** Browser opens; pick the Google account. Tokens travel on `Topic::CalendarConfig` (age-encrypted on disk). Add another Google account with **+ Google** again.
+**Settings → Calendar → Add account → Google → Sign in with Google.** Browser opens; pick the Google account. Tokens travel on `Topic::CalendarConfig` (age-encrypted on disk). Add another Google account the same way.
 
 Sola ships a Desktop OAuth client (Google still requires that client’s secret on the token POST). The first sign-in may warn that the app isn’t verified; choose Advanced → continue. The redirect is `http://127.0.0.1:8765/oauth`. Override the client with `SOLA_GOOGLE_CALENDAR_CLIENT_ID` and `SOLA_GOOGLE_CALENDAR_CLIENT_SECRET` if you use your own Cloud project.
 
 ## iCloud
 
-**Settings → Calendar → + iCloud.** Enter your Apple ID and an [app-specific password](https://appleid.apple.com). CalDAV talks to `caldav.icloud.com`. Repeating events show on each day in the window. Editing or deleting one day of a series is not supported. Add more than one iCloud account with **+ iCloud** again.
+**Settings → Calendar → Add account → iCloud.** Enter your Apple ID and an [app-specific password](https://appleid.apple.com). CalDAV talks to `caldav.icloud.com`. Repeating events show on each day in the window. Editing or deleting one day of a series is not supported. Add more than one iCloud account the same way.
 
 ## URL
 
-**Settings → Calendar → + URL.** Paste an `https://` or `webcal://` ICS/iCal feed (public holidays, school calendars, …). `webcal://` is fetched as `https://`. The name is optional (the host or the feed’s `X-WR-CALNAME` is used). URL calendars are **read-only**.
+**Settings → Calendar → Add account → Calendar URL.** Paste an `https://` or `webcal://` ICS/iCal feed (public holidays, school calendars, …). `webcal://` is fetched as `https://`. The name is optional (the host or the feed’s `X-WR-CALNAME` is used). URL calendars are **read-only**.
 
 ## CalDAV
 
-**Settings → Calendar → + CalDAV.** Enter the server URL, username, and password (often an app-specific password). Calendar discovers the event calendars on that host (Fastmail, Nextcloud, …).
+**Settings → Calendar → Add account → CalDAV.** Enter the server URL, username, and password (often an app-specific password). Calendar discovers the event calendars on that host (Fastmail, Nextcloud, …).
 
 ## Reminders
 

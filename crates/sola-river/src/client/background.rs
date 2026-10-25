@@ -190,22 +190,13 @@ pub fn sync_on_render(state: &mut AppData) {
     }
 }
 
-/// A second buffer over the shown picture's memory, for the idle fade's
-/// overlay (`fade.rs`): the buffer, its size and scale. `None` without a
+/// The shown picture's memory, for the idle fade's overlay (`fade.rs`),
+/// which makes its own buffers over parts of it: the pool, the buffer's
+/// size (XRGB8888, rows of `w * 4` bytes) and scale. `None` without a
 /// picture on screen.
-pub fn overlay_buffer(state: &AppData) -> Option<(wl_buffer::WlBuffer, i32, i32, i32)> {
+pub fn overlay_pool(state: &AppData) -> Option<(wl_shm_pool::WlShmPool, i32, i32, i32)> {
     let shown = state.background.shown.as_ref()?;
-    let qh = state.qh.as_ref()?;
-    let buffer = shown.pool.create_buffer(
-        0,
-        shown.w,
-        shown.h,
-        shown.w * 4,
-        wl_shm::Format::Xrgb8888,
-        qh,
-        (),
-    );
-    Some((buffer, shown.w, shown.h, shown.scale))
+    Some((shown.pool.clone(), shown.w, shown.h, shown.scale))
 }
 
 /// Which ground the corners were painted on (0: none).

@@ -192,27 +192,36 @@ the picture and publishes `Theme` with new colors, so every application
 changes at once:
 
 - The surfaces (window fills, titlebars, the tab bar and other sidebars,
-  the top row's islands, borders, the selection) take a faint tint of the
-  picture's dominant hue; the text a fainter one. Each keeps the lightness
-  of its grey, so contrast does not change.
-- The accent takes the picture's most vivid hue, usually one apart from
-  the tint (on the Cosmic Cliffs: an orange-brown tint and a blue accent).
+  the top row's islands, borders, the selection) take a tint of one of the
+  picture's colors; the text a fainter one. Each keeps the lightness of
+  its grey, so contrast does not change.
+- The accent takes another of the picture's colors, apart from the tint in
+  hue (on the Cosmic Cliffs: the cliffs' orange-brown tint and the sky's
+  blue accent).
 - Status colors, fonts, sizes and spacing do not change. A grey picture
   changes nothing.
 
-Below the strength, one scheme per major color in the picture (up to
-four, the dominant first, each named by its hue: on the Cosmic Cliffs the
-cliffs' Ember and the sky's Blue, …). Each is a small window in its colors;
-click one to use it. Its accent is a hue apart from its tint.
+Below the strength, one scheme per color the picture is made of (up to
+four, the best first, as far apart in hue as the picture allows, each
+named by its hue: on the Cosmic Cliffs the cliffs' Ember, the sky's Blue
+and the dust's Rose). The colors are the picture's own — the ones many of
+its pixels share, preferring vivid ones — not averages over it, so a dark
+picture still gives colorful schemes. Each is a small window in its
+colors, with the picture's color beside its name; click one to use it.
 
 **Strength** (0–100%, 60% at first) is how much of the picture's own color
 the tint takes; it applies when you let go of the slider. Near 100% the
 darkest surfaces take the hue fully (a strongly colored picture gives
 strongly colored chrome).
 
-**Custom colors** (Settings → Appearance) go over the greys or the
-picture's scheme, adapting on or off. Click a swatch for a picker, then
-**Use**; **Reset** forgets that one.
+**Your colors** (Settings → Appearance) go over the greys or the picture's
+scheme, adapting on or off. Click a swatch for a picker, then **Use**.
+Changing a color while a scheme is in use makes a look of your own from it
+— **Custom** (then Custom 2, …, up to six), a card beside the schemes —
+and leaves the scheme as it was: click the scheme to go back, the Custom
+card to come back to yours. While one of your looks is in use, changes go
+to it; **Reset** gives one color back to its scheme, **Remove Custom**
+forgets the look.
 
 | Color | Sets |
 |---|---|

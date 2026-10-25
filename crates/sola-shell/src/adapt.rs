@@ -123,6 +123,7 @@ impl Adapt {
                         base,
                         raised,
                         accent,
+                        source: s.source_hex(),
                     }
                 })
                 .collect(),

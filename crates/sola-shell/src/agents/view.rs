@@ -160,6 +160,20 @@ fn card_open(shell: &Shell) -> bool {
     shell.menu_open && shell.open_panel == Some(crate::app::Panel::AgentIsland)
 }
 
+/// The right edge of the top row's left group: the flower, then the
+/// islands laid out, then the +N island.
+pub fn left_group_end(shell: &Shell) -> f32 {
+    let (laid, more) = layout(shell);
+    let mut x = EDGE + ISLAND_H;
+    for l in &laid {
+        x += ISLAND_GAP + l.width;
+    }
+    if more > 0 {
+        x += ISLAND_GAP + MORE_W;
+    }
+    x
+}
+
 /// Where a card hangs: under island `key`'s left edge, or under the +N
 /// island for `None`.
 pub fn anchor_x(shell: &Shell, key: Option<&str>) -> f32 {

@@ -33,6 +33,7 @@ mod edit;
 mod mail;
 mod mail_discover;
 mod mail_from_api;
+mod page;
 mod procfs;
 
 use appearance::{AppearanceMsg, AppearanceState};
@@ -208,6 +209,7 @@ impl App {
                     }
                     Some(Topic::Appearance(a)) => {
                         self.appearance.look = if message.sticky { a } else { Default::default() };
+                        appearance::settle(&mut self.appearance.look);
                     }
                     Some(Topic::Theme(t)) => {
                         self.appearance.theme = Some(t);
@@ -327,8 +329,7 @@ impl App {
 
         // Page pad 24 = SPACE_XL + SPACE_MD (content margin, not control density).
         let page_pad = SPACE_XL + SPACE_MD;
-        // Both panels are fill-height: Applications and Mail rules are
-        // list + detail with internal scroll (account sits above rules).
+        // Every page scrolls on its own (`page::page`) under its title.
         let main_inner: Element<'_, Msg> = match self.panel {
             Panel::Applications => column![
                 kit_text::heading(title_text),

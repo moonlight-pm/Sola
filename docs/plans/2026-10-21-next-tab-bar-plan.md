@@ -734,3 +734,53 @@ tinted scheme. Spec § Custom colors and highlights.
       edge's partly covered pixel); foreign windows' unfocused rim opaque
       too (`rest_rim`) — Steam's black XWayland edge showed as a dark line
       (16× snapshots focused / unfocused: `#121212` → `#131b2d`).
+
+## Phase 20 — Modes, your looks, the fade's length; Settings pages
+
+Joshua (2026-10-24): the schemes looked like averages ("a sample from the
+modes would offer more interesting options"); a slider for the fade's 30
+minutes; a custom edit must be told apart from the scheme it came from and
+be resettable; the other Settings tabs were "kinda crusty". Spec § Modes,
+not averages; § Custom colors (your looks); § The idle fade.
+
+- [x] **20a** Sampler: narrow OKLCH cells (a mode each), scored as
+      Material Color Utilities' `Score` (hue family share + chroma), chosen
+      90° → 30° apart; each tint its own color's chroma; `source` on
+      `ThemeVariation`, a dot on each card. Prototyped against eight
+      pictures (Webb and photos) before the port.
+- [x] **20b** `Appearance.customs` / `custom`: changing a color on a
+      scheme makes a look of yours (Custom, Custom 2, … up to 6); Remove;
+      colors saved before looks become one (`settle`).
+- [x] **20c** `Appearance.fade_over_min` (1–120, 30); sola-river's fade
+      takes it.
+- [x] **20d** Settings: every page on `page.rs` — sections of grouped
+      rows, a row's editor in place under it, the add action in the
+      heading; Calendar's Add account asks the kind; Mail's default From
+      is its own Sending section. Kit: a primary button on a dark accent
+      takes a white label.
+- [ ] **20e Smoke** the fade's new length end to end (set 1 / 2 minutes,
+      wait it out).
+
+## Phase 21 — The fade's return and what it keeps; Projects repaints
+
+Joshua (2026-10-24): "When user activity causes the opacity to return,
+have it animate the return over a second"; "the flower menu icon and any
+islands … should never go below 20%"; on a scheme change "the terminal
+right here in projects didn't actually adopt the new background until I
+started typing in it". Spec § The idle fade.
+
+- [x] **21a** sola-river: `resumed` steps the overlay down over a second
+      (every 20 ms tick, `(1 − t)²`), then drops it.
+- [x] **21b** `Topic::IdleKeep` (shell → sola-river, sticky): the top
+      row's left group; the overlay is cut around it (sub-buffers of the
+      picture's pool), the kept piece capped at 80%; cut again when it
+      moves.
+- [x] **21c** Projects clears every pane's grid cache on `Topic::Theme`
+      (a resize cleared only panes whose size changed; sola-terminal
+      already cleared all).
+- [x] **21d Smoke** on canto (1-minute start, 10-minute fade, run to the
+      end): the clock island's fill read the picture itself (`#112b68`),
+      the flower `#332617` against `#8a6215` unfaded — 20% of it over the
+      picture; a pointer move brought a window pixel back from `#6e504e`
+      to `#13070a` over ~0.85 s in 10 shots (ease-out: half the way in
+      the first quarter).
