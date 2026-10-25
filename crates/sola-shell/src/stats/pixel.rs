@@ -1,14 +1,17 @@
 //! btop-style dithered pixel graph for menubar stats.
 //!
 //! A fixed LED matrix (dot + gutter) replaces variable-width numbers so
-//! the cluster cannot reflow. Each column is one recent sample. A cell is
-//! a 2×2 Bayer dither — the same five fill levels btop packs into braille.
+//! the cluster cannot reflow. Each column is one recent sample. A meter
+//! cell is a 2×2 Bayer dither — the same five fill levels btop packs into
+//! braille.
 //!
 //! Two grids: the islands' meters are 2 px dots on a 3 px pitch
 //! ([`ISLAND`]); the panels that hang from them draw the same LEDs at 4 on
-//! 5 ([`PANEL`]) — history columns, bars, and the dot readout
-//! ([`super::dots`]) — so the meter you clicked and its panel read as one
-//! instrument.
+//! 5 ([`PANEL`]) — history columns and bars — so the meter you clicked and
+//! its panel read as one instrument. Panel dots are whole: lit or not, a
+//! cell lighting once its column reaches the cell's middle. Dithered at
+//! 4 px the quarters read as broken dots (Joshua: "I don't like how it
+//! looks").
 //!
 //! Painted as a nearest-neighbor RGBA image, not iced `canvas` 1×1
 //! rectangles. Tiny fill_rectangle tessellation drops on GLES2 / software
@@ -55,35 +58,8 @@ impl Grid {
     }
 }
 
-/// One cell of `grid` at (`x0`, `y0`): `cf` of it lit (0..1), the top lit
-/// cell dithered over 2 × 2 quarter-cells.
-#[allow(clippy::too_many_arguments)]
-pub fn paint_cell_on(
-    buf: &mut [u8],
-    w: u32,
-    h: u32,
-    x0: u32,
-    y0: u32,
-    grid: Grid,
-    cf: f32,
-    lit: Color,
-    unlit: Color,
-) {
-    let q = (grid.dot / 2).max(1);
-    for dy in 0..2u32 {
-        for dx in 0..2u32 {
-            let c = if cell_pixel_on(cf, dx, dy) { lit } else { unlit };
-            for py in 0..q {
-                for px in 0..q {
-                    put_rgba(buf, w, h, (x0 + dx * q + px) as i32, (y0 + dy * q + py) as i32, c);
-                }
-            }
-        }
-    }
-}
-
-/// One whole cell in one color.
-pub fn fill_cell(buf: &mut [u8], w: u32, h: u32, x0: u32, y0: u32, grid: Grid, c: Color) {
+/// One whole LED of `grid` at (`x0`, `y0`).
+fn paint_dot(buf: &mut [u8], w: u32, h: u32, x0: u32, y0: u32, grid: Grid, c: Color) {
     for py in 0..grid.dot {
         for px in 0..grid.dot {
             put_rgba(buf, w, h, (x0 + px) as i32, (y0 + py) as i32, c);
@@ -111,6 +87,17 @@ pub fn columns<'a, Message: 'a>(
     grid: Grid,
     unlit: Color,
 ) -> Element<'a, Message> {
+    let (w, h, buf) = raster_columns(fills, colors, rows, grid, unlit);
+    image(w, h, buf)
+}
+
+fn raster_columns(
+    fills: &[f32],
+    colors: &[Color],
+    rows: usize,
+    grid: Grid,
+    unlit: Color,
+) -> (u32, u32, Vec<u8>) {
     let (w, h) = (grid.span(fills.len()), grid.span(rows));
     let mut buf = vec![0u8; (w * h * 4) as usize];
     for (col, (&fill, &lit)) in fills.iter().zip(colors).enumerate() {
@@ -120,47 +107,47 @@ pub fn columns<'a, Message: 'a>(
         let cells = fill.clamp(0.0, 1.0) * rows as f32;
         for row in 0..rows {
             let from_bottom = rows - 1 - row;
-            let cf = (cells - from_bottom as f32).clamp(0.0, 1.0);
-            let (x0, y0) = (col as u32 * grid.pitch, row as u32 * grid.pitch);
-            paint_cell_on(&mut buf, w, h, x0, y0, grid, cf, lit, unlit);
+            let c = if cells >= from_bottom as f32 + 0.5 { lit } else { unlit };
+            paint_dot(&mut buf, w, h, col as u32 * grid.pitch, row as u32 * grid.pitch, grid, c);
         }
     }
-    image(w, h, buf)
+    (w, h, buf)
 }
 
 /// A row of `cells` LEDs on `grid`, lit from the left in runs: each
-/// `(fraction of the row, color)` in turn, the rest unlit. A cell a run
-/// ends in dithers into what comes after it.
+/// `(fraction of the row, color)` in turn, the rest unlit. A cell takes the
+/// run its middle falls in.
 pub fn bar<'a, Message: 'a>(
     runs: &[(f32, Color)],
     cells: usize,
     grid: Grid,
     unlit: Color,
 ) -> Element<'a, Message> {
+    let (w, h, buf) = raster_bar(runs, cells, grid, unlit);
+    image(w, h, buf)
+}
+
+fn raster_bar(
+    runs: &[(f32, Color)],
+    cells: usize,
+    grid: Grid,
+    unlit: Color,
+) -> (u32, u32, Vec<u8>) {
     let (w, h) = (grid.span(cells), grid.dot);
     let mut buf = vec![0u8; (w * h * 4) as usize];
     let mut spans = Vec::with_capacity(runs.len());
     let mut at = 0.0;
     for &(frac, color) in runs {
         let end = at + frac.clamp(0.0, 1.0) * cells as f32;
-        if end > at {
-            spans.push((at, end, color));
-        }
+        spans.push((at, end, color));
         at = end;
     }
     for i in 0..cells {
-        let x = i as f32;
-        let (lit, cf, rest) = match spans.iter().position(|&(a, b, _)| x >= a && x < b) {
-            Some(k) => {
-                let (_, end, color) = spans[k];
-                let rest = spans.get(k + 1).map_or(unlit, |s| s.2);
-                (color, (end - x).clamp(0.0, 1.0), rest)
-            }
-            None => (unlit, 0.0, unlit),
-        };
-        paint_cell_on(&mut buf, w, h, i as u32 * grid.pitch, 0, grid, cf, lit, rest);
+        let mid = i as f32 + 0.5;
+        let c = spans.iter().find(|&&(a, b, _)| mid >= a && mid < b).map_or(unlit, |s| s.2);
+        paint_dot(&mut buf, w, h, i as u32 * grid.pitch, 0, grid, c);
     }
-    image(w, h, buf)
+    (w, h, buf)
 }
 
 pub fn graph<'a, Message: 'a>(
@@ -316,6 +303,41 @@ mod tests {
             .filter(|on| *on)
             .count();
         assert_eq!(lit, 2);
+    }
+
+    /// The color of panel dot (`col`, `row`), checking every pixel of it agrees.
+    fn dot_at(w: u32, buf: &[u8], col: u32, row: u32) -> [u8; 4] {
+        let px = |x: u32, y: u32| {
+            let i = ((y * w + x) * 4) as usize;
+            [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
+        };
+        let (x0, y0) = (col * PANEL.pitch, row * PANEL.pitch);
+        let first = px(x0, y0);
+        for y in y0..y0 + PANEL.dot {
+            for x in x0..x0 + PANEL.dot {
+                assert_eq!(px(x, y), first, "dot ({col}, {row}) is not whole");
+            }
+        }
+        first
+    }
+
+    #[test]
+    fn panel_columns_light_whole_dots() {
+        let (lit, unlit) = (Color::WHITE, Color::BLACK);
+        // 0.3 × 4 rows = 1.2 cells: the bottom dot lit, the rest dark.
+        // 0.6 × 4 = 2.4: two. 0.65 × 4 = 2.6: three.
+        let (w, _, buf) = raster_columns(&[0.3, 0.6, 0.65], &[lit; 3], 4, PANEL, unlit);
+        let lit_rows = |col| (0..4).filter(|&row| dot_at(w, &buf, col, row) == [255; 4]).count();
+        assert_eq!((lit_rows(0), lit_rows(1), lit_rows(2)), (1, 2, 3));
+    }
+
+    #[test]
+    fn panel_bar_dots_take_one_run_each() {
+        let (a, b, unlit) = (Color::WHITE, Color::from_rgb(1.0, 0.0, 0.0), Color::BLACK);
+        // 4 cells: a to 1.3, b to 2.6, unlit after.
+        let (w, _, buf) = raster_bar(&[(0.325, a), (0.325, b)], 4, PANEL, unlit);
+        let dots: Vec<_> = (0..4).map(|i| dot_at(w, &buf, i, 0)).collect();
+        assert_eq!(dots, vec![[255; 4], [255, 0, 0, 255], [255, 0, 0, 255], [0, 0, 0, 255]]);
     }
 
     #[test]

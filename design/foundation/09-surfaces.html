@@ -119,7 +119,7 @@
     <div class="label">Panels hang from their island · CPU · 1:1</div>
     <div id="cpu"></div>
     <div class="pair" style="margin-top:16px"><div id="mem"></div><div id="rx"></div></div>
-    <p class="note cap">Each instrument opens a 324 px popover whose left edge is under its label, its top on the row's lower edge (y 38), kept a gap from the output's right edge; the island lifts while it shows. It draws the island's LEDs larger, 4 px dots on a 5 px pitch: the value in 5 × 7 dots in a field well, four cells right-aligned so nothing shifts; the last 60 seconds as columns, each tinted by its own sample; per-thread load as a column per thread, a core's threads side by side and a gap between cores; top processes with a 16-cell LED bar; memory and VRAM as a 60-cell row (used lit, cache at 40%, free dark). Captions are 10 px caps, figures Iosevka. Every color is the theme's: ink at rest, warning past 75%, danger past 90%; RX in the accent, TX in success. Design: Instrument 07.</p>
+    <p class="note cap">Each instrument opens a 324 px popover whose left edge is under its label, its top on the row's lower edge (y 38), kept a gap from the output's right edge; the island lifts while it shows. It draws the island's LEDs larger, 4 px dots on a 5 px pitch, whole (a dot lights once its column reaches its middle; no dither): the value in large type (SF Pro Text medium, 28 px), tinted like the meter; the last 60 seconds as columns, each tinted by its own sample; per-thread load as a column per thread, a core's threads side by side and a gap between cores; top processes with a 16-cell LED bar; memory and VRAM as a 60-cell row (used lit, cache at 40%, free dark). Captions are 10 px caps, figures Iosevka. Every color is the theme's: ink at rest, warning past 75%, danger past 90%; RX in the accent, TX in success. Design: Instrument 07.</p>
     <div class="facts" style="margin-top:24px">
       <span>Audio</span><span>Under the spectrum: Output and Input, a device picker and a volume each. 320 × 400.</span>
       <span>Bluetooth</span><span>Under the extras: the adapter, connected devices, Not connected, Nearby; Connect, Pair, Add device. 320 × 480.</span>
@@ -204,7 +204,7 @@
         `<div class="dp__legend"><span><span class="dp__caps">Used</span><span class="dp__fig">12.7 GB</span></span><span><span class="dp__caps">Cache</span><span class="dp__fig">11.8 GB</span></span><span><span class="dp__caps">Free</span><span class="dp__fig">6.5 GB</span></span></div>`), dp.rule(),
       dp.procs([["sola-browser", 2140], ["sola-design", 1210], ["claude", 486], ["sola-shell", 212]], "RAM", (v) => v + " MB"), dp.rule(),
       dp.foot([["Swap", "0.0 / 8 GB"], ["Pressure", "41%"]])] });
-  const rx = dottedPanel({ anchor: "RX", label: "RX", value: "1.2M", ink: "var(--accent)", model: "Receive", sub: "net0", peak: "peak 4.8 MB/s", hist: rxHist, max: Math.max(...rxHist), histInk: () => "var(--accent)",
+  const rx = dottedPanel({ anchor: "RX", label: "RX", value: "1.2 MB/s", ink: "var(--accent)", model: "Receive", sub: "net0", peak: "peak 4.8 MB/s", hist: rxHist, max: Math.max(...rxHist), histInk: () => "var(--accent)",
     sections: [dp.rule(), dp.foot([["Interface", "net0  10.0.0.3"], ["Session", "3.1 GB"]])] });
   const openTop = (which) => ({ r: [I.extras({ mail: 12 }), I.spectrum(), I.meters({ gpu: false, open: which === "m", hot: true }), I.net(which === "n"), I.clock()] });
   document.getElementById("cpu").innerHTML = view(base(cpu, { top: openTop("m") }), { x: W - 1296, y: 0, w: 1296, h: 640 });

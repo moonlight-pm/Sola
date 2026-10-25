@@ -2,7 +2,6 @@
 //! See docs/specs/2026-06-16-menubar-system-monitors-design.md.
 
 pub mod cpu;
-pub mod dots;
 pub mod gpu;
 pub mod mem;
 pub mod net;

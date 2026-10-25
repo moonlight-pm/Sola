@@ -1,11 +1,11 @@
 //! Stat detail dropdown panels, rendered in the Menu window.
 //!
 //! Each panel draws its island's LEDs at the panel's size
-//! ([`pixel::PANEL`]): the value you came for as a dot readout in a well
-//! ([`dots`]), the last minute as columns each tinted by its own sample,
-//! per-thread load as a shape (cores a gap apart), processes and memory
-//! as LED bars. Names and
-//! figures stay type. Every color is the theme's: ink at rest, its warning
+//! ([`pixel::PANEL`]): the last minute as columns each tinted by its own
+//! sample, per-thread load as a shape (cores a gap apart), processes and
+//! memory as LED bars. The value you came for, names and figures are type
+//! (the value was a dot readout until Joshua: "i don't like the 'digital'
+//! number"). Every color is the theme's: ink at rest, its warning
 //! past 75% and danger past 90% ([`crate::stats::level_color`]), RX in the
 //! accent and TX in success as the islands draw them. Design:
 //! `design/instrument/panels.html`.
@@ -13,13 +13,13 @@
 use iced::widget::{Space, column, container, row, text};
 use iced::{Alignment, Color, Element, Length, Padding, Theme};
 use sola_kit::components::popover;
-use sola_kit::components::style::{HAIRLINE_A, HAIRLINE_STRONG_A, inset_surface, mix, mix_white};
+use sola_kit::components::style::{HAIRLINE_A, mix, mix_white};
 use sola_kit::fonts;
 
 use crate::app::{Msg, Shell};
 use crate::stats::cpu::Proc;
 use crate::stats::pixel::{self, PANEL};
-use crate::stats::{Metric, dots};
+use crate::stats::Metric;
 
 /// 60 history columns on the panel grid (299 px) plus the card's pad.
 pub const CARD_WIDTH: f32 = 324.0;
@@ -36,8 +36,8 @@ const THREAD_ROWS: usize = 6;
 /// A process's bar, and a whole-width bar (memory, VRAM).
 const PROC_CELLS: usize = 16;
 const WIDE_CELLS: usize = HISTORY_COLS;
-/// The readout's glyph cells (100% and 1.2M both fit).
-const READOUT_CELLS: usize = 4;
+/// The value you came for.
+const VALUE_SIZE: f32 = 28.0;
 /// How far an unlit cell is from its surface toward the ink.
 const UNLIT: f32 = 0.16;
 
@@ -100,39 +100,27 @@ fn figure<'a>(value: String, ink: Color) -> iced::widget::Text<'a, Theme> {
         .style(move |_: &Theme| iced::widget::text::Style { color: Some(ink) })
 }
 
-/// The value in dots, in a field well like a text input's.
-fn readout<'a>(value: &str, lit: Color, theme: &Theme) -> Element<'a, Msg> {
-    let p = theme.extended_palette();
-    let canvas = if p.background.base.color.a < 0.5 {
-        p.background.weakest.color
-    } else {
-        p.background.base.color
-    };
-    let well = inset_surface(canvas, 0.55);
-    let unlit = mix(p.background.base.text, well, UNLIT);
-    container(dots::readout(value, READOUT_CELLS, lit, unlit))
-        .padding(Padding::from([6, 7]))
-        .style(move |_: &Theme| container::Style {
-            background: Some(iced::Background::Color(well)),
-            border: sola_kit::components::style::hairline_on(well, HAIRLINE_STRONG_A, 5.0),
-            ..Default::default()
-        })
+/// The value, large, in the UI face, tinted like its meter.
+fn value<'a>(value: &str, lit: Color) -> Element<'a, Msg> {
+    text(value.to_string())
+        .font(fonts::ui_medium())
+        .size(VALUE_SIZE)
+        .style(move |_: &Theme| iced::widget::text::Style { color: Some(lit) })
         .into()
 }
 
-/// Label and readout on the left, what it is on the right.
+/// Label and value on the left, what it is on the right.
 fn header<'a>(
     label: &str,
-    value: &str,
+    shown: &str,
     lit: Color,
     model: String,
     sub: String,
-    theme: &Theme,
     ink: &Inks,
 ) -> Element<'a, Msg> {
     let figure_ink = ink.figure;
     row![
-        column![caps(label, ink.dim), readout(value, lit, theme)].spacing(8),
+        column![caps(label, ink.dim), value(shown, lit)].spacing(2),
         Space::new().width(Length::Fill),
         column![
             text(model)
@@ -246,11 +234,10 @@ fn cpu_card(shell: &Shell) -> Element<'_, Msg> {
     let mut parts = vec![
         header(
             "CPU",
-            &dots::percent(s.cpu_pct),
+            &percent(s.cpu_pct),
             level(s.cpu_pct),
             id.model.clone(),
             format!("{}C / {}T", id.cores, id.threads),
-            theme,
             &ink,
         ),
         section(
@@ -303,11 +290,10 @@ fn mem_card(shell: &Shell) -> Element<'_, Msg> {
     let mut parts = vec![
         header(
             "MEM",
-            &dots::percent(s.mem_pct),
+            &percent(s.mem_pct),
             level(s.mem_pct),
             format!("{total_gb:.0} GB"),
             "RAM".into(),
-            theme,
             &ink,
         ),
         section(
@@ -369,11 +355,10 @@ fn gpu_card(shell: &Shell) -> Element<'_, Msg> {
     let mut parts = vec![
         header(
             "GPU",
-            &dots::percent(util),
+            &percent(util),
             level(util),
             detail.map_or_else(|| "GPU".into(), |d| short_gpu(&d.name)),
             detail.map_or_else(String::new, |d| format!("{:.0} GB", d.mem_total_mb / 1024.0)),
-            theme,
             &ink,
         ),
         section(
@@ -439,7 +424,7 @@ fn rate_card(shell: &Shell, metric: Metric) -> Element<'_, Msg> {
     let max = peak(&samples).max(1.0);
 
     let mut parts = vec![
-        header(label, &dots::rate(rate), color, direction.into(), iface, theme, &ink),
+        header(label, &fmt_rate(rate), color, direction.into(), iface, &ink),
         section(
             "Last 60 seconds",
             format!("peak {}", fmt_rate(max)),
@@ -464,6 +449,11 @@ fn rate_card(shell: &Shell, metric: Metric) -> Element<'_, Msg> {
 // ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------
+
+/// A percentage: `7%`, `83%`, `100%`.
+fn percent(p: f32) -> String {
+    format!("{:.0}%", p.clamp(0.0, 100.0))
+}
 
 /// Human bytes/sec: B/s, KB/s, MB/s.
 pub fn fmt_rate(bps: f32) -> String {

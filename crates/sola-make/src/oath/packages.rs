@@ -61,6 +61,9 @@ pub const PACKAGES: &[Package] = &[
             "libxkbcommon",
             "mesa",
             "tmux",
+            // wl-copy / wl-paste: Claude Code reads a pasted image with
+            // them (the NixOS module ships wl-clipboard for the same).
+            "wl-clipboard",
             "pipewire",
             "wireplumber",
             "fontconfig",

@@ -69,8 +69,9 @@ panel is open. Windows and the tab bar start a gap below the row.
 CPU / GPU / MEM / RX / TX in the menubar are fixed dithered LED graphs
 of the last 12 seconds: a column a second, white, turning the theme's
 warning past 75% and its danger past 90% (RX in the accent, TX in
-success). Click one for its panel, which draws the same LEDs larger: the
-value in dot digits in a well, the last minute as columns tinted the same
+success). Click one for its panel, which draws the same LEDs larger and
+whole (no dithered quarter-dots; a dot lights once its column reaches its
+middle): the value in large type, the last minute as columns tinted the same
 way, per-thread load as one column per thread (a core's threads side by
 side, a gap between cores), top processes with LED bars, memory
 and VRAM as a row of LEDs (used lit, cache dim, free dark), and the rest

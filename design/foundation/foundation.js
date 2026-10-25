@@ -349,81 +349,39 @@ const statPanel = (o) => `<div class="st" data-anchor="${o.anchor}" style="top:3
     ${o.body}</div>`;
 
 /* ── The panels as built since 2026-10-24 (stats/view.rs, dots.rs) ──
- * The island's LEDs at 4 px on a 5 px pitch: the value in 5 × 7 dots in a
- * well (four cells, right-aligned), the last minute as 60 columns tinted
+ * The island's LEDs at 4 px on a 5 px pitch: the value in large type
+ * (it was a 5 × 7 dot readout for an evening), the last minute as 60 columns tinted
  * by their own sample, per-thread columns (a dark one between cores), LED
  * bars for processes and memory. Colors are the theme's. */
-const F57 = {
-  "0": [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
-  "1": ["..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."],
-  "2": [".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"],
-  "3": ["#####", "...#.", "..#..", "...#.", "....#", "#...#", ".###."],
-  "4": ["...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."],
-  "5": ["#####", "#....", "####.", "....#", "....#", "#...#", ".###."],
-  "6": ["..##.", ".#...", "#....", "####.", "#...#", "#...#", ".###."],
-  "7": ["#####", "....#", "...#.", "..#..", ".#...", ".#...", ".#..."],
-  "8": [".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."],
-  "9": [".###.", "#...#", "#...#", ".####", "....#", "...#.", ".##.."],
-  B: ["####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."],
-  G: [".###.", "#...#", "#....", "#.###", "#...#", "#...#", ".####"],
-  K: ["#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"],
-  M: ["#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"],
-  "%": ["##...", "##..#", "...#.", "..#..", ".#...", "#..##", "...##"],
-  ".": [".", ".", ".", ".", ".", ".", "#"],
-  " ": ["..", "..", "..", "..", "..", "..", ".."],
-};
 const PANEL = { dot: 4, pitch: 5 };
 const span = (n, g = PANEL) => n * g.pitch - (g.pitch - g.dot);
 const levelInk = (v) => (v >= 90 ? "var(--danger)" : v >= 75 ? "var(--warning)" : "var(--text-primary)");
 
-/* `text` right-aligned in `cells` cells, lit in `color`, the field unlit. */
-function readoutSvg(text, cells, color) {
-  const rows = Array.from({ length: 7 }, () => []);
-  [...text.toUpperCase()].forEach((ch, i) => (F57[ch] || F57[" "]).forEach((line, y) => {
-    if (i) rows[y].push(0);
-    for (const c of line) rows[y].push(c === "#" ? 1 : 0);
-  }));
-  const cols = cells * 6 - 1, lead = Math.max(0, cols - rows[0].length);
-  const W = span(cols), H = span(7);
-  let r = "";
-  for (let y = 0; y < 7; y++)
-    for (let x = 0; x < cols; x++) {
-      const on = x >= lead && rows[y][x - lead];
-      r += `<rect x="${x * 5}" y="${y * 5}" width="4" height="4" style="fill:${on ? color : "var(--led-off)"}"/>`;
-    }
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" shape-rendering="crispEdges">${r}</svg>`;
-}
+/* One whole dot. Panel dots are never dithered: at 4 px the quarters read as broken dots. */
+const cellSvg = (x, y, fill) => `<rect x="${x}" y="${y}" width="4" height="4" style="fill:${fill}"/>`;
 
-/* A cell `cf` lit (0..1): whole, or dithered over 2 × 2 quarters. */
-function cellSvg(x, y, cf, lit, rest = "var(--led-off)") {
-  if (cf <= 0 || cf >= 1) return `<rect x="${x}" y="${y}" width="4" height="4" style="fill:${cf >= 1 ? lit : rest}"/>`;
-  let r = "";
-  for (let dy = 0; dy < 2; dy++)
-    for (let dx = 0; dx < 2; dx++)
-      r += `<rect x="${x + dx * 2}" y="${y + dy * 2}" width="2" height="2" style="fill:${cf > BAYER[dy][dx] ? lit : rest}"/>`;
-  return r;
-}
-
-/* Columns lit from the bottom: `vals` against `max`, each in `ink(v)`; null is a dark column. */
+/* Columns lit from the bottom: `vals` against `max`, each in `ink(v)`, a dot lit once the
+ * column reaches its middle; null is an empty column. */
 function columnsSvg(vals, { rows = 8, max = 100, ink = levelInk } = {}) {
   const W = span(vals.length), H = span(rows);
   let r = "";
   vals.forEach((v, x) => {
     const cells = v == null ? 0 : Math.min(1, v / max) * rows;
-    for (let fb = 0; fb < rows; fb++) r += cellSvg(x * 5, (rows - 1 - fb) * 5, Math.max(0, Math.min(1, cells - fb)), v == null ? "" : ink(v));
+    if (v == null) return;
+    for (let fb = 0; fb < rows; fb++) r += cellSvg(x * 5, (rows - 1 - fb) * 5, cells >= fb + 0.5 ? ink(v) : "var(--led-off)");
   });
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" shape-rendering="crispEdges">${r}</svg>`;
 }
 
-/* One row of `cells` lit in runs [[fraction, color], …]; a run's last cell dithers into the next. */
+/* One row of `cells` lit in runs [[fraction, color], …]; a cell takes the run its middle falls in. */
 function barSvg(runs, cells) {
   const spans = [];
   let at = 0;
   for (const [f, c] of runs) { const end = at + Math.max(0, Math.min(1, f)) * cells; if (end > at) spans.push([at, end, c]); at = end; }
   let r = "";
   for (let i = 0; i < cells; i++) {
-    const k = spans.findIndex(([a, b]) => i >= a && i < b);
-    r += k < 0 ? cellSvg(i * 5, 0, 0, "") : cellSvg(i * 5, 0, Math.min(1, spans[k][1] - i), spans[k][2], spans[k + 1] ? spans[k + 1][2] : "var(--led-off)");
+    const s = spans.find(([a, b]) => i + 0.5 >= a && i + 0.5 < b);
+    r += cellSvg(i * 5, 0, s ? s[2] : "var(--led-off)");
   }
   return `<svg width="${span(cells)}" height="4" viewBox="0 0 ${span(cells)} 4" shape-rendering="crispEdges">${r}</svg>`;
 }
@@ -438,7 +396,7 @@ const dp = {
   foot: (pairs) => `<div class="dp__foot">${pairs.map(([l, v]) => `<span><span class="dp__caps">${l}</span><span class="dp__fig">${v}</span></span>`).join("")}</div>`,
 };
 const dottedPanel = (o) => `<div class="dp" data-anchor="${o.anchor}" style="top:38px">
-    <div class="dp__head"><div><div class="dp__caps">${o.label}</div><div class="dp__well">${readoutSvg(o.value, 4, o.ink)}</div></div>
+    <div class="dp__head"><div><div class="dp__caps">${o.label}</div><div class="dp__value" style="color:${o.ink}">${o.value}</div></div>
       <div class="dp__id"><span class="dp__model">${o.model}</span><span class="dp__fig dp__dim">${o.sub}</span></div></div>
     ${dp.sec("Last 60 seconds", o.peak, columnsSvg(o.hist.slice(-60), { max: o.max || 100, ink: o.histInk || levelInk }))}
     ${(o.sections || []).join("")}</div>`;
