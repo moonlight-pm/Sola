@@ -4,6 +4,12 @@
 //! the cluster cannot reflow. Each column is one recent sample. A cell is
 //! a 2×2 Bayer dither — the same five fill levels btop packs into braille.
 //!
+//! Two grids: the islands' meters are 2 px dots on a 3 px pitch
+//! ([`ISLAND`]); the panels that hang from them draw the same LEDs at 4 on
+//! 5 ([`PANEL`]) — history columns, bars, and the dot readout
+//! ([`super::dots`]) — so the meter you clicked and its panel read as one
+//! instrument.
+//!
 //! Painted as a nearest-neighbor RGBA image, not iced `canvas` 1×1
 //! rectangles. Tiny fill_rectangle tessellation drops on GLES2 / software
 //! GL (Oath metal, virtio llvmpipe); a 35×14 texture does not.
@@ -28,6 +34,133 @@ pub enum Tint {
     Level,
     Rx,
     Tx,
+}
+
+/// An LED grid: a cell's side and the distance from one cell to the next.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Grid {
+    pub dot: u32,
+    pub pitch: u32,
+}
+
+/// The islands' meters.
+pub const ISLAND: Grid = Grid { dot: 2, pitch: 3 };
+/// The panels under them.
+pub const PANEL: Grid = Grid { dot: 4, pitch: 5 };
+
+impl Grid {
+    /// Pixels `n` cells take, edge to edge.
+    pub fn span(&self, n: usize) -> u32 {
+        (n as u32 * self.pitch).saturating_sub(self.pitch - self.dot)
+    }
+}
+
+/// One cell of `grid` at (`x0`, `y0`): `cf` of it lit (0..1), the top lit
+/// cell dithered over 2 × 2 quarter-cells.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_cell_on(
+    buf: &mut [u8],
+    w: u32,
+    h: u32,
+    x0: u32,
+    y0: u32,
+    grid: Grid,
+    cf: f32,
+    lit: Color,
+    unlit: Color,
+) {
+    let q = (grid.dot / 2).max(1);
+    for dy in 0..2u32 {
+        for dx in 0..2u32 {
+            let c = if cell_pixel_on(cf, dx, dy) { lit } else { unlit };
+            for py in 0..q {
+                for px in 0..q {
+                    put_rgba(buf, w, h, (x0 + dx * q + px) as i32, (y0 + dy * q + py) as i32, c);
+                }
+            }
+        }
+    }
+}
+
+/// One whole cell in one color.
+pub fn fill_cell(buf: &mut [u8], w: u32, h: u32, x0: u32, y0: u32, grid: Grid, c: Color) {
+    for py in 0..grid.dot {
+        for px in 0..grid.dot {
+            put_rgba(buf, w, h, (x0 + px) as i32, (y0 + py) as i32, c);
+        }
+    }
+}
+
+/// An RGBA buffer as a pixel-exact image (nearest-neighbor, its own size).
+pub fn image<'a, Message: 'a>(w: u32, h: u32, pixels: Vec<u8>) -> Element<'a, Message> {
+    image::Image::new(image::Handle::from_rgba(w, h, pixels))
+        .filter_method(FilterMethod::Nearest)
+        .content_fit(ContentFit::Fill)
+        .width(Length::Fixed(w as f32))
+        .height(Length::Fixed(h as f32))
+        .into()
+}
+
+/// Columns of LEDs on `grid`, one per value (0..1 of the height, lit from
+/// the bottom), each in `colors[i]`. A NaN value is an empty column: no
+/// cells, a gap.
+pub fn columns<'a, Message: 'a>(
+    fills: &[f32],
+    colors: &[Color],
+    rows: usize,
+    grid: Grid,
+    unlit: Color,
+) -> Element<'a, Message> {
+    let (w, h) = (grid.span(fills.len()), grid.span(rows));
+    let mut buf = vec![0u8; (w * h * 4) as usize];
+    for (col, (&fill, &lit)) in fills.iter().zip(colors).enumerate() {
+        if fill.is_nan() {
+            continue;
+        }
+        let cells = fill.clamp(0.0, 1.0) * rows as f32;
+        for row in 0..rows {
+            let from_bottom = rows - 1 - row;
+            let cf = (cells - from_bottom as f32).clamp(0.0, 1.0);
+            let (x0, y0) = (col as u32 * grid.pitch, row as u32 * grid.pitch);
+            paint_cell_on(&mut buf, w, h, x0, y0, grid, cf, lit, unlit);
+        }
+    }
+    image(w, h, buf)
+}
+
+/// A row of `cells` LEDs on `grid`, lit from the left in runs: each
+/// `(fraction of the row, color)` in turn, the rest unlit. A cell a run
+/// ends in dithers into what comes after it.
+pub fn bar<'a, Message: 'a>(
+    runs: &[(f32, Color)],
+    cells: usize,
+    grid: Grid,
+    unlit: Color,
+) -> Element<'a, Message> {
+    let (w, h) = (grid.span(cells), grid.dot);
+    let mut buf = vec![0u8; (w * h * 4) as usize];
+    let mut spans = Vec::with_capacity(runs.len());
+    let mut at = 0.0;
+    for &(frac, color) in runs {
+        let end = at + frac.clamp(0.0, 1.0) * cells as f32;
+        if end > at {
+            spans.push((at, end, color));
+        }
+        at = end;
+    }
+    for i in 0..cells {
+        let x = i as f32;
+        let (lit, cf, rest) = match spans.iter().position(|&(a, b, _)| x >= a && x < b) {
+            Some(k) => {
+                let (_, end, color) = spans[k];
+                let rest = spans.get(k + 1).map_or(unlit, |s| s.2);
+                (color, (end - x).clamp(0.0, 1.0), rest)
+            }
+            None => (unlit, 0.0, unlit),
+        };
+        paint_cell_on(&mut buf, w, h, i as u32 * grid.pitch, 0, grid, cf, lit, rest);
+    }
+    image(w, h, buf)
 }
 
 pub fn graph<'a, Message: 'a>(
@@ -135,7 +268,7 @@ fn raster_stats(samples: &[f32], max: f32, tint: Tint, theme: &Theme) -> Vec<u8>
         let sample = if col < n { samples[col] } else { 0.0 };
         let fill = (sample / max).clamp(0.0, 1.0);
         let lit = match tint {
-            Tint::Level => crate::stats::level_color(sample, p.background.base.text),
+            Tint::Level => crate::stats::level_color(sample, theme),
             Tint::Rx => p.primary.base.color,
             Tint::Tx => p.success.base.color,
         };

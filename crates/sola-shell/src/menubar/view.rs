@@ -177,7 +177,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // Left of Bluetooth: panel anchors walk right-to-left, so nothing
     // anchored moves when this comes and goes.
     if let Some(chip) = crate::mouse::bar_chip(&shell.mouse) {
-        extras.push(mouse_chip(chip, fg, muted));
+        extras.push(mouse_chip(chip, fg, muted, &shell.theme));
     }
     if let Some(icon) = crate::bluetooth::bar_icon(&shell.bluetooth.snapshot) {
         let tint = if icon.muted { muted } else { fg };
@@ -361,12 +361,18 @@ fn chrome_nudge<'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
 }
 
 /// Mouse glyph + battery percent. Not a button: there is no panel.
-fn mouse_chip(chip: crate::mouse::BarChip, fg: Color, muted: Color) -> Element<'static, Msg> {
+fn mouse_chip(
+    chip: crate::mouse::BarChip,
+    fg: Color,
+    muted: Color,
+    theme: &Theme,
+) -> Element<'static, Msg> {
     use crate::mouse::Tone;
+    let p = theme.extended_palette();
     let color = match chip.tone {
         Tone::Normal => fg,
-        Tone::Low => crate::stats::AMBER,
-        Tone::Critical => crate::stats::RED,
+        Tone::Low => p.warning.base.color,
+        Tone::Critical => p.danger.base.color,
         Tone::Stale => muted,
     };
     container(chrome_nudge(

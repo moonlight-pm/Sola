@@ -66,9 +66,15 @@ mail, alerts, mouse and Bluetooth; the spectrum; CPU, GPU and MEM; RX and
 TX; the clock. Click an item for its panel; its island lifts while the
 panel is open. Windows and the tab bar start a gap below the row.
 
-CPU / GPU / MEM / RX / TX in the menubar are fixed dithered pixel graphs
-of the last ~12 seconds. Exact numbers are in the dropdown that opens on
-click.
+CPU / GPU / MEM / RX / TX in the menubar are fixed dithered LED graphs
+of the last 12 seconds: a column a second, white, turning the theme's
+warning past 75% and its danger past 90% (RX in the accent, TX in
+success). Click one for its panel, which draws the same LEDs larger: the
+value in dot digits in a well, the last minute as columns tinted the same
+way, per-thread load as one column per thread (a core's threads side by
+side, a gap between cores), top processes with LED bars, memory
+and VRAM as a row of LEDs (used lit, cache dim, free dark), and the rest
+as figures. Colors follow the theme.
 
 The volume island sits right of the mail / Bluetooth island and left of
 CPU. It is a 12-band LED spectrum analyzer of what the default
@@ -78,7 +84,7 @@ it the default (`wpctl set-default`). Media keys change the volume on that
 default sink.
 
 A Lamzu mouse on its 4K receiver (`3554:f510`) shows its battery left of
-Bluetooth: a mouse glyph and a percent, amber at 20% and below, red at 10%
+Bluetooth: a mouse glyph and a percent, in the theme's warning at 20% and below, its danger at 10%
 and below, and a charging glyph while it charges. A sleeping mouse does not
 answer, so the chip appears a few seconds after you first move the mouse;
 after that the Shell asks once a minute. The number dims after ten minutes

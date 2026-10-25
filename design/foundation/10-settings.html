@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Foundation / 10 Settings and the picture</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="foundation.css">
+<script src="foundation.js"></script>
+<style>
+  /* Settings as built (sola-settings page.rs, kit form.rs). raised = bg-secondary. */
+  .s-top { display: grid; grid-template-columns: 960px 1fr; gap: 40px; align-items: start; }
+  .s-stage { padding: 30px; }
+  .s-app { display: flex; align-items: stretch; background: var(--bg-primary); }
+  .s-side { width: 220px; flex-shrink: 0; background: var(--chrome); border-right: 1px solid #00000059; padding: 10px 8px; }
+  .s-side .z { height: 26px; display: flex; align-items: flex-end; padding: 0 10px 6px; font: 500 10px/1 var(--f-chrome); letter-spacing: 1px; color: var(--ink-3); }
+  .s-side .r { height: 32px; display: flex; align-items: center; padding: 0 10px; border-radius: 4px; font-size: 13px; color: color-mix(in srgb, var(--ink) 70%, transparent); }
+  .s-side .r.on { background: var(--highlight); color: var(--ink); }
+  .s-main { flex: 1; padding: 24px; display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+  .s-main h1 { margin: 0; font: 500 22px/28px var(--f-chrome); }
+  .s-page { display: flex; flex-direction: column; gap: 28px; max-width: 600px; padding-right: 12px; }
+  .s-sec { display: flex; flex-direction: column; gap: 4px; }
+  .s-head { height: 26px; display: flex; align-items: center; padding-left: 2px; font: 400 11px/14px var(--f-chrome); color: var(--ink-3); }
+  .s-head > :first-child { flex: 1; }
+  .s-foot { padding: 0 2px; font: 400 11px/15px var(--f-chrome); color: var(--ink-3); }
+  .s-group {
+    padding: 4px; border-radius: 10px;
+    background: linear-gradient(180deg, color-mix(in srgb, white 4%, var(--bg-secondary)), var(--bg-secondary));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, white 7%, var(--bg-secondary));
+  }
+  .s-rule { padding: 1px 10px; }
+  .s-rule::before { content: ""; display: block; height: 1px; background: color-mix(in srgb, white 6%, var(--bg-secondary)); }
+  .s-set { padding: 2px 8px 2px 10px; }
+  .s-set > div { height: 32px; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .s-set > div > span:first-child { flex: 1; }
+  .s-plain { padding: 8px 8px 8px 10px; font-size: 13px; }
+  .s-muted { color: var(--ink-3); }
+  .s-item { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 10px; border-radius: 7px; font-size: 13px; }
+  .s-item.hov { background: color-mix(in srgb, white 3.5%, var(--bg-secondary)); }
+  .s-item.prs { background: color-mix(in srgb, white 6%, var(--bg-secondary)); }
+  .s-item.open { background: color-mix(in srgb, white 5%, var(--bg-secondary)); }
+  .s-item .lead { width: 20px; display: grid; place-items: center; }
+  .s-item .words { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+  .s-item .words small { font-size: 11px; color: var(--ink-3); }
+  .s-item .trail { font-size: 12px; color: var(--ink-3); }
+  .s-item .chev { opacity: 0.45; }
+  .s-dot { width: 10px; height: 10px; border-radius: 5px; background: var(--c); box-shadow: inset 0 0 0 1px #ffffff33; }
+  .s-editor { padding: 8px 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+  .s-foot-btns { display: flex; gap: 4px; align-items: center; }
+  .s-foot-btns .sp { flex: 1; }
+  .s-toggle { width: 32px; height: 16px; border-radius: 8px; background: var(--bg-hover); position: relative; flex-shrink: 0; }
+  .s-toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-primary); }
+  .s-toggle.on { background: var(--accent); }
+  .s-toggle.on::after { left: 18px; background: var(--on-accent); }
+  .s-slider { display: flex; align-items: center; gap: 4px; }
+  .s-slider .rail { position: relative; width: 200px; height: 4px; border-radius: 2px; background: var(--bg-hover); }
+  .s-slider .rail b { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--accent); }
+  .s-slider .rail i { position: absolute; top: -5px; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); transform: translateX(-7px); }
+  .s-slider .v { width: 56px; padding-left: 4px; color: var(--ink-3); }
+  .s-cards { display: flex; flex-wrap: wrap; gap: 8px; }
+  .s-card { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .s-card .w { width: 96px; height: 56px; border-radius: 8px; background: var(--b); box-shadow: inset 0 0 0 1px #ffffff1f; padding: 1px; overflow: hidden; }
+  .s-card.on .w { box-shadow: inset 0 0 0 2px var(--accent); padding: 2px; }
+  .s-card .bar { height: 12px; background: var(--r); border-radius: 7px 7px 0 0; }
+  .s-card.on .bar { border-radius: 6px 6px 0 0; }
+  .s-card .pill { width: 22px; height: 6px; border-radius: 3px; background: var(--a); margin: 4px; }
+  .s-card .n { display: flex; align-items: center; gap: 2px; font-size: 12px; }
+  .s-card .src { width: 8px; height: 8px; border-radius: 4px; background: var(--src); box-shadow: inset 0 0 0 1px #ffffff40; margin-right: 2px; }
+  .s-sw { width: 40px; height: 18px; border-radius: 4px; background: var(--s); box-shadow: inset 0 0 0 1px #ffffff33; }
+  .s-picker { width: 196px; display: flex; flex-direction: column; gap: 8px; }
+  .s-sv { height: 140px; border-radius: 5px; position: relative; background: linear-gradient(0deg, #000, #0000), linear-gradient(90deg, #fff, hsl(219 96% 60%)); }
+  .s-strip { height: 12px; border-radius: 6px; position: relative; }
+  .s-strip.hue { background: linear-gradient(90deg, red, #ff0, lime, cyan, blue, #f0f, red); }
+  .s-strip.alpha { background: linear-gradient(90deg, #72a3fc00, #72a3fc), repeating-conic-gradient(#555 0 25%, #333 0 50%) 0 0 / 8px 8px; }
+  .s-thumb { position: absolute; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #0008; transform: translate(-7px, -7px); }
+  .s-strip .s-thumb { top: 6px; }
+  .s-hex { display: flex; gap: 4px; align-items: center; }
+  .s-hex .in { flex: 1; height: 28px; padding: 5px 8px; border-radius: 7px; font-size: 12px; line-height: 16px;
+    background: color-mix(in srgb, var(--bg-primary) 45%, black); box-shadow: inset 0 0 0 1px color-mix(in srgb, white 12%, color-mix(in srgb, var(--bg-primary) 45%, black)); }
+
+  .s-anat { display: grid; grid-template-columns: 620px 1fr; gap: 48px; align-items: start; }
+  .s-fade { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+  .s-veil { position: absolute; inset: 0; z-index: 30; background: var(--picture) 0 -16px / 1920px 1112px; }
+  .s-keep { position: absolute; z-index: 30; background-image: var(--picture); background-size: 1920px 1112px; }
+</style>
+</head>
+<body class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num">10</span><div class="head__title">Settings and the picture</div></div>
+    <div class="head__lead">Every Settings page is one column of sections: a caption, a group of rows on one raised surface, a caption under it. A row that opens shows its editor in place, under it, so the page is only as tall as what it holds. Appearance is where the background picture, the colors it gives, your own looks and the idle fade are set.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">Settings → Appearance · canto's theme (Rose, from the Cosmic Cliffs) · the Accent picker open · 1:1</div>
+    <div class="s-top">
+      <div class="stage stage--picture s-stage scheme-rose" id="settings"></div>
+      <div class="legend" style="grid-template-columns:1fr">
+        <div><span class="n">1</span><div><b>The window</b><span>A kit window: Settings, Edit, Window in its titlebar; the title would repeat the app's name, so it is left off. The sidebar is the kit's, 220 wide on the chrome surface; the page is the rest, padded 24, its heading 22.</span></div></div>
+        <div><span class="n">2</span><div><b>Background picture</b><span>The file Sola keeps, and Clear. With none: "None — the black ground."</span></div></div>
+        <div><span class="n">3</span><div><b>Colors</b><span>Adapt on or off, Strength (default 60%), then the picture's schemes as small windows: the raised bar, the accent pill, and beside the name the picture's color it came from. The one in use is ringed in the accent. Your looks follow them.</span></div></div>
+        <div><span class="n">4</span><div><b>Your colors</b><span>Window, Panels, Highlight, Accent as 40 × 18 swatches. A click opens the picker in an editor row under it; Use or Cancel. With a scheme in use, the change makes a new look ("Custom", "Custom 2"…, up to 6) and the scheme stays as it was.</span></div></div>
+        <div><span class="n">5</span><div><b>Idle</b><span>Fade the windows when idle (on), Start after 1–60 min (5), Fade over 1–120 min (30).</span></div></div>
+        <div><span class="n">·</span><div><b>Scheme cards</b><span>Rose is canto's theme as saved (<code>current.yaml</code>); Custom is canto's own look (accent #7b3113, from its second scheme). The other cards' colors are illustrative: the schemes are whatever the picture's modal colors give.</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">Anatomy · the grey base · 1:1</div>
+    <div class="s-anat">
+      <div id="anat"></div>
+      <div class="facts" style="grid-template-columns:150px 1fr">
+        <span>Page</span><span>One column, at most 600 wide, sections 28 apart; it scrolls under the heading.</span>
+        <span>Section</span><span>A caption head (11 px, muted, 26 tall) with an action at its right — a small secondary button: "+ Add", "Remove Custom". The group 4 under it; a muted caption under that.</span>
+        <span>Group</span><span>Raised, lit 4% at its top (<code>card_fill</code>), a 7% edge, radius 10, an inset of 4. A 1 px rule (white 6%) between rows, 10 in from each side.</span>
+        <span>Setting</span><span><code>form_row</code>: 32 tall, the label at full ink filling the row, its control at the right. Padded 2 × 10 / 8.</span>
+        <span>Opening row</span><span>A 20 px leading mark, the title over a muted subtitle, a note, a chevron at 45% that turns down while open. Hover lifts 3.5%, pressed 6%, open 5%; radius 7.</span>
+        <span>Editor</span><span>Under its row in the same group, padded 8 / 10 / 12. Its footer: small buttons left (Save, Discard) and right (Remove). No detail pane.</span>
+        <span>Sliders</span><span>200 wide with a 56 px value. They are iced's own style; the kit has no slider of its own yet.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">The picture</div>
+    <div class="grid2">
+      <div class="facts" style="grid-template-columns:150px 1fr">
+        <span>Set it</span><span>Paint: File → Set as Background. Or <code>solactl background</code>, which can also clear it. Sola keeps its own copy in <code>~/.config/sola/background/</code>.</span>
+        <span>Drawn</span><span>By sola-river, at the bottom of everything, filling the output and cropped about its center. With none, the ground is black.</span>
+        <span>Corners</span><span>Kit windows, the tab bar and the top row clear their corners, so the picture shows there. Other apps' tiles get corners painted from it, and the rim over them.</span>
+        <span>Colors</span><span>With Adapt on, the shell samples it at 96 px and finds its modal colors: up to four schemes, each a tint for the greys and an accent at least 60° away. Status colors stay. See 01.</span>
+      </div>
+      <div class="sample"><div id="corner"></div><p>A tile's corner at 6×: outside the 12 px radius the window is clear and the picture shows; the 1 px rim is opaque, a step lighter than the face in its hue.</p></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">The idle fade · 1:4</div>
+    <div class="s-fade" id="fade"></div>
+    <div class="facts" style="grid-template-columns:150px 1fr;margin-top:28px">
+      <span>When</span><span>After <i>Start after</i> with no input (<code>ext_idle_notify</code>, so an app that keeps the screen awake holds it off). Never while a window is fullscreen.</span>
+      <span>How</span><span>sola-river lays the picture (or black) over everything as shell surfaces with no input region, and raises their opacity with <code>wp_alpha_modifier_v1</code>: linear over <i>Fade over</i>, a step at most once a second, no repaint.</span>
+      <span>Kept</span><span>The piece over the flower and the agent islands (<code>Topic::IdleKeep</code>) is never covered, so they stay in full sight: what might want an answer.</span>
+      <span>Back</span><span>Any input brings the windows back over a second, easing out.</span>
+    </div>
+  </div>
+
+<script>
+  const $ = (id, html) => (document.getElementById(id).innerHTML = html);
+  const tog = (on) => `<span class="s-toggle${on ? " on" : ""}"></span>`;
+  const slide = (frac, v) => `<span class="s-slider"><span class="rail"><b style="width:${frac * 100}%"></b><i style="left:${frac * 100}%"></i></span><span class="v">${v}</span></span>`;
+  const set = (label, control) => `<div class="s-set"><div><span>${label}</span>${control}</div></div>`;
+  const plain = (html) => `<div class="s-plain">${html}</div>`;
+  const group = (rows) => `<div class="s-group">${rows.join(`<div class="s-rule"></div>`)}</div>`;
+  const section = (title, rows, foot, action = "") =>
+    `<div class="s-sec"><div class="s-head"><span>${title}</span>${action}</div>${group(rows)}${foot ? `<div class="s-foot">${foot}</div>` : ""}</div>`;
+  const small = (label, kind) => `<span class="btn btn--sm btn--${kind}">${label}</span>`;
+
+  /* Scheme cards: [name, base, raised, accent, source]. Rose is canto's saved theme. */
+  const card = ([name, b, r, a, src], on) =>
+    `<div class="s-card${on ? " on" : ""}"><div class="w" style="--b:${b};--r:${r}"><div class="bar"></div><div class="pill" style="--a:${a}"></div></div><div class="n">${src ? `<span class="src" style="--src:${src}"></span>` : ""}${name}</div></div>`;
+  const SCHEMES = [
+    ["Ember", "#140b07", "#22150f", "#8ab4f8", "#c06a3a"],
+    ["Blue", "#090c14", "#121826", "#f2a27a", "#4a6db5"],
+    ["Rose", "#12080a", "#1e1114", "#72a3fc", "#a9585a"],
+    ["Amber", "#120e06", "#1f190d", "#9ab8ff", "#d29a3c"],
+  ];
+  const MINE = [["Custom", "#090c14", "#121826", "#7b3113"]];
+
+  const picker = `<div class="s-editor"><div class="s-picker"><div class="s-sv"><span class="s-thumb" style="left:53%;top:2%"></span></div><div class="s-strip hue"><span class="s-thumb" style="left:61%"></span></div><div class="s-strip alpha"><span class="s-thumb" style="left:100%"></span></div><div class="s-hex"><span class="s-sw" style="--s:var(--accent);width:18px;border-radius:5px"></span><span class="in">#72a3fc</span></div></div>
+    <div class="s-foot-btns" style="margin-top:4px">${small("Use", "primary")}${small("Cancel", "ghost")}</div></div>`;
+  const swatch = (t) => `<span class="s-sw" style="--s:var(${t})"></span>`;
+
+  const appearance = [
+    section("Background picture", [set("webb-cosmic-cliffs.jpg", small("Clear", "secondary"))], "Set one from Paint: File → Set as Background."),
+    section("Colors", [
+      set("Adapt colors to the background", tog(true)),
+      set("Strength", slide(0.6, "60%")),
+      plain(`<div class="s-cards">${SCHEMES.map((s, i) => card(s, i === 2)).join("")}${MINE.map((s) => card(s, false)).join("")}</div>`),
+    ], "Windows, the tab bar and the top row take a tint and an accent from one of the picture's colors (its swatch is beside the name); their lightness stays the same. Strength is how much of that color the tint takes. Off, or with no picture: the greys."),
+    section("Your colors", [
+      set("Window", swatch("--bg-primary")),
+      set("Panels", swatch("--bg-secondary")),
+      set("Highlight", swatch("--highlight")),
+      set("Accent", swatch("--accent")) + picker,
+    ], "Changing one makes a look of your own from Rose, beside the picture's schemes; Rose itself stays as it is. The window, the panels (bars, titlebars, sidebars), the highlight (the tab bar's focused row; selections take its hue) and the accent."),
+    section("Idle", [
+      set("Fade the windows when idle", tog(true)),
+      set("Start after", slide(4 / 59, "5 min")),
+      set("Fade over", slide(29 / 119, "30 min")),
+    ], "After the first time with no input, the windows fade into the background over the second. Any input brings them back. Not while a window is fullscreen or an app keeps the screen awake (a video)."),
+  ];
+  const side = `<div class="s-side"><div class="z">SETTINGS</div>${["Applications", "Appearance", "Mail", "Calendar"].map((t) => `<div class="r${t === "Appearance" ? " on" : ""}">${t}</div>`).join("")}</div>`;
+  const body = `<div class="s-app">${side}<div class="s-main"><h1>Appearance</h1><div class="s-page">${appearance.join("")}</div></div></div>`;
+  $("settings", win("settings", { x: 0, y: 0, w: 900, h: 0, focus: true, tb: { title: "" }, body, style: "position:relative;height:auto" }));
+
+  /* Anatomy: a page from Mail (an opening row and its editor) and a look of yours in use */
+  const item = (cls, lead, title, sub, trail) =>
+    `<div class="s-item ${cls}"><span class="lead">${lead}</span><span class="words"><span>${title}</span><small>${sub}</small></span><span class="trail">${trail}</span>${icon(cls === "open" ? "chevD" : "chevR", 14, "currentColor").replace('class="ic"', 'class="ic chev"')}</div>`;
+  const dot = (c) => `<span class="s-dot" style="--c:${c}"></span>`;
+  const editor = `<div class="s-editor"><div class="s-foot-btns">${small("Save", "primary")}${small("Discard", "ghost")}<span class="sp"></span>${small("Remove", "secondary")}</div></div>`;
+  $("anat", `<div class="s-page" style="padding:0">${[
+    section("Accounts", [
+      item("", dot("var(--enamel-teal)"), "joshua@moonlight.pm", "Fastmail · IMAP", "Default"),
+      item("hov", dot("var(--enamel-iris)"), "work@exitgroup.us", "Google · OAuth", "") ,
+      item("open", dot("var(--enamel-clay)"), "billing@moonlight.pm", "Fastmail · IMAP", "") + editor,
+    ], "A row opens its editor under it; one open at a time.", small("+ Add", "secondary")),
+    section("Your colors", [
+      set("Window", swatch("--bg-primary")),
+      set("Accent", `<span style="display:flex;gap:4px;align-items:center">${small("Reset", "ghost")}<span class="s-sw" style="--s:#7b3113"></span></span>`),
+    ], "Changes go to Custom (made from Blue); Blue itself stays as it is — pick it above to go back.", small("Remove Custom", "secondary")),
+  ].join("")}</div>`);
+
+  /* A tile's corner on the picture, 6× */
+  const D = desk({ picture: true, scheme: "rose", top: { gpu: false } });
+  $("corner", view(D, { x: 236, y: 36, w: 600, h: 300, s: 6, picture: false }));
+
+  /* The fade: none, halfway, all the way (the islands never covered) */
+  const fadeDesk = (a) => desk({ picture: true, scheme: "rose", cls: "scheme-rose",
+    top: { gpu: false, l: [I.flower(), I.agent(mark.diamond(), "Sola", "root", "wants to run cargo make build")] },
+    extra: `<div class="s-veil" data-a="${a}" style="opacity:${a}"></div><div class="s-keep" data-a="${0}" style="opacity:${0}"></div>` });
+  $("fade", [[0, "Working", "Nothing over the desk."], [0.5, "Halfway", "The picture rises over every window at once; it looks the same as each window fading."], [1, "Faded", "Only the picture — and the flower and the agent island, never covered."]]
+    .map(([a, h, p]) => `<div class="sample">${view(fadeDesk(a), { w: 400, h: 225, s: 400 / 1920 })}<h4>${h} · ${Math.round(a * 100)}%</h4><p>${p}</p></div>`).join(""));
+
+  finish();
+
+  /* Cut the kept piece out of the veil, once the islands have their widths. */
+  document.fonts.ready.then(() => document.querySelectorAll("#fade .desk").forEach((d) => {
+    const l = d.querySelector(".top__l");
+    const x = 10, y = 10, w = l.offsetWidth, h = 28;
+    const veil = d.querySelector(".s-veil"), keep = d.querySelector(".s-keep");
+    veil.style.clipPath = `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${x}px ${y}px, ${x + w}px ${y}px, ${x + w}px ${y + h}px, ${x}px ${y + h}px, ${x}px ${y}px)`;
+    Object.assign(keep.style, { left: x + "px", top: y + "px", width: w + "px", height: h + "px", backgroundPosition: `${-x}px ${-16 - y}px` });
+  }));
+</script>
+</body>
+</html>

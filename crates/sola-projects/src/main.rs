@@ -92,6 +92,7 @@ fn main() -> iced::Result {
     BusSetup::new(APP_ID)
         .subscribe(&[
             TopicKind::Theme,
+            TopicKind::IdleFade,
             TopicKind::MenuAction,
             TopicKind::CloseApp,
             TopicKind::Windows,
@@ -150,6 +151,9 @@ struct App {
     startup: cards::StartupDraft,
     /// One of the app's windows has keyboard focus (desk cards wait).
     window_focused: bool,
+    /// The desk is idle and fading (`Topic::IdleFade`): a focused tab is
+    /// not being looked at, so its session's island shows.
+    idle_fading: bool,
     pending_waits: Vec<PendingWait>,
     /// What each session needs from you: its island in the top row.
     islands: islands::Islands,
@@ -360,6 +364,7 @@ impl App {
             add: cards::AddDraft::default(),
             startup: cards::StartupDraft::default(),
             window_focused: true,
+            idle_fading: false,
             pending_waits: Vec::new(),
             islands: islands::Islands::default(),
         };
@@ -986,6 +991,11 @@ impl App {
         }
         if let Some(Topic::AgentIslandAction(a)) = Topic::parse(m) {
             return self.on_island_action(a);
+        }
+        if let Some(Topic::IdleFade(f)) = Topic::parse(m) {
+            // Retracted (sola-river gone): not fading.
+            self.idle_fading = m.sticky && f.fading;
+            return Task::none();
         }
         if apply_theme_update(m, &mut self.theme) {
             if let Some(Topic::Theme(bus)) = Topic::parse(m) {
@@ -1746,8 +1756,12 @@ impl App {
     }
 
     /// You are looking at pane `pane`: its tab is the one its project
-    /// window shows, and that window has the keyboard.
+    /// window shows, that window has the keyboard, and the desk is not
+    /// idle-fading (then you are away, and its island shows).
     fn looked_at(&self, pane: &str) -> bool {
+        if self.idle_fading {
+            return false;
+        }
         let Some(tab) = self.tab_for_pane(pane) else {
             return false;
         };

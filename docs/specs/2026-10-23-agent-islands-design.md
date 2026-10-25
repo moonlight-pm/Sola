@@ -24,15 +24,18 @@ the top row, and the island grows into a card where you answer.
 | A2 | An answer reaches the agent as **keystrokes into its terminal**, as you would type them — so Claude, Codex and Grok all work. |
 | A3 | A **finished** session's card shows **its last message and a reply box**; replying does **not** jump to its tab. |
 | A4 | A separate button **pulls the session's tab up** (no answer). |
-| A5 | An island goes when you **answer it**, or when you **look at that session's tab** yourself; the session you are looking at gets none. |
+| A5 | An island goes when you **answer it**, or when you **look at that session's tab** yourself; the session you are looking at gets none. **While the desk is idle-fading, nothing is being looked at** (2026-10-24, Joshua: "the island should appear if we are in inactivity mode"): a session that finishes or asks then gets its island even with its tab focused, and the fade leaves the islands in full sight. Coming back and looking at the focused tab hides it. |
 
 ## The islands (proposed)
 
 - Right of the flower, a gap apart, one island per session that is
   **waiting** (a diamond, board 03's mark) or **done** (a check). Newest
-  first. An island reads `◆ menubar-pass wants to run cargo make build` /
-  `◆ kit-foundation asks: Which layout?` / `✓ mail-focus finished` — the
-  session's name in ink, the rest quieter, truncated to fit.
+  first. An island reads `◆ Sola (menubar-pass) wants to run cargo make
+  build` / `◆ Sola (kit-foundation) asks: Which layout?` / `✓ Sola (root)` —
+  the project in ink, its tab in parentheses and what it wants quieter,
+  truncated to fit; a finished one's check says the rest (Joshua,
+  2026-10-24: "root for what?"). The card above its body keeps the word
+  ("finished").
 - They take what room the left side has (to the centre); past that, a
   **+N** island lists the rest (the same cards, one at a time).
 - Working sessions get no island (the bar's row already rings).
@@ -83,7 +86,8 @@ Projects already knows each session's state from the agents' hooks
   name, state (waiting / done), title, body, choices: [{label, keys}],
   reply: bool, since }`, keyed by the session (`key`), and retracts it
   when the session works again, closes, is answered, or is looked at
-  (its tab selected in a focused project window). The shell sends
+  (its tab selected in a focused project window while the desk is not
+  idle-fading — `Topic::IdleFade` from sola-river). The shell sends
   `Topic::AgentIslandAction { key, action: Choose(i) | Reply(text) |
   Show }`.
 - **Projects** turns an action into keystrokes into the pane (`pane.send`:

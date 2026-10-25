@@ -78,7 +78,7 @@ application writes into its code does not follow the theme.
 | `bg-hover` | `#1f1f1f` | `background.neutral`, `background.strong`, `secondary.weak` | Hover |
 | `border` | `#2a2a2a` | `background.stronger`, `background.strongest`, `secondary.base`, `secondary.strong` | Hard edges and chrome |
 | `text-primary` | `#ececec` | Text on every background slot and on `secondary.strong` | Primary labels |
-| `text-tertiary` | `#949494` | Text on `secondary.base` and `secondary.weak` | Muted labels |
+| `text-tertiary` | `#949494` | Text on `secondary.base` and `secondary.weak` | Muted labels. A fresh desk writes `#949494`; the seed (restored when adapting is turned off) is `#737373` |
 | `accent` | `#3dd6f5` | `primary`; Iced derives its lighter and darker shades | Focus, selection chrome, key status |
 | `success` | `#3ecf8e` | `success` | Status |
 | `warning` | `#e8b84a` | `warning` | Status |
@@ -113,9 +113,9 @@ draw, and the theme assigns a family to each role.
 | Token | Role | Weight | Used for | Default family |
 |---|---|---|---|---|
 | `font-ui` | `fonts::ui()` | Regular | Body text, buttons, sidebar items | SF Pro Text |
-| `font-ui-medium` | `fonts::ui_medium()` | Medium (500) | Emphasis: the focused app's title, the active row | SF Pro Text |
+| `font-ui-medium` | `fonts::ui_medium()` | Medium (500) | Emphasis: badges, section caps, toolbar labels | SF Pro Text |
 | `font-display` | `fonts::display()` | Medium (500) | Page titles and large headings | SF Pro Text |
-| `font-chrome` | `fonts::chrome()` | Regular | Menubar labels and section headers | SF Pro Text |
+| `font-chrome` | `fonts::chrome()` | Regular | Titlebar menus and titles, the top row's labels and clock | SF Pro Text |
 | `font-mono` | `fonts::mono()` | Regular | Code, JSON, Terminal, Projects | Iosevka Term Slab |
 
 ### How a family is chosen
@@ -142,7 +142,7 @@ The shell's chrome has its own tokens in the same palette, all in the group
 
 | Token | Default | Controls |
 |---|---|---|
-| `shell-menubar-bg` | `#050505` | Menubar background |
+| `shell-menubar-bg` | `#050505` | Saved and editable; the top row is transparent and does not use it |
 | `shell-backdrop-dim` | `#00000099` | Dimming behind the launcher |
 | `shell-switcher-bg` | `#151515e6` | Switcher panel fill |
 | `shell-switcher-border` | `#ffffff1a` | Switcher panel border |
@@ -156,7 +156,7 @@ The shell's chrome has its own tokens in the same palette, all in the group
 
 Colours may carry alpha (`#rrggbbaa`). Spacing values are a number followed
 by `px`. The shell reads these tokens into its `ShellStyle` on every `Theme`
-message. The [Shell](sola-shell.md) chapter describes the menubar,
+message. The [Shell](sola-shell.md) chapter describes the top row,
 launcher, and switcher.
 
 ## How an application applies the theme
@@ -233,9 +233,9 @@ forgets the look.
 Hover and shown rows in a sidebar are lifts of the column that keep its
 hue, so they follow a tinted or custom panel color instead of turning grey.
 A focused window's rim is the highlight a step lighter, so it takes the
-scheme's or your highlight's hue (on the grey theme it looks as before);
-unfocused rims stay a faint white. Other applications' windows get the
-same rim from the compositor.
+scheme's or your highlight's hue (`#3d3d3d` on the grey theme). An
+unfocused rim is opaque: the window's face 7% lighter in its hue. Other
+applications' windows get the same rims from the compositor.
 
 Turning it off, or clearing the picture, puts the default greys back on
 those colors. While it is on, a color edited in Kit is replaced by the

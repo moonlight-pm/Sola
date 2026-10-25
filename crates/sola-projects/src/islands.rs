@@ -431,20 +431,27 @@ impl Islands {
         self.needs.keys().cloned().collect()
     }
 
-    /// Send the islands: one per need not seen. `looked_at` marks a need
-    /// seen; `place` names a pane `(project, session)`. `known` are every
-    /// pane's ids: on the first sync, their islands of a previous run go.
+    /// A need you look at is seen: its tab shows in the focused window and
+    /// the desk is not idle-fading (`looked_at`, from the caller). It stays
+    /// seen until the session moves on.
+    pub fn mark_seen(&mut self, looked_at: &HashMap<String, bool>) {
+        for (pane, need) in &mut self.needs {
+            if looked_at.get(pane).copied().unwrap_or(false) {
+                need.seen = true;
+            }
+        }
+    }
+
+    /// Send the islands: one per need not seen ([`Self::mark_seen`] first);
+    /// `place` names a pane `(project, session)`. `known` are every pane's
+    /// ids: on the first sync, their islands of a previous run go.
     pub fn sync(
         &mut self,
         looked_at: &HashMap<String, bool>,
         place: &HashMap<String, (String, String)>,
         known: &[String],
     ) {
-        for (pane, need) in &mut self.needs {
-            if looked_at.get(pane).copied().unwrap_or(false) {
-                need.seen = true;
-            }
-        }
+        self.mark_seen(looked_at);
         let mut want: HashMap<String, AgentIsland> = HashMap::new();
         for (pane, need) in &self.needs {
             if need.seen {
@@ -646,6 +653,22 @@ mod tests {
         assert!(islands.need_mut("p").is_none());
         assert!(islands.track("p", Some(AgentStatus::Done), 4));
         assert!(islands.need_mut("p").unwrap().reply());
+    }
+
+    #[test]
+    fn a_need_looked_at_is_seen_until_it_moves_on() {
+        let mut islands = Islands::default();
+        islands.track("p", Some(AgentStatus::Working), 0);
+        assert!(islands.track("p", Some(AgentStatus::Done), 100));
+        // Not looked at (another tab, or the desk fading): its island shows.
+        islands.mark_seen(&HashMap::new());
+        assert!(!islands.need_mut("p").unwrap().seen);
+        let looked: HashMap<String, bool> = [("p".to_string(), true)].into();
+        islands.mark_seen(&looked);
+        assert!(islands.need_mut("p").unwrap().seen);
+        // Working again clears it.
+        islands.track("p", Some(AgentStatus::Working), 200);
+        assert!(islands.need_mut("p").is_none());
     }
 
     #[test]

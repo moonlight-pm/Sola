@@ -70,13 +70,60 @@ fn layout(shell: &Shell) -> (Vec<Laid<'_>>, usize) {
     (laid, more)
 }
 
-/// An island's width and its title cut to fit [`ISLAND_MAX`].
+/// Who an island is: its project in medium, then its tab in parentheses
+/// (`✓ Sola (root)`; Joshua, 2026-10-24). The tab alone without a project;
+/// no parentheses when they say the same.
+fn who(isl: &AgentIsland) -> (String, Option<String>) {
+    let project = isl.project.trim();
+    let tab = isl.name.trim();
+    if project.is_empty() {
+        (tab.to_string(), None)
+    } else if tab.is_empty() || tab.eq_ignore_ascii_case(project) {
+        (project.to_string(), None)
+    } else {
+        (project.to_string(), Some(format!("({tab})")))
+    }
+}
+
+/// What the island adds after who: what a waiting session wants. A
+/// finished one says nothing more; its check is the word.
+fn want(isl: &AgentIsland) -> &str {
+    match isl.state {
+        IslandState::Waiting => isl.title.trim(),
+        IslandState::Done => "",
+    }
+}
+
+/// An island's width and what it wants, cut to fit [`ISLAND_MAX`].
 fn measure(isl: &AgentIsland) -> (f32, String) {
-    let name_w = fonts::line_width(&isl.name, CHROME_SIZE, name_font());
-    let fixed = 2.0 * ISLAND_PAD_H + MARK + GAP + name_w + GAP;
-    let title = fit(&isl.title, (ISLAND_MAX - fixed).max(0.0));
-    let title_w = fonts::line_width(&title, CHROME_SIZE, fonts::chrome());
-    ((fixed + title_w).ceil(), title)
+    let width = |t: &str, f: Font| fonts::line_width(t, CHROME_SIZE, f);
+    let (head, tab) = who(isl);
+    let mut fixed = 2.0 * ISLAND_PAD_H + MARK + GAP + width(&head, name_font());
+    if let Some(tab) = &tab {
+        fixed += GAP + width(tab, fonts::chrome());
+    }
+    let want = want(isl);
+    if want.is_empty() {
+        return (fixed.ceil(), String::new());
+    }
+    fixed += GAP;
+    let title = fit(want, (ISLAND_MAX - fixed).max(0.0));
+    ((fixed + width(&title, fonts::chrome())).ceil(), title)
+}
+
+/// Mark, who, and `tail` (muted) in a row, at `size`.
+fn label<'a>(isl: &AgentIsland, tail: String, size: f32, muted: Color) -> iced::widget::Row<'a, Msg> {
+    let (head, tab) = who(isl);
+    let mut r = row![mark(isl.state), text(head).font(name_font()).size(size)]
+        .spacing(GAP)
+        .align_y(Alignment::Center);
+    if let Some(tab) = tab {
+        r = r.push(text(tab).font(fonts::chrome()).size(size).color(muted));
+    }
+    if !tail.is_empty() {
+        r = r.push(text(tail).font(fonts::chrome()).size(size).color(muted));
+    }
+    r
 }
 
 /// `s` cut with an ellipsis to `max` wide.
@@ -118,16 +165,7 @@ pub fn row_islands(shell: &Shell) -> Vec<Element<'_, Msg>> {
     let mut out: Vec<Element<'_, Msg>> = laid
         .into_iter()
         .map(|l| {
-            let content = row![
-                mark(l.island.state),
-                text(l.island.name.clone()).font(name_font()).size(CHROME_SIZE),
-                text(l.title).font(fonts::chrome()).size(CHROME_SIZE).color(Color {
-                    a: TITLE_A,
-                    ..fg
-                }),
-            ]
-            .spacing(GAP)
-            .align_y(Alignment::Center);
+            let content = label(l.island, l.title, CHROME_SIZE, Color { a: TITLE_A, ..fg });
             let open = open_key.as_deref() == Some(l.island.key.as_str());
             container(island(
                 item(content, Msg::AgentIslandOpen(l.island.key.clone())),
@@ -196,22 +234,10 @@ pub fn card(shell: &Shell) -> Element<'_, Msg> {
     let fg = shell.theme.palette().text;
     let muted = Color { a: TITLE_A, ..fg };
     let ago = ago(isl.since);
+    // The card has room: a finished one says so beside who it is.
     let head = row![
-        mark(isl.state),
-        text(isl.name.clone()).font(name_font()).size(13),
-        text(isl.title.clone())
-            .font(fonts::chrome())
-            .size(13)
-            .color(muted)
-            .width(Length::Fill),
-        text(if isl.project.is_empty() {
-            ago
-        } else {
-            format!("{} · {ago}", isl.project)
-        })
-        .font(fonts::chrome())
-        .size(11)
-        .color(muted),
+        container(label(isl, isl.title.trim().to_string(), 13.0, muted)).width(Length::Fill),
+        text(ago).font(fonts::chrome()).size(11).color(muted),
     ]
     .spacing(GAP)
     .align_y(Alignment::Center);
@@ -313,16 +339,7 @@ pub fn list(shell: &Shell) -> Element<'_, Msg> {
     let rest = shell.agents.islands.iter().skip(laid.len());
     let rows = rest.map(|isl| {
         button(
-            row![
-                mark(isl.state),
-                text(isl.name.clone()).font(name_font()).size(13),
-                text(isl.title.clone())
-                    .font(fonts::chrome())
-                    .size(13)
-                    .color(Color { a: TITLE_A, ..fg }),
-            ]
-            .spacing(GAP)
-            .align_y(Alignment::Center),
+            label(isl, want(isl).to_string(), 13.0, Color { a: TITLE_A, ..fg }),
         )
         .style(kit_button::menu_item)
         .padding(Padding::from([6, 8]))
@@ -353,5 +370,36 @@ fn ago(since: u64) -> String {
         0..=59 => "now".into(),
         60..=3599 => format!("{}m", secs / 60),
         _ => format!("{}h", secs / 3600),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn island(project: &str, name: &str, state: IslandState, title: &str) -> AgentIsland {
+        AgentIsland {
+            key: "p".into(),
+            name: name.into(),
+            project: project.into(),
+            state,
+            title: title.into(),
+            body: String::new(),
+            choices: Vec::new(),
+            reply: false,
+            since: 0,
+        }
+    }
+
+    #[test]
+    fn an_island_names_its_project_then_its_tab() {
+        let done = island("Sola", "root", IslandState::Done, "finished");
+        assert_eq!(who(&done), ("Sola".into(), Some("(root)".into())));
+        assert_eq!(want(&done), "");
+        let asks = island("Sola", "kit-foundation", IslandState::Waiting, "wants to run ls");
+        assert_eq!(want(&asks), "wants to run ls");
+        // No project: the tab alone; the same name: once.
+        assert_eq!(who(&island("", "root", IslandState::Done, "")), ("root".into(), None));
+        assert_eq!(who(&island("Oath", "oath", IslandState::Done, "")), ("Oath".into(), None));
     }
 }

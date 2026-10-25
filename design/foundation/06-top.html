@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Foundation / 06 The top row</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="foundation.css">
+<script src="foundation.js"></script>
+<style>
+  .strip { position: relative; height: 48px; border-radius: 8px; outline: 1px solid var(--hairline); outline-offset: -0.5px; overflow: hidden; background: var(--ground); }
+  .strip .top { position: absolute; }
+  .zoom { transform-origin: 0 0; }
+  .parts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 36px 40px; }
+  .part__stage { overflow: hidden; height: 80px; display: flex; align-items: center; gap: 12px; padding: 0 22px; border-radius: 8px; background: var(--ground); outline: 1px solid var(--hairline); outline-offset: -0.5px; }
+  .part__stage > .x2 { transform: scale(1.5); transform-origin: 0 50%; display: flex; gap: 6px; }
+  .matrix { display: flex; gap: 40px; align-items: flex-end; }
+  .matrix__cap { margin-top: 12px; }
+  .fade { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+</style>
+</head>
+<body class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num">06</span><div class="head__title">The top row</div></div>
+    <div class="head__lead">The top of the desk carries only the shell's islands, on the ground, a gap in from every edge, with no band behind them. The flower and the agents on the left, a toast in the true center while one shows, and an island per instrument group on the right. Each island is the thing you click; its panel hangs from it.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">canto's row · 1920 wide at 1:1.5</div>
+    <div id="row"></div>
+    <div class="label" style="margin-top:28px">Its two ends · 1:1</div>
+    <div class="grid2" id="ends"></div>
+    <div class="legend" style="margin-top:28px">
+      <div><span class="n">1</span><div><b>The flower</b><span>A 28 px round island, the flower in Sol amber at 14 px. It opens the system menu. The only brand on the desk.</span></div></div>
+      <div><span class="n">2</span><div><b>Agents</b><span>One island per Projects session that asks or has finished: its mark, its project in medium, its tab in parentheses, and — while it waits — what it wants, at 55%: <code>✓ Sola (root)</code>. At most 340 wide; past half the row the rest fold into a +N island.</span></div></div>
+      <div><span class="n">3</span><div><b>The toast</b><span>The one live sentence, as an island in the true center, over the row, so uneven sides do not pull it off center.</span></div></div>
+      <div><span class="n">4</span><div><b>Extras</b><span>Mail with its count in the accent; the bell with the missed count, accent until seen; the mouse's battery; Bluetooth, dimmed when off. Each shows only when it has something.</span></div></div>
+      <div><span class="n">5</span><div><b>Sound</b><span>The 12-band spectrum alone in its island, inset 7 all round so its round ends follow the pill's.</span></div></div>
+      <div><span class="n">6</span><div><b>Meters</b><span>CPU, GPU (when there is an NVIDIA card), MEM: a label at 62% and a 12 × 5 LED graph. RX and TX in their own island.</span></div></div>
+      <div><span class="n">7</span><div><b>The clock</b><span><code>HH:MM Ddd YYYY-MM-DD</code>, tabular. The calendar hangs from it.</span></div></div>
+      <div><span class="n">8</span><div><b>Open</b><span>An island whose panel shows lifts a step: the hover grey, a stronger sheen.</span></div></div>
+      <div><span class="n">9</span><div><b>Nothing reflows</b><span>Meters are fixed matrices, not numbers. Panels anchor right to left, so an extra that comes and goes moves nothing anchored.</span></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">The island · 4×</div>
+    <div class="grid2">
+      <div id="anatomy"></div>
+      <div class="facts" style="align-self:start">
+        <span>Height</span><span>28, a full pill: corners 14. The row's window is 48 tall: gap, island, gap.</span>
+        <span>Fill</span><span>Midway between raised and hover (<code data-token="--island"></code>); open, the hover grey (<code data-token="--island-open"></code>).</span>
+        <span>Sheen</span><span>From the fill 4% whiter at the top (8% open) down to the fill at 55% of the height.</span>
+        <span>Rim</span><span>1 px at the top only: the fill 12% whiter, thin over the middle, gone down the round ends.</span>
+        <span>Spacing</span><span>Islands 6 apart; 12 inside either end; items 12 apart; a stat's label 5 from its graph. Icons 14, type 13.</span>
+        <span>Ground</span><span>The row's window is transparent. Between islands the picture shows, or black.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">Every island · 1.5×</div>
+    <div class="parts" id="parts"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">The LED matrix · 4×</div>
+    <div class="matrix" id="matrix"></div>
+    <div class="note matrix__cap" style="max-width:900px">Each column is one second, newest on the right, lit from the bottom. A cell is 2 × 2 px on a 3 px pitch; the top lit cell dithers on a 2 × 2 Bayer pattern, btop's five fill levels. CPU, GPU and MEM print in the ink, then the theme's <b>warning</b> past 75% and its <b>danger</b> past 90%, column by column. RX takes the accent, TX success, each scaled to its own peak. Unlit cells stay at 16%, so an empty meter still reads as a meter. Painted as a nearest-neighbor image, 35 × 14.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">The idle fade keeps the left end · 1:4</div>
+    <div class="fade" id="fade"></div>
+  </div>
+
+<script>
+  const S = 1296 / 1920;
+  const agents = [I.flower(), I.agent(mark.diamond(), "Sola", "root", "wants to run cargo make build"), I.agent(mark.check(), "Oath", "root")];
+  const full = { l: agents, c: I.toast("Screenshot copied"), r: [I.extras({ mail: 12, bell: 3, mouse: "82%" }), I.spectrum(), I.meters({ gpu: false }), I.net(), I.clock("18:35 Sat 2026-10-24")] };
+  const strip = (o, w, s = 1, picture) =>
+    `<div class="strip${picture ? " stage--picture" : ""}" style="width:${w * s}px;height:${48 * s}px"><div class="zoom" style="width:${w}px;height:48px;transform:scale(${s})">${topRow(o)}</div></div>`;
+  document.getElementById("row").innerHTML = strip(full, 1920, S, true);
+  document.getElementById("ends").innerHTML =
+    `<div style="overflow:hidden;width:628px">${strip({ l: agents, r: [] }, 628)}</div>` +
+    `<div style="position:relative;overflow:hidden;width:628px;height:48px;border-radius:8px"><div style="position:absolute;right:0;top:0">${strip({ l: [], r: full.r }, 1000)}</div></div>`;
+
+  document.getElementById("anatomy").innerHTML =
+    `<div class="strip" style="height:${48 * 4}px;width:620px;display:flex;align-items:center;padding-left:24px"><div style="transform:scale(4);transform-origin:0 50%;display:flex;gap:6px">${I.clock("14:32")}${I.extras({ mail: 3, open: true })}</div></div>
+     <div class="spec" style="margin-top:10px">At rest (left) and open (right).</div>`;
+
+  const part = (h, p, html) => `<div class="sample"><div class="part__stage"><div class="x2">${html}</div></div><h4>${h}</h4><p>${p}</p></div>`;
+  document.getElementById("parts").innerHTML = [
+    part("Flower", "Closed, then open. The system menu: Launch Application…, Keyboard Shortcuts, Restart Shell, Quit Sola, Restart Computer, Shut Down.", I.flower() + I.flower(true)),
+    part("An agent asks", "The waiting diamond, the session, what it wants. Click: its card grows under the island (board 09).", I.agent(mark.diamond(), "Sola", "root", "wants to run a build")),
+    part("An agent finished", "The done check says the rest. Answered or opened, the island goes.", I.agent(mark.check(), "Oath", "root") + I.more(2)),
+    part("Extras", "Mail and the bell in the accent while something waits; ink once seen. Battery and Bluetooth.", I.extras({ mail: 12, bell: 3, mouse: "82%" })),
+    part("Sound", "Five phosphor rows, low to high: green, cyan, blue, violet, orange. Lit only while something plays.", I.spectrum()),
+    part("Meters", "A release build: CPU columns past 75% print the warning, past 90% the danger. GPU sits between them when there is one.", I.meters({ hot: true, gpu: false })),
+    part("Network", "Receive in the accent, send in success, each scaled to its own last minute.", I.net()),
+    part("Clock", "The time, the day, the date, in the row's 13 px type.", I.clock("18:35 Sat 2026-10-24")),
+    part("Toast", "A whisper: five seconds for an error, twenty for “Opening…”.", I.toast("Screenshot copied")),
+  ].join("");
+
+  document.getElementById("matrix").innerHTML = [
+    ["CPU · a build", "cpuHot"], ["MEM", "mem"], ["RX", "rx"], ["TX", "tx"],
+  ].map(([l, k]) => `<div><div class="label">${l}</div>${leds(k, { scale: 4 })}</div>`).join("");
+
+  // The fade: the picture over everything, but the piece over the flower
+  // and an asking agent left uncovered: they stay in full sight.
+  const KEEP = { x: 10, y: 10, w: 346, h: 28 };
+  const hole = `polygon(evenodd, 0 0, 1920px 0, 1920px 1080px, 0 1080px, 0 0, ${KEEP.x}px ${KEEP.y}px, ${KEEP.x + KEEP.w}px ${KEEP.y}px, ${KEEP.x + KEEP.w}px ${KEEP.y + KEEP.h}px, ${KEEP.x}px ${KEEP.y + KEEP.h}px, ${KEEP.x}px ${KEEP.y}px)`;
+  const fadeAt = (pct, label, text) => {
+    const over = `<div style="position:absolute;inset:0;z-index:30;background:var(--picture) center/cover;opacity:${pct / 100};clip-path:${hole}"></div>
+      <div style="position:absolute;left:${KEEP.x}px;top:${KEEP.y}px;width:${KEEP.w}px;height:${KEEP.h}px;z-index:30;background:var(--picture) -${KEEP.x}px -${KEEP.y + 16}px/1920px 1112px;opacity:0"></div>`;
+    const html = desk({ picture: true, scheme: "rose", top: { gpu: false, l: [I.flower(), I.agent(mark.diamond(), "Sola", "root", "wants to run cargo make build")] }, extra: over });
+    return `<div class="sample">${view(html, { w: 400, h: 225, s: 400 / 1920 })}<h4>${label}</h4><p>${text}</p></div>`;
+  };
+  document.getElementById("fade").innerHTML = [
+    fadeAt(0, "Awake", "Nothing over the desk."),
+    fadeAt(50, "Fading", "After five idle minutes the picture rises over everything, linearly, over thirty."),
+    fadeAt(100, "Faded", "Only the picture — but the flower and the agents' islands stay in full sight, even one that has the keyboard. Any input brings the desk back over a second."),
+  ].join("");
+  finish();
+</script>
+</body>
+</html>

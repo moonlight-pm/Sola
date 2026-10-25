@@ -56,8 +56,8 @@ ask the human.
 | `AGENTS.md` | Contributor + agent guide |
 | `CURRENT.md` | Only living session handoff |
 | `PERFORMANCE.md` | GPU / idle program log (not a second CURRENT) |
-| `DESIGN.md` | Visual system: tokens, roles, rules, open proposals (P1–P10) |
-| `design/foundation/` | Visual authority sheet (sola-design canvas): Components board + Graphite sheet |
+| `DESIGN.md` | Visual system as built: tokens, roles, rules; the written form of the sheet |
+| `design/foundation/` | Visual authority sheet (sola-design canvas): the design as built — cover, 01–10, and 11 Open (decided-but-unbuilt, drift, P1–P10) |
 | `design/tokens.css` | Design tokens (CSS custom properties) shared by every canvas in `design/` |
 | `INSTALL.md` | Shape 1 colleague install (shipped-path ops; tarball may 404) |
 | `CONTRIBUTING.md` | From-source NixOS setup (`services.sola.installRelease = false`) |

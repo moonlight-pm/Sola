@@ -12,8 +12,9 @@
 //!
 //! The overlay is cut in pieces around what the shell keeps in sight
 //! (`Topic::IdleKeep`: the top row's flower and agent islands, what you
-//! may want to answer); the piece over it stops short, so they never fade
-//! below [`KEEP`].
+//! may want to answer); that part is never covered, so they stay in full
+//! sight while everything else goes. While the fade runs, `Topic::IdleFade`
+//! says so (Projects shows a session's island even with its tab focused).
 //!
 //! Idle comes from `ext_idle_notifier_v1.get_idle_notification`, which
 //! honors idle inhibitors (a video player keeping the screen awake); and
@@ -23,7 +24,7 @@ use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
 use rustix::fs::{MemfdFlags, ftruncate, memfd_create};
-use sola_bus::topics::{Appearance, IdleKeep};
+use sola_bus::topics::{Appearance, IdleFade, IdleKeep, Topic};
 use tracing::{debug, info, warn};
 use wayland_client::protocol::{wl_buffer, wl_shm, wl_shm_pool, wl_surface};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
@@ -43,8 +44,6 @@ use crate::protocol::river_window_management_v1::river_shell_surface_v1::RiverSh
 const STEP: Duration = Duration::from_secs(1);
 /// Input came back: the windows return over this, a step every bus tick.
 const RETURN: Duration = Duration::from_secs(1);
-/// What stays in sight of the kept part however far the fade goes.
-const KEEP: f64 = 0.2;
 
 pub struct FadeState {
     /// `ext_idle_notifier_v1`, `wp_alpha_modifier_v1`.
@@ -65,6 +64,8 @@ pub struct FadeState {
     overlay: Option<Overlay>,
     /// Making the overlay failed this idle: stop asking for render passes.
     failed: bool,
+    /// What `Topic::IdleFade` last said.
+    told: Option<bool>,
 }
 
 impl Default for FadeState {
@@ -85,6 +86,7 @@ impl Default for FadeState {
             keep: None,
             overlay: None,
             failed: false,
+            told: None,
         }
     }
 }
@@ -94,9 +96,9 @@ struct Overlay {
     pieces: Vec<Piece>,
     /// The black buffers' own memory (none over the picture's).
     black: Option<(rustix::fd::OwnedFd, wl_shm_pool::WlShmPool)>,
-    /// What it was cut around.
+    /// What it was cut around (that part has no piece).
     keep: Option<IdleKeep>,
-    /// The fade's level (the kept piece's is capped, [`piece_level`]).
+    /// The fade's level.
     level: u32,
     set_at: Instant,
 }
@@ -108,14 +110,12 @@ struct Piece {
     surface: wl_surface::WlSurface,
     opacity: WpAlphaModifierSurfaceV1,
     buffer: wl_buffer::WlBuffer,
-    /// Over the kept part.
-    kept: bool,
 }
 
 impl Overlay {
     fn set(&mut self, level: u32) {
         for p in &self.pieces {
-            p.opacity.set_multiplier(piece_level(level, p.kept));
+            p.opacity.set_multiplier(level);
             p.surface.commit();
         }
         self.level = level;
@@ -267,16 +267,6 @@ fn returning_level(from: u32, t: f64) -> u32 {
     (f64::from(from) * (1.0 - t.clamp(0.0, 1.0)).powi(2)) as u32
 }
 
-/// A piece's opacity at the fade's `level`: the kept piece stops at
-/// `1 − KEEP`.
-fn piece_level(level: u32, kept: bool) -> u32 {
-    if kept {
-        level.min(((1.0 - KEEP) * f64::from(u32::MAX)) as u32)
-    } else {
-        level
-    }
-}
-
 fn over(look: &Appearance) -> Duration {
     Duration::from_secs(u64::from(look.fade_over_min.max(1)) * 60)
 }
@@ -335,6 +325,7 @@ fn ensure(state: &mut AppData) {
 
 /// Input: the windows come back over [`RETURN`].
 fn resume(state: &mut AppData) {
+    tell(state, false);
     state.fade.since = None;
     state.fade.failed = false;
     match state.fade.overlay.as_ref().map(|o| o.level) {
@@ -347,8 +338,19 @@ fn resume(state: &mut AppData) {
     }
 }
 
+/// Tell the bus whether the desk is fading (`Topic::IdleFade`), once per
+/// change.
+fn tell(state: &mut AppData, fading: bool) {
+    if state.fade.told == Some(fading) {
+        return;
+    }
+    state.fade.told = Some(fading);
+    state.bus.emit(Topic::IdleFade(IdleFade { fading }));
+}
+
 /// The fade turned off or changed: the windows back at once.
 fn wake(state: &mut AppData) {
+    tell(state, false);
     state.fade.since = None;
     state.fade.failed = false;
     drop_overlay(state);
@@ -396,6 +398,10 @@ fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
     let (x, y) = state.output_origin.unwrap_or((0, 0));
     let mut pieces = Vec::new();
     for (r, kept) in cut(ow, oh, state.fade.keep) {
+        // The kept part stays uncovered: the flower and the agent islands.
+        if kept {
+            continue;
+        }
         // The piece in the buffer's pixels, inside it, whole logical pixels.
         let (px, py) = (r.x * scale, r.y * scale);
         let pw = (r.w * scale).min(bw - px);
@@ -411,7 +417,7 @@ fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
         surface.set_input_region(Some(&region));
         region.destroy();
         let opacity = alpha.get_surface(&surface, &qh, ());
-        opacity.set_multiplier(piece_level(level, kept));
+        opacity.set_multiplier(level);
         let shell_surface = wm.get_shell_surface(&surface, &qh, ());
         let node = shell_surface.get_node(&qh, ());
         node.place_top();
@@ -427,7 +433,6 @@ fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
             surface,
             opacity,
             buffer,
-            kept,
         });
     }
     Ok(Overlay {
@@ -451,6 +456,7 @@ impl Dispatch<ExtIdleNotificationV1, ()> for AppData {
         match event {
             ext_idle_notification_v1::Event::Idled => {
                 info!("idle: the fade starts");
+                tell(state, true);
                 state.fade.returning = None;
                 state.fade.since = Some(Instant::now());
                 state.pending.render_dirty = true;
@@ -525,15 +531,6 @@ mod tests {
         let half = returning_level(from, 0.5) as f64 / f64::from(from);
         assert!((half - 0.25).abs() < 0.001, "{half}");
         assert_eq!(returning_level(from, 1.0), 0);
-    }
-
-    #[test]
-    fn the_kept_part_stays_a_fifth_in_sight() {
-        let full = piece_level(u32::MAX, true) as f64 / f64::from(u32::MAX);
-        assert!((full - 0.8).abs() < 0.001, "{full}");
-        // Until then it fades with the rest.
-        assert_eq!(piece_level(1000, true), 1000);
-        assert_eq!(piece_level(u32::MAX, false), u32::MAX);
     }
 
     #[test]

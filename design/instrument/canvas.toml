@@ -65,3 +65,13 @@ y = 11081
 width = 1440
 height = "auto"
 title = "Instrument / 06 What it takes"
+
+# 2026-10-24: board 01's drop panel on the foundation as built.
+[[artboard]]
+id = "panels"
+src = "panels.html"
+x = 0
+y = 13400
+width = 1440
+height = "auto"
+title = "Instrument / 07 Panels on today's desk"

@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Foundation / 09 Surfaces</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="foundation.css">
+<script src="foundation.js"></script>
+<style>
+  /* Kit popover chrome: raised face, 7% hairline, radius 7 (RADIUS_MD), 28% y2 blur10 */
+  .pc { position: absolute; z-index: 9; border-radius: 7px; background: var(--bg-secondary); box-shadow: inset 0 0 0 1px var(--hairline), 0 2px 10px #00000047; color: var(--ink); }
+  .dim-all { position: absolute; inset: 0; background: var(--shell-backdrop-dim); z-index: 8; }
+
+  /* Launcher: kit modal (bevel, radius 14, 38% y8 blur28), 560 wide */
+  .launch { position: absolute; z-index: 9; width: 560px; padding: 1px; border-radius: 14px;
+    background: linear-gradient(135deg, #0e0e0e, color-mix(in srgb, white 12%, var(--bg-secondary)));
+    box-shadow: 0 8px 28px #00000061; }
+  .launch__face { border-radius: 13px; background: var(--bg-secondary); overflow: hidden; }
+  .launch__q { margin: 0; padding: 12px; background: var(--field-well); box-shadow: inset 0 0 0 1px var(--field-edge); border-radius: 5px 5px 0 0; font: 400 16px/20px var(--f-chrome); display: flex; align-items: center; }
+  .launch__q .caret { width: 1.5px; height: 19px; background: var(--ink); margin-left: 1px; }
+  .launch__div { height: 1px; background: var(--hairline); }
+  .launch__list { padding: 6px; height: 372px; display: flex; flex-direction: column; gap: 2px; }
+  .lrow { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 5px; font: 400 14px/18px var(--f-chrome); }
+  .lrow.is-sel { background: var(--bg-hover); }
+
+  /* Switcher: backplate, no shadow; 96 cells, 72 icons */
+  .sw { position: absolute; z-index: 9; padding: 14px 22px 12px; border-radius: 14px; background: var(--shell-switcher-bg); box-shadow: inset 0 0 0 1px var(--shell-switcher-border); display: flex; gap: 6px; }
+  .sw__cell { width: 96px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .sw__plate { position: relative; width: 96px; height: 96px; border-radius: 10px; display: grid; place-items: center; color: var(--ink); }
+  .sw__plate.is-sel { background: var(--shell-switcher-icon-bg); }
+  .sw__cap { height: 18px; font: 400 13px/18px var(--f-chrome); color: color-mix(in srgb, var(--ink) 92%, transparent); }
+  .cm { position: absolute; top: 4px; right: 4px; height: 18px; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font: 500 10px/18px var(--f-chrome); text-align: center; box-shadow: 0 0 0 1px color-mix(in srgb, white 14%, var(--bg-primary)); }
+
+  /* Notices: popover, pad 12; icon 18, source 11, title 13 medium, body 12 */
+  .ntc { width: 340px; height: 76px; padding: 12px; display: flex; gap: 4px; }
+  .ntc__body { flex: 1; display: flex; gap: 8px; min-width: 0; }
+  .ntc__copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .ntc__src { font: 400 11px/13px var(--f-chrome); color: var(--ink-2); }
+  .ntc__t { font: 500 13px/16px var(--f-chrome); }
+  .ntc__b { font: 400 12px/15px var(--f-chrome); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ntc__x { color: var(--ink-2); padding: 4px 6px; }
+  .pile { width: 320px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .pile__t { font: 500 13px/16px var(--f-chrome); }
+  .pile__row { display: flex; gap: 8px; align-items: flex-start; font: 400 12px/16px var(--f-chrome); }
+  .pile__row b { display: block; font-weight: 500; font-size: 13px; color: var(--ink); }
+  .pile__row span { color: var(--ink-2); }
+
+  /* The agent card: popover 440, pad 4 + 12 */
+  .ac { width: 440px; padding: 16px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; line-height: 16px; }
+  .ac__head { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .ac__head b { font-weight: 500; }
+  .ac__head .t { color: var(--ink-dim); flex: 1; }
+  .ac__head .w { font-size: 11px; color: var(--ink-dim); }
+  .ac__body { font: 400 13px/18px var(--f-mono); color: var(--ink); white-space: pre-wrap; }
+  .ac__body--ui { font-family: var(--f-chrome); }
+  .ac > .btn { width: 100%; }
+  .ac__field { height: 30px; padding: 0 8px; border-radius: 5px; background: var(--field-well); box-shadow: inset 0 0 0 1px var(--field-edge); display: flex; align-items: center; color: var(--ink-3); }
+  .ac__foot { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--ink-dim); }
+
+  /* Shell menus: popover pad 4; rows pad 3×10, 14 px check slot, grey hover r5 */
+  .sm { width: 240px; padding: 4px; font: 400 13px/16px var(--f-chrome); }
+  .sm .r { display: flex; align-items: center; gap: 8px; padding: 3px 10px; border-radius: 5px; }
+  .sm .r i { width: 14px; font-style: normal; }
+  .sm .r .k { margin-left: auto; font-size: 12px; color: var(--ink-dim); }
+  .sm .r.is-hot { background: color-mix(in srgb, var(--bg-hover) 75%, transparent); }
+  .sm .r.is-off { color: var(--ink-3); }
+  .sm .s { height: 1px; background: var(--hairline); margin: 4px 0; }
+
+  /* Stat panels, as stats/view.rs draws them since 2026-10-24 */
+
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .cap { margin-top: 14px; }
+</style>
+</head>
+<body class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num">09</span><div class="head__title">Surfaces</div></div>
+    <div class="head__lead">What opens over the desk, drawn as the code draws it today on the grey base. The launcher and the switcher sit in the middle of the output. Notices stack at the top right. The agent card and every panel hang from their island. Menus open from the flower, from the tab bar's head, and from a window's titlebar.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">Launcher · Super+Space · 1:1</div>
+    <div id="launcher"></div>
+    <p class="note cap">A 560 px kit modal in the middle of the output, over a 60% black backdrop. Corners 14, a 1 px bevel, shadow 38% y 8 blur 28. The query is 16 px in an inset well, pad 12, then a divider. Rows are a 20 px icon and a 14 px label, gap 10, pad 8 × 12, in a 360 px list inset 6. The selected row is the hover grey at radius 5, not the accent.</p>
+  </div>
+
+  <div class="section">
+    <div class="label">Switcher · Super+Tab · 1:1</div>
+    <div id="switcher"></div>
+    <p class="note cap">One icon per app with an open window, on every workspace, most recent first; it opens on the second. A 72 px icon in a 96 px cell, 6 apart. The selected cell gets a white 18% plate at radius 10 and the only caption (13 px). Unread mail and unseen notices show as the accent count mark at the cell's corner. The backplate is the switcher token (raised at 90%), a 1 px white 10% edge, radius 14, pad 14 × 22, and no shadow.</p>
+  </div>
+
+  <div class="section">
+    <div class="label">Notices and the missed pile · 1:1</div>
+    <div id="notices" style="display:flex;flex-direction:column;gap:16px"></div>
+    <p class="note cap">Notices are 340 × 76 popover cards, 8 apart, at most 3 live, each held 6 s. They rest 12 px from the right edge and 6 px under the top row (y 44), and drop in from 14 px higher over 180 ms; they leave in 140 ms. Missed ones go to the pile: the bell island shows the count in the accent until you open it, and the pile opens as a 320 px panel under it, grouped by app.</p>
+  </div>
+
+  <div class="section">
+    <div class="label">The agent card · 1:1</div>
+    <div class="pair" id="agents"></div>
+    <p class="note cap">Clicking an agent island opens its card under the island's left edge: a 440 px popover, pad 12. The head repeats the island (mark, name in medium, what it wants at 55%) with the project and age at the right. The body is mono when the agent wants to run a command, at most 220 px tall. Choices fill the width, the first primary and the rest secondary; a done session or a free answer gets a reply field. Show (small ghost) brings up the session's window.</p>
+  </div>
+
+  <div class="section">
+    <div class="label">Menus · 1:1</div>
+    <div class="trio" id="menus"></div>
+    <p class="note cap">The flower's menu and a workspace's menu are the shell's: kit popover chrome (radius 7, pad 4), 13 px rows padded 3 × 10 with a 14 px check slot, shortcuts 12 px at 55%, a grey hover (the hover grey at 75%, radius 5). A window's menu is the kit's own sheet, drawn inside the window: radius 12, 26 px rows, radius 7, and an accent hover at 14%. Two menu styles are live today.</p>
+  </div>
+
+  <div class="section">
+    <div class="label">Toast · the center of the top row · 1:1</div>
+    <div id="toast"></div>
+    <p class="note cap">A toast is an island in the true center of the row, 13 px chrome type. An error stays 5 s; "Opening …" stays up to 20 s, until the app's window appears.</p>
+  </div>
+
+  <div class="section">
+    <div class="label">Panels hang from their island · CPU · 1:1</div>
+    <div id="cpu"></div>
+    <div class="pair" style="margin-top:16px"><div id="mem"></div><div id="rx"></div></div>
+    <p class="note cap">Each instrument opens a 324 px popover whose left edge is under its label, its top on the row's lower edge (y 38), kept a gap from the output's right edge; the island lifts while it shows. It draws the island's LEDs larger, 4 px dots on a 5 px pitch: the value in 5 × 7 dots in a field well, four cells right-aligned so nothing shifts; the last 60 seconds as columns, each tinted by its own sample; per-thread load as a column per thread, a core's threads side by side and a gap between cores; top processes with a 16-cell LED bar; memory and VRAM as a 60-cell row (used lit, cache at 40%, free dark). Captions are 10 px caps, figures Iosevka. Every color is the theme's: ink at rest, warning past 75%, danger past 90%; RX in the accent, TX in success. Design: Instrument 07.</p>
+    <div class="facts" style="margin-top:24px">
+      <span>Audio</span><span>Under the spectrum: Output and Input, a device picker and a volume each. 320 × 400.</span>
+      <span>Bluetooth</span><span>Under the extras: the adapter, connected devices, Not connected, Nearby; Connect, Pair, Add device. 320 × 480.</span>
+      <span>The pile</span><span>Under the extras, right-aligned: Notifications, grouped by app, "Nothing missed." when empty. 320 wide.</span>
+      <span>Calendar</span><span>Under the clock, right-aligned: a Sunday-first month, previous and next, Today. 248 × 320.</span>
+      <span>GPU</span><span>Only with an NVIDIA card: utilization, VRAM bar, top by GPU and by VRAM, temperature, power, fan, clock.</span>
+    </div>
+  </div>
+
+<script>
+  const W = 1920, H = 1080;
+  const base = (extra, o = {}) => desk({ w: W, h: H, extra, ...o, top: { gpu: false, ...(o.top || {}) } });
+
+  /* Launcher */
+  const apps = [["calendar", "Calendar", true], ["calculator", "Calculator"], ["capture", "Capture area"], ["gamepad", "Arcade"], ["palette", "Design"]];
+  const launcher = `<div class="dim-all"></div><div class="launch" style="left:${(W - 560) / 2}px;top:330px"><div class="launch__face">
+    <div class="launch__q">ca<span class="caret"></span></div><div class="launch__div"></div>
+    <div class="launch__list">${apps.map(([ic, t, sel]) => `<div class="lrow${sel ? " is-sel" : ""}">${icon(ic, 20)}<span>${t}</span></div>`).join("")}</div></div></div>`;
+  document.getElementById("launcher").innerHTML = view(base(launcher), { x: 312, y: 250, w: 1296, h: 560 });
+
+  /* Switcher */
+  const sw = [["terminal", "Terminal"], ["prompt", "Projects", true], ["mail", "Mail", false, 12], ["globe", "Browser"], ["settings", "Settings", false, 1], ["music", "Spotify"]];
+  const swW = sw.length * 96 + (sw.length - 1) * 6 + 44;
+  const switcher = `<div class="sw" style="left:${(W - swW) / 2}px;top:${H / 2 - 66}px">${sw.map(([ic, t, sel, n]) =>
+    `<div class="sw__cell"><div class="sw__plate${sel ? " is-sel" : ""}">${icon(ic, 72, "currentColor", 1.25)}${n ? `<span class="cm">${n}</span>` : ""}</div><div class="sw__cap">${sel ? t : ""}</div></div>`).join("")}</div>`;
+  document.getElementById("switcher").innerHTML = view(base(switcher), { x: 312, y: 390, w: 1296, h: 300 });
+
+  /* Notices + pile */
+  const ntc = (ic, src, t, b, y) => `<div class="pc ntc" style="left:${W - 340 - 12}px;top:${y}px"><div class="ntc__body">${icon(ic, 18)}<div class="ntc__copy"><span class="ntc__src">${src}</span><span class="ntc__t">${t}</span><span class="ntc__b">${b}</span></div></div><span class="ntc__x">${icon("x", 12)}</span></div>`;
+  const notices = ntc("calendar", "Calendar", "Design review in 15 minutes", "Today, 10:00 to 10:30", 44) + ntc("mail", "Mail · Cal.com", "Design review moved to Monday", "The Sola foundation review is now…", 44 + 76 + 8);
+  const pile = `<div class="pc pile" style="left:${W - 320 - 10}px;top:38px"><span class="pile__t">Notifications</span>
+    ${[["mail", "Hetzner Online", "Invoice 0412 for October"], ["calendar", "Calendar", "Hike, Tiger Mtn — tomorrow 08:00"], ["globe", "Browser · Primary", "Download finished: canto.iso"]]
+      .map(([ic, t, s]) => `<div class="pile__row">${icon(ic, 18)}<div><b>${t}</b><span>${s}</span></div></div>`).join("")}</div>`;
+  const ext = { extras: { mail: 12, bell: 3 } };
+  const topWith = (o) => ({ r: [I.extras(o), I.spectrum(), I.meters({ gpu: false }), I.net(), I.clock()] });
+  document.getElementById("notices").innerHTML =
+    view(base(notices, { top: topWith({ mail: 12, bell: 3 }) }), { x: W - 1296, y: 0, w: 1296, h: 236 }) +
+    view(base(pile, { top: topWith({ mail: 12, bell: 3, seen: true, open: true }) }), { x: W - 1296, y: 0, w: 1296, h: 236 });
+
+  /* The agent card: choices, then a reply */
+  const agentTop = (open) => ({ l: [I.flower(), I.agent(mark.diamond(), "Sola", "root", "wants to run cargo make build").replace('class="isl"', `class="isl${open ? " is-open" : ""}"`), I.agent(mark.check(), "Oath", "root")] });
+  const card = (under, head, body, ui, choices, reply) => `<div class="pc ac" data-island="${under}" style="left:44px;top:38px">
+    <div class="ac__head">${head}</div>${body ? `<div class="ac__body${ui ? " ac__body--ui" : ""}">${body}</div>` : ""}
+    ${choices.map((c, i) => `<span class="btn ${i ? "btn--secondary" : "btn--primary"}">${c}</span>`).join("")}
+    ${reply ? `<div class="ac__field">${reply}</div>` : ""}
+    <div class="ac__foot"><span>${reply ? "Return sends · Esc closes" : "Esc closes"}</span><span class="btn btn--sm btn--ghost">Show</span></div></div>`;
+  const ask = card("Sola", `${mark.diamond()}<b>Sola</b><span class="t">wants to run cargo make build</span><span class="w">Sola · 2m</span>`,
+    "cargo make build sola-kit", false, ["Yes", "Yes, and don't ask again for cargo make", "No, and tell Claude what to do"]);
+  const done = card("Oath", `${mark.check()}<b>Oath</b><span class="t">done</span><span class="w">Oath · 1m</span>`,
+    "Published pkg:sola 0c41e9 to the origin. canto applied it and the shell restarted cleanly.", true, [], "Tell it what to do next");
+  document.getElementById("agents").innerHTML =
+    view(base(ask, { top: agentTop(true) }), { x: 0, y: 0, w: 640, h: 330 }) +
+    view(base(done, { top: { l: [I.flower(), I.agent(mark.diamond(), "Sola", "root", "wants to run cargo make build"), I.agent(mark.check(), "Oath", "root").replace('class="isl"', 'class="isl is-open"')] } }), { x: 160, y: 0, w: 640, h: 330 });
+
+  /* Menus: flower, workspace, a window's dropdown */
+  const smenu = (rows, x, y, w = 240) => `<div class="pc sm" style="left:${x}px;top:${y}px;width:${w}px">${rows.map((r) => r === "-" ? `<div class="s"></div>` :
+    `<div class="r${r[2] === "hot" ? " is-hot" : r[2] === "off" ? " is-off" : ""}"><i>${r[3] ? "✓" : ""}</i>${r[0]}<span class="k">${r[1] || ""}</span></div>`).join("")}</div>`;
+  const flowerMenu = smenu([["Launch Application…"], ["Keyboard Shortcuts", "⌘K", "hot"], "-", ["Restart Shell"], ["Quit Sola"], "-", ["Restart Computer"], ["Shut Down"]], 10, 38);
+  const wsMenu = smenu([["Main", "⌘1", "", true], ["Mail", "⌘2"], ["Game", "⌘3", "hot"], "-", ["New Workspace"], ["Rename…"], "-", ["Move Left", "", "off"], ["Move Right"], ["Delete"]], 20, 88, 220);
+  document.getElementById("menus").innerHTML =
+    view(base(flowerMenu, { top: { l: [I.flower(true)] } }), { x: 0, y: 0, w: 421, h: 300 }) +
+    view(base(wsMenu, { bar: { headOpen: true } }), { x: 0, y: 0, w: 421, h: 330 }) +
+    view(base("", { wins: [{ app: "projects", zone: "left", focus: true, tb: { open: "Projects" }, sheet: "Projects", sheetOpts: { top: 42 } }, { app: "terminal", zone: "right" }] }), { x: 240, y: 30, w: 421, h: 330 });
+
+  /* Toast */
+  document.getElementById("toast").innerHTML = view(base("", { top: { c: I.toast("Opening Calendar…") } }), { x: 312, y: 0, w: 1296, h: 80 });
+
+  /* Stat panels */
+  const hist = (f) => Array.from({ length: 60 }, (_, i) => Math.max(1, f(i)));
+  const cpuHist = hist((i) => 14 + i * 1.1 + 8 * Math.sin(i / 3) + 4 * Math.sin(i * 1.7));
+  cpuHist.splice(50, 10, 78, 84, 88, 86, 91, 85, 80, 87, 83, 83);
+  const memHist = hist((i) => 40 + 1.2 * Math.sin(i / 7));
+  const rxHist = hist((i) => (i % 17 < 5 ? 1.6e6 + 3.2e6 * Math.sin(i) ** 2 : 1e5 + 8e4 * Math.sin(i * 2)));
+  // canto's CPU: 4 cores, threads n and n + 4 siblings — by core, a gap between.
+  const threads = [96, 82, 0, 88, 69, 0, 74, 93, 0, 91, 77].map((v) => (v === 0 ? null : v));
+  const cpu = dottedPanel({ anchor: "CPU", label: "CPU", value: "83%", ink: levelInk(83), model: "Xeon E5-1620 v2", sub: "4C / 8T", peak: "peak 91%", hist: cpuHist,
+    sections: [dp.sec("Per-thread load", "8 threads", columnsSvg(threads, { rows: 6 })), dp.rule(),
+      dp.procs([["rustc", 38], ["rustc", 31], ["sola-browser", 9], ["river", 3]], "CPU", (v) => v + "%"), dp.rule(),
+      dp.foot([["Load", "6.2  4.8  3.1"], ["Up", "2d 6h 41m"]])] });
+  const mem = dottedPanel({ anchor: "MEM", label: "MEM", value: "41%", ink: levelInk(41), model: "31 GB", sub: "RAM", peak: "peak 42%", hist: memHist,
+    sections: [dp.sec("Memory", "", barSvg([[0.41, "var(--text-primary)"], [0.38, "color-mix(in srgb, var(--text-primary) 40%, transparent)"]], 60) +
+        `<div class="dp__legend"><span><span class="dp__caps">Used</span><span class="dp__fig">12.7 GB</span></span><span><span class="dp__caps">Cache</span><span class="dp__fig">11.8 GB</span></span><span><span class="dp__caps">Free</span><span class="dp__fig">6.5 GB</span></span></div>`), dp.rule(),
+      dp.procs([["sola-browser", 2140], ["sola-design", 1210], ["claude", 486], ["sola-shell", 212]], "RAM", (v) => v + " MB"), dp.rule(),
+      dp.foot([["Swap", "0.0 / 8 GB"], ["Pressure", "41%"]])] });
+  const rx = dottedPanel({ anchor: "RX", label: "RX", value: "1.2M", ink: "var(--accent)", model: "Receive", sub: "net0", peak: "peak 4.8 MB/s", hist: rxHist, max: Math.max(...rxHist), histInk: () => "var(--accent)",
+    sections: [dp.rule(), dp.foot([["Interface", "net0  10.0.0.3"], ["Session", "3.1 GB"]])] });
+  const openTop = (which) => ({ r: [I.extras({ mail: 12 }), I.spectrum(), I.meters({ gpu: false, open: which === "m", hot: true }), I.net(which === "n"), I.clock()] });
+  document.getElementById("cpu").innerHTML = view(base(cpu, { top: openTop("m") }), { x: W - 1296, y: 0, w: 1296, h: 640 });
+  document.getElementById("mem").innerHTML = view(base(mem, { top: openTop("m") }), { x: W - 640, y: 0, w: 640, h: 560 });
+  document.getElementById("rx").innerHTML = view(base(rx, { top: openTop("n") }), { x: W - 640, y: 0, w: 640, h: 560 });
+
+  /* Hang each panel under its label (measured), kept a gap from the right edge,
+   * and slide a narrow crop so the panel sits in it. */
+  function hang() {
+    document.querySelectorAll(".dp[data-anchor]").forEach((p) => {
+      const d = p.closest(".desk");
+      const lbl = [...d.querySelectorAll(".isl .stat")].find((s) => s.textContent.trim().startsWith(p.dataset.anchor));
+      if (!lbl) return;
+      const x = lbl.getBoundingClientRect().left - d.getBoundingClientRect().left;
+      p.style.left = Math.min(x, W - 324 - 10) + "px";
+    });
+    document.querySelectorAll(".ac[data-island]").forEach((c) => {
+      const d = c.closest(".desk");
+      const isl = [...d.querySelectorAll(".isl")].find((i) => i.querySelector(".agent__name")?.textContent === c.dataset.island);
+      if (isl) c.style.left = isl.getBoundingClientRect().left - d.getBoundingClientRect().left + "px";
+    });
+  }
+  finish();
+  hang();
+  document.fonts.ready.then(hang);
+</script>
+</body>
+</html>

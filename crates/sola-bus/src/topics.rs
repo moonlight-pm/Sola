@@ -484,16 +484,25 @@ pub struct ThemeVariation {
     pub source: String,
 }
 
-/// Where the idle fade stops short (shell → sola-river, `Topic::IdleKeep`,
-/// sticky): the top row's left group — the flower and the agent islands,
-/// what you may want to answer — stays at least a fifth in sight however
-/// far the fade goes. Output-local logical pixels.
+/// What the idle fade leaves uncovered (shell → sola-river,
+/// `Topic::IdleKeep`, sticky): the top row's left group — the flower and
+/// the agent islands, what you may want to answer — stays in full sight
+/// while everything else fades into the picture. Output-local logical
+/// pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdleKeep {
     pub x: i32,
     pub y: i32,
     pub w: u32,
     pub h: u32,
+}
+
+/// The desk is idle and fading (sola-river → Projects, `Topic::IdleFade`,
+/// sticky): no input for the fade's delay. While it is on, a session's tab
+/// that has the keyboard is not being looked at, so its island shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdleFade {
+    pub fading: bool,
 }
 
 /// Emitted by compositor when pointer enters a different surface/window.
@@ -1757,6 +1766,11 @@ define_topics! {
     // Appended last.
     #[sticky]
     IdleKeep(IdleKeep),
+
+    // The desk is idle and fading (sola-river → Projects). Sticky.
+    // Appended last.
+    #[sticky]
+    IdleFade(IdleFade),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1784,6 +1798,7 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::Appearance
             | TopicKind::ThemeVariations
             | TopicKind::IdleKeep
+            | TopicKind::IdleFade
     )
 }
 
@@ -1982,6 +1997,13 @@ mod tests {
         }
         assert!(TopicKind::IdleKeep.behavior().is_sticky());
         assert!(topic_kind_is_after_mail_status(TopicKind::IdleKeep));
+        let fade = IdleFade { fading: true };
+        match Topic::parse(&Topic::IdleFade(fade).to_message()) {
+            Some(Topic::IdleFade(back)) => assert_eq!(back, fade),
+            other => panic!("expected IdleFade, got {other:?}"),
+        }
+        assert!(TopicKind::IdleFade.behavior().is_sticky());
+        assert!(topic_kind_is_after_mail_status(TopicKind::IdleFade));
     }
 
     #[test]

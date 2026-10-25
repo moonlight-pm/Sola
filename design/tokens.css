@@ -1,32 +1,40 @@
 /* Sola design tokens. Color names are the bus palette keys.
  * Shared by every canvas in design/ (../tokens.css). Mirrors the kit as
- * built: since Next (2026-10-23) the base is neutral grey, no blue. */
+ * built on `next` (2026-10-24): the grey base (no blue), the gap grid,
+ * windows with titlebars, the top row as islands. Derived edges are the
+ * kit's own math (opaque white mixes over the surface, style.rs), not
+ * eyeballed. design/foundation/ is the board that shows these. */
 :root {
-  /* Surfaces */
-  --bg-primary: #0b0b0b;
-  --bg-chrome: #141414;
-  --bg-secondary: #151515;
+  /* Surfaces (seed: sola-core theme/palette.rs) */
+  --bg-primary: #0b0b0b;        /* window face */
+  --bg-secondary: #151515;      /* raised: titlebar, sheets, the tab bar */
+  --bg-tertiary: #1f1f1f;
   --bg-hover: #1f1f1f;
+  --bg-chrome: #141414;         /* not a token: base → raised at 90% (style.rs chrome_surface) */
   --selection: #292929;
+  --highlight: #353535;         /* a column's active row; the focus rim is it, 4% lighter */
 
   /* Lines */
   --border: #2a2a2a;
-  --hairline: #222222;
-  --hairline-strong: #2b2b2b;
+  --border-subtle: #1f1f1f;
+  --hairline: #252525;          /* white 7% over raised */
+  --hairline-strong: #313131;   /* white 12% over raised */
 
   /* Fields */
-  --field-well: #050505;
-  --field-edge: #1e1e1e;
-  --field-focus: #24788a;
+  --field-well: #050505;        /* base × 0.45 */
+  --field-edge: #232323;        /* white 12% over the well */
+  --field-focus: #24788a;       /* accent 55% into the well */
 
   /* Text */
   --text-primary: #ececec;
   --text-secondary: #949494;
-  --text-tertiary: #737373;
+  --text-tertiary: #737373;     /* seed; the kit's muted text falls back to #949494 (see foundation 11) */
+  --text-muted: #2a2a2a;
   --text-ghost: #b3b3b3;
 
   /* Accent */
   --accent: #3dd6f5;
+  --text-accent: #3dd6f5;
   --accent-hover: #58dcf6;
   --accent-dim: #3dd6f51a;
   --accent-soft: #3dd6f524;
@@ -48,34 +56,53 @@
   --on-danger: #1a0608;
 
   /* Buttons */
-  --danger-outline-fill: #2b222b;
-  --danger-outline-edge: #713e46;
+  --danger-outline-fill: #2b1e1f;
+  --danger-outline-edge: #713c3f;
   --danger-outline-text: #f28288;
-  --secondary-fill: #1d1d1d;
-  --secondary-edge: #313131;
-  --secondary-hover: #292929;
+  --secondary-fill: #1e1e1e;
+  --secondary-edge: #393939;
+  --secondary-hover: #2c2c2c;
   --ghost-hover: #1f1f1fb3;
 
   /* Menus */
   --menu-hover: #1f1f1fbf;
-  --menubar-active: #ececec2e;
+
+  /* Windows (kit window_frame) */
+  --rim-focus: #3d3d3d;         /* highlight lifted 4% in its hue */
+  --rim-rest: #1c1c1c;          /* the face lifted 7% in its hue; opaque */
+  --close-dot: #ff5f57;         /* focused only */
+  --close-hover: #ff736b;
+  --close-off: #ffffff1f;
+
+  /* Islands (the top row; menubar/view.rs) */
+  --island: #1a1a1a;            /* raised ↔ hover midpoint */
+  --island-open: #1f1f1f;       /* while its panel shows */
+  --island-rim: #353535;        /* 1 px top rim, white 12% over the fill */
 
   /* Shell chrome */
-  --shell-menubar-bg: #050505;
+  --shell-menubar-bg: #050505;  /* seeded, no longer read: the top row is transparent */
   --shell-backdrop-dim: #00000099;
   --shell-switcher-bg: #151515e6;
   --shell-switcher-border: #ffffff1a;
   --shell-switcher-icon-bg: #ffffff2e;
 
   /* Details */
-  --close-dot: #ff5f57;
   --term-cursor: #ffb800;
 
   /* Shadows */
-  --shadow: #00000047;
-  --shadow-deep: #00000061;
+  --shadow: #00000047;          /* popover, floats: 28% */
+  --shadow-deep: #00000061;     /* modal: 38% */
 
-  /* Space */
+  /* The grid (sola-shell zoning.rs) */
+  --gap: 10px;                  /* edges, between tiles, above and below the islands */
+  --island-h: 28px;
+  --top-h: 48px;                /* gap + island + gap: tiles and the tab bar start here */
+  --tabbar-width: 240px;
+  --tb-h: 38px;                 /* titlebar */
+  --r-window: 12px;             /* windows, the tab bar, dropdown sheets */
+  --sidebar-width: 220px;       /* an app's own sidebar */
+
+  /* Space (kit SPACE_*; the bus space-* names sit one step up) */
   --space-2xs: 2px;
   --space-xs: 4px;
   --space-sm: 8px;
@@ -84,18 +111,15 @@
   --space-xl: 20px;
   --space-xxl: 24px;
 
-  /* Radius */
+  /* Radius (kit RADIUS_*) */
+  --radius-row: 4px;            /* sidebar rows */
   --radius-xs: 4px;
   --radius-sm: 5px;
   --radius-md: 7px;
   --radius-lg: 10px;
   --radius-xl: 14px;
 
-  /* Metrics */
-  --menubar-height: 28px;
-  --sidebar-width: 220px;
-
-  /* Type scale */
+  /* Type scale (kit text.rs; titlebar 12.5 title, 13 menus) */
   --type-badge: 10px;
   --type-caption: 11px;
   --type-small: 12px;
@@ -103,13 +127,13 @@
   --type-prose: 14px;
   --type-title: 15px;
   --type-heading: 22px;
-  --type-display: 32px;
 
-  /* Faces: the kit fallbacks (Inter for SF Pro Text, JetBrains Mono for Iosevka Term Slab) */
-  --font-ui: Inter, system-ui, sans-serif;
-  --font-display: Inter, system-ui, sans-serif;
-  --font-chrome: Inter, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  /* Faces: SF Pro Text and Iosevka Term Slab when installed; the kit falls
+   * back to Inter and JetBrains Mono. */
+  --font-ui: "SF Pro Text", Inter, system-ui, sans-serif;
+  --font-display: "SF Pro Text", Inter, system-ui, sans-serif;
+  --font-chrome: "SF Pro Text", Inter, system-ui, sans-serif;
+  --font-mono: "Iosevka Term Slab", "JetBrains Mono", ui-monospace, monospace;
 
   /* Enamel: identity colors */
   --enamel-teal: #61adb8;
@@ -123,15 +147,17 @@
 
   /* Sol, LEDs, phosphor */
   --sol: #ffb800;
-  --led-off: #ececec1f;
-  --stat-label: #ececec9e;
+  --led-off: #ececec29;         /* text at 16% */
+  --stat-label: #ececec9e;      /* text at 62% */
   --phosphor-1: #38fa6b;
   --phosphor-2: #1febe0;
   --phosphor-3: #6185ff;
   --phosphor-4: #c752ff;
   --phosphor-5: #ff942e;
 
-  /* Proposed */
+  /* Retired: kept so the exploration canvases still render. Not in the kit. */
+  --menubar-height: 28px;       /* the old global bar; the top row is 38 */
+  --menubar-active: #ececec2e;
   --text-tertiary-proposed: #858585;
   --rail-hover: #212121;
   --rail-selected: #2d2d2d;

@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Foundation / 07 The tab bar and workspaces</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="foundation.css">
+<script src="foundation.js"></script>
+<style>
+  /* Board-local, as the kit draws rows (sidebar/mod.rs well_row_colors):
+   * a shown row is lifted but keeps the muted ink; focused and bright rows
+   * take the medium weight; hover takes full ink. */
+  .tabbar__row.is-shown { color: color-mix(in srgb, var(--text-primary) 70%, transparent); }
+  .tabbar__row.is-focus, .tabbar__row.is-bright { font-weight: 500; }
+  .tabbar__row.is-hover { color: var(--ink); }
+  .tb__close + .tb__menu { font-weight: 600; }
+  /* The head is a full-width button in code (its marks sit at the right). */
+  .tabbar__head { display: flex; }
+
+  .bar-row { display: grid; grid-template-columns: 260px 1fr; gap: 48px; align-items: start; }
+  .states { display: grid; grid-template-columns: 120px 1fr; border-top: 1px solid var(--hairline); }
+  .states > * { padding: 10px 0; border-bottom: 1px solid var(--hairline); font: 400 13px/20px var(--f-chrome); }
+  .states > .k { color: var(--ink); font-weight: 500; }
+  .states > .v { color: var(--ink-2); }
+  .anat { position: relative; height: 580px; }
+  .anat__in { position: absolute; left: 120px; top: 40px; transform: scale(2); transform-origin: 0 0; width: 260px; height: 240px; }
+  .heads { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+  .menu.ws { width: 220px; }
+  .menu.ws .row { height: 24px; }
+  .menu.ws .check { width: 14px; display: grid; place-items: center; }
+  .menu.ws .row.is-off { color: var(--ink-faint); }
+  .wsdesks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+  .docs { display: grid; grid-template-columns: 1fr 1fr; gap: 36px 40px; }
+  .doc { position: relative; height: 290px; }
+  .canvas { flex: 1; background: #0d0d0d; position: relative; overflow: hidden; }
+  .canvas i { position: absolute; border-radius: 3px; background: #1d1d1d; box-shadow: inset 0 0 0 1px #ffffff12; }
+  .canvas b { position: absolute; font: 500 9px/1 var(--f-chrome); color: var(--ink-3); letter-spacing: 0.4px; }
+</style>
+</head>
+<body class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num">07</span><div class="head__title">The tab bar and workspaces</div></div>
+    <div class="head__lead">One tab list for the whole desk. The tab bar sits in the grid's left column and lists the showing workspace's windows by zone; its head is the workspace switcher. Apps open a window per document, so every page, tab, image and project is a row here.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">The tab bar · every row state · 1:1</div>
+    <div class="bar-row">
+      <div class="stage" style="height:520px;width:260px" id="bar"></div>
+      <div class="states" id="states"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">Anatomy · 2×</div>
+    <div class="stage anat" id="anat"><div class="anat__in" id="anatIn"></div></div>
+  </div>
+
+  <div class="section">
+    <div class="label">The head · 1:1</div>
+    <div class="heads" id="heads"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Workspaces · 1:6</div>
+    <div class="wsdesks" id="wsdesks"></div>
+    <div class="facts" style="margin-top:28px">
+      <span>A workspace</span><span>Its own desk: its own windows in their zones, its own browser profile. Named; a fresh desk starts with <b style="font-weight:500;color:var(--ink)">Main</b>. Hidden ones keep running.</span>
+      <span>Show one</span><span>Super+1…9, Super+Ctrl+Tab and Super+Ctrl+Shift+Tab, or the head's menu. Its last focused window takes focus.</span>
+      <span>Send a window</span><span>Super+Ctrl+1…9 sends the focused window there; the showing workspace keeps focus on what is left.</span>
+      <span>Super+Tab</span><span>The switcher lists apps across every workspace.</span>
+      <span>Attention</span><span>Another workspace's state rolls up beside the head's name: a diamond where a tab waits on a decision, outranking a dot for unread mail.</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">A window per document · 1:1</div>
+    <div class="docs" id="docs"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Where a window goes</div>
+    <div class="facts">
+      <span>New</span><span>Joins the focused zone, in front. The first window on an empty workspace goes to Full.</span>
+      <span>Returning</span><span>A window that comes back (an app restart, a re-exec after install) gets its saved place: its place waits 30 s, the whole saved layout two minutes at session start.</span>
+      <span>Moving</span><span>Drag a row to reorder it or onto another zone. ⌘ Pad 4 / 6 / 0 / * send the focused window to Left, Right, Full or Float.</span>
+      <span>Showing</span><span>A click shows the window in its zone and focuses it. The one it covers stays in the list, behind.</span>
+      <span>Closing</span><span>Hover a row and its red stoplight closes that window.</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">The numbers</div>
+    <div class="facts">
+      <span>Bar</span><span>A kit island 240 wide, at x 10 and y 48, a gap from the bottom. The raised fill, a 1 px rim 12% lighter in its hue, 12 px corners cleared to the ground.</span>
+      <span>Head</span><span>28 tall, 10 px in. The workspace's name in semibold 13 and a 12 px chevron at 55%. Hover white 7%, open 14%, corners 7.</span>
+      <span>Workspace menu</span><span>220 wide (the head's width), hanging 2 px under it. 24 px rows: each workspace with Super+N and the showing one checked; New Workspace, Rename…; Move Left, Move Right; Delete.</span>
+      <span>Zones</span><span>Full, Left, Right, Floating, in that order: 10 px caps. A zone with no windows keeps its label.</span>
+      <span>Rows</span><span>32 tall, 6 × 10 pad, 13 px, a 16 px leading slot, 4 px corners. Behind: ink at 70%. Shown: lifted 5% in its hue, ink still 70%. Bright: full ink, medium, no lift. Focused: the highlight, medium. Hover: lifted 7%, full ink, the 12 px stoplight.</span>
+      <span>Marks</span><span>A working or waiting tab shows its mark in the icon's slot, so the title does not move. Idle shows the app's icon.</span>
+    </div>
+  </div>
+
+<script>
+  /* 1 · Every state, on one bar */
+  const ZONES = {
+    Full: [{ ic: "globe", t: "Primary — Claude", bright: true }],
+    Left: [{ ic: "prompt", t: "Sola", focus: true }, { ic: "prompt", t: "Thoxa" }],
+    Right: [
+      { ic: "terminal", t: "home", shown: true },
+      { m: "ring", t: "Oath" },
+      { m: "diamond", t: "Wicket" },
+      { ic: "settings", t: "Sola Settings", hover: true },
+      { ic: "music", t: "Spotify", sub: "hidden" },
+    ],
+    Floating: [{ ic: "image", t: "invoice-0412.png" }],
+  };
+  document.getElementById("bar").innerHTML = tabbar({ zones: ZONES, x: 10, y: 10, w: 240, bottom: 10 });
+  const STATES = [
+    ["Focused", "The window with focus: the theme's highlight, medium weight. Sola, in Left."],
+    ["Shown", "A zone's front window while that zone is on screen, without focus: lifted 5% in its hue. home, in Right."],
+    ["Bright", "A zone's front window while that zone is off screen (Full while the halves show, or the halves while Full does): full ink, no lift. Primary — Claude, in Full."],
+    ["Behind", "Windows under the front one in their zone: ink at 70%. Thoxa."],
+    ["Working", "A Projects session at work: the spinning accent ring in the icon's place. Oath."],
+    ["Waiting", "A session that needs a decision: the warning diamond. Wicket."],
+    ["Hover", "Lifted 7% with full ink; the red stoplight at the right closes the window. Sola Settings."],
+    ["Hidden", "An app hidden with ⌘H keeps its row, marked hidden. Spotify."],
+  ];
+  document.getElementById("states").innerHTML = STATES.map(([k, v]) => `<span class="k">${k}</span><span class="v">${v}</span>`).join("");
+
+  /* 2 · Anatomy at 2× */
+  document.getElementById("anatIn").innerHTML = tabbar({
+    zones: { Left: [{ ic: "prompt", t: "Sola", focus: true }, { ic: "prompt", t: "Thoxa" }], Right: [{ ic: "terminal", t: "home", shown: true }] },
+    x: 10, y: 10, w: 240, h: 220,
+  });
+
+  /* 3 · The head: at rest with a waiting workspace, with unread mail, open */
+  const headStage = (h, inner, extra = "") => `<div class="stage" style="height:${h}px">${inner}${extra}</div>`;
+  const wsMenu = () => {
+    const rows = [["Main", "⌘1", "check"], ["Thoxa", "⌘2"], ["Games", "⌘3"], "-", ["New Workspace"], ["Rename…"], "-", ["Move Left", "", "off"], ["Move Right"], "-", ["Delete"]];
+    return `<div class="menu ws" style="left:20px;top:50px">${rows.map((r) => r === "-" ? `<div class="sep"></div>`
+      : `<div class="row${r[2] === "off" ? " is-off" : ""}${r[0] === "Thoxa" ? " is-hot" : ""}"><span class="check">${r[2] === "check" ? icon("check", 12, "currentColor", 2.2) : ""}</span>${r[0]}${r[1] ? `<span class="row__key">${r[1]}</span>` : ""}</div>`).join("")}</div>`;
+  };
+  document.getElementById("heads").innerHTML = [
+    `<div class="sample">${headStage(68, tabbar({ zones: {}, x: 10, y: 10, w: 240, h: 48, wsMarks: `<span style="margin-left:auto">${mark.diamond(12)}</span>` }))}<h4>Another workspace waits</h4><p>A tab on another workspace needs a decision: the diamond, at the head's right.</p></div>`,
+    `<div class="sample">${headStage(68, tabbar({ zones: {}, x: 10, y: 10, w: 240, h: 48, wsMarks: `<span class="wsdot" style="margin-left:auto"></span>` }))}<h4>Unread mail elsewhere</h4><p>A Mail window on another workspace has unread mail: a 6 px accent dot. A decision outranks it.</p></div>`,
+    `<div class="sample">${headStage(330, tabbar({ zones: {}, x: 10, y: 10, w: 240, h: 48, ws: "Main", headOpen: true }), wsMenu())}<h4>Open</h4><p>The menu lists the workspaces (Super+1…9) and what to do with the showing one. Move Left is off on the first.</p></div>`,
+  ].join("");
+
+  /* 4 · Workspaces: three desks, one list each */
+  const R = zoneRects(1920, 1080);
+  const wsDesk = (name, zones, wins, extra = {}) => view(desk({ bar: { ws: name, zones }, wins, top: { gpu: false }, ...extra }), { w: 320, h: 180, s: 1 / 6 });
+  document.getElementById("wsdesks").innerHTML = [
+    `<div class="sample">${wsDesk("Main", { Full: [], Left: [{ ic: "prompt", t: "Sola", focus: true }], Right: [{ ic: "terminal", t: "home", shown: true }], Floating: [] },
+      [{ app: "projects", zone: "left", focus: true }, { app: "terminal", zone: "right" }])}<h4>1 · Main</h4><p>Projects and a terminal in the halves.</p></div>`,
+    `<div class="sample">${wsDesk("Thoxa", { Full: [{ ic: "globe", t: "thoxa.moonlight.pm", focus: true }], Left: [], Right: [], Floating: [] },
+      [{ app: "browser", zone: "full", focus: true }])}<h4>2 · Thoxa</h4><p>A browser page in Full, its own profile.</p></div>`,
+    `<div class="sample">${wsDesk("Games", { Full: [], Left: [], Right: [], Floating: [] }, [], { picture: true, scheme: "rose" })}<h4>3 · Games</h4><p>Empty: the ground shows. The first window here goes to Full.</p></div>`,
+  ].join("");
+
+  /* 5 · A window per document */
+  const doc = (title, text, zones, w) => `<div class="sample"><div class="stage doc">${tabbar({ zones, x: 10, y: 10, w: 240, h: 270 })}${w}</div><h4>${title}</h4><p>${text}</p></div>`;
+  const at = { x: 260, y: 10, w: 340, h: 270 };
+  const designBody = () => `<div class="proj"><div class="proj__bar"><span class="chip is-on">foundation</span><span class="chip">next</span><span class="chip">instrument</span><span class="proj__add">${icon("plus", 14)}</span></div>
+    <div class="canvas"><b style="left:18px;top:14px">FOUNDATION / COVER</b><i style="left:18px;top:28px;width:120px;height:70px"></i><b style="left:18px;top:110px">01 COLOR</b><i style="left:18px;top:124px;width:120px;height:90px"></i><b style="left:160px;top:14px">08 THE DESK</b><i style="left:160px;top:28px;width:150px;height:84px"></i></div></div>`;
+  document.getElementById("docs").innerHTML = [
+    doc("Projects", "A window per project. Its sessions are chips along a 36 px bar on the chrome surface: a mark, the name, ×N panes. The selected chip takes the highlight; + opens the new-tab card. The project's row shows the sessions' rolled-up mark.",
+      { Left: [{ m: "ring", t: "Sola", focus: true }, { m: "diamond", t: "Wicket" }, { ic: "prompt", t: "Thoxa" }] },
+      win("projects", { ...at, focus: true, body: projectsBody({ chips: [["root", "ring", true], ["kit-foundation", "diamond", false, 2], ["mail-focus", "check"]] }) })),
+    doc("Browser", "A window per page. Popups are windows too. Each workspace has its own browser profile.",
+      { Right: [{ ic: "globe", t: "ext-background-effect-v1", focus: true }, { ic: "globe", t: "niri 26.04 — LWN.net" }, { ic: "globe", t: "iced 0.14 — docs.rs" }] },
+      win("browser", { ...at, focus: true })),
+    doc("Terminal", "A window per tab, named for its directory or its command.",
+      { Right: [{ ic: "terminal", t: "home", focus: true }, { ic: "terminal", t: "~/Projects/Sola" }, { ic: "terminal", t: "cargo make build" }] },
+      win("terminal", { ...at, focus: true })),
+    doc("Paint", "A window per image. Set as Background lives in its File menu.",
+      { Floating: [{ ic: "image", t: "invoice-0412.png", focus: true }, { ic: "image", t: "webb-cosmic-cliffs.jpg" }] },
+      win("paint", { ...at, focus: true })),
+    doc("Design", "A window per project; its canvases run along the top as chips.",
+      { Right: [{ ic: "palette", t: "Sola", focus: true }, { ic: "palette", t: "Thoxa" }] },
+      win({ menus: ["Design", "Project", "Share", "View", "Window"], title: "Sola", body: designBody }, { ...at, focus: true })),
+  ].join("");
+
+  /* Dimension marks on the 2× bar */
+  function marks() {
+    const st = document.getElementById("anat");
+    const sr = st.getBoundingClientRect();
+    const r = (el) => { const b = el.getBoundingClientRect(); return { x: b.left - sr.left, y: b.top - sr.top, w: b.width, h: b.height }; };
+    const bar = r(st.querySelector(".tabbar"));
+    const head = r(st.querySelector(".tabbar__head"));
+    const rows = [...st.querySelectorAll(".tabbar__row")].map(r);
+    const lead = r(st.querySelector(".tabbar__row .lead"));
+    const zone = r(st.querySelector(".tabbar__zone"));
+    const add = (html) => st.insertAdjacentHTML("beforeend", html);
+    const h = (x1, x2, y, t) => add(`<div class="dm dm--h" style="left:${x1}px;top:${y}px;width:${x2 - x1}px"><span>${t}</span></div>`);
+    const v = (y1, y2, x, t) => add(`<div class="dm dm--v" style="left:${x}px;top:${y1}px;height:${y2 - y1}px"><span>${t}</span></div>`);
+    const tag = (x, y, t) => add(`<div class="dm" style="left:${x}px;top:${y}px;color:var(--ink-2)">${t}</div>`);
+    h(bar.x, bar.x + bar.w, bar.y - 18, "240");
+    v(head.y, head.y + head.h, bar.x - 16, "28");
+    v(rows[0].y, rows[0].y + rows[0].h, bar.x - 16, "32");
+    h(rows[0].x, lead.x, bar.y + bar.h + 14, "10");
+    h(lead.x, lead.x + lead.w, bar.y + bar.h + 34, "16");
+    tag(bar.x + bar.w + 18, head.y + 16, "Head: the workspace, its menu");
+    tag(bar.x + bar.w + 18, zone.y + 6, "Zone label: 10 px caps, tertiary ink");
+    tag(bar.x + bar.w + 18, rows[0].y + 22, "Focused: the highlight, 4 px corners");
+    tag(bar.x + bar.w + 18, rows[1].y + 22, "Behind: ink at 70%");
+    tag(bar.x + bar.w + 18, rows[2].y + 22, "Shown: lifted 5%, ink at 70%");
+    tag(bar.x + bar.w + 18, bar.y + bar.h - 30, "Rim: the fill 12% lighter, 12 px corners");
+  }
+
+  /* Fit titlebars like bar.rs: menus past the limit are left off, then the
+   * title is left out under 32 px of room. */
+  function fitBars() {
+    document.querySelectorAll(".win .tb").forEach((tb) => {
+      const limit = tb.parentElement.clientWidth - 10;
+      let cut = false;
+      tb.querySelectorAll(".tb__menu").forEach((m) => {
+        if (cut || m.offsetLeft + m.offsetWidth > limit) { cut = true; m.remove(); }
+      });
+      const menus = tb.querySelectorAll(".tb__menu");
+      const last = menus[menus.length - 1];
+      if (last && limit - (last.offsetLeft + last.offsetWidth + 18) < 32) tb.querySelector(".tb__title")?.remove();
+    });
+  }
+
+  finish();
+  document.fonts.ready.then(() => { fitBars(); marks(); });
+</script>
+</body>
+</html>
