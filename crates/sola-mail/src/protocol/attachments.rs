@@ -173,29 +173,34 @@ pub fn downloads_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
-/// Write `bytes` to a unique temp path so Open can hand off to paint/browser.
+/// Write `bytes` to a unique temp path so Open can hand off to paint / calendar / browser.
+///
+/// Each file gets its own directory so the leaf keeps the attachment's
+/// name (the app that opens it shows that name).
 pub fn write_open_temp(filename: &str, bytes: &[u8]) -> Result<PathBuf, String> {
-    let dir = std::env::temp_dir().join("sola-mail");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Can't create temp dir: {e}"))?;
-    let name = sanitize_filename(filename);
     let unique = format!(
-        "{}-{}-{name}",
+        "{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     );
-    let path = dir.join(unique);
+    let dir = std::env::temp_dir().join("sola-mail").join(unique);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Can't create temp dir: {e}"))?;
+    let path = dir.join(sanitize_filename(filename));
     std::fs::write(&path, bytes).map_err(|e| format!("Can't write {}: {e}", path.display()))?;
     Ok(path)
 }
 
-/// Open a local file the same way `solactl open` does (paint for images, browser else).
+/// Open a local file the same way `solactl open` does (paint for images,
+/// calendar for `.ics`, browser else).
 pub fn open_path(path: &Path) {
     let s = path.to_string_lossy();
     if sola_core::open_image::looks_like_image(&s) {
         sola_core::open_image_logged(&s);
+    } else if sola_core::open_calendar::looks_like_calendar(&s) {
+        sola_core::open_calendar_logged(&s);
     } else {
         sola_core::open_url_logged(&s);
     }

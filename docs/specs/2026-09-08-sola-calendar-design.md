@@ -3,7 +3,7 @@
 **Date:** 2026-09-08  
 **Branch:** sola-calendar  
 **Status:** implemented (partial) — first-pass kit app: month / week / day, local store, Google Calendar API, iCloud / generic CalDAV, ICS/webcal URLs. **Installed** `bus`+`settings`+`calendar` release 2026-09-08 (unsmoked). Reminders **smoked** `shell`+`calendar` release 2026-10-12  
-**Gaps:** no invites / RSVP; no provider alarm sync (reminders are local); Apple/CalDAV repeating events are display-only (series edit later); URL feeds are read-only; no drag-resize; no timezone picker (local); menubar clock is still a date grid, not this app; reminder delivery needs Calendar running
+**Gaps:** no RSVP (an opened `.ics` becomes a new draft — 2026-10-26; one date of a series); no provider alarm sync (reminders are local); Apple/CalDAV repeating events are display-only (series edit later); URL feeds are read-only; no drag-resize; no timezone picker (local); menubar clock is still a date grid, not this app; reminder delivery needs Calendar running
 
 ## Goal
 

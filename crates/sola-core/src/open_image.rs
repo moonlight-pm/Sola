@@ -90,7 +90,7 @@ pub fn sola_paint_bin() -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-fn strip_file_url(target: &str) -> &str {
+pub(crate) fn strip_file_url(target: &str) -> &str {
     target
         .strip_prefix("file://")
         .map(|rest| rest.split_once('?').map(|(p, _)| p).unwrap_or(rest))

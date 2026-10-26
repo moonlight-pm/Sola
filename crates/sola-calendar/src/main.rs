@@ -6,12 +6,15 @@ mod fit;
 mod google;
 mod rich;
 mod ics;
+mod instance;
+mod invite;
 mod model;
 mod paths;
 mod reminders;
 mod store;
 mod timeutil;
 mod ui;
+mod wintz;
 mod worker;
 
 use sola_bus::topics::{MenuDefinition, MenuItem, TopicKind};
@@ -27,6 +30,12 @@ fn main() -> iced::Result {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     startup(APP_ID);
+    if instance::claim() == instance::Claim::Handoff {
+        if let Err(e) = instance::handoff(&instance::launch_paths()) {
+            tracing::warn!(error = %e, "handoff to running calendar failed");
+        }
+        return Ok(());
+    }
     bridge::init_channels();
     worker::start();
 

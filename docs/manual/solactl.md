@@ -874,12 +874,16 @@ escape hatch: any topic can be faked.
 solactl open URL|PATH
 ```
 
-Opens a URL or file in the Browser, or an image in Paint. It does not go
-through MIME.
+Opens a URL or file in the Browser, an image in Paint, or an iCalendar
+file in Calendar. It does not go through MIME.
 
 - A path or `file://` URL whose extension is a raster image (`png`, `jpg`,
   `jpeg`, `jpe`, `gif`, `webp`, `bmp`, `tif`, `tiff`, `tga`) starts
   `sola-paint` with it (`$SOLA_PAINT`, else `/opt/sola/bin/sola-paint`).
+- A path or `file://` URL ending in `.ics`, `.ical`, or `.icalendar`
+  starts `sola-calendar` with it. A running Calendar keeps its window: the
+  new process hands the path over (`$XDG_RUNTIME_DIR/sola/calendar.sock`)
+  and exits. Calendar opens the event as a new draft.
 - Anything else goes to the Browser. An absolute path becomes a
   `file://` URL; a relative path does too when the file exists or it
   starts with `./` or `../`. A running Browser gets the URL through its

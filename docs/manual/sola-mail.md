@@ -42,7 +42,8 @@ Three columns: mailboxes, message list, and the letter (or compose).
   original recipient.
 - **Letter**: the Date is the local calendar day with the local clock
   (`16:00`) under it. Links open in Browser. **Open** / **Save** on
-  attached files (images open in Paint, everything else in Browser).
+  attached files (images open in Paint, `.ics` invites in Calendar as a
+  new event you file in a calendar, everything else in Browser).
 - **Toolbar**: New message, Attach, Reply, Reply all, Forward, then
   Archive / Trash / Junk (and **Move to Inbox** in Junk, Trash and
   Archive), then Mark as read/unread, Flag, Copy, Undo. In Drafts,
