@@ -84,6 +84,11 @@ mail, alerts, mouse and Bluetooth; the spectrum; CPU, GPU and MEM; RX and
 TX; the clock. Click an item for its panel; its island lifts while the
 panel is open. Windows and the tab bar start a gap below the row.
 
+The clock's panel is the month: six weeks from the Sunday on or before
+the 1st, the days of the months either side faint, today on an accent
+circle. ‹ and › step the month; Today comes back to this one (dim while
+this month shows).
+
 CPU / GPU / MEM / RX / TX in the menubar are fixed LED graphs of the
 last 12 seconds: a column a second, white, turning the theme's warning
 past 75% and its danger past 90% (RX in the accent, TX in success). Dots
