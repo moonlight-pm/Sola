@@ -395,7 +395,7 @@ pub fn kagi_lucky_url(q: &str) -> String {
     format!("{SEARCH_PREFIX}%5C{}", encode_query(q.trim()))
 }
 
-/// Kagi SERP / lucky URL — same-site tab switching must not steal these.
+/// Kagi SERP / lucky URL (kept out of visit history).
 pub fn is_kagi_search_url(url: &str) -> bool {
     url.to_ascii_lowercase().contains("kagi.com/search")
 }
@@ -422,28 +422,6 @@ pub fn omnibox_submit_url(typed: &str, highlighted: Option<&str>, search_results
     } else {
         kagi_lucky_url(typed)
     }
-}
-
-/// `scheme://host` of a URL (no path / query). Empty if it cannot be split.
-pub fn page_origin(url: &str) -> String {
-    let t = url.trim();
-    if t.is_empty() {
-        return String::new();
-    }
-    if let Some((scheme, rest)) = t.split_once("://") {
-        let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-        if host.is_empty() {
-            return String::new();
-        }
-        return format!("{scheme}://{host}").to_ascii_lowercase();
-    }
-    String::new()
-}
-
-/// Same site (scheme + host), ignoring path and query.
-pub fn same_site(a: &str, b: &str) -> bool {
-    let oa = page_origin(a);
-    !oa.is_empty() && oa == page_origin(b)
 }
 
 /// One-line history subtitle: no query string, middle-ellipsis if long.
@@ -791,18 +769,6 @@ mod tests {
         assert!(!looks_like_url("how to tie a tie"));
         assert!(!looks_like_url(""));
         assert!(!looks_like_url(".")); // lone dot is not a host
-    }
-
-    #[test]
-    fn same_site_ignores_path_and_query() {
-        assert!(same_site(
-            "https://ideogram.ai/login?utm=1",
-            "https://ideogram.ai/g/abc"
-        ));
-        assert!(!same_site(
-            "https://ideogram.ai/",
-            "https://kagi.com/search?q=a"
-        ));
     }
 
     #[test]
