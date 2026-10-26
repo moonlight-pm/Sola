@@ -8,7 +8,7 @@
 //! - `Topic::OpenUrl` — open a fresh tab, a window of its own (in front
 //!   per `activate`). Our own echo is ignored.
 //! - `Topic::MenuAction` from published menus — keyboard shortcuts and
-//!   menubar clicks (Profiles switch / manage included),
+//!   menubar clicks,
 //! - `Topic::Chord` / `ChordReleased` — Super held (River steals Super_L
 //!   from the focused client; ⌘-click needs that bit),
 //! - `Topic::Theme` — restyle the chrome live (handled by the kit helper),
@@ -26,9 +26,8 @@ use sola_bus::topics::{
 };
 use sola_core::{KeyChord, KeyCode};
 
-use crate::app::{App, BLANK_URL, Msg, ProfileDialog};
+use crate::app::{App, BLANK_URL, Msg};
 use crate::engine::{EditCmd, Engine};
-use crate::profiles;
 
 // Menu action ids — shared between the published menu and the handler so the
 // two never drift.
@@ -49,11 +48,6 @@ pub const ACTION_EDIT_SELECT_ALL: &str = "edit-select-all";
 pub const ACTION_FIND: &str = "find";
 pub const ACTION_FIND_NEXT: &str = "find-next";
 pub const ACTION_FIND_PREV: &str = "find-prev";
-pub const ACTION_PROFILE_NEW: &str = "profile-new";
-pub const ACTION_PROFILE_RENAME: &str = "profile-rename";
-pub const ACTION_PROFILE_DELETE: &str = "profile-delete";
-/// Prefix for per-profile switch actions: `profile-switch:<uuid>`.
-pub const ACTION_PROFILE_SWITCH_PREFIX: &str = "profile-switch:";
 /// Browser → Wrap This Page…: the page becomes a web app.
 pub const ACTION_WRAP_PAGE: &str = "wrap-page";
 /// Topics the browser subscribes to. Theme/MenuAction are the live inputs;
@@ -125,8 +119,8 @@ pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 7] = [
     (ACTION_FIND_PREV, "Find Previous", KeyCode::G.meta_shift()),
 ];
 
-/// Full menubar for the browser (Browser + Edit + Profiles). Rebuilt when
-/// the profile list changes so switcher checkmarks stay accurate.
+/// Full menubar for the browser (Browser + Edit). No Profiles menu: a
+/// workspace has its own profile, so where a page is says which it runs.
 pub fn browser_app_menu(app_id: &str) -> AppMenuPayload {
     let mut browser = menu_from_items("Browser", &MENU_ITEMS);
     // Before Quit: the page becomes its own app.
@@ -146,7 +140,6 @@ pub fn browser_app_menu(app_id: &str) -> AppMenuPayload {
         menus: vec![
             browser,
             menu_from_items("Edit", &EDIT_MENU_ITEMS),
-            profiles_menu(),
         ],
     }
 }
@@ -167,69 +160,10 @@ fn menu_from_items(label: &str, items: &[(&str, &str, KeyChord)]) -> MenuDefinit
     }
 }
 
-/// Profiles menubar: every profile, the showing workspace's checked
-/// (picking one sets it for this workspace), then New / Rename / Delete.
-pub fn profiles_menu() -> MenuDefinition {
-    let active_id = profiles::showing_profile();
-    let entries = profiles::list();
-    let only_one = entries.len() <= 1;
-
-    let mut items: Vec<MenuItem> = entries
-        .into_iter()
-        .map(|p| {
-            let is_active = p.id == active_id;
-            MenuItem::Action {
-                id: format!("{ACTION_PROFILE_SWITCH_PREFIX}{}", p.id),
-                label: p.name,
-                shortcut: None,
-                disabled: false,
-                checked: is_active,
-            }
-        })
-        .collect();
-
-    items.push(MenuItem::Divider);
-    items.push(MenuItem::Action {
-        id: ACTION_PROFILE_NEW.into(),
-        label: "New Profile…".into(),
-        shortcut: None,
-        disabled: false,
-        checked: false,
-    });
-    items.push(MenuItem::Action {
-        id: ACTION_PROFILE_RENAME.into(),
-        label: "Rename Profile…".into(),
-        shortcut: None,
-        disabled: false,
-        checked: false,
-    });
-    items.push(MenuItem::Action {
-        id: ACTION_PROFILE_DELETE.into(),
-        label: "Delete Profile…".into(),
-        shortcut: None,
-        disabled: only_one,
-        checked: false,
-    });
-
-    MenuDefinition {
-        label: "Profiles".into(),
-        items,
-    }
-}
-
-/// Re-publish Browser + Edit + Profiles menus (after create/rename/delete).
-pub fn republish_menus(app_id: &str) {
-    sola_kit::menu::publish(browser_app_menu(app_id));
-}
-
 /// Stable widget id for the chrome URL field, so the `Focus URL` action can
 /// move keyboard focus to it.
 pub fn url_input_id() -> iced::advanced::widget::Id {
     iced::advanced::widget::Id::new("browser-url-bar")
-}
-
-pub fn profile_name_input_id() -> iced::advanced::widget::Id {
-    iced::advanced::widget::Id::new("browser-profile-name")
 }
 
 pub fn find_input_id() -> iced::advanced::widget::Id {
@@ -257,16 +191,6 @@ pub enum BrowserIntent {
     FocusUrl,
     /// Run an editing command, routed to the focused surface.
     Edit(EditCmd),
-    /// Switch to profile `id` (save session, set active, same window).
-    SwitchProfile {
-        id: String,
-    },
-    /// Open the new-profile name dialog.
-    NewProfile,
-    /// Open rename dialog for the active profile.
-    RenameProfile,
-    /// Open delete confirmation for the active profile.
-    DeleteProfile,
     /// Open DevTools (console) for the active tab.
     ShowDevTools,
     Find,
@@ -295,9 +219,6 @@ pub fn intent_for_open_url(req: &OpenUrlRequest) -> BrowserIntent {
 
 /// Map a menu `action_id` to an intent. Unknown ids are ignored.
 pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
-    if let Some(id) = action_id.strip_prefix(ACTION_PROFILE_SWITCH_PREFIX) {
-        return BrowserIntent::SwitchProfile { id: id.to_string() };
-    }
     match action_id {
         ACTION_NEW_TAB => BrowserIntent::NewBlankTab,
         ACTION_CLOSE_TAB => BrowserIntent::CloseActiveTab,
@@ -317,9 +238,6 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_EDIT_COPY => BrowserIntent::Edit(EditCmd::Copy),
         ACTION_EDIT_PASTE => BrowserIntent::Edit(EditCmd::Paste),
         ACTION_EDIT_SELECT_ALL => BrowserIntent::Edit(EditCmd::SelectAll),
-        ACTION_PROFILE_NEW => BrowserIntent::NewProfile,
-        ACTION_PROFILE_RENAME => BrowserIntent::RenameProfile,
-        ACTION_PROFILE_DELETE => BrowserIntent::DeleteProfile,
         _ => BrowserIntent::None,
     }
 }
@@ -358,7 +276,7 @@ pub fn handle_bus<E: Engine>(
         Some(Topic::MenuAction(m)) if m.app_id == app_id => {
             tracing::info!(
                 action_id = %m.action_id,
-                profile = %crate::profiles::active().name,
+                profile = %crate::profiles::active().id,
                 "menu action received"
             );
             run_intent(app, intent_for_menu_action(&m.action_id))
@@ -436,19 +354,6 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
                 url_bar_focused: app.url_bar_focused,
             })
         }
-        BrowserIntent::SwitchProfile { id } => app.switch_profile(&id),
-        BrowserIntent::NewProfile => {
-            app.open_profile_dialog(ProfileDialog::New);
-            focus_profile_name()
-        }
-        BrowserIntent::RenameProfile => {
-            app.open_profile_dialog(ProfileDialog::Rename);
-            focus_profile_name()
-        }
-        BrowserIntent::DeleteProfile => {
-            app.open_profile_dialog(ProfileDialog::DeleteConfirm);
-            Task::none()
-        }
         BrowserIntent::ShowDevTools => {
             let _ = app.cmd_tx.send(crate::engine::Cmd::ShowDevTools {
                 panel: "console".into(),
@@ -474,12 +379,6 @@ pub(crate) fn focus_url_bar() -> Task<Msg> {
 /// webview shader after a click into the page.
 pub(crate) fn unfocus_chrome() -> Task<Msg> {
     iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::unfocus::<Msg>())
-}
-
-fn focus_profile_name() -> Task<Msg> {
-    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus::<Msg>(
-        profile_name_input_id(),
-    ))
 }
 
 /// Select all text in the chrome URL field.
@@ -610,28 +509,6 @@ mod tests {
                 ACTION_FIND_NEXT,
                 ACTION_FIND_PREV,
             ]
-        );
-    }
-
-    #[test]
-    fn profile_actions_map() {
-        assert_eq!(
-            intent_for_menu_action(ACTION_PROFILE_NEW),
-            BrowserIntent::NewProfile
-        );
-        assert_eq!(
-            intent_for_menu_action(ACTION_PROFILE_RENAME),
-            BrowserIntent::RenameProfile
-        );
-        assert_eq!(
-            intent_for_menu_action(ACTION_PROFILE_DELETE),
-            BrowserIntent::DeleteProfile
-        );
-        assert_eq!(
-            intent_for_menu_action("profile-switch:abc-123"),
-            BrowserIntent::SwitchProfile {
-                id: "abc-123".into()
-            }
         );
     }
 

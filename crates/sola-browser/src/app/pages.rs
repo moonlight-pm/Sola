@@ -1,10 +1,9 @@
-//! Pages and their profiles (Next slice 5). Each desktop workspace picks a
-//! profile; every page window on it runs that profile, in that profile's
-//! helper. A page opens under the showing workspace's profile (or its
-//! opener's); a page whose window lands on a workspace with another
-//! profile — sent there, or its workspace's profile changed — reopens at
-//! the same URL under that profile, in the same window. Sessions are saved
-//! per profile.
+//! Pages and their profiles (Next slice 5). Each desktop workspace has a
+//! profile of its own; every page window on it runs that profile, in that
+//! profile's helper. A page opens under the showing workspace's profile
+//! (or its opener's); a page whose window lands on another workspace
+//! reopens there at the same URL under that workspace's profile, in the
+//! same window. Sessions are saved per profile.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -47,10 +46,7 @@ impl<E: Engine> App<E> {
     pub(super) fn on_workspace_message(&mut self, msg: &Message) -> Task<Msg> {
         match Topic::parse(msg) {
             Some(Topic::Workspaces(w)) => {
-                let ids: Vec<String> = w.workspaces.iter().map(|ws| ws.id.clone()).collect();
-                crate::profiles::adopt_workspaces(&ids, &w.showing);
-                // The menu checks the showing workspace's profile.
-                crate::integration::republish_menus(self.app_id);
+                crate::profiles::adopt_workspaces(&w.workspaces, &w.showing);
             }
             Some(Topic::WindowWorkspace(ww)) => {
                 if msg.sticky {
@@ -97,6 +93,21 @@ impl<E: Engine> App<E> {
             .collect();
         for (id, profile) in moves {
             self.reopen_in(id, &profile);
+        }
+        self.stop_unused_helpers();
+    }
+
+    /// Stop the helper of each profile no workspace runs and nothing uses
+    /// (a deleted workspace's, once its pages reopened elsewhere).
+    fn stop_unused_helpers(&self) {
+        let mut used = crate::profiles::workspace_profiles();
+        used.push(crate::profiles::registry_active_id());
+        used.extend(self.cached_tabs.iter().map(|t| t.profile.clone()));
+        used.extend(self.webapps.apps.values().filter_map(|a| a.profile.clone()));
+        for p in crate::profiles::list() {
+            if !used.contains(&p.id) {
+                let _ = self.cmd_tx.send(Cmd::DropParkedProfile { profile_id: p.id });
+            }
         }
     }
 
@@ -216,9 +227,9 @@ impl<E: Engine> App<E> {
     }
 }
 
-/// Which profiles' saved pages open at start: those a workspace uses, and
-/// the registry's active one. Other profiles' pages stay saved until a
-/// workspace picks them.
+/// Which profiles' saved pages open at start: the workspaces', and the
+/// registry's active one. A deleted workspace's profile keeps its pages
+/// saved, unopened.
 pub fn boot_profiles() -> Vec<String> {
     let mut out = vec![crate::profiles::registry_active_id()];
     for p in crate::profiles::workspace_profiles() {

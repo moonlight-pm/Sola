@@ -51,7 +51,16 @@ the open fails.
 
 ## Profiles
 
-A **profile** is a separate web identity and tab workspace.
+A **profile** is a separate web identity: cookies, site storage, saved
+pages. Every desktop workspace has one of its own; there is nothing to
+pick and no Profiles menu. A profile has no name (it is a uuid on disk),
+so renaming a workspace changes nothing about its profile. Every page on a
+workspace runs its profile. Send a page to another workspace and it
+reopens there, at the same address, under that workspace's profile (its
+back history and form state do not come along). A new workspace starts
+with a new, empty profile. A deleted workspace's profile stays on disk
+with its sign-ins and saved pages, but nothing opens it. A web app keeps
+the profile it was wrapped from, wherever its window goes.
 
 | Piece | Location |
 |-------|----------|
@@ -76,31 +85,12 @@ After updating, sign in once more if an older session still does not
 restore (cookies written under a failed keyring backend cannot be read
 again). Closed tabs stay closed across a restart; `⌘⇧T` reopens them.
 
-### Menubar → Profiles
+### Each profile runs live
 
-1. **Profile list**: click a name to switch. The active profile shows a
-   checkmark.
-2. **New Profile…**: a name dialog; creates the directories and switches
-   to the new profile in the same window.
-3. **Rename Profile…**: renames the active profile.
-4. **Delete Profile…**: confirms deletion of the **active** profile
-   (blocked if it is the only one). Its data directories are removed, and
-   the window loads the next profile's tabs.
-
-### Switching profiles
-
-Switching profiles is **instant**. The shell still shows one **Browser**
-app. Each profile keeps its own CEF cookie store in a headless engine
-process (no extra windows or tab bar rows). The location bar updates
-immediately; the page area blanks until the new
-profile's tab paints (it does not keep showing the previous identity). A
-tab you have already opened this session appears instantly; one that has
-not painted yet stays blank until it does. Switching back restores the
-parked helper's live tabs; they do not reload. Closing the last page
-window quits the browser and those helpers. Tabs restore from
-`session.json`.
-
-Switch, create, rename, and delete profiles under **Menubar → Profiles**.
+Each profile runs in its own headless engine process, all at once: pages
+on every workspace stay live, and showing a workspace shows its pages
+without reloading. Closing the last page window quits the browser and
+those helpers. Pages restore from each profile's `session.json`.
 
 **Cold start** with an empty session opens a single **blank** tab.
 

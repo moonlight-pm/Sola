@@ -213,11 +213,11 @@ fn router_main(
     } else {
         refresh_fronts(&helpers, &shared);
     }
-    // Warm other profiles without blocking the first tab's OpenTab.
-    let others: Vec<String> = profiles::list()
+    // Warm the other workspaces' profiles without blocking the first tab's
+    // OpenTab (not a deleted workspace's: nothing opens there).
+    let others: Vec<String> = profiles::workspace_profiles()
         .into_iter()
-        .filter(|p| p.id != live)
-        .map(|p| p.id)
+        .filter(|p| *p != live)
         .collect();
     {
         let helpers_w = helpers.clone();

@@ -58,7 +58,8 @@ const mark = {
 
 /* ── LED meters (stats/pixel.rs, audio/wave.rs) ─────────────────
  * 12 × 5 cells of 2 px dots on a 3 px pitch, 35 × 14. A column is one
- * sample, lit from the bottom, its top cell dithered (2×2 Bayer). Levels
+ * sample, lit from the bottom in whole dots (a dot lights once the column
+ * reaches its middle). Levels
  * (CPU, GPU, MEM) print the ink, then the warning past 75%, the danger past 90%,
  * per column; RX takes the accent, TX success. Unlit cells stay at 16%. */
 const LED = {
@@ -71,7 +72,6 @@ const LED = {
 };
 const SPECTRUM = [0.62, 0.8, 1, 0.82, 0.6, 0.78, 0.42, 0.58, 0.4, 0.38, 0.22, 0.2];
 const PHOSPHOR = ["--phosphor-1", "--phosphor-2", "--phosphor-3", "--phosphor-4", "--phosphor-5"];
-const BAYER = [[0.125, 0.625], [0.875, 0.375]];
 
 function leds(kind, o = {}) {
   const data = o.vals ? ` data-vals="${o.vals.join(" ")}"` : "";
@@ -111,17 +111,12 @@ function paintLeds(root = document) {
       const x = spectrum ? b * (3 * pitch + band) + (c % 3) * pitch : c * pitch;
       const sample = spectrum ? vals[b] : vals[c - (cols - vals.length)] ?? 0;
       const fill = spectrum ? sample : Math.min(1, sample / max);
-      const cells = fill * rows;
+      const cells = Math.max(0, Math.min(1, fill)) * rows;
       for (let r = 0; r < rows; r++) {
-        const cf = Math.max(0, Math.min(1, cells - r));
         const lit = spectrum ? v(PHOSPHOR[Math.min(r, 4)]) : tint || level(sample);
-        // 2×2 sub-pixels per cell, dithered like pixel.rs.
-        for (let dy = 0; dy < 2; dy++)
-          for (let dx = 0; dx < 2; dx++) {
-            const on = cf >= 1 || (cf > 0 && cf > BAYER[dy][dx]);
-            g.fillStyle = on ? lit : off;
-            g.fillRect(x + dx * k, h - dot - r * pitch + dy * k, k, k);
-          }
+        // Whole dots, like pixel.rs `lit`.
+        g.fillStyle = cells >= r + 0.5 ? lit : off;
+        g.fillRect(x, h - dot - r * pitch, dot, dot);
       }
     }
   });
@@ -357,7 +352,7 @@ const PANEL = { dot: 4, pitch: 5 };
 const span = (n, g = PANEL) => n * g.pitch - (g.pitch - g.dot);
 const levelInk = (v) => (v >= 90 ? "var(--danger)" : v >= 75 ? "var(--warning)" : "var(--text-primary)");
 
-/* One whole dot. Panel dots are never dithered: at 4 px the quarters read as broken dots. */
+/* One whole dot. No LED dithers: part-lit quarters read as broken dots. */
 const cellSvg = (x, y, fill) => `<rect x="${x}" y="${y}" width="4" height="4" style="fill:${fill}"/>`;
 
 /* Columns lit from the bottom: `vals` against `max`, each in `ink(v)`, a dot lit once the

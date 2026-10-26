@@ -224,7 +224,7 @@ Use this when restyling or reviewing shell UI. Default comparison target: **macO
 | Tab bar | Dock + window menu | 240 px island at the left: its head switches workspaces; sections Full / Left / Right / Floating list the showing workspace's windows. |
 | Launcher | Spotlight | Single focused field + results list; dimmed backdrop; not a dashboard. |
 | Switcher | App / window switcher | MRU, keyboard-first; translucent backplate via shell tokens. A pointer already on an icon does not select until it moves. Count mark on the icon is pending attention (live + pile; Mail unread). |
-| Stat indicators | Menu bar extras | Two islands: CPU / GPU / MEM, and RX / TX. Each shows a muted label plus a fixed btop-style dithered 12 × 5 pixel graph (numbers live in the panel). |
+| Stat indicators | Menu bar extras | Two islands: CPU / GPU / MEM, and RX / TX. Each shows a muted label plus a fixed btop-style 12 × 5 LED graph in whole dots (numbers live in the panel). |
 | Stat / calendar popovers | Menu bar dropdowns | Hang from their island; compact detail, not marketing cards. |
 | Bluetooth | Menu bar extras (Control Center-ish) | Quiet lucide glyph, last in the extras island; popover is the same Menu overlay (`Panel::Bluetooth`). Off vs on on the icon. Not a Waybar module. [freeze](../specs/2026-08-29-shell-bluetooth-menubar-design.md). |
 | Volume | Menu bar extras (Control Center-ish) | 12-band LED spectrum alone in its own island, right of the extras; click it for `Panel::Audio` (slider, mute, output/input pick). No speaker glyph. Media keys stay `solactl media`. [freeze](../specs/2026-08-29-shell-audio-menubar-design.md). |

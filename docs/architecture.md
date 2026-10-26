@@ -253,10 +253,13 @@ browser runs one CEF helper per profile, all live: its router keeps a page
 → profile map and routes commands by page (the rest to the active page's
 helper), merges every helper's pages, and makes a helper front only while
 it has a page on screen or the active one; helper-minted page ids sit in a
-per-profile range above chrome's. Each workspace picks a profile
-(`profiles.json` `workspaces`); a page runs its workspace's profile and
-reopens in place when that differs (`app/pages.rs`); sessions are saved
-per profile.
+per-profile range above chrome's. Each workspace has a profile of its
+own, paired by the workspace's id (`profiles.json` `workspaces`,
+`profiles::pair`; a profile is only a uuid, so a workspace renames
+freely; no Profiles menu since 2026-10-26); a page runs its
+workspace's profile and reopens in place when that differs
+(`app/pages.rs`); a deleted workspace's profile stays on disk, its helper
+stopped; sessions are saved per profile.
 
 **On `next`, window frames (slice 6):** one 10 px gap (`zoning::GAP`)
 around the output under the menubar, between the bar and the tiles, and

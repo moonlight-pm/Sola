@@ -48,9 +48,10 @@ code and updates the **Workspaces names** lock in the same change.
 alias; tmux `sola-ws` / `sws-` and the `SOLA_WS_*` names stay (live
 sessions use them). The lock row is now **Projects names**.
 **Order:** the browser (slice 4) comes before Projects sessions (slice 3).
-**Profiles (Joshua, 2026-10-21; shaped 2026-10-23):** each desktop
-workspace picks a browser profile and every browser window on it runs that
-profile (slice 5); until then page windows use the active profile.
+**Profiles (Joshua, 2026-10-21; shaped 2026-10-23; joined 2026-10-26):**
+each desktop workspace has a browser profile of its own and every browser
+window on it runs that profile (slice 5); until then page windows use the
+active profile.
 
 ## Model
 
@@ -237,7 +238,19 @@ keep; Super+Tab across every workspace; every window on exactly one
 workspace. **Each workspace picks one browser profile** (Primary by
 default; several may share one); every browser window on a workspace runs
 that profile, and **a page sent to another workspace reopens there under
-that workspace's profile**, so a workspace never mixes profiles. **N6 is
+that workspace's profile**, so a workspace never mixes profiles.
+
+**Amended 2026-10-26 (Joshua: "we decided before to keep 'Workspace' and
+'Browser profile' separate — but i think that over complicates things.
+Let's join them. Every workspace has a single browser profile. If i move
+a browser tab to another workspace, its profile gets replaced"):** a
+workspace's profile is its own — one each, none shared, paired by the
+workspace's id; a profile is only a uuid with no name, so a workspace
+renames freely (Joshua: "the profile should just be some uuid and the
+workspace name can be freely changed"); there is nothing to pick, and no
+Profiles menu. A page sent to
+another workspace still reopens there under that workspace's profile.
+Browser windows no longer carry the profile's name in their title. **N6 is
 dropped for now:** projects are not tied to workspaces. My calls: the
 vault stays shared across profiles (as frozen in the profiles spec);
 Design's Actual Size moves from ⌘1 to ⌘⇧0.
@@ -318,7 +331,10 @@ space; the tab bar's head is the switcher.
   (`profiles.json`); a workspace it has not seen starts on the profile of
   the workspace that was showing when it appeared (the registry's active
   profile for the first ones it hears of, so pages already open keep
-  theirs).
+  theirs). *Since 2026-10-26:* a workspace it has not seen gets a new
+  profile, except that when no workspace has one, the first takes the
+  registry's active profile; a profile two workspaces shared stays with
+  the first (`profiles::pair`). Profiles carry no name.
 - **New windows** (⌘T, `OpenUrl`, a second launch, `tab.open`) open under
   the showing workspace's profile; ⌘-click and popups under their
   opener's.
@@ -328,13 +344,17 @@ space; the tab bar's head is the switcher.
   back history and form state do not.
 - **Profiles menu:** a check on this workspace's profile; picking another
   sets it for the workspace (its pages reopen); New / Rename / Delete as
-  today. Deleting a profile moves its workspaces to Primary.
+  today. Deleting a profile moves its workspaces to Primary. *Retired
+  2026-10-26:* no menu; a deleted workspace lets go of its profile, which
+  stays on disk with its data and saved pages, unused (its helper stops
+  once its pages have reopened elsewhere).
 - **Sessions** are saved per profile (`session_path_for`); a restore
   opens the pages of every profile a workspace runs (and the active one),
   and the shell puts each window back on its workspace by key. A profile no
   workspace runs keeps its saved pages on disk, unopened.
-- Per-page lookups (window title, notification and media permissions)
-  use the page's profile, not the process-wide active one.
+- Per-page lookups (notification and media permissions) use the page's
+  profile, not the process-wide active one. (The window title named it
+  until 2026-10-26; now it is the page's title alone.)
 
 ### Not in slice 5
 

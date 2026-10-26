@@ -292,7 +292,7 @@ pub enum Cmd<E: Engine> {
         profile: String,
         cmd: Box<Cmd<E>>,
     },
-    /// Stop a profile's helper (the profile was deleted).
+    /// Stop a profile's helper (its workspace was deleted).
     DropParkedProfile {
         profile_id: String,
     },

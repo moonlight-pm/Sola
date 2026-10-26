@@ -6105,7 +6105,7 @@ fn initialize_cef(app_id: &'static str) {
     let cache_root = cef_abs_path(&crate::profiles::active().cef_user_data_dir());
     tracing::info!(
         path = %cache_root,
-        profile = %crate::profiles::active().name,
+        profile = %crate::profiles::active().id,
         "CEF root_cache_path + cache_path (active profile)"
     );
 

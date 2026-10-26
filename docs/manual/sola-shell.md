@@ -84,12 +84,12 @@ mail, alerts, mouse and Bluetooth; the spectrum; CPU, GPU and MEM; RX and
 TX; the clock. Click an item for its panel; its island lifts while the
 panel is open. Windows and the tab bar start a gap below the row.
 
-CPU / GPU / MEM / RX / TX in the menubar are fixed dithered LED graphs
-of the last 12 seconds: a column a second, white, turning the theme's
-warning past 75% and its danger past 90% (RX in the accent, TX in
-success). Click one for its panel, which draws the same LEDs larger and
-whole (no dithered quarter-dots; a dot lights once its column reaches its
-middle): the value in large type, the last minute as columns tinted the same
+CPU / GPU / MEM / RX / TX in the menubar are fixed LED graphs of the
+last 12 seconds: a column a second, white, turning the theme's warning
+past 75% and its danger past 90% (RX in the accent, TX in success). Dots
+are whole: a dot lights once its column reaches its middle (the volume
+spectrum's too). Click one for its panel, which draws the same LEDs
+larger: the value in large type, the last minute as columns tinted the same
 way, per-thread load as one column per thread (a gap between threads, two
 between cores), top processes with LED bars, memory
 and VRAM as a row of LEDs (used lit, cache dim, free dark), and the rest
@@ -158,6 +158,12 @@ then **New Workspace**, **Rename…**, **Move Left** / **Move Right**, and
 **Delete** for the current one. A diamond beside the name means a tab on
 another workspace waits on a decision; a dot, that a Mail window on
 another workspace has unread mail.
+
+Each workspace has a browser profile of its own (rename the workspace
+freely; the profile goes by the workspace, not its name): browser pages on
+a workspace share its sign-ins, and a page sent to another
+workspace reopens there under that workspace's profile. A browser tab's
+row shows the page's title alone.
 
 ## Window menu
 

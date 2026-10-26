@@ -290,7 +290,7 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
     let app_id = base_id;
     tracing::info!(
         %app_id,
-        profile = %crate::profiles::active().name,
+        profile = %crate::profiles::active().id,
         "browser chrome (one window; CEF in helpers)"
     );
 

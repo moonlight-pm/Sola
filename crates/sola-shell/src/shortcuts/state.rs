@@ -156,7 +156,6 @@ fn menu_group(label: &str) -> &'static str {
         "File" => "File",
         "View" => "View",
         "Browser" => "Browser",
-        "Profiles" => "Profiles",
         "Project" => "Project",
         "Projects" => "Projects",
         "Mail" => "Mail",

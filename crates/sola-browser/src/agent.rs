@@ -505,7 +505,7 @@ impl<E: Engine> App<E> {
                     "title": t.title,
                     "active": t.id == self.cached_active,
                     "loading": t.is_loading,
-                    "profile": crate::profiles::name_of(&t.profile).unwrap_or_default(),
+                    "profile": t.profile,
                 })
             })
             .collect();

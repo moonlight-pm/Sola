@@ -290,16 +290,6 @@ pub enum Msg {
     /// Worker → chrome (drained on Tick when bitwarden enabled).
     #[cfg(feature = "bitwarden")]
     VaultWorker(VaultEvent),
-    // —— Profiles (menubar manage dialogs) ——
-    ProfileNameInput(String),
-    ProfileDialogSubmit,
-    ProfileDialogCancel,
-    /// Open / close the sidebar profile switcher.
-    ProfilePickerToggle,
-    /// Outside-click (or Escape) dismissed the sidebar profile switcher.
-    ProfilePickerDismiss,
-    /// Instant-switch to this profile from the sidebar menu.
-    ProfileSwitch(String),
     /// Toolbar download icon: open / close the downloads panel.
     DownloadsToggle,
     DownloadsPanelClose,
@@ -375,14 +365,6 @@ struct NavHold {
 }
 
 const NAV_HOLD_MS: u128 = 400;
-
-/// In-chrome dialog for creating / renaming / confirming delete of a profile.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProfileDialog {
-    New,
-    Rename,
-    DeleteConfirm,
-}
 
 /// Which form the vault panel shows.
 #[cfg(feature = "bitwarden")]
@@ -641,17 +623,6 @@ pub struct App<E: Engine> {
     /// Tick count while waiting (close after ~2s if the page never reports).
     #[cfg(feature = "bitwarden")]
     vault_awaiting_fill_ticks: u8,
-    /// Profiles menubar manage dialog (new / rename / delete confirm).
-    pub profile_dialog: Option<ProfileDialog>,
-    /// Name field for new/rename profile dialogs.
-    pub profile_name_field: String,
-    /// Inline error under the profile dialog (empty name, last profile, …).
-    pub profile_dialog_error: Option<String>,
-    /// Sidebar profile name is a select; true while the menu is open.
-    profile_picker_open: bool,
-    /// Cached registry rows — `profiles::list()` used to re-read the JSON
-    /// from disk on every `view()` (60 Hz while a page animated).
-    profile_options: Vec<crate::profiles::ProfileEntry>,
     downloads: crate::downloads::DownloadList,
     downloads_panel_open: bool,
     download_icon: iced::widget::svg::Handle,
@@ -812,11 +783,6 @@ impl<E: Engine> App<E> {
             vault_awaiting_fill: false,
             #[cfg(feature = "bitwarden")]
             vault_awaiting_fill_ticks: 0,
-            profile_dialog: None,
-            profile_name_field: String::new(),
-            profile_dialog_error: None,
-            profile_picker_open: false,
-            profile_options: crate::profiles::list(),
             downloads: crate::downloads::DownloadList::load(),
             downloads_panel_open: false,
             download_icon: icon_handle("lucide/download"),
@@ -1373,108 +1339,6 @@ impl<E: Engine> App<E> {
         );
     }
 
-    /// Open a profiles manage dialog (from the Profiles menubar).
-    pub fn open_profile_dialog(&mut self, kind: ProfileDialog) {
-        self.profile_picker_open = false;
-        self.profile_dialog_error = None;
-        match kind {
-            ProfileDialog::New => {
-                self.profile_name_field.clear();
-                self.profile_dialog = Some(ProfileDialog::New);
-            }
-            ProfileDialog::Rename => {
-                self.profile_name_field =
-                    crate::profiles::name_of(&crate::profiles::showing_profile())
-                        .unwrap_or_default();
-                self.profile_dialog = Some(ProfileDialog::Rename);
-            }
-            ProfileDialog::DeleteConfirm => {
-                if crate::profiles::list().len() <= 1 {
-                    tracing::info!("cannot delete the only profile");
-                    return;
-                }
-                self.profile_name_field.clear();
-                self.profile_dialog = Some(ProfileDialog::DeleteConfirm);
-            }
-        }
-    }
-
-    pub fn close_profile_dialog(&mut self) {
-        self.profile_dialog = None;
-        self.profile_name_field.clear();
-        self.profile_dialog_error = None;
-    }
-
-    /// The Profiles menu: this workspace runs `id` from now on; its pages
-    /// reopen under it.
-    pub fn switch_profile(&mut self, id: &str) -> Task<Msg> {
-        self.profile_picker_open = false;
-        if id == crate::profiles::showing_profile() {
-            return Task::none();
-        }
-        let set = match crate::profiles::showing_workspace() {
-            Some(ws) => crate::profiles::set_workspace_profile(&ws, id),
-            None => crate::profiles::set_registry_active(id),
-        };
-        if let Err(e) = set {
-            tracing::warn!(error = %e, id, "set this workspace's profile failed");
-            return Task::none();
-        }
-        tracing::info!(profile = %id, "this workspace's profile");
-        crate::integration::republish_menus(self.app_id);
-        self.profile_options = crate::profiles::list();
-        self.rebind_pages();
-        Task::done(Msg::NewFrame)
-    }
-
-    fn submit_profile_dialog(&mut self) -> Task<Msg> {
-        match self.profile_dialog.clone() {
-            Some(ProfileDialog::New) => match crate::profiles::create(&self.profile_name_field) {
-                Ok(profile) => {
-                    self.close_profile_dialog();
-                    return self.switch_profile(&profile.id);
-                }
-                Err(e) => {
-                    self.profile_dialog_error = Some(e);
-                }
-            },
-            Some(ProfileDialog::Rename) => {
-                let id = crate::profiles::showing_profile();
-                match crate::profiles::rename(&id, &self.profile_name_field) {
-                    Ok(()) => {
-                        self.close_profile_dialog();
-                        crate::integration::republish_menus(self.app_id);
-                    }
-                    Err(e) => {
-                        self.profile_dialog_error = Some(e);
-                    }
-                }
-            }
-            Some(ProfileDialog::DeleteConfirm) => {
-                let id = crate::profiles::showing_profile();
-                match crate::profiles::delete(&id) {
-                    Ok(_) => {
-                        self.close_profile_dialog();
-                        // Its workspaces moved to the first profile: their
-                        // pages reopen there before its helper stops.
-                        crate::integration::republish_menus(self.app_id);
-                        self.profile_options = crate::profiles::list();
-                        self.rebind_pages();
-                        let _ = self.cmd_tx.send(Cmd::DropParkedProfile {
-                            profile_id: id.clone(),
-                        });
-                        return Task::done(Msg::NewFrame);
-                    }
-                    Err(e) => {
-                        self.profile_dialog_error = Some(e);
-                    }
-                }
-            }
-            None => {}
-        }
-        Task::none()
-    }
-
     pub fn active_tab_info(&self) -> Option<&TabInfo> {
         self.cached_tabs.iter().find(|t| t.id == self.cached_active)
     }
@@ -2009,10 +1873,6 @@ impl<E: Engine> App<E> {
             Msg::VaultWorker(ev) => {
                 self.handle_vault_event(ev);
             }
-            Msg::ProfileNameInput(s) => {
-                self.profile_name_field = s;
-                self.profile_dialog_error = None;
-            }
             Msg::Wallpaper(event) => return self.on_wallpaper(event),
             Msg::WrapOpen => {
                 self.context_menu = None;
@@ -2033,12 +1893,6 @@ impl<E: Engine> App<E> {
                 if let Some(tab) = self.windows.tab_of(window) {
                     return self.update_msg(Msg::CloseTab(tab));
                 }
-            }
-            Msg::ProfileDialogCancel => {
-                self.close_profile_dialog();
-            }
-            Msg::ProfileDialogSubmit => {
-                return self.submit_profile_dialog();
             }
             Msg::DownloadsToggle => {
                 let open = !self.downloads_panel_open;
@@ -2126,15 +1980,6 @@ impl<E: Engine> App<E> {
             }
             Msg::DownloadRemove(id) => {
                 self.downloads.remove(&id);
-            }
-            Msg::ProfilePickerToggle => {
-                self.profile_picker_open = !self.profile_picker_open;
-            }
-            Msg::ProfilePickerDismiss => {
-                self.profile_picker_open = false;
-            }
-            Msg::ProfileSwitch(id) => {
-                return self.switch_profile(&id);
             }
             Msg::NewFrame => {
                 // Allow the next kick if the shader pump stops. While the
@@ -2244,14 +2089,6 @@ impl<E: Engine> App<E> {
                 }
                 if self.context_menu.is_some() {
                     self.context_menu = None;
-                    return Task::none();
-                }
-                if self.profile_picker_open {
-                    self.profile_picker_open = false;
-                    return Task::none();
-                }
-                if self.profile_dialog.is_some() {
-                    self.close_profile_dialog();
                     return Task::none();
                 }
                 #[cfg(feature = "bitwarden")]
@@ -2492,7 +2329,6 @@ impl<E: Engine> App<E> {
                     }
                 }
                 self.persist_session();
-                self.profile_options = crate::profiles::list();
                 {
                     let evs: Vec<_> = self
                         .engine
@@ -3144,13 +2980,9 @@ impl<E: Engine> App<E> {
         if let Some(app) = tab.and_then(|t| self.webapps.app_of(t)) {
             return app.label.clone();
         }
-        let info = tab.and_then(|tab| self.cached_tabs.iter().find(|t| t.id == tab));
-        let profile = info
-            .and_then(|t| crate::profiles::name_of(&self.profile_of(t.id)))
-            .unwrap_or_default();
-        match info {
-            Some(t) => crate::util::browser_window_title(&profile, &t.title, &t.url),
-            None => crate::util::browser_window_title(&profile, "", ""),
+        match tab.and_then(|tab| self.cached_tabs.iter().find(|t| t.id == tab)) {
+            Some(t) => crate::util::browser_window_title(&t.title, &t.url),
+            None => crate::util::browser_window_title("", ""),
         }
     }
 
@@ -3161,7 +2993,6 @@ impl<E: Engine> App<E> {
             .height(Length::Fill);
         let chrome_keys = !self.url_bar_focused
             && !self.find_field_focused
-            && self.profile_dialog.is_none()
             && self.pending_js_dialog.is_none()
             && self.wallpaper.is_none()
             && !self.downloads_panel_open
@@ -3243,9 +3074,7 @@ impl<E: Engine> App<E> {
             content
         };
 
-        let content: Element<'_, Msg> = if self.profile_dialog.is_some() {
-            stack![content, self.view_profile_dialog()].into()
-        } else if self.webapps.wrap.is_some() {
+        let content: Element<'_, Msg> = if self.webapps.wrap.is_some() {
             stack![content, self.view_wrap_sheet()].into()
         } else if let Some(lightbox) = self.view_wallpaper() {
             stack![content, lightbox].into()
@@ -4931,145 +4760,6 @@ impl<E: Engine> App<E> {
             .height(Length::Fill)
             .align_x(Alignment::Center)
             .align_y(Alignment::Center);
-        stack![backdrop, centered].into()
-    }
-
-    /// Centered modal for Profiles menubar manage actions.
-    fn view_profile_dialog(&self) -> Element<'_, Msg> {
-        use sola_kit::components::style::{SPACE_MD, SPACE_SM};
-
-        let Some(kind) = self.profile_dialog.as_ref() else {
-            return Space::new()
-                .width(Length::Shrink)
-                .height(Length::Shrink)
-                .into();
-        };
-
-        let title = match kind {
-            ProfileDialog::New => "New Profile",
-            ProfileDialog::Rename => "Rename Profile",
-            ProfileDialog::DeleteConfirm => "Delete Profile",
-        };
-        let title_el = text(title).size(15).font(sola_kit::fonts::ui_medium());
-
-        let body: Element<'_, Msg> = match kind {
-            ProfileDialog::New | ProfileDialog::Rename => {
-                let hint = match kind {
-                    ProfileDialog::New => "Name for the new profile.",
-                    ProfileDialog::Rename => "New name for this profile.",
-                    ProfileDialog::DeleteConfirm => unreachable!(),
-                };
-                let name_field = text_input("Profile name", &self.profile_name_field)
-                    .id(crate::integration::profile_name_input_id())
-                    .size(13)
-                    .style(sola_kit::components::text_input::style)
-                    .width(Length::Fill)
-                    .on_input(Msg::ProfileNameInput)
-                    .on_submit(Msg::ProfileDialogSubmit);
-
-                let mut col = column![
-                    title_el,
-                    text(hint).size(12).style(|theme: &iced::Theme| {
-                        let t = theme.extended_palette().background.base.text;
-                        iced::widget::text::Style {
-                            color: Some(iced::Color { a: 0.72, ..t }),
-                        }
-                    }),
-                    Space::new().height(SPACE_SM),
-                    name_field,
-                ]
-                .spacing(SPACE_SM)
-                .width(Length::Fixed(300.0));
-
-                if let Some(err) = &self.profile_dialog_error {
-                    col = col.push(text(err.clone()).size(12).style(|theme: &iced::Theme| {
-                        iced::widget::text::Style {
-                            color: Some(theme.extended_palette().danger.base.color),
-                        }
-                    }));
-                }
-
-                let submit_label = match kind {
-                    ProfileDialog::New => "Create",
-                    ProfileDialog::Rename => "Rename",
-                    ProfileDialog::DeleteConfirm => unreachable!(),
-                };
-                let actions = row![
-                    kit_button::labeled(submit_label, kit_button::primary)
-                        .on_press(Msg::ProfileDialogSubmit),
-                    kit_button::labeled("Cancel", kit_button::ghost)
-                        .on_press(Msg::ProfileDialogCancel),
-                ]
-                .spacing(SPACE_SM)
-                .align_y(Alignment::Center);
-                col.push(actions).into()
-            }
-            ProfileDialog::DeleteConfirm => {
-                let showing = crate::profiles::showing_profile();
-                let name = crate::profiles::name_of(&showing).unwrap_or_default();
-                // Its workspaces move to the first profile left.
-                let heir = crate::profiles::list()
-                    .into_iter()
-                    .find(|p| p.id != showing)
-                    .map(|p| p.name)
-                    .unwrap_or_default();
-                let mut col = column![
-                    title_el,
-                    text(format!(
-                        "Delete “{name}”? Its site data is removed; its pages reopen under “{heir}”."
-                    ))
-                    .size(12)
-                    .style(|theme: &iced::Theme| {
-                        let t = theme.extended_palette().background.base.text;
-                        iced::widget::text::Style {
-                            color: Some(iced::Color { a: 0.72, ..t }),
-                        }
-                    }),
-                ]
-                .spacing(SPACE_SM)
-                .width(Length::Fixed(300.0));
-
-                if let Some(err) = &self.profile_dialog_error {
-                    col = col.push(text(err.clone()).size(12).style(|theme: &iced::Theme| {
-                        iced::widget::text::Style {
-                            color: Some(theme.extended_palette().danger.base.color),
-                        }
-                    }));
-                }
-
-                let actions = row![
-                    kit_button::labeled("Delete", kit_button::primary)
-                        .on_press(Msg::ProfileDialogSubmit),
-                    kit_button::labeled("Cancel", kit_button::ghost)
-                        .on_press(Msg::ProfileDialogCancel),
-                ]
-                .spacing(SPACE_SM)
-                .align_y(Alignment::Center);
-                col.push(actions).into()
-            }
-        };
-
-        let panel =
-            card::modal(container(body).padding(SPACE_MD + SPACE_SM)).width(Length::Fixed(340.0));
-
-        let backdrop = mouse_area(
-            container(Space::new().width(Length::Fill).height(Length::Fill)).style(|_t| {
-                container::Style {
-                    background: Some(iced::Background::Color(iced::Color::from_rgba(
-                        0.0, 0.0, 0.0, 0.22,
-                    ))),
-                    ..container::Style::default()
-                }
-            }),
-        )
-        .on_press(Msg::ProfileDialogCancel);
-
-        let centered = container(panel)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center);
-
         stack![backdrop, centered].into()
     }
 
