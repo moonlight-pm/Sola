@@ -395,6 +395,12 @@ pub struct Appearance {
     /// Minutes the fade takes, from the first sign to fully faded.
     #[serde(default = "Appearance::default_fade_over")]
     pub fade_over_min: u16,
+    /// How opaque the desk's surfaces are at rest, in % (the windows,
+    /// the bar, the top row): sola-river draws the background over them
+    /// at the rest, and the idle fade rises from there.
+    /// [`Appearance::MIN_OPACITY`]–100.
+    #[serde(default = "Appearance::default_opacity")]
+    pub opacity: u8,
     /// Colors you set yourself, over the greys or the picture's scheme:
     /// `window`, `panels`, `highlight`, `accent` → `#rrggbb`
     /// (`sola_core::theme::Theme::customize`). Those of the custom look in
@@ -425,6 +431,10 @@ impl Appearance {
     pub const DEFAULT_STRENGTH: u8 = 60;
     pub const DEFAULT_FADE_AFTER_MIN: u16 = 5;
     pub const DEFAULT_FADE_OVER_MIN: u16 = 30;
+    pub const DEFAULT_OPACITY: u8 = 90;
+    /// The least opacity Settings offers: below it, text over a busy
+    /// picture stops reading.
+    pub const MIN_OPACITY: u8 = 50;
     /// The most looks you can keep.
     pub const MAX_CUSTOMS: usize = 6;
 
@@ -443,6 +453,10 @@ impl Appearance {
     fn default_fade_over() -> u16 {
         Self::DEFAULT_FADE_OVER_MIN
     }
+
+    fn default_opacity() -> u8 {
+        Self::DEFAULT_OPACITY
+    }
 }
 
 impl Default for Appearance {
@@ -454,6 +468,7 @@ impl Default for Appearance {
             fade_idle: true,
             fade_after_min: Self::DEFAULT_FADE_AFTER_MIN,
             fade_over_min: Self::DEFAULT_FADE_OVER_MIN,
+            opacity: Self::DEFAULT_OPACITY,
             colors: Default::default(),
             customs: Vec::new(),
             custom: None,
@@ -2019,6 +2034,7 @@ mod tests {
         assert!(old.fade_idle);
         assert_eq!(old.fade_after_min, Appearance::DEFAULT_FADE_AFTER_MIN);
         assert_eq!(old.fade_over_min, Appearance::DEFAULT_FADE_OVER_MIN);
+        assert_eq!(old.opacity, Appearance::DEFAULT_OPACITY);
         assert!(old.customs.is_empty() && old.custom.is_none());
         let mine = Appearance {
             variation: 1,

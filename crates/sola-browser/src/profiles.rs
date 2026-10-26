@@ -244,8 +244,14 @@ fn pair(
     reg.workspaces = paired;
 }
 
-/// The profiles some workspace runs.
+/// The profiles some workspace runs. None in an app that embeds the
+/// engine under its own profile ([`bind_external`], Design): a helper it
+/// started on the browser's profile would share that profile's data with
+/// the browser's own, and Chromium answers with plain "New Tab" windows.
 pub fn workspace_profiles() -> Vec<String> {
+    if is_external() {
+        return Vec::new();
+    }
     let reg = load_registry_or_empty();
     let mut out: Vec<String> = Vec::new();
     for id in reg.workspaces.values() {

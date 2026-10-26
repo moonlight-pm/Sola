@@ -1,9 +1,9 @@
 //! Appearance: the background picture, whether the theme's colors follow
 //! it (and which of its schemes), the looks you make with your own colors,
-//! and the idle fade. The picture is set from Paint (File → Set as
+//! how opaque the desk is over the picture, and the idle fade. The picture is set from Paint (File → Set as
 //! Background) or `solactl background`; here it can be cleared. The
 //! settings are `Topic::Appearance`: the shell acts on the colors,
-//! sola-river on the fade. The schemes come from the shell
+//! sola-river on the opacity and the fade. The schemes come from the shell
 //! (`Topic::ThemeVariations`).
 
 mod looks;
@@ -31,6 +31,10 @@ pub enum AppearanceMsg {
     Strength(u8),
     /// The strength slider was let go: send where it stopped.
     StrengthDone,
+    /// The opacity slider moved: sent as it moves, like the strength.
+    Opacity(u8),
+    /// The opacity slider was let go.
+    OpacityDone,
     /// One of the picture's schemes, by index, as it is.
     Variation(u8),
     /// One of your looks (`Appearance.customs`), by index.
@@ -68,27 +72,31 @@ pub struct AppearanceState {
     pub theme: Option<sola_core::theme::Theme>,
     /// The custom color being picked, and its picker.
     picking: Option<(&'static str, ColorPicker)>,
-    /// When a strength drag last sent the settings.
-    strength_sent: Option<std::time::Instant>,
+    /// When a strength or opacity drag last sent the settings.
+    drag_sent: Option<std::time::Instant>,
 }
 
-/// While the strength slider moves, the settings go out at most this
-/// often (each one re-tints every app); letting go sends the last value.
+/// While the strength or opacity slider moves, the settings go out at
+/// most this often (a strength re-tints every app); letting go sends the
+/// last value.
 const LIVE_EVERY: std::time::Duration = std::time::Duration::from_millis(40);
 
 pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) {
     let look = &mut state.look;
     match msg {
         AppearanceMsg::Adapt(on) => look.adapt_theme = on,
-        AppearanceMsg::Strength(v) => {
-            look.strength = v;
+        AppearanceMsg::Strength(v) | AppearanceMsg::Opacity(v) => {
+            match msg {
+                AppearanceMsg::Strength(_) => look.strength = v,
+                _ => look.opacity = v,
+            }
             let now = std::time::Instant::now();
-            if state.strength_sent.is_some_and(|at| now - at < LIVE_EVERY) {
+            if state.drag_sent.is_some_and(|at| now - at < LIVE_EVERY) {
                 return;
             }
-            state.strength_sent = Some(now);
+            state.drag_sent = Some(now);
         }
-        AppearanceMsg::StrengthDone | AppearanceMsg::FadeDone => {}
+        AppearanceMsg::StrengthDone | AppearanceMsg::OpacityDone | AppearanceMsg::FadeDone => {}
         AppearanceMsg::Variation(i) => {
             looks::pick_variation(look, i);
             state.picking = None;
@@ -159,8 +167,30 @@ pub fn view(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
         picture(state),
         looks::colors(state),
         looks::yours(state),
+        desk(state),
         idle(state),
     ])
+}
+
+fn desk(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
+    let opacity = state.look.opacity.clamp(Appearance::MIN_OPACITY, 100);
+    page::section(
+        "Desk",
+        None,
+        page::group(vec![page::setting(
+            "Opacity",
+            slider_with(
+                slider(Appearance::MIN_OPACITY..=100u8, opacity, AppearanceMsg::Opacity)
+                    .on_release(AppearanceMsg::OpacityDone),
+                format!("{opacity}%"),
+            ),
+        )]),
+        Some(
+            "How opaque the windows, the bar and the top row are over the \
+             background. The idle fade starts from here."
+                .into(),
+        ),
+    )
 }
 
 fn picture(state: &AppearanceState) -> Element<'_, AppearanceMsg> {

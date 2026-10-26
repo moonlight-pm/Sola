@@ -287,13 +287,16 @@ publishes the choices as sticky `Topic::ThemeVariations` for Settings;
 your colors over it, `Appearance.colors`, kept as looks in
 `Appearance.customs`);
 the kit's chrome surface follows the theme (`style::chrome_surface`,
-`theme::install_atoms`). The idle fade is sola-river's (`client/fade.rs`):
-`ext_idle_notifier_v1` says idle / resumed, and a shell surface at the top
-of the render list shows the picture (or black) at an opacity rising over
-`fade_over_min` (`wp_alpha_modifier_v1`), stepped back down over a second
-on input. It is cut in pieces (sub-buffers of the picture's memory) around
+`theme::install_atoms`). The desk's opacity and the idle fade are
+sola-river's (`client/fade.rs`): a shell surface at the top of the render
+list shows the picture (or black) at `100 − Appearance.opacity` % at rest
+(none at 100 %, none over a fullscreen window; made again when the
+picture, the output size or the kept rectangle change);
+`ext_idle_notifier_v1` says idle / resumed, and the opacity rises from
+there over `fade_over_min` (`wp_alpha_modifier_v1`), stepped back down to
+the rest over a second on input. It is cut in pieces (sub-buffers of the picture's memory) around
 the shell's sticky `Topic::IdleKeep` — the top row's flower and agent
-islands — whose piece stops at 80%. The menubar carries no
+islands — whose piece stays at the rest. The menubar carries no
 app menus. The shell publishes sticky
 `Topic::WindowChrome` (window id → tiled, Cinema, rim; `chrome.rs`):
 sola-river sends `set_tiled` on change and a 1 px border on windows whose

@@ -1,7 +1,9 @@
-//! The idle fade (Settings → Appearance, `Appearance.fade_idle`): after
-//! `fade_after_min` minutes with no input, the windows fade into the
-//! background over `fade_over_min`; input brings them back over a second
-//! ([`RETURN`]).
+//! The desk's opacity and the idle fade (Settings → Appearance). At rest
+//! the windows, the bar and the top row are `Appearance.opacity` % opaque
+//! over the background (90 by default). With `fade_idle`, after
+//! `fade_after_min` minutes with no input they fade into the background
+//! over `fade_over_min`; input brings them back to their rest over a
+//! second ([`RETURN`]).
 //!
 //! Fading every window toward the picture looks exactly like the picture
 //! rising over every window (`a·window + (1−a)·picture` either way), so
@@ -10,10 +12,13 @@
 //! without a picture), their opacity raised by `wp_alpha_modifier_v1` — a
 //! number per step, no repaint. Their input regions are empty.
 //!
-//! The overlay is cut in pieces around what the shell keeps in sight
+//! At rest the overlay is up at `100 − opacity` % (its floor), and the
+//! fade rises from there; at 100 % opacity it is only up while fading.
+//! It is cut in pieces around what the shell keeps in sight
 //! (`Topic::IdleKeep`: the top row's flower and agent islands, what you
-//! may want to answer); that part is never covered, so they stay in full
-//! sight while everything else goes. While the fade runs, `Topic::IdleFade`
+//! may want to answer); that piece stays at the floor, so they keep their
+//! rest while everything else goes. Nothing is over a fullscreen window
+//! (Cinema scans out). While the fade runs, `Topic::IdleFade`
 //! says so (Projects shows a session's island even with its tab focused).
 //!
 //! Idle comes from `ext_idle_notifier_v1.get_idle_notification`, which
@@ -53,6 +58,8 @@ pub struct FadeState {
     wanted: Option<u32>,
     /// How long the fade takes.
     over: Duration,
+    /// The overlay's level at rest (`Appearance.opacity`); 0 at 100 %.
+    floor: u32,
     /// The notification for `wanted`, and its delay.
     notification: Option<(ExtIdleNotificationV1, u32)>,
     /// When the fade began (idle, and no fullscreen window).
@@ -80,6 +87,7 @@ impl Default for FadeState {
                 .fade_idle
                 .then(|| u32::from(look.fade_after_min) * 60_000),
             over: over(&look),
+            floor: floor(&look),
             notification: None,
             since: None,
             returning: None,
@@ -96,8 +104,12 @@ struct Overlay {
     pieces: Vec<Piece>,
     /// The black buffers' own memory (none over the picture's).
     black: Option<(rustix::fd::OwnedFd, wl_shm_pool::WlShmPool)>,
-    /// What it was cut around (that part has no piece).
+    /// What it was cut around.
     keep: Option<IdleKeep>,
+    /// The background it shows (`background::generation`; 0: black) and
+    /// the output's size: either changing makes it again.
+    ground: u64,
+    size: (i32, i32),
     /// The fade's level.
     level: u32,
     set_at: Instant,
@@ -105,6 +117,8 @@ struct Overlay {
 
 /// One rectangle of the overlay.
 struct Piece {
+    /// Over what the shell keeps in sight: never past the floor.
+    kept: bool,
     shell_surface: RiverShellSurfaceV1,
     node: RiverNodeV1,
     surface: wl_surface::WlSurface,
@@ -113,9 +127,10 @@ struct Piece {
 }
 
 impl Overlay {
-    fn set(&mut self, level: u32) {
+    fn set(&mut self, level: u32, floor: u32) {
         for p in &self.pieces {
-            p.opacity.set_multiplier(level);
+            p.opacity
+                .set_multiplier(if p.kept { level.min(floor) } else { level });
             p.surface.commit();
         }
         self.level = level;
@@ -145,6 +160,12 @@ impl Drop for Piece {
 /// `Topic::Appearance` (`None`: retracted, the defaults).
 pub fn settings(state: &mut AppData, look: Option<&Appearance>) {
     let look = look.cloned().unwrap_or_default();
+    let floor = floor(&look);
+    if floor != state.fade.floor {
+        info!(opacity = look.opacity, "the desk's opacity");
+        state.fade.floor = floor;
+        rest(state);
+    }
     let wanted = look
         .fade_idle
         .then(|| u32::from(look.fade_after_min.max(1)) * 60_000);
@@ -179,14 +200,16 @@ pub fn keep(state: &mut AppData, keep: Option<IdleKeep>) {
 /// opacity as the fade goes, and lower it as the windows return.
 pub fn tick(state: &mut AppData) {
     ensure(state);
+    let floor = state.fade.floor;
     if let Some((from, at)) = state.fade.returning {
         let t = at.elapsed().as_secs_f64() / RETURN.as_secs_f64();
         if t >= 1.0 || state.fade.overlay.is_none() {
-            drop_overlay(state);
+            state.fade.returning = None;
+            rest(state);
             return;
         }
         if let Some(overlay) = &mut state.fade.overlay {
-            overlay.set(returning_level(from, t));
+            overlay.set(returning_level(from, floor, t), floor);
         }
         flush(state);
         return;
@@ -202,7 +225,7 @@ pub fn tick(state: &mut AppData) {
         state.fade.since = Some(Instant::now());
         return;
     }
-    let target = multiplier(since.elapsed(), state.fade.over);
+    let target = multiplier(floor, since.elapsed(), state.fade.over);
     let Some(overlay) = &mut state.fade.overlay else {
         // Made in the next render sequence (it must be placed on top).
         if !state.fade.failed {
@@ -213,34 +236,47 @@ pub fn tick(state: &mut AppData) {
     if overlay.level == target || overlay.set_at.elapsed() < STEP {
         return;
     }
-    overlay.set(target);
+    overlay.set(target, floor);
     flush(state);
 }
 
-/// Run during every render sequence, last: make the overlay when the fade
-/// needs it (again when what it keeps moved), and keep it on top.
+/// Run during every render sequence, last: make the overlay when the rest
+/// or the fade needs it (again when what it keeps moved), and keep it on
+/// top.
 pub fn sync_on_render(state: &mut AppData) {
-    let fading = state.fade.since.is_some() || state.fade.returning.is_some();
-    if !fading || state.fade.wanted.is_none() {
+    let fading = state.fade.wanted.is_some()
+        && (state.fade.since.is_some() || state.fade.returning.is_some());
+    if !fading && state.fade.floor == 0 {
         state.fade.overlay = None;
         return;
     }
+    if !state.currently_fullscreen.is_empty() {
+        // A fullscreen window scans out with nothing over it.
+        state.fade.overlay = None;
+        return;
+    }
+    let ground = crate::client::background::generation(state);
     if let Some(overlay) = &state.fade.overlay {
-        // Cut again only while fading out; a return is over in a second.
-        if overlay.keep == state.fade.keep || state.fade.returning.is_some() {
+        // Made again (a new cut, picture or size) unless returning; a
+        // return is over in a second.
+        let current = overlay.keep == state.fade.keep
+            && overlay.ground == ground
+            && Some(overlay.size) == state.output_size;
+        if current || state.fade.returning.is_some() {
             for p in &overlay.pieces {
                 p.node.place_top();
             }
             return;
         }
     }
-    if !state.currently_fullscreen.is_empty() || state.fade.failed {
+    if state.fade.failed {
         return;
     }
+    let floor = state.fade.floor;
     let level = match (&state.fade.overlay, state.fade.since) {
         (Some(overlay), _) => overlay.level,
-        (None, Some(since)) => multiplier(since.elapsed(), state.fade.over),
-        (None, None) => 0,
+        (None, Some(since)) => multiplier(floor, since.elapsed(), state.fade.over),
+        (None, None) => floor,
     };
     match make_overlay(state, level) {
         Ok(overlay) => {
@@ -255,16 +291,25 @@ pub fn sync_on_render(state: &mut AppData) {
     }
 }
 
-/// The opacity `elapsed` into a fade that takes `over`.
-fn multiplier(elapsed: Duration, over: Duration) -> u32 {
+/// The overlay's opacity `elapsed` into a fade that takes `over`, rising
+/// from `floor`.
+fn multiplier(floor: u32, elapsed: Duration, over: Duration) -> u32 {
     let t = (elapsed.as_secs_f64() / over.as_secs_f64().max(1.0)).clamp(0.0, 1.0);
-    (t * f64::from(u32::MAX)) as u32
+    floor + (t * f64::from(u32::MAX - floor)) as u32
 }
 
-/// The opacity `t` (0–1) into a return from `from`: quick at first, then
-/// settling.
-fn returning_level(from: u32, t: f64) -> u32 {
-    (f64::from(from) * (1.0 - t.clamp(0.0, 1.0)).powi(2)) as u32
+/// The opacity `t` (0–1) into a return from `from` to `floor`: quick at
+/// first, then settling.
+fn returning_level(from: u32, floor: u32, t: f64) -> u32 {
+    let from = from.max(floor);
+    floor + (f64::from(from - floor) * (1.0 - t.clamp(0.0, 1.0)).powi(2)) as u32
+}
+
+/// The overlay's level at rest: the picture over the desk at
+/// `100 − opacity` %.
+fn floor(look: &Appearance) -> u32 {
+    let clear = 100 - u32::from(look.opacity.min(100));
+    (f64::from(clear) / 100.0 * f64::from(u32::MAX)) as u32
 }
 
 fn over(look: &Appearance) -> Duration {
@@ -323,18 +368,40 @@ fn ensure(state: &mut AppData) {
     state.fade.notification = Some((n, timeout));
 }
 
-/// Input: the windows come back over [`RETURN`].
+/// Input: the windows come back to their rest over [`RETURN`].
 fn resume(state: &mut AppData) {
     tell(state, false);
     state.fade.since = None;
     state.fade.failed = false;
     match state.fade.overlay.as_ref().map(|o| o.level) {
-        Some(level) if level > 0 => {
+        Some(level) if level > state.fade.floor => {
             if state.fade.returning.is_none() {
                 state.fade.returning = Some((level, Instant::now()));
             }
         }
-        _ => drop_overlay(state),
+        _ => {
+            state.fade.returning = None;
+            rest(state);
+        }
+    }
+}
+
+/// Not fading: the overlay at the floor, made in the next render sequence
+/// if it is not up, gone at 100 %. A fade under way carries on and comes
+/// back to the new floor.
+fn rest(state: &mut AppData) {
+    if state.fade.since.is_some() || state.fade.returning.is_some() {
+        return;
+    }
+    let floor = state.fade.floor;
+    match &mut state.fade.overlay {
+        Some(_) if floor == 0 => drop_overlay(state),
+        Some(overlay) => {
+            overlay.set(floor, floor);
+            flush(state);
+        }
+        None if floor > 0 => state.pending.render_dirty = true,
+        None => {}
     }
 }
 
@@ -348,12 +415,14 @@ fn tell(state: &mut AppData, fading: bool) {
     state.bus.emit(Topic::IdleFade(IdleFade { fading }));
 }
 
-/// The fade turned off or changed: the windows back at once.
+/// The fade turned off or changed: the windows back to their rest at
+/// once.
 fn wake(state: &mut AppData) {
     tell(state, false);
     state.fade.since = None;
     state.fade.failed = false;
-    drop_overlay(state);
+    state.fade.returning = None;
+    rest(state);
 }
 
 fn drop_overlay(state: &mut AppData) {
@@ -361,7 +430,7 @@ fn drop_overlay(state: &mut AppData) {
     let Some(mut overlay) = state.fade.overlay.take() else {
         return;
     };
-    overlay.set(0);
+    overlay.set(0, 0);
     drop(overlay);
     flush(state);
 }
@@ -397,11 +466,8 @@ fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
     };
     let (x, y) = state.output_origin.unwrap_or((0, 0));
     let mut pieces = Vec::new();
+    let floor = state.fade.floor;
     for (r, kept) in cut(ow, oh, state.fade.keep) {
-        // The kept part stays uncovered: the flower and the agent islands.
-        if kept {
-            continue;
-        }
         // The piece in the buffer's pixels, inside it, whole logical pixels.
         let (px, py) = (r.x * scale, r.y * scale);
         let pw = (r.w * scale).min(bw - px);
@@ -417,7 +483,8 @@ fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
         surface.set_input_region(Some(&region));
         region.destroy();
         let opacity = alpha.get_surface(&surface, &qh, ());
-        opacity.set_multiplier(level);
+        // The kept part (the flower, the agent islands) stays at the rest.
+        opacity.set_multiplier(if kept { level.min(floor) } else { level });
         let shell_surface = wm.get_shell_surface(&surface, &qh, ());
         let node = shell_surface.get_node(&qh, ());
         node.place_top();
@@ -428,6 +495,7 @@ fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
         surface.damage_buffer(0, 0, pw, ph);
         surface.commit();
         pieces.push(Piece {
+            kept,
             shell_surface,
             node,
             surface,
@@ -439,6 +507,8 @@ fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
         pieces,
         black,
         keep: state.fade.keep,
+        ground: crate::client::background::generation(state),
+        size: (ow, oh),
         level,
         set_at: Instant::now(),
     })
@@ -516,21 +586,39 @@ mod tests {
     fn the_fade_rises_over_its_minutes() {
         let over = over(&Appearance::default());
         assert_eq!(over, Duration::from_secs(30 * 60));
-        assert_eq!(multiplier(Duration::ZERO, over), 0);
-        let half = multiplier(over / 2, over);
+        assert_eq!(multiplier(0, Duration::ZERO, over), 0);
+        let half = multiplier(0, over / 2, over);
         assert!((half as f64 / u32::MAX as f64 - 0.5).abs() < 0.001);
-        assert_eq!(multiplier(Duration::from_secs(3 * 3600), over), u32::MAX);
+        assert_eq!(multiplier(0, Duration::from_secs(3 * 3600), over), u32::MAX);
         let quick = Duration::from_secs(5 * 60);
-        assert_eq!(multiplier(quick, quick), u32::MAX);
+        assert_eq!(multiplier(0, quick, quick), u32::MAX);
     }
 
     #[test]
-    fn the_return_starts_quick_and_ends_clear() {
+    fn the_fade_rises_from_the_rest() {
+        let floor = floor(&Appearance::default());
+        // 90 % opaque: the picture over the desk at a tenth.
+        assert!((floor as f64 / u32::MAX as f64 - 0.1).abs() < 0.001);
+        let over = Duration::from_secs(60);
+        assert_eq!(multiplier(floor, Duration::ZERO, over), floor);
+        assert_eq!(multiplier(floor, over, over), u32::MAX);
+        let opaque = Appearance {
+            opacity: 100,
+            ..Appearance::default()
+        };
+        assert_eq!(super::floor(&opaque), 0);
+    }
+
+    #[test]
+    fn the_return_starts_quick_and_ends_at_the_rest() {
         let from = u32::MAX;
-        assert_eq!(returning_level(from, 0.0), from);
-        let half = returning_level(from, 0.5) as f64 / f64::from(from);
+        assert_eq!(returning_level(from, 0, 0.0), from);
+        let half = returning_level(from, 0, 0.5) as f64 / f64::from(from);
         assert!((half - 0.25).abs() < 0.001, "{half}");
-        assert_eq!(returning_level(from, 1.0), 0);
+        assert_eq!(returning_level(from, 0, 1.0), 0);
+        let floor = u32::MAX / 10;
+        assert_eq!(returning_level(from, floor, 1.0), floor);
+        assert_eq!(returning_level(floor / 2, floor, 0.5), floor);
     }
 
     #[test]

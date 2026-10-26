@@ -282,6 +282,17 @@ transparent. On any user input, it snaps back to full opacity."
   Turning the fade off still clears it at once. The notification
   honors **idle inhibitors** (an app keeping the screen awake), and no fade
   runs while a window is **fullscreen** (Cinema; it starts over after).
+- **The desk's opacity (2026-10-26):** Joshua: "Can we make the default
+  opacity for desktop items 90% … put the max transparency in our
+  appearance settings ..default to 90". Settings → Appearance → Desk →
+  *Opacity*, 50–100% (90), persistent `Appearance.opacity`. At rest the
+  same overlay stays up at `100 − opacity` % (its floor), so the windows,
+  the bar and the top row are that opaque over the picture; at 100 % it is
+  only up while fading. The fade rises from the floor to the picture, a
+  return comes back to the floor, and the kept piece (the flower and the
+  agent islands) stays at the floor. Nothing is over a fullscreen window
+  (it scans out). The overlay is made again when the picture, the output's
+  size or the kept rectangle change. The slider sends as it moves.
 - **Why not real window opacity:** River's window-management protocol
   has no per-window opacity, and a client can only set its own surfaces'
   alpha; the overlay needs no compositor change and costs one composite a
