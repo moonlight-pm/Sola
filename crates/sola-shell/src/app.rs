@@ -52,6 +52,23 @@ fn with_bus(f: impl FnOnce(&mut sola_bus::BusClient)) {
     }
 }
 
+/// Calendar's app id: the clock's panel opens its events there.
+const CALENDAR_APP: &str = "sola-calendar";
+
+/// Ask Calendar to show event `id` (as a reminder card's click does).
+fn emit_calendar_event(id: String) {
+    with_bus(|bus| {
+        let _ = bus.emit(Topic::NotificationActivate(
+            sola_bus::topics::NotificationActivate {
+                id: format!("clock:{id}"),
+                app_id: CALENDAR_APP.into(),
+                tab_id: None,
+                url: Some(id),
+            },
+        ));
+    });
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowKind {
     Menubar,
@@ -112,6 +129,9 @@ pub enum Msg {
     CalendarNextMonth,
     /// Reset the calendar to the current month.
     CalendarToday,
+    /// An event in the clock's panel: show it in Calendar (an empty id
+    /// just opens Calendar).
+    CalendarOpenEvent(String),
     /// Expire the toast for `generation` if it matches the current generation.
     /// Also clears a matching pending launch (opening feedback timeout).
     ToastExpire(u64),
@@ -441,6 +461,12 @@ pub struct Shell {
     /// Last `Topic::MailStatus` inbox unread. Chip shows only when mail
     /// is mapped and this is `Some(n)` with `n > 0`.
     pub inbox_unread: Option<u32>,
+    /// Calendar's coming days (`Topic::CalendarAgenda`): the clock's
+    /// panel lists today's. `None` until Calendar has published.
+    pub calendar_agenda: Option<sola_bus::topics::CalendarAgenda>,
+    /// An event to show once Calendar's window appears (the clock's panel
+    /// launched it to open one).
+    pub calendar_event_pending: Option<String>,
     /// Iced-reported live swapchain for menu / launcher /
     /// selection / notify / shortcuts. Composition waits on this so River
     /// does not show a stretched 2×2.
@@ -549,6 +575,8 @@ impl Shell {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
+            calendar_agenda: None,
+            calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
 
@@ -955,6 +983,67 @@ impl Shell {
             self.unhide_app("sola-mail");
         }
         self.raise_app("sola-mail");
+    }
+
+    /// Today's events from Calendar's agenda, if it has published a span
+    /// that covers today.
+    pub fn today_events(&self, today: chrono::NaiveDate) -> Option<&[sola_bus::topics::AgendaEvent]> {
+        let date = today.format("%Y-%m-%d").to_string();
+        self.calendar_agenda
+            .as_ref()?
+            .days
+            .iter()
+            .find(|d| d.date == date)
+            .map(|d| d.events.as_slice())
+    }
+
+    /// Show event `id` in Calendar: raise it and ask, or launch it and ask
+    /// once its window appears ([`Self::flush_calendar_event`]). An empty
+    /// id only brings Calendar forward.
+    fn open_calendar_event(&mut self, id: String) -> iced::Task<Msg> {
+        let _ = self.dismiss_open_menu();
+        let mut opening = iced::Task::none();
+        let wanted = (!id.is_empty()).then_some(id);
+        if self.calendar_is_mapped() {
+            if self.is_app_hidden(CALENDAR_APP) {
+                self.unhide_app(CALENDAR_APP);
+            }
+            self.raise_app(CALENDAR_APP);
+            if let Some(id) = wanted {
+                emit_calendar_event(id);
+            }
+        } else if let Some(app) = self.applications.get(CALENDAR_APP) {
+            let (command, label) = (app.command.clone(), app.label.clone());
+            self.calendar_event_pending = wanted;
+            if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                let _ = bus.emit(Topic::LaunchApp(sola_bus::topics::LaunchAppPayload {
+                    app_id: CALENDAR_APP.to_string(),
+                    command,
+                }));
+            }
+            opening = self.begin_opening(CALENDAR_APP, &label);
+        }
+        self.emit_overlay_frames();
+        self.emit_composition();
+        self.emit_registered_chords();
+        opening
+    }
+
+    fn calendar_is_mapped(&self) -> bool {
+        self.known_windows
+            .iter()
+            .any(|w| w.app_id.eq_ignore_ascii_case(CALENDAR_APP))
+    }
+
+    /// The event the clock's panel asked for, once Calendar's window is up
+    /// (it subscribes before it maps, and holds the ask until its store
+    /// loads).
+    pub fn flush_calendar_event(&mut self) {
+        if self.calendar_event_pending.is_some() && self.calendar_is_mapped() {
+            if let Some(id) = self.calendar_event_pending.take() {
+                emit_calendar_event(id);
+            }
+        }
     }
 
     fn activate_notification(&mut self, id: &str) -> iced::Task<Msg> {
@@ -1885,7 +1974,9 @@ impl Shell {
         let (x, width, height) = match self.open_panel {
             Some(Panel::Calendar) => {
                 let w = crate::calendar::CARD_WIDTH;
-                (clamp_x(ow - w - GUTTER, w), w, crate::calendar::CARD_HEIGHT)
+                let today = self.menubar.clock_now.date_naive();
+                let h = crate::calendar::card_height(self.today_events(today).map(<[_]>::len));
+                (clamp_x(ow - w - GUTTER, w), w, h)
             }
             Some(Panel::Stat(m)) => {
                 let w = crate::stats::view::CARD_WIDTH;
@@ -2255,6 +2346,7 @@ impl Shell {
                 self.calendar_month = crate::calendar::next_month(self.calendar_month);
                 iced::Task::none()
             }
+            Msg::CalendarOpenEvent(id) => self.open_calendar_event(id),
             Msg::CalendarToday => {
                 self.calendar_month =
                     crate::calendar::first_of_month(self.menubar.clock_now.date_naive());
@@ -2987,6 +3079,8 @@ mod pending_launch_tests {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
+            calendar_agenda: None,
+            calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
         shell.menubar.toast_generation = 1;
@@ -3106,6 +3200,8 @@ mod hide_tests {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
+            calendar_agenda: None,
+            calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
         // Tabs: the first app on the Left, the second on the Right, the

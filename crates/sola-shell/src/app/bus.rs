@@ -43,6 +43,7 @@ impl Shell {
             Topic::Windows(w) => {
                 self.on_windows(w);
                 self.resolve_pending_launch_if_window();
+                self.flush_calendar_event();
                 Task::none()
             }
             Topic::SetAppMenu(m) => {
@@ -123,6 +124,10 @@ impl Shell {
             Topic::AppNotification(n) => self.on_app_notification(n),
             Topic::MailStatus(s) => {
                 self.on_mail_status(s, message.sticky);
+                Task::none()
+            }
+            Topic::CalendarAgenda(a) => {
+                self.calendar_agenda = message.sticky.then_some(a);
                 Task::none()
             }
             Topic::MenuAction(a) => self.on_titlebar_menu_action(a),

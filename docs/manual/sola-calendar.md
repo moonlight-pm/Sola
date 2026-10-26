@@ -8,10 +8,13 @@ Month is the default view (Sunday-start, the same as the menubar clock). Week an
 
 ## Use
 
-- **‹ ›** and **Today** move the visible range. **1 / 2 / 3** switch Month / Week / Day. **t** jumps to today. **n** or **New Event** creates an event on the selected day.
-- Click a day to inspect it in the right pane (always open; drag its splitter to resize). Double-click a day (or **New Event**) to open the editor there: title first, then date / time / all-day, then calendar, location, and notes. Escape discards an unsaved draft and returns to the day. Save writes local events immediately; Google, iCloud, and CalDAV events go through the provider. URL feeds are view-only.
+- The bar over the board names the range shown (the window's title does too). At its right: **Month / Week / Day**, **‹ Today ›**, and **+** for a new event. **1 / 2 / 3** switch Month / Week / Day. **t** jumps to today. **n** or **+** creates an event on the selected day.
+- The month is six weeks, a hairline apart; today's date sits on an accent circle. Events are chips in their calendar's colour (a bar and a light fill); a day wide enough shows their times. Week lists each day's events as cards; Day lists them with their times and places.
+- Where the inspector goes depends on the window's width. In a wide window it is a pane at the right: click a day to see it there (drag its splitter to resize). In a half tile it is a card over the board's right edge that opens with an event and closes with × or Escape. The calendars sidebar leaves a window narrower than 700 px.
+- Double-click a day (or **+**) to open the editor: title first, then date / time / all-day, then calendar, location, and notes. Escape discards an unsaved draft and returns to the day. Save writes local events immediately; Google, iCloud, and CalDAV events go through the provider. URL feeds are view-only.
 - Click a calendar disc (or the name) to show or hide its events on the board. Double-click sets the default calendar for new events. The pencil gives the calendar an alias (the field is selected on open) and shows a colour swatch like Browser tab groups; the original provider name appears only while editing. Eye-off in that row hides the calendar from the sidebar and turns it off.
-- Under the calendars list, **Today** and **Tomorrow** list the next events (click one to open it; **+N more** opens that day).
+- Under the calendars list, **Today** and then **Tomorrow** list the next events (click one to open it; **+N more** opens that day). Click another day on the board and the second list is that day.
+- The menubar clock's panel lists today's events from the calendars shown (see the shell's manual). Calendar keeps it current while it runs, and the panel keeps the last list after Calendar quits.
 - Drag the left rail divider to widen the sidebar.
 - Accounts, re-showing a hidden calendar, and editing its label or colour are in **Settings → Calendar**.
 - **Remind me** is at the bottom of an open event (including read-only ones). Checking it adds one reminder: 30 minutes before, or 9:00 on the morning of an all-day event. The chips add the other quick sets (at time, 5, 10, 15, and 30 minutes, 1 and 2 hours, 1 day, 1 week; for all-day events: morning of, 1 day before, 2 days before, 1 week before). × drops one. The last × unchecks Remind me.
@@ -67,7 +70,8 @@ Calendar has to be open. When a reminder comes due, a card stays on the desk unt
 | `~/.local/state/sola/calendar/store.json` | Calendars and events |
 | `~/.local/state/sola/calendar/reminders.json` | Reminders for events on this computer |
 | `Topic::CalendarConfig` (bus, age-encrypted secrets) | Accounts and calendar shelf (hidden / alias / colour), set in **Settings → Calendar** |
+| `~/.config/sola/calendar/agenda.yaml` (`Topic::CalendarAgenda`) | Today through the next week, for the menubar clock |
 
 ## Limits
 
-Calendar does not reply to invites (no accept / decline) or add a whole repeating series from a file. It does not support provider alarms (Google / iCloud / CalDAV), authenticated ICS URLs, drag-to-create, a time zone picker, or showing these events in the menubar clock.
+Calendar does not reply to invites (no accept / decline) or add a whole repeating series from a file. It does not support provider alarms (Google / iCloud / CalDAV), authenticated ICS URLs, drag-to-create, or a time zone picker. An event over several days shows as a chip on each day, not one bar across them.

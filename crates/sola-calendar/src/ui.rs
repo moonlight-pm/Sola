@@ -4,14 +4,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{Datelike, NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
+use chrono::{NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
 use iced::event;
 use iced::keyboard;
 use iced::keyboard::key::Named as NamedKey;
 use iced::mouse;
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Space, button, checkbox, column, container, mouse_area, row, scrollable, text, toggler,
+    Space, button, checkbox, column, container, mouse_area, row, scrollable, stack, toggler,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Event, Length, Padding, Subscription, Task,
@@ -25,9 +25,10 @@ use sola_bus::topics::{
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::color_picker;
 use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
+use sola_kit::components::popover::style as popover_style;
 use sola_kit::components::prose::prose;
 use sola_kit::components::style::{
-    HAIRLINE_A, ON_FILL_DARK, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, mix_white,
+    HAIRLINE_A, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, mix_white,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input as kit_input;
@@ -39,13 +40,15 @@ use sola_kit::components::{
 use sola_kit::fonts;
 use sola_kit::theme::{color_to_hex, default_theme};
 
+mod board;
+
 use crate::bridge;
 use crate::model::{CalEvent, Calendar, Settings, Store, View, format_hm, parse_hex};
 use crate::paths::AppDirs;
 use crate::reminders::{self, ReminderBook};
 use crate::timeutil::{
-    WEEKDAYS, day_title, first_of_month, month_span, month_title, month_weeks_filled, next_month,
-    next_week, parse_pretty_date, pretty_date, prev_month, prev_week, today, week_of, week_title,
+    day_title, month_span, next_month, next_week, parse_pretty_date, pretty_date, prev_month,
+    prev_week, short_day, today, week_of,
 };
 use crate::worker::{CalCmd, CalNotice};
 
@@ -54,7 +57,12 @@ const SIDEBAR_W_MIN: f32 = 180.0;
 const SIDEBAR_W_MAX: f32 = 420.0;
 const INSPECTOR_W_MIN: f32 = 260.0;
 const INSPECTOR_W_MAX: f32 = 520.0;
-const CHROME_H: f32 = 44.0;
+/// Calendars beside the board from this window width.
+const SIDEBAR_FROM: f32 = 700.0;
+/// The inspector docks beside a board at least this wide (sidebar aside).
+const DOCK_FROM: f32 = 900.0;
+/// The floating inspector's width.
+const INSPECTOR_FLOAT_W: f32 = 320.0;
 const TOAST_TTL: Duration = Duration::from_secs(4);
 const QUICKVIEW_CAP: usize = 6;
 const DRAFT_LABEL_W: f32 = 64.0;
@@ -87,6 +95,11 @@ pub struct App {
     loaded: bool,
     /// `.ics` files to draft once [`Self::loaded`].
     pending_files: Vec<PathBuf>,
+    /// An event asked for from outside (a reminder card, the clock's
+    /// panel) before [`Self::loaded`].
+    pending_event: Option<String>,
+    /// The coming days for the menubar clock.
+    agenda: crate::agenda::Publisher,
 }
 
 #[derive(Debug, Clone)]
@@ -211,6 +224,8 @@ impl Default for App {
             pending_remind: None,
             loaded: false,
             pending_files: Vec::new(),
+            pending_event: None,
+            agenda: crate::agenda::Publisher::default(),
         }
     }
 }
@@ -285,6 +300,7 @@ impl App {
             }
             Msg::Tick => {
                 self.deliver_due();
+                self.publish_agenda();
                 Task::none()
             }
             Msg::Prev => {
@@ -353,6 +369,7 @@ impl App {
                         visible: cal.visible,
                     });
                 }
+                self.publish_agenda();
                 Task::none()
             }
             Msg::DefaultCal(id) => {
@@ -573,6 +590,28 @@ impl App {
         }
     }
 
+    /// The shown calendars' coming days to the menubar clock, once the
+    /// store has loaded (an empty store would blank what the clock knew).
+    fn publish_agenda(&mut self) {
+        if self.loaded {
+            self.agenda.publish(&self.store, today());
+        }
+    }
+
+    /// Open `id` from outside (a reminder card, the clock's panel): on
+    /// its day, in the inspector.
+    fn show_event(&mut self, id: &str) {
+        let Some(ev) = self.store.events.iter().find(|e| e.id == id).cloned() else {
+            tracing::info!(id, "asked to show an event the store does not have");
+            return;
+        };
+        self.cursor = ev
+            .start_date
+            .unwrap_or_else(|| ev.start.with_timezone(&chrono::Local).date_naive());
+        let reminders = self.reminders.offsets(&ev.id);
+        self.pane = Pane::Draft(draft_from_event(&ev, reminders));
+    }
+
     /// Draft each queued `.ics` (the last one stays open). Waits for the
     /// first snapshot so the calendar picker knows what you can edit.
     fn open_pending_files(&mut self) -> Task<Msg> {
@@ -621,7 +660,11 @@ impl App {
         if let Some(Topic::NotificationActivate(a)) = Topic::parse(message) {
             if a.app_id == APP_ID {
                 if let Some(id) = a.url.clone() {
-                    return self.update(Msg::OpenEvent(id));
+                    if self.loaded {
+                        self.show_event(&id);
+                    } else {
+                        self.pending_event = Some(id);
+                    }
                 }
             }
         }
@@ -737,8 +780,13 @@ impl App {
                 self.deliver_due();
                 if !self.loaded {
                     self.loaded = true;
+                    self.publish_agenda();
+                    if let Some(id) = self.pending_event.take() {
+                        self.show_event(&id);
+                    }
                     return self.open_pending_files();
                 }
+                self.publish_agenda();
             }
             CalNotice::EventSaved {
                 requested_id,
@@ -916,6 +964,10 @@ impl App {
         bridge::send(CalCmd::Sync { start, end });
     }
 
+    /// Calendars at the left once the window is wide enough for them
+    /// beside a month; the inspector docked at the right once the board
+    /// keeps [`DOCK_FROM`] beside it, else an open event floats over the
+    /// board's right edge (a half tile is 820 wide).
     pub fn view(&self) -> Element<'_, Msg> {
         let board: Element<'_, Msg> = match self.settings.view {
             View::Month => self.view_month(),
@@ -923,39 +975,50 @@ impl App {
             View::Day => self.view_day(),
         };
         let win = self.window_w.max(1.0);
-        let rest_w = (win - self.settings.sidebar_w).max(1.0);
-        let board_ratio = ((rest_w - self.settings.inspector_w) / rest_w).clamp(0.35, 0.88);
+        let (sidebar, rest_w) = self.sidebar_and_rest();
+        let board_ratio = self.board_ratio(rest_w);
         let sidebar_ratio = (self.settings.sidebar_w / win).clamp(0.08, 0.45);
         let palette = self.theme.extended_palette();
         let line = palette.background.stronger.color;
         let chrome = palette.background.weakest.color;
         let canvas = palette.background.base.color;
-        let main = split_with(
-            SplitDir::Vertical,
-            column![self.view_toolbar(), board]
-                .width(Length::Fill)
-                .height(Length::Fill),
-            board_ratio,
-            Msg::InspectorPress,
-            self.view_inspector(),
-            DividerColors {
-                a: canvas,
-                line,
-                b: chrome,
-            },
-        );
-        let body = split_with(
-            SplitDir::Vertical,
-            self.view_sidebar(),
-            sidebar_ratio,
-            Msg::SidebarPress,
-            main,
-            DividerColors {
-                a: chrome,
-                line,
-                b: canvas,
-            },
-        );
+        let board = column![self.view_bar(), board]
+            .width(Length::Fill)
+            .height(Length::Fill);
+        let main: Element<'_, Msg> = if rest_w >= DOCK_FROM {
+            split_with(
+                SplitDir::Vertical,
+                board,
+                board_ratio,
+                Msg::InspectorPress,
+                self.view_inspector(),
+                DividerColors {
+                    a: canvas,
+                    line,
+                    b: chrome,
+                },
+            )
+        } else if matches!(self.pane, Pane::Draft(_)) {
+            stack![board, self.floating_inspector()].into()
+        } else {
+            board.into()
+        };
+        let body = if sidebar {
+            split_with(
+                SplitDir::Vertical,
+                self.view_sidebar(),
+                sidebar_ratio,
+                Msg::SidebarPress,
+                main,
+                DividerColors {
+                    a: chrome,
+                    line,
+                    b: canvas,
+                },
+            )
+        } else {
+            main
+        };
         let mut col = column![body].width(Length::Fill).height(Length::Fill);
         if let Some(toast) = &self.toast {
             col = col.push(self.view_toast(toast));
@@ -966,12 +1029,38 @@ impl App {
             .style(canvas_style);
         sola_kit::window_frame(
             self.float.chrome_any(),
-            "Calendar",
+            self.range_title(),
             Msg::TitleDrag,
             Msg::TitleClose,
             Msg::TitleResize,
             canvas.into(),
         )
+    }
+
+    /// Whether the calendars show beside the board, and the width left
+    /// for the board and the inspector.
+    fn sidebar_and_rest(&self) -> (bool, f32) {
+        let win = self.window_w.max(1.0);
+        if win >= SIDEBAR_FROM {
+            (true, (win - self.settings.sidebar_w).max(1.0))
+        } else {
+            (false, win)
+        }
+    }
+
+    fn board_ratio(&self, rest_w: f32) -> f32 {
+        ((rest_w - self.settings.inspector_w) / rest_w).clamp(0.35, 0.88)
+    }
+
+    /// The board's width: what the calendars leave, less a docked
+    /// inspector.
+    fn board_w(&self) -> f32 {
+        let (_, rest_w) = self.sidebar_and_rest();
+        if rest_w >= DOCK_FROM {
+            rest_w * self.board_ratio(rest_w)
+        } else {
+            rest_w
+        }
     }
 
     fn view_sidebar(&self) -> Element<'_, Msg> {
@@ -1049,10 +1138,21 @@ impl App {
         }
         let today = today();
         let tomorrow = today.succ_opt().unwrap_or(today);
+        let picked = match &self.pane {
+            Pane::Day(d) => *d,
+            Pane::Draft(_) => self.cursor,
+        };
+        // Today, then the day picked on the board (tomorrow while that is
+        // today): with the inspector floating, the sidebar lists a day.
+        let second = if picked == today || picked == tomorrow {
+            self.quickview_section("Tomorrow".to_string(), tomorrow)
+        } else {
+            self.quickview_section(short_day(picked), picked)
+        };
         let sections = vec![
             SidebarSection::new("Calendars", items),
-            self.quickview_section("Today", today),
-            self.quickview_section("Tomorrow", tomorrow),
+            self.quickview_section("Today".to_string(), today),
+            second,
         ];
         let status = kit_text::caption(if self.status.is_empty() {
             " ".to_string()
@@ -1066,7 +1166,7 @@ impl App {
             .build()
     }
 
-    fn quickview_section(&self, title: &'static str, day: NaiveDate) -> SidebarSection<'_, Msg> {
+    fn quickview_section(&self, title: String, day: NaiveDate) -> SidebarSection<'_, Msg> {
         let events = self.store.visible_events_on(day);
         let extra = events.len().saturating_sub(QUICKVIEW_CAP);
         let mut items = Vec::new();
@@ -1100,214 +1200,7 @@ impl App {
         SidebarSection::new(title, items)
     }
 
-    fn view_toolbar(&self) -> Element<'_, Msg> {
-        let title = match self.settings.view {
-            View::Month => month_title(self.cursor),
-            View::Week => week_title(week_of(self.cursor)),
-            View::Day => day_title(self.cursor),
-        };
-        let nav = row![
-            kit_btn::labeled_sm("‹", kit_btn::ghost).on_press(Msg::Prev),
-            kit_btn::labeled_sm("›", kit_btn::ghost).on_press(Msg::Next),
-            kit_btn::labeled_sm("Today", kit_btn::secondary).on_press(Msg::Today),
-        ]
-        .spacing(SPACE_SM)
-        .align_y(Alignment::Center);
-        let views = row![
-            view_chip("Month", self.settings.view == View::Month, View::Month),
-            view_chip("Week", self.settings.view == View::Week, View::Week),
-            view_chip("Day", self.settings.view == View::Day, View::Day),
-        ]
-        .spacing(SPACE_XS)
-        .align_y(Alignment::Center);
-        container(
-            row![
-                nav,
-                kit_text::subheading(title).width(Length::Fill),
-                views,
-                kit_btn::labeled_sm("New Event", kit_btn::primary).on_press(Msg::NewEvent),
-            ]
-            .spacing(SPACE_LG)
-            .align_y(Alignment::Center)
-            .padding(Padding::from([SPACE_SM, SPACE_LG]))
-            .height(Length::Fixed(CHROME_H)),
-        )
-        .width(Length::Fill)
-        .style(chrome_style)
-        .into()
-    }
-
-    fn view_month(&self) -> Element<'_, Msg> {
-        let weeks = month_weeks_filled(self.cursor);
-        let this_month = first_of_month(self.cursor).month();
-        let today = today();
-        let selected = match self.pane {
-            Pane::Day(d) => Some(d),
-            Pane::Draft(_) => Some(self.cursor),
-        };
-        let mut rows: Vec<Element<'_, Msg>> = Vec::new();
-        rows.push(
-            row(WEEKDAYS
-                .iter()
-                .map(|d| {
-                    container(kit_text::caption(*d).style(kit_text::muted))
-                        .width(Length::Fill)
-                        .padding(Padding::from([SPACE_SM, SPACE_SM]))
-                        .into()
-                })
-                .collect::<Vec<_>>())
-            .into(),
-        );
-        for week in weeks {
-            let cells: Vec<Element<'_, Msg>> = week
-                .iter()
-                .map(|day| {
-                    self.month_cell(
-                        *day,
-                        *day == today,
-                        selected == Some(*day),
-                        day.month() == this_month,
-                    )
-                })
-                .collect();
-            rows.push(row(cells).spacing(1).height(Length::Fill).into());
-        }
-        container(column(rows).spacing(1).padding(SPACE_MD))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    }
-
-    fn month_cell(
-        &self,
-        day: NaiveDate,
-        is_today: bool,
-        selected: bool,
-        in_month: bool,
-    ) -> Element<'_, Msg> {
-        let events = self.store.visible_events_on(day);
-        let chips: Vec<Element<'_, Msg>> = events
-            .iter()
-            .map(|ev| event_chip(ev, self.store.calendar(&ev.calendar_id)))
-            .collect();
-        let events_el: Element<'_, Msg> = if chips.is_empty() {
-            Space::new().width(Length::Fill).height(Length::Fill).into()
-        } else {
-            crate::fit::stack(chips)
-        };
-        let mut num = container(
-            text(format!("{}", day.day()))
-                .size(12)
-                .font(fonts::ui_medium()),
-        )
-        .width(Length::Fixed(22.0))
-        .height(Length::Fixed(22.0))
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center);
-        if is_today {
-            num = num.style(today_disc);
-        } else if !in_month {
-            num = num.style(|theme: &Theme| container::Style {
-                text_color: Some(theme.extended_palette().secondary.base.text),
-                ..container::Style::default()
-            });
-        }
-        let body = column![num, events_el]
-            .spacing(SPACE_XS)
-            .padding(Padding::from([SPACE_XS, SPACE_SM]))
-            .align_x(Alignment::Start)
-            .width(Length::Fill)
-            .height(Length::Fill);
-        mouse_area(
-            container(body)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .clip(true)
-                .style(move |theme: &Theme| cell_style(theme, selected)),
-        )
-        .on_press(Msg::SelectDay(day))
-        .on_double_click(Msg::NewOn(day))
-        .into()
-    }
-
-    fn view_week(&self) -> Element<'_, Msg> {
-        let week = week_of(self.cursor);
-        let today = today();
-        let headers: Vec<Element<'_, Msg>> = week
-            .iter()
-            .map(|d| {
-                let label = format!(
-                    "{} {}",
-                    WEEKDAYS[d.weekday().num_days_from_sunday() as usize],
-                    d.day()
-                );
-                let mut t = kit_text::caption(label);
-                if *d == today {
-                    t = t.style(kit_text::accent);
-                } else {
-                    t = t.style(kit_text::muted);
-                }
-                mouse_area(
-                    container(t)
-                        .width(Length::Fill)
-                        .center_x(Length::Fill)
-                        .padding(SPACE_SM),
-                )
-                .on_press(Msg::SelectDay(*d))
-                .into()
-            })
-            .collect();
-        let cols: Vec<Element<'_, Msg>> =
-            week.iter().map(|d| self.agenda_column(*d, false)).collect();
-        column![
-            row(headers).padding(Padding::from([0.0, SPACE_MD])),
-            h_hairline(),
-            scrollable(row(cols).spacing(1).padding(SPACE_MD)).height(Length::Fill),
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-    }
-
-    fn view_day(&self) -> Element<'_, Msg> {
-        scrollable(self.agenda_column(self.cursor, true))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    }
-
-    fn agenda_column(&self, day: NaiveDate, wide: bool) -> Element<'_, Msg> {
-        let events = self.store.visible_events_on(day);
-        let mut rows: Vec<Element<'_, Msg>> = Vec::new();
-        for ev in events {
-            let cal = self.store.calendar(&ev.calendar_id);
-            let time = kit_text::caption(ev.timed_label()).style(kit_text::muted);
-            let title = kit_text::body(ev.display_title().to_string());
-            let disc = cal_disc(cal.map(|c| c.display_color()).unwrap_or("#7aa2f7"), true);
-            let row = row![disc, column![title, time].spacing(2)]
-                .spacing(SPACE_MD)
-                .align_y(Alignment::Center)
-                .padding(SPACE_SM);
-            rows.push(
-                button(row)
-                    .style(kit_btn::list_item(false))
-                    .width(Length::Fill)
-                    .on_press(Msg::OpenEvent(ev.id.clone()))
-                    .into(),
-            );
-        }
-        if rows.is_empty() {
-            rows.push(kit_text::caption("No events").style(kit_text::muted).into());
-        }
-        let inner = column(rows).spacing(SPACE_XS).padding(SPACE_SM);
-        let _ = wide;
-        mouse_area(container(inner).width(Length::Fill).padding(SPACE_XS))
-            .on_press(Msg::SelectDay(day))
-            .on_double_click(Msg::NewOn(day))
-            .into()
-    }
-
-    fn view_inspector(&self) -> Element<'_, Msg> {
+    fn inspector_content(&self) -> Element<'_, Msg> {
         let (body, actions): (Element<'_, Msg>, Option<Element<'_, Msg>>) = match &self.pane {
             Pane::Day(day) => (self.view_day_pane(*day), None),
             Pane::Draft(d) if d.read_only => (self.view_draft_read(d), None),
@@ -1319,11 +1212,46 @@ impl App {
         if let Some(actions) = actions {
             col = col.push(actions);
         }
-        container(col)
+        col.into()
+    }
+
+    fn view_inspector(&self) -> Element<'_, Msg> {
+        container(self.inspector_content())
             .width(Length::Fill)
             .height(Length::Fill)
             .style(chrome_style)
             .into()
+    }
+
+    /// The open event on a card over the board's right edge, with a close
+    /// at its corner (Escape closes it too). The card takes its clicks so
+    /// the day under it stays put.
+    fn floating_inspector(&self) -> Element<'_, Msg> {
+        let close = button(icon_svg(icon_handle("lucide/x"), 13))
+            .style(kit_btn::ghost)
+            .padding(4)
+            .on_press(Msg::ClosePane);
+        let card = container(stack![
+            self.inspector_content(),
+            container(close).align_right(Length::Fill).padding(SPACE_SM),
+        ])
+        .width(Length::Fixed(INSPECTOR_FLOAT_W))
+        .height(Length::Fill)
+        .style(popover_style);
+        container(
+            mouse_area(card)
+                .on_press(Msg::Tick)
+                .interaction(mouse::Interaction::Idle),
+        )
+        .align_right(Length::Fill)
+        .height(Length::Fill)
+        .padding(Padding {
+            top: board::BAR_H + SPACE_MD,
+            right: SPACE_MD,
+            bottom: SPACE_MD,
+            left: 0.0,
+        })
+        .into()
     }
 
     fn view_day_pane(&self, day: NaiveDate) -> Element<'_, Msg> {
@@ -1332,9 +1260,8 @@ impl App {
             kit_text::subheading(day_title(day))
                 .wrapping(Wrapping::Word)
                 .into(),
-            kit_btn::labeled("New Event", kit_btn::primary)
+            kit_btn::labeled_sm("New Event", kit_btn::secondary)
                 .on_press(Msg::NewOn(day))
-                .width(Length::Fill)
                 .into(),
         ];
         if events.is_empty() {
@@ -1994,48 +1921,6 @@ fn hide_cal_button<'a>(msg: Msg) -> Element<'a, Msg> {
         .into()
 }
 
-fn view_chip<'a>(label: &'a str, active: bool, view: View) -> Element<'a, Msg> {
-    let style = if active {
-        kit_btn::secondary
-    } else {
-        kit_btn::ghost
-    };
-    kit_btn::labeled_sm(label, style)
-        .on_press(Msg::SetView(view))
-        .into()
-}
-
-fn event_chip<'a>(ev: &'a CalEvent, cal: Option<&'a Calendar>) -> Element<'a, Msg> {
-    let color = cal
-        .and_then(|c| parse_hex(c.display_color()))
-        .unwrap_or(Color::from_rgb(0.48, 0.64, 0.97));
-    let disc = container(Space::new().width(8).height(8))
-        .width(Length::Fixed(8.0))
-        .height(Length::Fixed(8.0))
-        .style(move |_| container::Style {
-            background: Some(Background::Color(color)),
-            border: Border {
-                radius: 4.0.into(),
-                ..Default::default()
-            },
-            ..container::Style::default()
-        });
-    let label = if ev.all_day {
-        ev.display_title().to_string()
-    } else {
-        format!("{}  {}", ev.timed_label(), ev.display_title())
-    };
-    button(
-        row![disc, kit_text::caption(label)]
-            .spacing(SPACE_SM)
-            .align_y(Alignment::Center),
-    )
-    .style(kit_btn::ghost)
-    .padding([2, 4])
-    .on_press(Msg::OpenEvent(ev.id.clone()))
-    .into()
-}
-
 fn cal_disc<'a>(hex: &str, visible: bool) -> Element<'a, Msg> {
     let color = parse_hex(hex).unwrap_or(Color::from_rgb(0.48, 0.64, 0.97));
     let fill = if visible { color } else { Color::TRANSPARENT };
@@ -2075,55 +1960,6 @@ fn toast_style(theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(p.background.strong.color)),
         text_color: Some(p.background.base.text),
-        ..container::Style::default()
-    }
-}
-
-fn cell_style(theme: &Theme, selected: bool) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(if selected {
-            p.background.strong.color
-        } else {
-            mix_white(p.background.base.color, 0.02)
-        })),
-        border: Border {
-            color: mix_white(p.background.base.color, HAIRLINE_A),
-            width: 1.0,
-            radius: RADIUS_SM.into(),
-        },
-        ..container::Style::default()
-    }
-}
-
-fn today_disc(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(p.primary.base.color)),
-        text_color: Some(ON_FILL_DARK),
-        border: Border {
-            radius: 11.0.into(),
-            ..Default::default()
-        },
-        ..container::Style::default()
-    }
-}
-
-fn h_hairline() -> Element<'static, Msg> {
-    container(Space::new().width(Length::Fill).height(1))
-        .width(Length::Fill)
-        .height(1)
-        .style(hairline_style)
-        .into()
-}
-
-fn hairline_style(theme: &Theme) -> container::Style {
-    let p = theme.extended_palette();
-    container::Style {
-        background: Some(Background::Color(mix_white(
-            p.background.base.color,
-            HAIRLINE_A,
-        ))),
         ..container::Style::default()
     }
 }

@@ -797,6 +797,45 @@ pub struct CalendarConfig {
     pub calendars: Vec<CalendarShelf>,
 }
 
+/// Calendar's coming days, for the menubar clock's panel (sola-calendar
+/// → shell, `Topic::CalendarAgenda`, persistent): the shown calendars'
+/// events from today through the next week, a day at a time, so the panel
+/// lists today's while Calendar is closed (what it last knew).
+/// Republished when the events, the calendars shown or the day change.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalendarAgenda {
+    pub days: Vec<AgendaDay>,
+}
+
+/// One local day of [`CalendarAgenda`]: an event over several days, or a
+/// repeat, shows on each day it covers.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgendaDay {
+    /// Local date, `YYYY-MM-DD`.
+    pub date: String,
+    /// All-day first, then by start, as Calendar lists them.
+    pub events: Vec<AgendaEvent>,
+}
+
+/// An event in [`AgendaDay`].
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgendaEvent {
+    /// Calendar's id for it; `NotificationActivate { app_id:
+    /// "sola-calendar", url: id }` opens it there.
+    pub id: String,
+    pub title: String,
+    /// Its calendar's colour, `#rrggbb`.
+    pub color: String,
+    pub all_day: bool,
+    /// Unix seconds (unused for an all-day event).
+    pub start: i64,
+    pub end: i64,
+    pub location: String,
+}
+
 /// One calendar as shown in Settings and the Calendar sidebar.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -1776,6 +1815,12 @@ define_topics! {
     // Appended last.
     #[sticky]
     IdleFade(IdleFade),
+
+    // Calendar's coming days for the menubar clock (sola-calendar →
+    // shell). Persistent in its own namespace, so the panel has today's
+    // events while Calendar is closed. Appended last.
+    #[persistent(namespace = "calendar/agenda")]
+    CalendarAgenda(CalendarAgenda),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1804,6 +1849,7 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::ThemeVariations
             | TopicKind::IdleKeep
             | TopicKind::IdleFade
+            | TopicKind::CalendarAgenda
     )
 }
 
@@ -2009,6 +2055,30 @@ mod tests {
         }
         assert!(TopicKind::IdleFade.behavior().is_sticky());
         assert!(topic_kind_is_after_mail_status(TopicKind::IdleFade));
+    }
+
+    #[test]
+    fn calendar_agenda_is_persistent_and_roundtrips() {
+        let agenda = CalendarAgenda {
+            days: vec![AgendaDay {
+                date: "2026-10-26".into(),
+                events: vec![AgendaEvent {
+                    id: "ev-1".into(),
+                    title: "Design review".into(),
+                    color: "#e8b84a".into(),
+                    all_day: false,
+                    start: 1_793_030_400,
+                    end: 1_793_032_200,
+                    location: String::new(),
+                }],
+            }],
+        };
+        match Topic::parse(&Topic::CalendarAgenda(agenda.clone()).to_message()) {
+            Some(Topic::CalendarAgenda(back)) => assert_eq!(back, agenda),
+            other => panic!("expected CalendarAgenda, got {other:?}"),
+        }
+        assert!(TopicKind::CalendarAgenda.behavior().is_persistent());
+        assert!(topic_kind_is_after_mail_status(TopicKind::CalendarAgenda));
     }
 
     #[test]

@@ -119,8 +119,15 @@ pub fn items_card(items: Vec<MenuItem>, app_id: String) -> Element<'static, Msg>
 /// Render the calendar dropdown, right-anchored under the menubar clock,
 /// over a full-screen dismiss backdrop (same window as the menu dropdown).
 fn calendar_panel(shell: &crate::app::Shell) -> Element<'_, Msg> {
-    let today = shell.menubar.clock_now.date_naive();
-    crate::menu::host_card(crate::calendar::view(shell.calendar_month, today, &shell.theme))
+    let now = shell.menubar.clock_now;
+    let today = now.date_naive();
+    crate::menu::host_card(crate::calendar::view(
+        shell.calendar_month,
+        today,
+        now,
+        shell.today_events(today),
+        &shell.theme,
+    ))
 }
 
 /// Build a menu item element from owned data (no borrows from caller's locals).

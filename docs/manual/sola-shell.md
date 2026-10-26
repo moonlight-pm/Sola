@@ -87,7 +87,12 @@ panel is open. Windows and the tab bar start a gap below the row.
 The clock's panel is the month: six weeks from the Sunday on or before
 the 1st, the days of the months either side faint, today on an accent
 circle. ‹ and › step the month; Today comes back to this one (dim while
-this month shows).
+this month shows). Under the month, **Today** lists today's events from
+Calendar: its calendar's colour, the time (or "all day") and the title;
+one that has ended dims, one under way is brighter. Click one and
+Calendar shows it, starting Calendar if it is closed. Past five, a count
+opens Calendar. The list is what Calendar last knew, so it is there with
+Calendar closed; it appears once Calendar has run.
 
 CPU / GPU / MEM / RX / TX in the menubar are fixed LED graphs of the
 last 12 seconds: a column a second, white, turning the theme's warning
