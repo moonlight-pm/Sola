@@ -14,7 +14,8 @@ use iced::{event, keyboard, window};
 
 use sola_bus::Message;
 use sola_bus::topics::{
-    AgentIslandAction, AppNotification, IslandAction, IslandState, SplitDir, Topic, TopicKind,
+    AgentIslandAction, AppNotification, IslandAction, IslandState, MenuActionPayload, SplitDir,
+    Topic, TopicKind,
 };
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
@@ -33,6 +34,7 @@ mod cards;
 mod catalog;
 mod cli;
 mod hooks;
+mod instance;
 mod islands;
 mod menu;
 mod paths;
@@ -81,6 +83,22 @@ const MIN_PANE_PX: f32 = 80.0;
 
 fn main() -> iced::Result {
     startup(APP_ID);
+
+    // One Projects: a second launch asks the running one to show its
+    // project. Before tmux: the helpers below act on the running one's
+    // server.
+    if !instance::claim() {
+        BusSetup::new(APP_ID).install();
+        if let Ok(mut client) = bus().lock() {
+            if let Err(e) = client.emit(Topic::MenuAction(MenuActionPayload {
+                app_id: APP_ID.into(),
+                action_id: instance::RAISE.into(),
+            })) {
+                tracing::warn!("asking the running Projects to show itself failed: {e:?}");
+            }
+        }
+        return Ok(());
+    }
 
     // Must precede any tmux helper — do not share sola-terminal's server.
     tmux::configure(TMUX_SOCKET, TMUX_UNIT, TMUX_PREFIX);
@@ -1030,6 +1048,18 @@ impl App {
                         match pid {
                             Some(id) => self.open_spawn(&id),
                             None => self.open_add(),
+                        }
+                    }
+                    instance::RAISE => {
+                        let pid = self
+                            .tabs
+                            .iter()
+                            .find(|w| w.id == self.selected)
+                            .map(|w| w.project_id.clone())
+                            .or_else(|| self.projects.first().map(|p| p.id.clone()));
+                        match pid {
+                            Some(id) => self.show_project(&id),
+                            None => Task::none(),
                         }
                     }
                     "add-project" => self.open_add(),

@@ -265,9 +265,11 @@ the application.
 
 `sola-session` has no notion of a single instance: every launch starts a
 new process. Applications that keep one instance do it themselves:
-Browser (with its web apps), Paint, Arcade, and Design. A second process
-hands its request (a URL, an image, or a request to come forward) to the
-running one and exits. `sola-session` reaps it like any other exit.
+Browser (with its web apps), Paint, Arcade, Design, Calendar, Terminal, and
+Projects. A second process hands its request (a URL, an image, a file, a
+new tab, or a request to come forward) to the running one and exits.
+`sola-session` reaps it like any other exit. A second Projects shows the
+running one's current project.
 
 The launcher does not start a second copy of an application hidden with
 Super+H: choosing it shows and raises the hidden one
