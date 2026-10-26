@@ -2368,6 +2368,7 @@ impl<E: Engine> App<E> {
                 {
                     self.vault_copy_flash = None;
                 }
+                let mut launched = Task::none();
                 while let Some(h) = crate::instance::try_recv_handoff() {
                     match h {
                         crate::instance::Handoff::OpenUrl(url) => {
@@ -2375,9 +2376,15 @@ impl<E: Engine> App<E> {
                             tracing::info!(%url, "opening handed-off URL in this chrome");
                             self.open_tab(url, true);
                         }
-                        crate::instance::Handoff::Activate => {
-                            tracing::info!("activate handoff — showing the active page");
-                            self.windows.show(self.cached_active);
+                        crate::instance::Handoff::Launch => {
+                            // A launch (the shell's launcher, a bare
+                            // `sola-browser`) opens a window, like ⌘T.
+                            tracing::info!("launch handoff — opening a new page window");
+                            let opened = crate::integration::run_intent(
+                                self,
+                                crate::integration::BrowserIntent::NewBlankTab,
+                            );
+                            launched = Task::batch([launched, opened]);
                         }
                         crate::instance::Handoff::OpenApp(id) => self.open_app(&id),
                     }
@@ -2567,13 +2574,14 @@ impl<E: Engine> App<E> {
                         js_dlg,
                         http_auth,
                         agent,
+                        launched,
                         iced::widget::operation::focus(vault_otp_id()),
                     ]);
                 }
                 #[cfg(feature = "bitwarden")]
-                return Task::batch([clip, totp_clip, js_dlg, http_auth, agent]);
+                return Task::batch([clip, totp_clip, js_dlg, http_auth, agent, launched]);
                 #[cfg(not(feature = "bitwarden"))]
-                return Task::batch([clip, js_dlg, http_auth, agent]);
+                return Task::batch([clip, js_dlg, http_auth, agent, launched]);
             }
             Msg::Bus(message) => {
                 self.windows.update(&message);
@@ -2999,6 +3007,13 @@ impl<E: Engine> App<E> {
     /// sampling the previous tab's texture until a new frame arrives
     /// (and static pages may never produce one).
     pub fn switch_active_tab(&mut self, id: TabId) {
+        // The location bar was the other page's: a page that becomes active
+        // (⌘W back to the opener, a click on its window) starts unfocused,
+        // or its history suggestions would open over it. ⌘T / ⌘L focus it
+        // after switching.
+        if id != self.cached_active {
+            self.set_url_bar_focused(false);
+        }
         self.cached_active = id;
         // Optimistic: worker frame filter reads this before SetActiveTab is
         // pumped. Without this, every buffer-rendered is drop_bg → black page.

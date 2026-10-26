@@ -88,6 +88,12 @@ pub struct Stacks {
     /// Saved index of each restored window, so windows that come back in
     /// any order still line up as saved.
     ranks: HashMap<u32, usize>,
+    /// The tab with keyboard focus: a new window opens right after it.
+    focused: Option<u32>,
+    /// The focused tab and the last window opened from it while it kept
+    /// focus (tabs opened behind): the next one goes after that one, so a
+    /// run of them stays in the order they were opened.
+    opened: Option<(u32, u32)>,
 }
 
 impl Default for Stacks {
@@ -106,6 +112,8 @@ impl Stacks {
             restore_until: None,
             ghosts: Vec::new(),
             ranks: HashMap::new(),
+            focused: None,
+            opened: None,
         }
     }
 
@@ -125,11 +133,13 @@ impl Stacks {
 
     /// Place a new window. In order: the place its key just left, its
     /// key's saved place (for a tab with neither, its app's), Floating for
-    /// `floats`, else the end of the showing workspace's landing zone
-    /// (shown): Full while it is up or nothing is tiled, else the last
-    /// focused half. `returning` windows (the ones present when the shell
-    /// starts) take a remembered place if there is one and otherwise join
-    /// without being shown over the zone's tab.
+    /// `floats`, else the showing workspace's landing zone (shown): Full
+    /// while it is up or nothing is tiled, else the last focused half. It
+    /// goes right after the focused tab when that tab is in the zone (after
+    /// the last window opened from it, while it kept focus), else at the
+    /// end. `returning` windows (the ones present when the shell starts,
+    /// and tabs opened behind) take a remembered place if there is one
+    /// and otherwise join without being shown over the zone's tab.
     pub fn place(
         &mut self,
         window_id: u32,
@@ -158,10 +168,19 @@ impl Stacks {
         let desk = &mut self.desks[self.showing];
         let zone = if floats { Zone::Float } else { desk.landing() };
         let show = !(returning && desk.column(zone).shown.is_some());
-        let shown = desk.push(tab, zone, show);
+        let tabs = &desk.column(zone).tabs;
+        let index_of = |w: u32| tabs.iter().position(|t| t.window_id == w);
+        let opener = self.focused.filter(|&f| index_of(f).is_some());
+        let after = match (opener, self.opened) {
+            (Some(f), Some((from, last))) if from == f && index_of(last).is_some() => Some(last),
+            _ => opener,
+        };
+        let at = after.and_then(index_of).map_or(tabs.len(), |i| i + 1);
+        let shown = desk.insert(tab, zone, at, show);
         if shown {
             desk.pick(zone);
         }
+        self.opened = opener.map(|f| (f, window_id));
         Placed {
             zone,
             shown,
@@ -189,7 +208,7 @@ impl Stacks {
         if slot.zone == Zone::Float {
             desk.float_z.push(window_id);
         } else if slot.shown || col.shown.is_none() {
-            col.shown = Some(window_id);
+            col.show(window_id);
         } else {
             shown = false;
         }
@@ -226,10 +245,14 @@ impl Stacks {
     }
 
     /// A window closed. Its place waits [`GHOST_GRACE`] for its app to
-    /// come back. A zone whose shown tab left shows the next tab (else
-    /// the previous). Returns the zone it was in.
+    /// come back. A zone whose shown tab left shows the tab it showed
+    /// before (else the next, else the previous). Returns the zone it was
+    /// in.
     pub fn remove(&mut self, window_id: u32, now: Instant) -> Option<Zone> {
         self.parents.retain(|child, parent| *child != window_id && *parent != window_id);
+        if self.focused == Some(window_id) {
+            self.focused = None;
+        }
         let workspace = self.desks[self.desk_of(window_id)?].id.clone();
         let (zone, at, tab, was_shown) = self.take(window_id)?;
         self.ghosts.push((
@@ -303,7 +326,7 @@ impl Stacks {
             desk.float_z.retain(|&w| w != window_id);
             desk.float_z.push(window_id);
         } else {
-            desk.column_mut(zone).shown = Some(window_id);
+            desk.column_mut(zone).show(window_id);
             desk.pick(zone);
         }
         true
@@ -317,6 +340,10 @@ impl Stacks {
         let Some(d) = self.desk_of(window_id) else {
             return;
         };
+        self.focused = Some(window_id);
+        if self.opened.is_some_and(|(from, _)| from != window_id) {
+            self.opened = None;
+        }
         let desk = &mut self.desks[d];
         if let Some(zone) = desk.zone_of(window_id).filter(|z| is_half(*z)) {
             desk.last_half = zone;
@@ -345,7 +372,7 @@ impl Stacks {
         if zone == Zone::Float {
             desk.float_z.push(window_id);
         } else {
-            col.shown = Some(window_id);
+            col.show(window_id);
             desk.pick(zone);
         }
         true
@@ -363,6 +390,46 @@ impl Stacks {
         let n = tabs.len();
         let next = if back { (i + n - 1) % n } else { (i + 1) % n };
         Some(tabs[next].window_id)
+    }
+
+    /// The window group (zone) after (or before) `from`'s on the showing
+    /// workspace, wrapping, skipping groups with nothing to show — and what
+    /// it shows: a tiled zone's shown tab, the top float. Without `from` (or
+    /// from a window in no group), the first (the last, `back`). `None` when
+    /// no other group has anything to show.
+    pub fn step_group(
+        &self,
+        from: Option<u32>,
+        back: bool,
+        hidden: &dyn Fn(&str) -> bool,
+    ) -> Option<u32> {
+        let desk = &self.desks[self.showing];
+        let groups: Vec<(Zone, u32)> = ZONES
+            .iter()
+            .filter_map(|&zone| {
+                let front = if zone == Zone::Float {
+                    desk.float_z.iter().rev().copied().find(|&w| {
+                        desk.tab(w).is_some_and(|t| !hidden(&t.app_id))
+                    })
+                } else {
+                    desk.visible_shown(zone, hidden)
+                };
+                front.map(|w| (zone, w))
+            })
+            .collect();
+        let from = from.map(|w| self.parent_of(w).unwrap_or(w));
+        let here = from
+            .and_then(|w| desk.zone_of(w))
+            .and_then(|z| groups.iter().position(|(g, _)| *g == z));
+        let n = groups.len();
+        let next = match here {
+            Some(_) if n < 2 => return None,
+            Some(i) if back => (i + n - 1) % n,
+            Some(i) => (i + 1) % n,
+            None if back => n.checked_sub(1)?,
+            None => 0,
+        };
+        groups.get(next).map(|(_, w)| *w)
     }
 
     /// Toggle Cinema (the whole output, menubar and bar included) for

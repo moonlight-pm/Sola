@@ -28,7 +28,8 @@ static HANDOFF_RX: OnceLock<Mutex<Receiver<Handoff>>> = OnceLock::new();
 #[derive(Debug, Clone)]
 pub enum Handoff {
     OpenUrl(String),
-    Activate,
+    /// A bare launch: open a new page window.
+    Launch,
     /// Open web app `<id>`'s window, or bring it up.
     OpenApp(String),
 }
@@ -140,7 +141,7 @@ fn read_handoff(stream: UnixStream) -> Option<Handoff> {
 
 /// One handoff line. Connect-only (no line) is a liveness probe —
 /// `chrome_is_running` and `sock_is_live` just connect and drop. Treating
-/// that as Activate made every shell OpenUrl check queue a raise, which
+/// that as `@activate` made every shell OpenUrl check queue a raise, which
 /// re-probed the sock and flooded the chrome.
 fn parse_line(line: &str) -> Option<Handoff> {
     let line = line.trim();
@@ -148,7 +149,7 @@ fn parse_line(line: &str) -> Option<Handoff> {
         return None;
     }
     if line == ACTIVATE {
-        Some(Handoff::Activate)
+        Some(Handoff::Launch)
     } else if let Some(rest) = line
         .strip_prefix(OPEN_APP)
         .filter(|r| r.is_empty() || r.starts_with(' '))
@@ -258,7 +259,7 @@ mod tests {
     #[test]
     fn activate_line_round_trip() {
         assert!(parse_line("").is_none(), "empty connect is a probe");
-        assert!(matches!(parse_line(ACTIVATE), Some(Handoff::Activate)));
+        assert!(matches!(parse_line(ACTIVATE), Some(Handoff::Launch)));
         match parse_line("https://wiki.example") {
             Some(Handoff::OpenUrl(u)) => assert_eq!(u, "https://wiki.example"),
             other => panic!("{other:?}"),

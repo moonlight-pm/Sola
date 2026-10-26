@@ -35,7 +35,7 @@ impl LauncherState {
 ///
 /// Entries with an empty `command` are label-only overlays (e.g. Arcade's
 /// gamescope host name while a nest is running) and never appear in the
-/// launcher — they exist so the switcher/menubar can resolve a display name.
+/// launcher — they exist so the menubar and tab bar can resolve a display name.
 pub fn filter(apps: &ApplicationsConfig, query: &str) -> Vec<String> {
     let q = query.trim().to_lowercase();
     apps.apps

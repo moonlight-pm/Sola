@@ -8,7 +8,8 @@ Chromium (CEF) engine that renders off-screen on the CPU.
 ## Launch
 
 Open **Browser** from the shell launcher, or run
-`/opt/sola/bin/sola-browser`.
+`/opt/sola/bin/sola-browser`. With the browser running, either opens a new
+page window (as ⌘T does), placed right after the focused tab.
 
 The same window is also a call-plane owner: `solactl browser` lists tabs,
 opens and moves them, and snapshots and clicks the page (YAML with refs).
@@ -40,7 +41,8 @@ top (the same as a click) and focuses the new tab.
 
 Only **one** browser chrome runs. A second `sola-browser` (or
 `solactl open`) hands the URL to
-`~/.local/share/sola/browser/chrome.sock` and exits.
+`~/.local/share/sola/browser/chrome.sock` and exits; with no URL it asks
+for a new page window.
 
 Installing Sola copies the desktop file to `~/.local/share/applications/`
 and re-registers MIME defaults from every `sola-*.desktop` `MimeType=`
@@ -89,7 +91,7 @@ again). Closed tabs stay closed across a restart; `⌘⇧T` reopens them.
 
 Switching profiles is **instant**. The shell still shows one **Browser**
 app. Each profile keeps its own CEF cookie store in a headless engine
-process (no extra switcher entries). The location bar updates
+process (no extra windows or tab bar rows). The location bar updates
 immediately; the page area blanks until the new
 profile's tab paints (it does not keep showing the previous identity). A
 tab you have already opened this session appears instantly; one that has
@@ -112,8 +114,11 @@ Another page window on screen shows its page live under a read-only
 address bar; click into it to make it the active page. Pages stacked
 behind the shown one in a zone rest until shown.
 
-`⌘T` opens a blank page window in the focused zone. `⌘W` closes the page
-and its window; closing the last page window quits the browser.
+`⌘T` opens a blank page window right after the focused one, in its zone.
+`⌘W` closes the page and its window, and the zone shows the page it showed
+before (the one you opened it from, if you did not switch away); the
+location bar there starts unfocused. Closing the last page window quits
+the browser.
 
 `⌘⇧T` (Browser → **Reopen Closed Tab**) reopens the most recently closed
 page in a new window; press it again for the one before that. The stack is
@@ -122,7 +127,8 @@ saved there too, each with a stable id, so every page window keeps its
 place in the tab bar across restarts.
 
 Links from other apps (`xdg-open`, `solactl open`) open a new page window.
-`⌘`-click opens a page window behind the current one. A page
+`⌘`-click opens a page window behind the current one, right after it
+(several in a row keep the order you opened them). A page
 `window.open` (database consoles, SSH terminals, and similar) or a
 `target=_blank` link opens a page window in front, focused.
 

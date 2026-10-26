@@ -18,7 +18,7 @@ pub const ISLAND_H: i32 = 28;
 /// start a gap below it (at 48), so the row is gap + island + gap.
 pub const MENUBAR_HEIGHT: i32 = GAP + ISLAND_H;
 
-/// Iced open size/position for menu, launcher, and switcher: usable area
+/// Iced open size/position for menu and launcher: usable area
 /// below the menubar. Matches [`Self::default_app_frame`].
 pub fn overlay_open_rect(output_w: i32, output_h: i32) -> (f32, f32, f32, f32) {
     let w = output_w.max(1) as f32;
@@ -214,7 +214,7 @@ pub fn menu_overlay_frame(
     Some(menu_live_frame(window_id, ow, oh, spec))
 }
 
-/// Live size for a centered overlay card (Super+K; launcher/switcher can
+/// Live size for a centered overlay card (Super+K; the launcher can
 /// reuse this later). Same park/live split as [`menu_overlay_frame`]:
 /// dismissed is 2×2 off-output; shown is the card plus shadow pad, never
 /// the full usable area. A 1080p wgpu fill on software GL pegs a core

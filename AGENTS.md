@@ -98,7 +98,7 @@ crates/
   sola-session/        # User-app session manager
   sola-settings/       # Settings panel (incl. mail config)
   sola-oath/           # Oath catalog app (`oath --json`); launcher entry only on Oath
-  sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
+  sola-shell/          # Desktop shell — launcher, tab bar, menubar, zoning
   sola-terminal/       # Untitled-shell terminal (alacritty grid + iced); also a lib
   sola-projects/       # Projects: project / tab rail + agent-aware PTYs
   sola-mail/           # Kit-native mail client
@@ -387,15 +387,17 @@ apps need shared pieces — no speculative widgets.
 ## sola-shell (the Iced desktop shell)
 
 A single **`iced::daemon`** multi-window application. The daemon opens no
-default window; a boot task opens the menubar, then parks menu / launcher /
-switcher / selection at 2×2 (`WindowKind`). Show is Frame to live output, not
-a new map. The
+default window; a boot task opens the menubar and the tab bar, then parks
+menu / launcher / selection / notify / shortcuts at 2×2 (`WindowKind`). Show
+is Frame to live output, not a new map. The
 `Shell` struct holds the per-window `iced::window::Id`s, focused app/window,
-MRU apps + per-app MRU windows, known windows, the application list, parsed app
-menus, output size, menu open-state, switcher/launcher sub-state, and zoning
-state. `Msg` covers bus events, window lifecycle, menu open/hover/close/action,
-launcher (query/nav/launch), switcher (nav/hover/confirm/cancel + a focus-hover
-timer), zoning, clock tick, and toasts. It path-depends on `sola-kit`.
+MRU apps + per-app MRU windows, known windows, the tab bar's model
+(`stacks::Stacks`: workspaces, zones, each zone's tabs), the application
+list, parsed app menus, output size, menu open-state, launcher sub-state,
+and zoning state. `Msg` covers bus events, window lifecycle, menu
+open/hover/close/action, launcher (query/nav/launch), tab and group
+stepping (Super+\` / Super+Tab), a focus-hover timer, zoning, clock tick,
+and toasts. It path-depends on `sola-kit`.
 
 Spec: `docs/specs/2026-05-22-sola-shell-iced-port-design.md`.
 

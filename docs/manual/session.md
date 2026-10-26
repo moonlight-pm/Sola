@@ -133,7 +133,7 @@ ignoring case. Each entry has:
 | Field | Meaning |
 |---|---|
 | `app_id` | The identifier; see [Application ids](#application-ids) |
-| `label` | The name in the launcher and the switcher |
+| `label` | The name in the launcher and the tab bar |
 | `command` | What `LaunchApp` carries |
 | `icon` | An icon pack name under `/opt/sola/share/icons` (`lucide/terminal`, `simpleicons/firefox`), or a path to an image |
 | `kind` | `command`, or `web` for a [web app](web-apps.md) |
@@ -170,7 +170,7 @@ or from the window's process.
 **Configure** starts a new entry with both filled in.
 
 Other applications publish entries too. Arcade adds an entry with no
-command so the switcher can name a running game. Entries with no command
+command so the tab bar can name a running game. Entries with no command
 never appear in the launcher.
 
 ### Web apps

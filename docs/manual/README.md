@@ -15,7 +15,7 @@ two lists the same).
 | [The call plane](call.md) | `sola-call`: owners and methods, the wire format, timeouts, observers, MCP |
 | [Compositor](compositor.md) | River and `sola-river`: window management, focus, zones, outputs, screenshots, input |
 | [Session manager](session.md) | `sola-session`: launching, tracking, and closing applications; opening URLs and files |
-| [Shell](sola-shell.md) | `sola-shell`: menubar, launcher, switcher, zones, keyboard shortcuts |
+| [Shell](sola-shell.md) | `sola-shell`: menubar, tab bar, launcher, zones, keyboard shortcuts |
 | [Theme and toolkit](theme.md) | `sola-kit` and the theme protocol: palette tokens, font roles, live updates |
 | [solactl](solactl.md) | The command line: every command, method, and flag |
 | [Applications](applications.md) | The applications, one line each, with links to their notes |

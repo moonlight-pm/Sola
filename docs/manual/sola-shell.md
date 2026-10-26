@@ -1,24 +1,33 @@
 # Shell
 
-The Shell (`sola-shell`) is Sola's desktop shell: the menubar, the
-launcher, the app switcher, zoning, and the keyboard shortcuts overlay.
+The Shell (`sola-shell`) is Sola's desktop shell: the menubar, the tab
+bar, the launcher, zoning, and the keyboard shortcuts overlay.
 
 ## Keyboard
 
 | Chord | Action |
 |-------|--------|
 | Super+Space | Launcher |
-| Super+Tab | App switcher (release Super to raise) |
-| Super+Backtick | Cycle windows of the focused app |
+| Super+Tab | Next window group (Super+Shift+Tab: previous) |
+| Super+Backtick | Next tab in the focused group (Super+Shift+Backtick: previous) |
 | Super+H | Hide the focused app |
 | Super+Q | Close the focused app |
 | Super+K | Keyboard shortcuts overlay (same chord as Omarchy) |
 | Super+Shift+3 / 4 / 5 | Screenshot: full output / selection (freeze then marquee) / focused window buffer |
 | Super+Numpad | Zone snap (NumLock on or off) |
 
-Super+Tab opens with the previous app highlighted. An icon the pointer is
-already resting on stays unselected until the pointer moves. Releasing
-Super raises the highlighted app.
+A window group is a zone of the [tab bar](#tab-bar): Full, Left, Right,
+Floating. Super+Tab focuses the next group that has a window to show, in
+bar order and wrapping, showing its tab (the top float, for Floating); a
+group in Full brings Full on screen, one in a half brings the halves.
+Super+Backtick steps through that group's tabs. Between the two you can
+reach every tab.
+
+Focus follows the mouse only when the mouse moves. When a keyboard
+switch, a new window or a close leaves the pointer resting on another
+window, focus stays where it went until you move the mouse; then it
+follows the pointer again (after a short pause), even within the window
+the pointer was already on.
 
 The number pad types digits at session start (NumLock is turned on for
 each keyboard). Super+Numpad zoning still works if you turn NumLock off
@@ -31,6 +40,15 @@ Shortcuts**. Type in the overlay to filter; click an entry or press Enter
 to run the action. Escape or Super+K again dismisses it, and so does a
 click on the pad around the card (the same as a menu dropdown). Clicks on
 the desk pass through: the overlay is the card, not a full-output dim.
+
+### Launcher
+
+Super+Space opens the launcher; type to filter and press Enter (or click)
+to launch. Launching always opens a new window of the app you pick, even
+when it is running: the browser opens a new page window and Terminal a new
+tab window, each right after the focused tab. Design, Paint and Arcade keep
+a single window and bring it up instead. An app you hid with Super+H is
+shown again rather than started twice.
 
 ## Flower menu
 
@@ -72,8 +90,8 @@ warning past 75% and its danger past 90% (RX in the accent, TX in
 success). Click one for its panel, which draws the same LEDs larger and
 whole (no dithered quarter-dots; a dot lights once its column reaches its
 middle): the value in large type, the last minute as columns tinted the same
-way, per-thread load as one column per thread (a core's threads side by
-side, a gap between cores), top processes with LED bars, memory
+way, per-thread load as one column per thread (a gap between threads, two
+between cores), top processes with LED bars, memory
 and VRAM as a row of LEDs (used lit, cache dim, free dark), and the rest
 as figures. Colors follow the theme.
 
@@ -121,6 +139,13 @@ zone and focus it; drag a row to reorder it or move it to another zone.
 Hovering a row shows a red close dot, the same as a window's own: it
 closes that window as the window's own close dot would.
 
+A new window opens right after the window that had focus, in its zone
+(a browser page opened with ⌘T or a link, a Terminal tab, a window from
+the launcher). Several opened behind it from the same window (⌘-click)
+stay in the order you opened them. Closing the window a zone shows brings
+back the one it showed before, so closing a page you just opened returns
+to the page it came from.
+
 - The focused window's row is the bright pill.
 - The window a zone is showing is lifted a step while it is on screen,
   and in full ink without a lift while its zone is not (Full while the
@@ -146,7 +171,7 @@ windows too.
 Super+H does **not** close the app. Its surfaces drop out of composition
 (River `hide`), so they are not drawn until you bring the app back:
 
-- Super+Tab — hidden apps stay in the switcher
+- the tab bar — click its row
 - Super+Space — pick a running hidden app to unhide (this does not spawn a
   second copy)
 
@@ -166,8 +191,6 @@ The bell shows the accent color while there are unseen items; clicking it
 returns it to normal chrome. There is no Clear All; the group × dismisses
 that app’s missed items. Click a row to raise the source.
 
-Super+Tab shows a count on an app's icon for notifications you have not
-opened in the pile or visited in that app (Mail uses inbox unread).
 Super+Shift+4 with the panel open keeps the panel in the freeze.
 
 ## Screenshots
@@ -193,4 +216,4 @@ chord copies to the clipboard.
 - Hide is per `app_id` (every window of that app). Steam id variants can
   miss.
 - There is no hide animation.
-- Super+H is ignored while the switcher or launcher is up.
+- Super+H is ignored while the launcher is up.

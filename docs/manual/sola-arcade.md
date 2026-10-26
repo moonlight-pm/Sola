@@ -4,7 +4,7 @@ Arcade is a vertical list of your Steam titles, built from Steam's data on
 disk (library manifests, `localconfig` activity, `appinfo` names), with
 Steam's hero banner art when it is cached. **Play** starts an installed
 title under windowed gamescope, so the game is one normal host window: it
-floats, zones, and shows in Super+Tab like any other.
+floats, zones, and has a tab bar row like any other.
 
 ## Requirements
 
@@ -138,7 +138,7 @@ the same path, through `CloseApp` and a local `pkill`.
 | **Pointer** | The host cursor is gamescope's nested X cursor, scaled to about 36 px through `--cursor-scale-height` (the same as the initial `-H`). Without that, Factorio-class titles show a giant pointer over the nest. |
 
 While a nest is up, Arcade publishes a catalog and menu label, so the
-menubar and the app switcher show the game's title. River rewrites an empty
+menubar and the tab bar show the game's title. River rewrites an empty
 gamescope `app_id` to `gamescope` from the process command line when
 needed.
 

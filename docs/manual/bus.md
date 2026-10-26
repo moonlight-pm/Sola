@@ -202,7 +202,7 @@ Settings, Monitor, and others) subscribe to every kind and ignore most.
 | `Frame` | One window's position, size, and `fullscreen` flag | Shell | `sola-river` | Ephemeral |
 | `Focus` | The `window_id` to focus | Shell; Paint, Design, Arcade (to raise themselves) | `sola-river` | Ephemeral |
 | `AppHidden` | An `app_id` left out of `Composition` | Shell ([Hide](sola-shell.md#hide)); retracted to show it again | Shell | Sticky by `app_id` |
-| `MouseEntered` | The `window_id` the pointer entered | `sola-river` | Shell | Ephemeral |
+| `MouseEntered` | The `window_id` the pointer entered; `still` when the pointer did not move (the window under it changed), sent again without it on the next move | `sola-river` | Shell | Ephemeral |
 | `MouseLeft` | None | `sola-river` | Shell | Ephemeral |
 | `MouseClicked` | The `window_id` clicked | `sola-river` | Shell | Ephemeral |
 | `RegisteredChords` | Chords (`keysym`, `modifiers`) to route to the bus, not the focused window | Shell | `sola-river` | Sticky |

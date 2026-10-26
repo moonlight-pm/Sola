@@ -244,19 +244,28 @@ pub fn parse_cpuinfo(s: &str) -> CpuIdentity {
     }
 }
 
-/// Per-thread load laid out by core: each core's threads side by side, a
-/// gap (`None`) between cores. Without usable groups, the threads in order.
+/// Per-thread load laid out by core: a gap (`None`) between threads, two
+/// between cores. Without usable groups, the threads in order, a gap
+/// apart. (Siblings side by side with no gap read as one wide bar —
+/// Joshua: "it says 8 threads, but its only showing four bars".)
 pub fn by_core(per_core: &[f32], groups: &[Vec<usize>]) -> Vec<Option<f32>> {
     let covered: usize = groups.iter().map(Vec::len).sum();
-    if groups.is_empty() || covered != per_core.len() || groups.iter().flatten().any(|&i| i >= per_core.len()) {
-        return per_core.iter().map(|&v| Some(v)).collect();
-    }
-    let mut out = Vec::with_capacity(per_core.len() + groups.len());
+    let usable = !groups.is_empty()
+        && covered == per_core.len()
+        && groups.iter().flatten().all(|&i| i < per_core.len());
+    let in_order = [(0..per_core.len()).collect::<Vec<_>>()];
+    let groups = if usable { groups } else { &in_order[..] };
+    let mut out = Vec::with_capacity(per_core.len() * 2 + groups.len());
     for (k, g) in groups.iter().enumerate() {
         if k > 0 {
-            out.push(None);
+            out.extend([None, None]);
         }
-        out.extend(g.iter().map(|&i| Some(per_core[i])));
+        for (j, &i) in g.iter().enumerate() {
+            if j > 0 {
+                out.push(None);
+            }
+            out.push(Some(per_core[i]));
+        }
     }
     out
 }
@@ -310,11 +319,12 @@ mod tests {
         let load = [10.0, 20.0, 30.0, 40.0];
         assert_eq!(
             by_core(&load, &groups),
-            vec![Some(10.0), Some(30.0), None, Some(20.0), Some(40.0)]
+            vec![Some(10.0), None, Some(30.0), None, None, Some(20.0), None, Some(40.0)]
         );
         // Groups that do not cover every thread fall back to the order.
-        assert_eq!(by_core(&load, &[vec![0, 1]]).len(), 4);
-        assert_eq!(by_core(&load, &[]).len(), 4);
+        let in_order = vec![Some(10.0), None, Some(20.0), None, Some(30.0), None, Some(40.0)];
+        assert_eq!(by_core(&load, &[vec![0, 1]]), in_order);
+        assert_eq!(by_core(&load, &[]), in_order);
     }
 
     #[test]

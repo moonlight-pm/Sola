@@ -183,6 +183,8 @@ pub(crate) fn gamescope_size_gate(
 }
 
 pub fn handle_manage_start(state: &mut AppData) {
+    // This sequence's enters are read; a move from here on is new.
+    state.pointer_moved = false;
     let Some(wm) = state.wm.clone() else { return };
 
     // Layer-shell default output (manage-sequence-only request).
@@ -286,6 +288,9 @@ pub fn handle_manage_start(state: &mut AppData) {
                             );
                             seat.focus_window(proxy);
                             state.focused_window = Some(id);
+                            if state.pointer_window.is_some_and(|p| p != id) {
+                                state.rehover = true;
+                            }
                         }
                     }
                     FocusAction::None => {

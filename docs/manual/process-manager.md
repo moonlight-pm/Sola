@@ -61,7 +61,7 @@ on a second console while a session runs ends the first session.
 | 2 | `sola-call` | none | The call host ([The call plane](call.md)) |
 | 3 | `sola-botsd` | none | Bots daemon: call owner `bots`, HTTP on `0.0.0.0:27419` ([solactl](solactl.md)) |
 | 4 | `sola-river` | none | River's window manager; call owner `compositor` ([Compositor](compositor.md)) |
-| 5 | `sola-shell` | none | Menubar, launcher, switcher, zones ([Shell](sola-shell.md)) |
+| 5 | `sola-shell` | none | Menubar, tab bar, launcher, zones ([Shell](sola-shell.md)) |
 | 6 | `sola-session` | none | Applications; call owner `session` ([Session manager](session.md)) |
 | 7 | `sola-kvm` | `server --input evdev` | KVM server ([KVM](sola-kvm-operator.md)) |
 

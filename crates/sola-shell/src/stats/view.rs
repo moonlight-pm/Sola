@@ -2,10 +2,10 @@
 //!
 //! Each panel draws its island's LEDs at the panel's size
 //! ([`pixel::PANEL`]): the last minute as columns each tinted by its own
-//! sample, per-thread load as a shape (cores a gap apart), processes and
-//! memory as LED bars. The value you came for, names and figures are type
-//! (the value was a dot readout until Joshua: "i don't like the 'digital'
-//! number"). Every color is the theme's: ink at rest, its warning
+//! sample, per-thread load as a shape (threads a gap apart, cores two),
+//! processes and memory as LED bars. The value you came for, names and
+//! figures are type (the value was a dot readout until Joshua: "i don't
+//! like the 'digital' number"). Every color is the theme's: ink at rest, its warning
 //! past 75% and danger past 90% ([`crate::stats::level_color`]), RX in the
 //! accent and TX in success as the islands draw them. Design:
 //! `design/instrument/panels.html`.
@@ -249,7 +249,7 @@ fn cpu_card(shell: &Shell) -> Element<'_, Msg> {
     ];
 
     if let Some(crate::stats::Detail::Cpu(d)) = &s.detail {
-        // A column per thread, siblings side by side, a gap between
+        // A column per thread, a gap between threads, two between
         // cores. No numbers: the shape is the point.
         let cols = crate::stats::cpu::by_core(&d.per_core, &id.groups);
         // NaN: no cells at all, so the cores stand apart even when idle.

@@ -351,7 +351,7 @@ const statPanel = (o) => `<div class="st" data-anchor="${o.anchor}" style="top:3
 /* ── The panels as built since 2026-10-24 (stats/view.rs, dots.rs) ──
  * The island's LEDs at 4 px on a 5 px pitch: the value in large type
  * (it was a 5 × 7 dot readout for an evening), the last minute as 60 columns tinted
- * by their own sample, per-thread columns (a dark one between cores), LED
+ * by their own sample, per-thread columns (a gap between threads, two between cores), LED
  * bars for processes and memory. Colors are the theme's. */
 const PANEL = { dot: 4, pitch: 5 };
 const span = (n, g = PANEL) => n * g.pitch - (g.pitch - g.dot);

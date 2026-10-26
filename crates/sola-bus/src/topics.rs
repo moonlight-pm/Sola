@@ -509,6 +509,11 @@ pub struct IdleFade {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEnteredPayload {
     pub window_id: u32,
+    /// The pointer did not move: the window under it changed (a tab
+    /// switch, a close, a new window). Focus does not follow a still
+    /// pointer; sola-river sends the enter again, not still, once it moves.
+    #[serde(default)]
+    pub still: bool,
 }
 
 /// App menu definition, emitted as sticky by apps at startup.

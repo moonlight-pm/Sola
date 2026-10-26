@@ -119,7 +119,7 @@
     <div class="label">Panels hang from their island · CPU · 1:1</div>
     <div id="cpu"></div>
     <div class="pair" style="margin-top:16px"><div id="mem"></div><div id="rx"></div></div>
-    <p class="note cap">Each instrument opens a 324 px popover whose left edge is under its label, its top on the row's lower edge (y 38), kept a gap from the output's right edge; the island lifts while it shows. It draws the island's LEDs larger, 4 px dots on a 5 px pitch, whole (a dot lights once its column reaches its middle; no dither): the value in large type (SF Pro Text medium, 28 px), tinted like the meter; the last 60 seconds as columns, each tinted by its own sample; per-thread load as a column per thread, a core's threads side by side and a gap between cores; top processes with a 16-cell LED bar; memory and VRAM as a 60-cell row (used lit, cache at 40%, free dark). Captions are 10 px caps, figures Iosevka. Every color is the theme's: ink at rest, warning past 75%, danger past 90%; RX in the accent, TX in success. Design: Instrument 07.</p>
+    <p class="note cap">Each instrument opens a 324 px popover whose left edge is under its label, its top on the row's lower edge (y 38), kept a gap from the output's right edge; the island lifts while it shows. It draws the island's LEDs larger, 4 px dots on a 5 px pitch, whole (a dot lights once its column reaches its middle; no dither): the value in large type (SF Pro Text medium, 28 px), tinted like the meter; the last 60 seconds as columns, each tinted by its own sample; per-thread load as a column per thread, a gap between threads and two between cores (side by side, a pair read as one bar); top processes with a 16-cell LED bar; memory and VRAM as a 60-cell row (used lit, cache at 40%, free dark). Captions are 10 px caps, figures Iosevka. Every color is the theme's: ink at rest, warning past 75%, danger past 90%; RX in the accent, TX in success. Design: Instrument 07.</p>
     <div class="facts" style="margin-top:24px">
       <span>Audio</span><span>Under the spectrum: Output and Input, a device picker and a volume each. 320 × 400.</span>
       <span>Bluetooth</span><span>Under the extras: the adapter, connected devices, Not connected, Nearby; Connect, Pair, Add device. 320 × 480.</span>
@@ -193,8 +193,8 @@
   cpuHist.splice(50, 10, 78, 84, 88, 86, 91, 85, 80, 87, 83, 83);
   const memHist = hist((i) => 40 + 1.2 * Math.sin(i / 7));
   const rxHist = hist((i) => (i % 17 < 5 ? 1.6e6 + 3.2e6 * Math.sin(i) ** 2 : 1e5 + 8e4 * Math.sin(i * 2)));
-  // canto's CPU: 4 cores, threads n and n + 4 siblings — by core, a gap between.
-  const threads = [96, 82, 0, 88, 69, 0, 74, 93, 0, 91, 77].map((v) => (v === 0 ? null : v));
+  // canto's CPU: 4 cores, threads n and n + 4 siblings — a gap between threads, two between cores.
+  const threads = [[96, 82], [88, 69], [74, 93], [91, 77]].flatMap((c, k) => [...(k ? [null, null] : []), c[0], null, c[1]]);
   const cpu = dottedPanel({ anchor: "CPU", label: "CPU", value: "83%", ink: levelInk(83), model: "Xeon E5-1620 v2", sub: "4C / 8T", peak: "peak 91%", hist: cpuHist,
     sections: [dp.sec("Per-thread load", "8 threads", columnsSvg(threads, { rows: 6 })), dp.rule(),
       dp.procs([["rustc", 38], ["rustc", 31], ["sola-browser", 9], ["river", 3]], "CPU", (v) => v + "%"), dp.rule(),

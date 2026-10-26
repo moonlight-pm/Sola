@@ -128,7 +128,14 @@ No gaps and no titlebars on tiles yet (N8).
 - A **new** window joins the focused zone at the end of its stack, and is
   shown and focused. The focused zone is the focused tab's zone; with a
   float or nothing focused, the last focused tiled zone; on an empty desk,
-  Left.
+  Left. **Amended 2026-10-25** (Joshua: "it should follow right after the
+  tab it was opened from… for all apps"): it goes right after the focused
+  tab when that tab is in the zone — after the last window opened from it
+  while it kept focus, so tabs opened behind keep their order — else at
+  the end.
+- **Amended 2026-10-25:** when a zone's shown tab closes, the zone shows
+  the tab it showed before (else the next, else the previous), so closing
+  a tab you just opened returns to the one it came from.
 - A **returning** window (the app restarted, or the session restored it)
   goes back to its remembered zone and place.
 - An app whose window was floated (the float key, or sola-scope, which
@@ -143,17 +150,22 @@ No gaps and no titlebars on tiles yet (N8).
 | Super+KP_* | Move to Floating | Float |
 | Super+KP_0 / KP_Enter | Fullscreen / Cinema the shown tab (toggle). **Amended 2026-10-23:** KP_0 moves the tab to Full; KP_Enter stays Cinema | Same zones |
 | Super+KP_8, 2, 5, =, ., + | Unbound on the two-zone layout | Other snaps |
-| Super+Tab | Same app list; confirming shows that app's most recent tab in its zone | Raises the app |
+| Super+Tab | Same app list; confirming shows that app's most recent tab in its zone. **Amended 2026-10-25:** the switcher is gone; Super+Tab / Super+Shift+Tab focus the next / previous zone with something to show (bar order, wrapping), showing its tab | Raises the app |
 | Super+H | Hides the app as today; its rows stay, dimmed; clicking one unhides it | Hides the app |
-| Launcher on a running app | Shows its most recent tab | Raises it |
+| Launcher on a running app | Shows its most recent tab. **Amended 2026-10-25:** opens a new window (the browser a page window, Terminal a tab window); one-window apps (Design, Paint, Arcade) still raise | Raises it |
 
 ## Focus
 
 - Showing a tab focuses it.
 - Focus follows the mouse only over what is on screen; hidden windows get
-  no pointer events. The bar is excluded like the menubar.
+  no pointer events. The bar is excluded like the menubar. **Amended
+  2026-10-25** (Joshua: "we don't focus follow mouse on it unless we start
+  moving the mouse"): only a moving pointer leads focus; a window that
+  comes under a resting pointer (a tab shown, a close, a new window) does
+  not take focus until the pointer moves.
 - When a zone's shown tab closes, the next tab in its stack shows (else the
-  previous). When a zone empties, the other zone takes its width.
+  previous). **Amended 2026-10-25:** the tab it showed before. When a zone
+  empties, the other zone takes its width.
 
 ## State
 
@@ -273,7 +285,8 @@ workspaces (ordered, named, kept; one showing)
 - **Super+Tab** lists apps on every workspace; confirming one whose window
   is elsewhere shows that workspace. So do the launcher on a running app,
   a notification, a tab-bar row, and `ShowTab`: anything that shows a
-  window shows its workspace first.
+  window shows its workspace first. **Amended 2026-10-25:** Super+Tab steps
+  the showing workspace's zones; it no longer lists apps.
 - Focus fallbacks (a window closes, Super+H) stay on the showing
   workspace.
 
@@ -460,7 +473,8 @@ zone Floating             every float shows, over either
 
 ### Focus
 
-- When the focused tab closes, its zone's next tab takes focus; if the
+- When the focused tab closes, its zone's next tab (**amended 2026-10-25:**
+  the tab it showed before) takes focus; if the
   zone emptied, the tab in front (Full's, else the last focused half's,
   else the other half's); else the most recent app.
 - A focused tab whose side left the screen hands focus to the tab in

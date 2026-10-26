@@ -117,19 +117,85 @@ fn floats_and_dialogs() {
 }
 
 #[test]
-fn closing_the_shown_tab_shows_the_next_then_the_previous() {
+fn closing_the_shown_tab_shows_the_one_shown_before() {
     let t = Instant::now();
     let mut s = Stacks::new();
     for w in 1..=3 {
         s.place(w, "app", "app", false, false, t);
     }
-    s.show(2);
-    s.remove(2, t);
-    assert_eq!(s.shown(FULL), Some(3));
+    s.show(1);
+    s.show(3);
+    // Not 2, the tab beside it: 1 was on screen before.
     s.remove(3, t);
     assert_eq!(s.shown(FULL), Some(1));
     s.remove(1, t);
+    assert_eq!(s.shown(FULL), Some(2));
+    s.remove(2, t);
     assert_eq!(s.shown(FULL), None);
+}
+
+#[test]
+fn closing_a_tab_never_shown_falls_back_to_the_next_then_the_previous() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    for w in 1..=3 {
+        // Behind: joins without being shown.
+        s.place(w, "app", "app", false, w > 1, t);
+    }
+    assert_eq!(s.shown(FULL), Some(1));
+    s.remove(1, t);
+    assert_eq!(s.shown(FULL), Some(2));
+}
+
+#[test]
+fn a_new_window_opens_right_after_the_focused_tab() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    for w in 1..=3 {
+        s.place(w, "app", "app", false, false, t);
+    }
+    s.show(1);
+    s.focus(1);
+    s.place(4, "app", "app", false, false, t);
+    assert_eq!(ids(&s, FULL), vec![1, 4, 2, 3]);
+    assert_eq!(s.shown(FULL), Some(4));
+    // The shell focuses it; closing it shows the tab it came from.
+    s.focus(4);
+    s.remove(4, t);
+    assert_eq!(s.shown(FULL), Some(1));
+}
+
+#[test]
+fn tabs_opened_behind_keep_their_order() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    for w in 1..=3 {
+        s.place(w, "app", "app", false, false, t);
+    }
+    s.show(1);
+    s.focus(1);
+    s.place(5, "app", "app", false, true, t);
+    s.place(6, "app", "app", false, true, t);
+    assert_eq!(ids(&s, FULL), vec![1, 5, 6, 2, 3]);
+    assert_eq!(s.shown(FULL), Some(1));
+    // Focus elsewhere starts over from there.
+    s.show(2);
+    s.focus(2);
+    s.place(7, "app", "app", false, true, t);
+    assert_eq!(ids(&s, FULL), vec![1, 5, 6, 2, 7, 3]);
+}
+
+#[test]
+fn a_new_window_in_another_zone_than_the_focused_tab_goes_last() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    for w in 1..=3 {
+        s.place(w, "app", "app", false, false, t);
+    }
+    s.place(9, "scope", "scope", true, false, t);
+    s.focus(9);
+    s.place(4, "app", "app", false, false, t);
+    assert_eq!(ids(&s, FULL), vec![1, 2, 3, 4]);
 }
 
 #[test]
@@ -297,6 +363,41 @@ fn move_and_step() {
     assert_eq!(s.step(3, false), Some(2));
     assert_eq!(s.step(3, true), Some(2));
     assert_eq!(s.step(1, false), None);
+}
+
+#[test]
+fn super_tab_steps_through_the_groups_with_something_to_show() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    for w in 1..=4 {
+        s.place(w, "app", "app", false, false, t);
+    }
+    s.move_to(1, Zone::Left, None);
+    s.move_to(2, Zone::Right, None);
+    s.place(9, "scope", "scope", true, false, t);
+    s.show(4);
+    // Full shows 4, Left 1, Right 2; the float 9. Bar order, wrapping.
+    assert_eq!(s.step_group(Some(4), false, &none), Some(1));
+    assert_eq!(s.step_group(Some(1), false, &none), Some(2));
+    assert_eq!(s.step_group(Some(2), false, &none), Some(9));
+    assert_eq!(s.step_group(Some(9), false, &none), Some(4));
+    assert_eq!(s.step_group(Some(4), true, &none), Some(9));
+    assert_eq!(s.step_group(None, false, &none), Some(4));
+    // An empty group is skipped; a hidden app's group shows what is left.
+    s.move_to(2, Zone::Left, None);
+    assert_eq!(s.step_group(Some(2), false, &none), Some(9));
+    let hide_scope = |a: &str| a == "scope";
+    assert_eq!(s.step_group(Some(2), false, &hide_scope), Some(4));
+}
+
+#[test]
+fn super_tab_with_one_group_stays() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    s.place(1, "app", "app", false, false, t);
+    s.place(2, "app", "app", false, false, t);
+    assert_eq!(s.step_group(Some(2), false, &none), None);
+    assert_eq!(s.step_group(None, false, &none), Some(2));
 }
 
 #[test]

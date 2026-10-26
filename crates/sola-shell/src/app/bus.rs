@@ -58,7 +58,6 @@ impl Shell {
                 Task::none()
             }
             Topic::Chord(c) => self.on_chord(c),
-            Topic::ChordReleased(c) => self.on_chord_released(c),
             Topic::MouseEntered(e) => self.on_mouse_entered(e),
             Topic::MouseClicked(e) => {
                 self.on_mouse_clicked(e);
@@ -427,15 +426,12 @@ impl Shell {
         // the focused tab.
         self.keep_focus_on_screen();
 
-        // Drop hover if that window closed; then re-apply FFM over any
-        // programmatic focus steal above.
+        // Drop hover if that window closed. A new window, or the tab shown
+        // in a closed one's place, keeps focus until the pointer moves.
         if let Some(wid) = self.pointer_window_id {
             if !self.known_windows.iter().any(|w| w.window_id == wid) {
                 self.pointer_window_id = None;
             }
-        }
-        if take_focus.is_some() || focused_closed {
-            self.sync_keyboard_focus_to_pointer();
         }
 
         // Dismiss open menu if the focused window changed.
@@ -446,15 +442,6 @@ impl Shell {
         // Tell sola-river / kit apps which windows are floating (move/resize + CSD).
         self.sync_window_floating();
         self.emit_all_frames();
-
-        // Re-derive the switcher app list whenever windows change while active.
-        if self.switcher.active {
-            crate::switcher::state::rebuild_apps(
-                &mut self.switcher,
-                &self.mru_apps.clone(),
-                &self.known_windows.clone(),
-            );
-        }
 
         self.emit_composition();
 
@@ -735,7 +722,6 @@ impl Shell {
         if bump_mru {
             self.mru_apps.retain(|m| m != app_id);
             self.mru_apps.insert(0, app_id.to_string());
-            self.ack_notify_badge(app_id);
         } else if !self.mru_apps.iter().any(|m| m == app_id) {
             // Track without raising — least-recent = bottom of stack.
             self.mru_apps.push(app_id.to_string());
@@ -770,7 +756,7 @@ impl Shell {
     }
 
     /// Pointer focus (no raise, no stack change). Used after the FFM dwell
-    /// timer and by map/close resync.
+    /// timer.
     pub(crate) fn focus_window_from_pointer(&mut self, window_id: u32) {
         if self.focused_window_id == Some(window_id) {
             tracing::debug!(window_id, "pointer focus no-op (already focused)");
@@ -792,33 +778,6 @@ impl Shell {
         self.focused_window_id = Some(window_id);
         self.tabs.focus(window_id);
         self.emit_focus(window_id, prev_window);
-    }
-
-    /// Re-apply keyboard focus to whatever is under the pointer.
-    ///
-    /// General fix for focus-follows-mouse after any non-pointer focus change:
-    /// a newly mapped window (or MRU fallback after close) steals focus, but
-    /// if the cursor never left another app, River will not re-fire
-    /// `MouseEntered`. Restore input focus to the hovered window without
-    /// undoing the raise (stack order stays).
-    fn sync_keyboard_focus_to_pointer(&mut self) {
-        let Some(wid) = self.pointer_window_id else {
-            return;
-        };
-        // Drop stale hover if the window vanished.
-        if !self.known_windows.iter().any(|w| w.window_id == wid) {
-            self.pointer_window_id = None;
-            return;
-        }
-        // Menubar / shell overlays never take keyboard focus via FFM.
-        if self
-            .known_windows
-            .iter()
-            .any(|w| w.window_id == wid && w.app_id == Self::APP_ID)
-        {
-            return;
-        }
-        self.focus_window_from_pointer(wid);
     }
 
     /// Raise `app_id` as if the user clicked it (MRU + composition + seat).
@@ -847,7 +806,7 @@ impl Shell {
     }
 
     /// Show `window_id` in its zone and focus it: a tab bar row, Super+`,
-    /// the switcher. Unhides a Super+H'd app first.
+    /// Super+Tab. Unhides a Super+H'd app first.
     pub(crate) fn activate_window(&mut self, window_id: u32) {
         let Some(app_id) = self.app_id_for_window(window_id) else {
             return;
@@ -1074,9 +1033,6 @@ impl Shell {
             if self.menu_open {
                 return Task::done(Msg::CloseMenu);
             }
-            if self.switcher.active {
-                return Task::done(Msg::SwitcherCancel);
-            }
         }
 
         // Selection marquee is modal — Escape cancels; ignore other chords.
@@ -1111,15 +1067,14 @@ impl Shell {
         }
 
         // Launcher / shortcuts are modal — they own the keyboard while
-        // active, so eat every other chord. (Switcher has its own
-        // navigation branch below.)
+        // active, so eat every other chord.
         if self.launcher.active || self.shortcuts.active {
             return Task::none();
         }
 
         // A dropdown menu is transient — any non-Escape chord should
         // dismiss it and then proceed normally (so Meta+Space still
-        // opens the launcher, Meta+Tab still opens the switcher, etc.
+        // opens the launcher, Meta+Tab still moves between groups, etc.
         // even if the user left a menu hanging open).
         // Screenshot chords are the exception: they must copy the live
         // scene (open notifications panel, text selections) before chrome
@@ -1137,50 +1092,6 @@ impl Shell {
             self.emit_overlay_frames();
             self.emit_composition();
             self.emit_registered_chords();
-        }
-
-        // Switcher active: Tab/Right cycles forward; Left cycles backward;
-        // Meta+Q closes the *selected* app (not the front one); Meta
-        // release (handled in on_chord_released) confirms.
-        if self.switcher.active {
-            use sola_core::KeyCode;
-            if chord.keycode == KeyCode::TAB || chord.keycode == KeyCode::RIGHT {
-                return Task::done(Msg::SwitcherNav { next: true });
-            }
-            if chord.keycode == KeyCode::LEFT {
-                return Task::done(Msg::SwitcherNav { next: false });
-            }
-            // Super+H while the switcher is up would hide the focused app
-            // then Super-release would confirm and unhide it. Eat the chord.
-            if chord.meta && chord.keycode == KeyCode::H {
-                return Task::none();
-            }
-            if chord.meta && chord.keycode == KeyCode::Q {
-                if let Some(target) = self.switcher.apps.get(self.switcher.selected).cloned() {
-                    tracing::info!(
-                        app_id = %target.app_id,
-                        "Meta+Q in switcher — close selected app"
-                    );
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(Topic::CloseApp(target.app_id.clone()));
-                    }
-                    // Optimistic remove — Topic::Windows from sola-river
-                    // will reconcile, but pulling the entry now keeps the
-                    // switcher visually in step with the keypress. Clamp
-                    // the selection so it still points at a real app;
-                    // dismiss the switcher entirely if we just killed the
-                    // last one.
-                    self.switcher.apps.retain(|a| a.app_id != target.app_id);
-                    if self.switcher.apps.is_empty() {
-                        return Task::done(Msg::SwitcherCancel);
-                    }
-                    if self.switcher.selected >= self.switcher.apps.len() {
-                        self.switcher.selected = self.switcher.apps.len() - 1;
-                    }
-                    self.emit_composition();
-                }
-                return Task::none();
-            }
         }
 
         // Meta+Space: toggle launcher.
@@ -1292,39 +1203,9 @@ impl Shell {
             }
         }
 
-        // Meta+Tab: activate or cycle switcher.
-        if chord.meta && chord.keycode == sola_core::KeyCode::TAB {
-            if self.launcher.active {
-                // Close launcher first, then open switcher.
-                self.launcher.active = false;
-                self.emit_composition();
-                self.emit_registered_chords();
-            }
-            if self.switcher.active {
-                // Already active: cycle forward.
-                return Task::done(Msg::SwitcherNav { next: true });
-            }
-            tracing::info!("Meta+Tab — activating switcher");
-            if let Some(id) = self.focused_app_id.clone() {
-                self.ack_notify_badge(&id);
-            }
-            crate::switcher::state::rebuild_apps(
-                &mut self.switcher,
-                &self.mru_apps.clone(),
-                &self.known_windows.clone(),
-            );
-            self.switcher.active = true;
-            // Start at index 1 so the second (next) app is pre-selected on
-            // first press — mirrors the legacy macOS-style Alt+Tab feel.
-            // A pointer already on an icon must not replace this until it
-            // moves (`prepare_open` drops the previous hover gate).
-            self.switcher.selected = if self.switcher.apps.len() > 1 { 1 } else { 0 };
-            self.switcher.prepare_open();
-            // Focus is applied in `CommitOverlayShow` once the iced swapchain
-            // is live — focusing the parked 2×2 can unhide it.
-            self.emit_registered_chords();
-            self.emit_composition();
-            return Task::none();
+        // Meta+Tab / Meta+Shift+Tab: the next / previous window group.
+        if chord.meta && !chord.ctrl && !chord.alt && chord.keycode == sola_core::KeyCode::TAB {
+            return Task::done(Msg::CycleGroups { back: chord.shift });
         }
 
         // Zone snapping (Meta+Numpad).
@@ -1367,15 +1248,6 @@ impl Shell {
         Task::none()
     }
 
-    /// Handle a chord-released event.
-    /// Super_L release while the switcher is active confirms the selection.
-    fn on_chord_released(&mut self, evt: ChordEvent) -> Task<Msg> {
-        if evt.keysym == keys::KEYSYM_SUPER_L && evt.modifiers == 0 && self.switcher.active {
-            return Task::done(Msg::SwitcherConfirm);
-        }
-        Task::none()
-    }
-
     // -------------------------------------------------------------------------
     // Mouse handlers
     // -------------------------------------------------------------------------
@@ -1391,13 +1263,23 @@ impl Shell {
     /// moves to the window under the pointer — **without** raising. Raising is
     /// click-only (see [`Self::on_mouse_clicked`]). The delay is a grace period
     /// for the path from a floating app up to the menubar across another window.
+    ///
+    /// Only a pointer that moves leads focus. A still enter (the window under
+    /// a resting pointer changed: Super+Tab, a close, a new window) is just
+    /// remembered; sola-river sends the enter again once the pointer moves,
+    /// as it does when focus went elsewhere by keyboard.
     fn on_mouse_entered(&mut self, e: MouseEnteredPayload) -> Task<Msg> {
-        // Always remember hover (including shell) so map/close resync knows
-        // whether the pointer is on an app vs chrome vs nowhere.
+        // Always remember hover (including shell): the dwell checks the
+        // pointer is still there when it fires.
         self.pointer_window_id = Some(e.window_id);
 
         // Cancel any in-flight dwell (new target or shell chrome).
         self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
+
+        if e.still {
+            tracing::debug!(window_id = e.window_id, "FFM still enter — focus stays");
+            return Task::none();
+        }
 
         // Shell surfaces never take FFM focus — and entering the menubar
         // cancels a pending steal from an intermediate window, so the floater

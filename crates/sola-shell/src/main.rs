@@ -1,5 +1,5 @@
 //! sola-shell — iced-native desktop shell. Multi-window daemon
-//! (menubar, menu, launcher, switcher, shortcuts, selection marquee,
+//! (menubar, tab bar, menu, launcher, shortcuts, selection marquee,
 //! notifications).
 
 use sola_bus::topics::TopicKind;
@@ -29,7 +29,6 @@ pub mod selection;
 pub mod shortcuts;
 pub mod stacks;
 pub mod stats;
-pub mod switcher;
 pub mod tabbar;
 pub mod zoning;
 

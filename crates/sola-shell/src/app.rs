@@ -21,7 +21,6 @@ use crate::menubar::{FlashTarget, MenubarState};
 use crate::selection::state::SelectionState;
 use crate::shortcuts::state::ShortcutsState;
 use crate::stacks::Stacks;
-use crate::switcher::state::SwitcherState;
 use crate::zoning::ZoningState;
 
 pub mod adapt;
@@ -58,7 +57,6 @@ pub enum WindowKind {
     Menubar,
     Menu,
     Launcher,
-    Switcher,
     Selection,
     Notify,
     Shortcuts,
@@ -66,8 +64,8 @@ pub enum WindowKind {
     TabBar,
 }
 
-/// Live-swapchain slots: menu, launcher, switcher, selection, notify, shortcuts.
-const OVERLAY_LIVE_SLOTS: usize = 6;
+/// Live-swapchain slots: menu, launcher, selection, notify, shortcuts.
+const OVERLAY_LIVE_SLOTS: usize = 5;
 
 #[derive(Clone, Debug)]
 pub enum Msg {
@@ -174,25 +172,6 @@ pub enum Msg {
     BluetoothUi(crate::bluetooth::UiMsg),
     /// Battery answer (or silence) from the Lamzu receiver.
     Mouse(crate::mouse::Event),
-    // --- Switcher messages ---
-    /// Cycle switcher selection forward (next=true) or backward (next=false).
-    SwitcherNav {
-        next: bool,
-    },
-    /// Icon the pointer entered. Applied only after the pointer moves
-    /// (`SwitcherPointer`); the open-time enter is not a choice.
-    SwitcherHover {
-        index: usize,
-    },
-    /// Overlay-local pointer sample while the switcher is up.
-    SwitcherPointer {
-        x: f32,
-        y: f32,
-    },
-    /// Confirm selection: focus the MRU window of the selected app, deactivate.
-    SwitcherConfirm,
-    /// Cancel without focus change: deactivate.
-    SwitcherCancel,
     /// Focus-follows-mouse delay fired: focus `window_id` (no raise) if
     /// `generation` still matches.
     FocusHoverFire {
@@ -202,6 +181,9 @@ pub enum Msg {
     /// Show the next (or, `back`, previous) tab in the focused tab's zone
     /// (Super+` / Super+Shift+`).
     CycleTabs { back: bool },
+    /// Focus the next (or, `back`, previous) window group — the bar's
+    /// zones — showing its tab (Super+Tab / Super+Shift+Tab).
+    CycleGroups { back: bool },
     /// A tab bar row was clicked: show that window in its zone.
     ShowTab(u32),
     /// A tab bar row's stoplight: close that window, as its own close would.
@@ -323,7 +305,7 @@ const OPENING_TOAST_SECS: u64 = 20;
 pub struct Shell {
     pub theme: iced::Theme,
     /// Shell-specific chrome (shell-* tokens) — colors with alpha +
-    /// switcher/launcher spacing. Refreshed alongside `theme` on every
+    /// launcher spacing. Refreshed alongside `theme` on every
     /// Topic::Theme delivery.
     pub style: theme::ShellStyle,
 
@@ -331,7 +313,6 @@ pub struct Shell {
     pub menubar_window_id: Option<iced::window::Id>,
     pub menu_window_id: Option<iced::window::Id>,
     pub launcher_window_id: Option<iced::window::Id>,
-    pub switcher_window_id: Option<iced::window::Id>,
     pub selection_window_id: Option<iced::window::Id>,
     pub notify_window_id: Option<iced::window::Id>,
     pub shortcuts_window_id: Option<iced::window::Id>,
@@ -371,9 +352,8 @@ pub struct Shell {
     pub focused_app_id: Option<String>,
     pub focused_window_id: Option<u32>,
     /// Window currently under the pointer (`Topic::MouseEntered` /
-    /// `MouseLeft`). Used to re-apply focus-follows-mouse after programmatic
-    /// focus steals (new map, close fallback) — River does not re-send
-    /// `pointer_enter` if the cursor never left the old surface.
+    /// `MouseLeft`); the focus-follows-mouse dwell fires only if the
+    /// pointer is still on its window.
     pub pointer_window_id: Option<u32>,
     /// Generation counter for the focus-follows-mouse dwell timer. Bumped on
     /// every enter/leave so a superseded `FocusHoverFire` is a no-op — gives
@@ -382,7 +362,7 @@ pub struct Shell {
 
     // MRU (most-recently-used)
     pub mru_apps: Vec<String>,
-    /// Most-recently-focused window per app, for switcher restore.
+    /// Most-recently-focused window per app, for raising an app.
     pub mru_window_by_app: HashMap<String, u32>,
 
     // Window registry (from Topic::Windows — sola-river)
@@ -425,7 +405,6 @@ pub struct Shell {
     pub open_panel: Option<Panel>,
     /// The month shown in the calendar — always the 1st of that month.
     pub calendar_month: chrono::NaiveDate,
-    pub switcher: SwitcherState,
     pub launcher: LauncherState,
     pub shortcuts: ShortcutsState,
     pub selection: SelectionState,
@@ -462,7 +441,7 @@ pub struct Shell {
     /// Last `Topic::MailStatus` inbox unread. Chip shows only when mail
     /// is mapped and this is `Some(n)` with `n > 0`.
     pub inbox_unread: Option<u32>,
-    /// Iced-reported live swapchain for menu / launcher / switcher /
+    /// Iced-reported live swapchain for menu / launcher /
     /// selection / notify / shortcuts. Composition waits on this so River
     /// does not show a stretched 2×2.
     overlay_iced_live: [bool; OVERLAY_LIVE_SLOTS],
@@ -472,7 +451,7 @@ impl Shell {
     /// Wayland app_id / bus app_id for the shell's own surfaces.
     pub const APP_ID: &'static str = "sola-shell";
 
-    /// Boot the daemon: menubar first. Menu / launcher / switcher / selection
+    /// Boot the daemon: menubar first. Menu / launcher / selection
     /// park at 2×2 after the menubar maps so show is Frame + iced resize,
     /// not a new map — without keeping 5K swapchains while dismissed.
     pub fn boot() -> (Self, iced::Task<Msg>) {
@@ -511,7 +490,6 @@ impl Shell {
             menubar_window_id: Some(menubar_id),
             menu_window_id: None,
             launcher_window_id: None,
-            switcher_window_id: None,
             selection_window_id: None,
             notify_window_id: None,
             shortcuts_window_id: None,
@@ -552,7 +530,6 @@ impl Shell {
             current_open_is_system: false,
             open_panel: None,
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
-            switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
             shortcuts: ShortcutsState::default(),
             selection: SelectionState::default(),
@@ -846,22 +823,7 @@ impl Shell {
         match row.action {
             ShortcutAction::OpenShortcuts => iced::Task::none(),
             ShortcutAction::OpenLauncher => iced::Task::done(Msg::OpenLauncher),
-            ShortcutAction::OpenSwitcher => {
-                if let Some(id) = self.focused_app_id.clone() {
-                    self.ack_notify_badge(&id);
-                }
-                crate::switcher::state::rebuild_apps(
-                    &mut self.switcher,
-                    &self.mru_apps.clone(),
-                    &self.known_windows.clone(),
-                );
-                self.switcher.active = true;
-                self.switcher.selected = if self.switcher.apps.len() > 1 { 1 } else { 0 };
-                self.switcher.prepare_open();
-                self.emit_registered_chords();
-                self.emit_composition();
-                iced::Task::none()
-            }
+            ShortcutAction::NextGroup => iced::Task::done(Msg::CycleGroups { back: false }),
             ShortcutAction::Hide => {
                 self.hide_focused_app();
                 iced::Task::none()
@@ -987,20 +949,6 @@ impl Shell {
         if self.mail_is_mapped() { Some(n) } else { None }
     }
 
-    /// Super+Tab numeral: Mail uses inbox unread; everyone else unseen
-    /// live + pile. Visiting the app or opening the pile marks items seen.
-    pub fn switcher_badge(&self, app_id: &str) -> Option<u32> {
-        if app_id.eq_ignore_ascii_case("sola-mail") {
-            return self.mail_unread_badge();
-        }
-        let n = self.notify.attention_count(app_id);
-        (n > 0).then_some(n)
-    }
-
-    fn ack_notify_badge(&mut self, app_id: &str) {
-        self.notify.ack_app(app_id);
-    }
-
     /// Raise sola-mail (unhide first if it is composition-hidden).
     pub fn activate_mail(&mut self) {
         if self.is_app_hidden("sola-mail") {
@@ -1049,17 +997,9 @@ impl Shell {
     }
 
     fn push_notification(&mut self, n: sola_bus::topics::AppNotification) -> iced::Task<Msg> {
-        let app_id = n.app_id.clone();
         let persist = n.persists();
         let now = std::time::Instant::now();
         let generation = self.notify.push(n, now);
-        if self
-            .focused_app_id
-            .as_deref()
-            .is_some_and(|id| id.eq_ignore_ascii_case(&app_id))
-        {
-            self.ack_notify_badge(&app_id);
-        }
         let expire = if persist {
             iced::Task::none()
         } else {
@@ -1109,7 +1049,7 @@ impl Shell {
         true
     }
 
-    /// Dismiss launcher / switcher / shortcuts / menubar panels.
+    /// Dismiss launcher / shortcuts / menubar panels.
     /// Does not touch the selection overlay (Super+Shift+4 freeze).
     pub(crate) fn dismiss_chrome_overlays(&mut self) -> bool {
         let mut changed = self.dismiss_open_menu();
@@ -1121,15 +1061,11 @@ impl Shell {
             self.shortcuts.active = false;
             changed = true;
         }
-        if self.switcher.active {
-            self.switcher.active = false;
-            changed = true;
-        }
         changed
     }
 
     /// Dismiss transient shell overlays so a capture doesn't leave the
-    /// switcher/launcher/selection holding the scene (and keyboard routing).
+    /// launcher/selection holding the scene (and keyboard routing).
     pub fn dismiss_transient_overlays(&mut self) {
         let mut changed = self.dismiss_chrome_overlays();
         if self.selection.active || self.selection.pending {
@@ -1226,8 +1162,7 @@ impl Shell {
             let app_id = w.app_id.clone();
             self.focused_window_id = Some(window_id);
             self.focused_app_id = Some(app_id.clone());
-            self.mru_window_by_app.insert(app_id.clone(), window_id);
-            self.ack_notify_badge(&app_id);
+            self.mru_window_by_app.insert(app_id, window_id);
         }
     }
 
@@ -1433,7 +1368,7 @@ impl Shell {
         // 4. Shell overlays on top when active *and* already live-sized.
         //    Framing to the output happens while still hidden; joining the
         //    stack at 2×2 is the first-show flash.
-        //    Notify sits above apps but below menu/launcher/switcher/selection.
+        //    Notify sits above apps but below menu/launcher/selection.
         if self.overlay_should_compose("notify", self.notify.visible()) {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "notify") {
                 entries.push(CompositionEntry { window_id: wid });
@@ -1441,11 +1376,6 @@ impl Shell {
         }
         if self.overlay_should_compose("menu", self.menu_open) {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
-                entries.push(CompositionEntry { window_id: wid });
-            }
-        }
-        if self.overlay_should_compose("switcher", self.switcher.active) {
-            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "switcher") {
                 entries.push(CompositionEntry { window_id: wid });
             }
         }
@@ -1502,7 +1432,7 @@ impl Shell {
     ///      it.
     ///   3. Floats, least recently raised first.
     ///   4. Unplaced windows, then a Cinema tab.
-    ///   5. Shell overlays when active (menu, switcher, launcher, selection —
+    ///   5. Shell overlays when active (menu, launcher, selection —
     ///      selection on top while capturing).
     ///
     /// No-op when the stack order is identical to the last emit — title-only
@@ -1552,12 +1482,6 @@ impl Shell {
                 chords.push(alt);
             }
         }
-        // Bare Super_L (no modifiers) so we receive ChordReleased when the user
-        // lets the Super key go — used to confirm the app switcher.
-        chords.push(RegisteredChord {
-            keysym: keys::KEYSYM_SUPER_L,
-            modifiers: 0,
-        });
         // Global media keys (play/pause, mute, next/prev, volume). Bare
         // keysyms, registered unconditionally so they work regardless of
         // focus or overlay state; `on_chord` runs them via `solactl media`.
@@ -1572,7 +1496,6 @@ impl Shell {
         // the overlay closes so terminal apps keep their Escape.
         if self.launcher.active
             || self.shortcuts.active
-            || self.switcher.active
             || self.menu_open
             || self.selection.active
             || self.selection.pending
@@ -1582,13 +1505,6 @@ impl Shell {
                 modifiers: 0,
             });
         }
-        // While the switcher is up, Super is held (Meta+Tab). Grab Meta+←/→ so
-        // River delivers them; `on_chord` already maps Left/Right to SwitcherNav.
-        // Deregistered on dismiss so bare apps keep their own arrow bindings.
-        if self.switcher.active {
-            chords.push(keys::to_registered(&KeyCode::LEFT.meta()));
-            chords.push(keys::to_registered(&KeyCode::RIGHT.meta()));
-        }
         chords.sort_by_key(|c| (c.modifiers, c.keysym));
         chords.dedup();
         chords
@@ -1597,10 +1513,8 @@ impl Shell {
     /// Emit Topic::RegisteredChords based on current overlay state and focused app.
     ///
     /// Base set: shell key chords (Meta+Space, Meta+Tab, Meta+Q, Meta+H, Meta+Grave,
-    /// Meta+Numpad{…}), focused-app menu shortcuts (meta-bound only). Bare Super_L
-    /// always registered so ChordReleased fires for switcher confirm. Escape
-    /// registered only while an overlay is active. Meta+Left/Right registered
-    /// only while the switcher is active.
+    /// Meta+Numpad{…}), focused-app menu shortcuts (meta-bound only). Escape
+    /// registered only while an overlay is active.
     ///
     /// No-op when the chord set is identical to the last emit — avoids a River
     /// manage cycle on every title-only `Windows` rebroadcast.
@@ -1614,7 +1528,6 @@ impl Shell {
         tracing::info!(
             count = chords.len(),
             launcher = self.launcher.active,
-            switcher = self.switcher.active,
             "emitting RegisteredChords"
         );
         with_bus(|bus| {
@@ -1646,7 +1559,8 @@ impl Shell {
         }
 
         // Fixed shell chords.
-        bindings.push(KeyCode::TAB.meta()); // Meta+Tab → switcher
+        bindings.push(KeyCode::TAB.meta()); // Meta+Tab → next window group
+        bindings.push(KeyCode::TAB.meta().shift()); // Meta+Shift+Tab → previous group
         bindings.push(KeyCode::GRAVE.meta()); // Meta+` → next tab in the focused zone
         bindings.push(KeyCode::GRAVE.meta_shift()); // Meta+Shift+` → previous tab
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
@@ -1683,7 +1597,7 @@ impl Shell {
     /// every tiled tab.
     ///
     /// Overlays stay mapped: live size while visible, 2×2 while dismissed
-    /// (menu/shortcuts/notify are card-sized; launcher/switcher/selection
+    /// (menu/shortcuts/notify are card-sized; launcher/selection
     /// still use [`crate::zoning::overlay_frame`]). Lookup misses until
     /// River publishes the surface — a later `Windows` / `WindowOpened`
     /// fills in.
@@ -1760,7 +1674,6 @@ impl Shell {
         }
         for (title, visible, cover_menubar) in [
             ("launcher", self.launcher.active, false),
-            ("switcher", self.switcher.active, false),
             ("selection", self.selection.active, true),
         ] {
             let Some(wid) = self.lookup_window_id(Self::APP_ID, title) else {
@@ -1796,10 +1709,9 @@ impl Shell {
         match kind {
             WindowKind::Menu => Some(0),
             WindowKind::Launcher => Some(1),
-            WindowKind::Switcher => Some(2),
-            WindowKind::Selection => Some(3),
-            WindowKind::Notify => Some(4),
-            WindowKind::Shortcuts => Some(5),
+            WindowKind::Selection => Some(2),
+            WindowKind::Notify => Some(3),
+            WindowKind::Shortcuts => Some(4),
             WindowKind::Menubar | WindowKind::TabBar => None,
         }
     }
@@ -1808,7 +1720,6 @@ impl Shell {
         [
             WindowKind::Menu,
             WindowKind::Launcher,
-            WindowKind::Switcher,
             WindowKind::Selection,
             WindowKind::Notify,
             WindowKind::Shortcuts,
@@ -1821,10 +1732,9 @@ impl Shell {
         let idx = match title {
             "menu" => 0,
             "launcher" => 1,
-            "switcher" => 2,
-            "selection" => 3,
-            "notify" => 4,
-            "shortcuts" => 5,
+            "selection" => 2,
+            "notify" => 3,
+            "shortcuts" => 4,
             _ => return false,
         };
         self.overlay_iced_live[idx]
@@ -1853,7 +1763,6 @@ impl Shell {
         self.emit_composition();
         for (title, want) in [
             ("launcher", self.launcher.active),
-            ("switcher", self.switcher.active),
             (
                 "selection",
                 self.selection.active && self.selection.presentable,
@@ -1866,9 +1775,6 @@ impl Shell {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, title) {
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
                     let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                }
-                if title == "switcher" {
-                    self.focused_window_id = Some(wid);
                 }
             }
         }
@@ -1899,9 +1805,6 @@ impl Shell {
         if Some(window) == self.launcher_window_id {
             return "launcher".to_string();
         }
-        if Some(window) == self.switcher_window_id {
-            return "switcher".to_string();
-        }
         if Some(window) == self.selection_window_id {
             return "selection".to_string();
         }
@@ -1923,7 +1826,7 @@ impl Shell {
     ///   board 03); foreground text/icons follow the real palette.
     /// - Tab bar: no fill — the island paints its face and clears its
     ///   corners, so the ground shows there.
-    /// - Overlays (menu, launcher, switcher): transparent window fill so the
+    /// - Overlays (menu, launcher): transparent window fill so the
     ///   OS background shows through, but all non-base palette tiers remain
     ///   opaque so kit components (card, popover, button) render correctly.
     pub fn theme(&self, window: iced::window::Id) -> iced::Theme {
@@ -2149,7 +2052,6 @@ impl Shell {
         iced::Task::batch([
             self.open_overlay(WindowKind::Menu),
             self.open_overlay(WindowKind::Launcher),
-            self.open_overlay(WindowKind::Switcher),
             self.open_overlay(WindowKind::Selection),
             self.open_overlay(WindowKind::Notify),
             self.open_overlay(WindowKind::Shortcuts),
@@ -2161,7 +2063,6 @@ impl Shell {
             WindowKind::Menubar => self.menubar_window_id,
             WindowKind::Menu => self.menu_window_id,
             WindowKind::Launcher => self.launcher_window_id,
-            WindowKind::Switcher => self.switcher_window_id,
             WindowKind::Selection => self.selection_window_id,
             WindowKind::Notify => self.notify_window_id,
             WindowKind::Shortcuts => self.shortcuts_window_id,
@@ -2174,7 +2075,6 @@ impl Shell {
             WindowKind::Menubar => &mut self.menubar_window_id,
             WindowKind::Menu => &mut self.menu_window_id,
             WindowKind::Launcher => &mut self.launcher_window_id,
-            WindowKind::Switcher => &mut self.switcher_window_id,
             WindowKind::Selection => &mut self.selection_window_id,
             WindowKind::Notify => &mut self.notify_window_id,
             WindowKind::Shortcuts => &mut self.shortcuts_window_id,
@@ -2187,7 +2087,6 @@ impl Shell {
             WindowKind::Menubar | WindowKind::TabBar => true,
             WindowKind::Menu => self.menu_open,
             WindowKind::Launcher => self.launcher.active,
-            WindowKind::Switcher => self.switcher.active,
             WindowKind::Selection => self.selection.active,
             WindowKind::Notify => self.notify.visible(),
             WindowKind::Shortcuts => self.shortcuts.active,
@@ -2198,7 +2097,6 @@ impl Shell {
         [
             self.menu_open,
             self.launcher.active,
-            self.switcher.active,
             self.selection.active,
             self.notify.visible(),
             self.shortcuts.active,
@@ -2214,7 +2112,6 @@ impl Shell {
         let (id, task) = match kind {
             WindowKind::Menu => crate::menu::open_window(),
             WindowKind::Launcher => crate::launcher::open_window(),
-            WindowKind::Switcher => crate::switcher::open_window(),
             WindowKind::Selection => crate::selection::open_window(),
             WindowKind::Notify => crate::notify::open_window(),
             WindowKind::Shortcuts => crate::shortcuts::open_window(),
@@ -2251,7 +2148,6 @@ impl Shell {
         if !self.last_composition.is_empty()
             && (self.menu_window_id.is_none()
                 || self.launcher_window_id.is_none()
-                || self.switcher_window_id.is_none()
                 || self.selection_window_id.is_none()
                 || self.notify_window_id.is_none()
                 || self.shortcuts_window_id.is_none())
@@ -2498,9 +2394,6 @@ impl Shell {
             Msg::OpenShortcuts => {
                 if self.launcher.active {
                     self.launcher.active = false;
-                }
-                if self.switcher.active {
-                    self.switcher.active = false;
                 }
                 let _ = self.dismiss_open_menu();
                 self.shortcuts.prior_focus = self.focused_window_id;
@@ -2770,41 +2663,6 @@ impl Shell {
                 }
                 iced::Task::none()
             }
-            // --- Switcher ---
-            Msg::SwitcherNav { next } => {
-                if next {
-                    self.switcher.select_next();
-                } else {
-                    self.switcher.select_prev();
-                }
-                iced::Task::none()
-            }
-            Msg::SwitcherHover { index } => {
-                self.switcher.note_hover(index);
-                iced::Task::none()
-            }
-            Msg::SwitcherPointer { x, y } => {
-                self.switcher.note_pointer(x, y);
-                iced::Task::none()
-            }
-            Msg::SwitcherConfirm => {
-                let app_id = self.switcher.selected_app_id().map(|s| s.to_string());
-                self.switcher.active = false;
-
-                if let Some(ref app_id) = app_id {
-                    // Unhide if Super+H parked this app, then raise (MRU + seat).
-                    self.raise_app(app_id);
-                }
-                self.emit_composition();
-                self.emit_registered_chords();
-                iced::Task::none()
-            }
-            Msg::SwitcherCancel => {
-                self.switcher.active = false;
-                self.emit_composition();
-                self.emit_registered_chords();
-                iced::Task::none()
-            }
             Msg::FocusHoverFire {
                 window_id,
                 generation,
@@ -2902,6 +2760,16 @@ impl Shell {
                 crate::screenshot::crop_freeze(handle, rx, ry, rw, rh)
             }
             Msg::ScreenshotDone(result) => self.on_screenshot_done(result),
+            Msg::CycleGroups { back } => {
+                let from = self.focused_window_id;
+                let hidden = |app: &str| self.is_app_hidden(app);
+                let next = self.tabs.step_group(from, back, &hidden);
+                if let Some(next) = next {
+                    tracing::info!(?from, to = next, back, "Super+Tab — next window group");
+                    self.activate_window(next);
+                }
+                iced::Task::none()
+            }
             Msg::CycleTabs { back } => {
                 let Some(from) = self.focused_window_id else {
                     return iced::Task::none();
@@ -3005,9 +2873,6 @@ impl Shell {
         if Some(window) == self.launcher_window_id {
             return crate::launcher::view::view(self);
         }
-        if Some(window) == self.switcher_window_id {
-            return crate::switcher::view::view(self);
-        }
         if Some(window) == self.selection_window_id {
             return crate::selection::view::view(self);
         }
@@ -3054,7 +2919,6 @@ mod pending_launch_tests {
             menubar_window_id: None,
             menu_window_id: None,
             launcher_window_id: None,
-            switcher_window_id: None,
             selection_window_id: None,
             notify_window_id: None,
             shortcuts_window_id: None,
@@ -3100,7 +2964,6 @@ mod pending_launch_tests {
             current_open_is_system: false,
             open_panel: None,
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
-            switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
             shortcuts: ShortcutsState::default(),
             selection: SelectionState::default(),
@@ -3184,7 +3047,6 @@ mod hide_tests {
             menubar_window_id: None,
             menu_window_id: None,
             launcher_window_id: None,
-            switcher_window_id: None,
             selection_window_id: None,
             notify_window_id: None,
             shortcuts_window_id: None,
@@ -3225,7 +3087,6 @@ mod hide_tests {
             current_open_is_system: false,
             open_panel: None,
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
-            switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
             shortcuts: ShortcutsState::default(),
             selection: SelectionState::default(),

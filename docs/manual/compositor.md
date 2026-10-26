@@ -142,13 +142,13 @@ A hidden window is not drawn and receives no pointer input; its client
 keeps running.
 
 A window that appears before the shell lists it stays hidden until the
-shell does. The shell's overlays (launcher, switcher, menus) rely on this:
+shell does. The shell's overlays (launcher, menus) rely on this:
 they stay mapped at 2×2 while dismissed and appear only when the shell
 adds them to the stack.
 
 The shell builds the stack as the menubar, then application windows from
 least to most recently used, then any open overlays on top.
-[Shell](sola-shell.md) describes raising and the switcher.
+[Shell](sola-shell.md) describes raising and the tab bar.
 
 When the shell restarts, it rebuilds its recent-use order from window ids
 and would shuffle the windows. If the bottom window (the old menubar) is
@@ -163,9 +163,19 @@ window already has focus: asking again makes some clients (Electron)
 re-enter focus and flash.
 
 The focus policy is the shell's: focus follows the pointer after a 200 ms
-pause, without raising; a click raises; Super+Tab raises. `sola-river`
-supplies the input for it: `MouseEntered` and `MouseLeft` as the pointer
-crosses windows, and `MouseClicked` when a window is clicked or touched.
+pause, without raising, but only a pointer that moves; a click raises;
+Super+Tab and Super+Backtick show and focus a tab. `sola-river` supplies
+the input for it: `MouseEntered` and `MouseLeft` as the pointer crosses
+windows, and `MouseClicked` when a window is clicked or touched.
+
+`MouseEntered` carries `still` when the pointer did not move since the
+last manage sequence: the window under it changed (a tab shown, a close,
+a new window). The shell leaves focus alone for a still enter.
+`sola-river` sends the enter again, not still, on the pointer's next move,
+and does the same after keyboard focus goes to a window other than the
+one under the pointer, so focus follows the pointer again once it moves,
+even within that window. River reports each move's position as it
+happens (`pointer_position`), ahead of the enter it causes.
 
 When the focused window closes, `sola-river` clears focus before the
 window is destroyed. While a layer-shell surface holds exclusive keyboard
@@ -356,11 +366,9 @@ focused application.
 The modifier field is a bit set: Shift 1, Ctrl 4, Alt 8, Super 64.
 
 The shell always registers its own chords ([Shell § Keyboard](sola-shell.md#keyboard)),
-the Super shortcuts of its menus, left Super on its own (so it sees Super
-released and can confirm the switcher), and the media keys without
-modifiers. It adds the Super shortcuts of the focused application's menus
-while that application has focus, Escape while an overlay or menu is open,
-and Super+Left and Super+Right while the switcher is open.
+the Super shortcuts of its menus, and the media keys without modifiers.
+It adds the Super shortcuts of the focused application's menus while that
+application has focus, and Escape while an overlay or menu is open.
 
 While a layer-shell surface holds exclusive keyboard focus, `sola-river`
 disables every registered chord so the keys reach that surface, and enables

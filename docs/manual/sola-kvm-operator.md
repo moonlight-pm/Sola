@@ -203,9 +203,8 @@ sola-kvm listen --bind 0.0.0.0:4242
 `--dump` logs packets and does not inject.
 
 The peer injects each key before the matching `modifiers()` update, so
-River sees Super the same way as from a physical keyboard. Super+Tab on
-the peer confirms when Super is released (a bare Super_L
-`ChordReleased`). Kernel auto-repeat (`EV_KEY` value 2) is not injected:
+River sees Super the same way as from a physical keyboard, so Super
+chords on the peer (Super+Tab, Super+Space) work as they do locally. Kernel auto-repeat (`EV_KEY` value 2) is not injected:
 River would stack press counts and leave Super or Alt stuck (the terminal
 drops Super+letter or prints ESC and the character). The compositor
 generates its own repeat.

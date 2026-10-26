@@ -1,6 +1,6 @@
 //! One workspace's zones: each zone's tabs in bar order, what each tiled
-//! zone shows, whether Full or the halves are up, the floats' stacking,
-//! the last focused half, and the tab in Cinema.
+//! zone shows (and showed before it), whether Full or the halves are up,
+//! the floats' stacking, the last focused half, and the tab in Cinema.
 
 use sola_bus::topics::Zone;
 
@@ -11,6 +11,18 @@ pub(super) struct Column {
     pub tabs: Vec<Tab>,
     /// Tiled zones only.
     pub shown: Option<u32>,
+    /// The tabs it has shown, least recent first: when the shown tab
+    /// leaves, the one before it comes back.
+    recent: Vec<u32>,
+}
+
+impl Column {
+    /// Show `window_id` (a tiled zone).
+    pub fn show(&mut self, window_id: u32) {
+        self.shown = Some(window_id);
+        self.recent.retain(|&w| w != window_id);
+        self.recent.push(window_id);
+    }
 }
 
 pub(super) struct Desk {
@@ -39,6 +51,7 @@ impl Desk {
                     zone,
                     tabs: Vec::new(),
                     shown: None,
+                    recent: Vec::new(),
                 })
                 .collect(),
             float_z: Vec::new(),
@@ -107,22 +120,30 @@ impl Desk {
     /// Put `tab` at the end of `zone`; a tiled zone shows it when `show`
     /// (or when it showed nothing).
     pub fn push(&mut self, tab: Tab, zone: Zone, show: bool) -> bool {
+        let at = self.column(zone).tabs.len();
+        self.insert(tab, zone, at, show)
+    }
+
+    /// Put `tab` at index `at` of `zone` (clamped); a tiled zone shows it
+    /// when `show` (or when it showed nothing).
+    pub fn insert(&mut self, tab: Tab, zone: Zone, at: usize, show: bool) -> bool {
         let window_id = tab.window_id;
         let col = self.column_mut(zone);
-        col.tabs.push(tab);
+        col.tabs.insert(at.min(col.tabs.len()), tab);
         if zone == Zone::Float {
             self.float_z.push(window_id);
             return true;
         }
         if show || col.shown.is_none() {
-            col.shown = Some(window_id);
+            col.show(window_id);
             return true;
         }
         false
     }
 
     /// Take `window_id` out: its zone, index, key, and whether its zone
-    /// showed it. The zone then shows the next tab (else the previous).
+    /// showed it. The zone then shows the tab it showed before (else the
+    /// next, else the previous).
     pub fn take(&mut self, window_id: u32) -> Option<(Zone, usize, Tab, bool)> {
         self.float_z.retain(|&w| w != window_id);
         if self.cinema == Some(window_id) {
@@ -134,13 +155,18 @@ impl Desk {
             .find(|c| c.tabs.iter().any(|t| t.window_id == window_id))?;
         let at = col.tabs.iter().position(|t| t.window_id == window_id)?;
         let tab = col.tabs.remove(at);
+        col.recent.retain(|&w| w != window_id);
         let was_shown = col.shown == Some(window_id);
         if was_shown {
-            col.shown = col
-                .tabs
-                .get(at)
-                .or_else(|| at.checked_sub(1).and_then(|i| col.tabs.get(i)))
-                .map(|t| t.window_id);
+            col.shown = col.recent.last().copied().or_else(|| {
+                col.tabs
+                    .get(at)
+                    .or_else(|| at.checked_sub(1).and_then(|i| col.tabs.get(i)))
+                    .map(|t| t.window_id)
+            });
+            if let Some(w) = col.shown {
+                col.show(w);
+            }
         }
         Some((col.zone, at, tab, was_shown))
     }
@@ -149,6 +175,7 @@ impl Desk {
         for c in &mut self.columns {
             c.tabs.clear();
             c.shown = None;
+            c.recent.clear();
         }
         self.float_z.clear();
         self.cinema = None;

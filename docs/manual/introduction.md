@@ -3,7 +3,7 @@
 Sola is a desktop environment for Linux on Wayland, written in Rust. A
 session is a set of separate processes under a process manager: an event
 bus, a request/reply host, a bridge to the River compositor, the shell
-(menubar, launcher, window switcher), and applications that share one
+(menubar, tab bar, launcher), and applications that share one
 toolkit, sola-kit, and one theme.
 
 This manual describes Sola as it works today. Sola is pre-release: there

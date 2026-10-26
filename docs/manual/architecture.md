@@ -17,7 +17,7 @@ login shell on a console
    ├─ sola-call          call host
    ├─ sola-botsd         bots daemon
    ├─ sola-river         River's window manager and bus bridge
-   ├─ sola-shell         menubar, launcher, switcher, zones
+   ├─ sola-shell         menubar, tab bar, launcher, zones
    ├─ sola-session       application launcher and tracker
    │  └─ applications    each in its own systemd user scope
    └─ sola-kvm           KVM server
@@ -30,7 +30,7 @@ login shell on a console
 | `sola-bus` | The bus socket, and the current value of every sticky and persistent topic. See [The bus](bus.md). |
 | `sola-call` | The call socket, and the registry of live owners and their methods. See [The call plane](call.md). |
 | `sola-river` | River's window manager (`river-window-management-v1`). It places, stacks, and focuses windows as the shell asks, binds key chords, and reports windows and outputs on the bus. Call owner `compositor`. See [Compositor](compositor.md). |
-| `sola-shell` | The menubar, launcher, switcher, notifications, and zones. It decides which windows are shown and where, and tells `sola-river`. See [Shell](sola-shell.md). |
+| `sola-shell` | The menubar, tab bar, launcher, notifications, and zones. It decides which windows are shown and where, and tells `sola-river`. See [Shell](sola-shell.md). |
 | `sola-session` | Launching, tracking, and closing applications, and relaunching the previous session's applications at start. Call owner `session`. See [Session manager](session.md). |
 | `sola-botsd` | Named agent sessions. Call owner `bots`, and an HTTP API on port 27419. See [solactl](solactl.md). |
 | `sola-kvm` | Sharing this machine's keyboard and mouse with another machine. See [KVM](sola-kvm-operator.md). |

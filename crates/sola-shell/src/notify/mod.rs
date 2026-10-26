@@ -61,9 +61,6 @@ pub struct NotifyState {
     pub unseen: bool,
     /// App ids whose pile group is expanded in the panel.
     expanded: HashSet<String>,
-    /// Notification ids that no longer count toward Super+Tab marks.
-    /// Pile history stays until × / activate; the badge is unseen attention.
-    badge_seen: HashSet<String>,
     generation: u64,
 }
 
@@ -74,7 +71,6 @@ impl Default for NotifyState {
             pile: Vec::new(),
             unseen: false,
             expanded: HashSet::new(),
-            badge_seen: HashSet::new(),
             generation: 0,
         }
     }
@@ -90,59 +86,8 @@ impl NotifyState {
     }
 
     /// Clicking the bell: icon returns to normal chrome (pile may still be there).
-    /// Also marks every current item seen for Super+Tab — looking at the
-    /// list is enough; visiting the app is the other path.
     pub fn acknowledge(&mut self) {
         self.unseen = false;
-        self.ack_all();
-    }
-
-    fn badge_unseen(&self, id: &str) -> bool {
-        !self.badge_seen.contains(id)
-    }
-
-    /// Pending Super+Tab attention: unseen live + pile for `app_id`.
-    pub fn attention_count(&self, app_id: &str) -> u32 {
-        let live = self
-            .live
-            .iter()
-            .filter(|b| b.n.app_id.eq_ignore_ascii_case(app_id) && self.badge_unseen(&b.n.id))
-            .count();
-        let piled = self
-            .pile
-            .iter()
-            .filter(|n| n.app_id.eq_ignore_ascii_case(app_id) && self.badge_unseen(&n.id))
-            .count();
-        (live + piled) as u32
-    }
-
-    /// Looking at `app_id` (raise / Super+Tab land) clears its mark.
-    pub fn ack_app(&mut self, app_id: &str) {
-        for b in &self.live {
-            if b.n.app_id.eq_ignore_ascii_case(app_id) {
-                self.badge_seen.insert(b.n.id.clone());
-            }
-        }
-        for n in &self.pile {
-            if n.app_id.eq_ignore_ascii_case(app_id) {
-                self.badge_seen.insert(n.id.clone());
-            }
-        }
-    }
-
-    pub fn ack_all(&mut self) {
-        for b in &self.live {
-            self.badge_seen.insert(b.n.id.clone());
-        }
-        for n in &self.pile {
-            self.badge_seen.insert(n.id.clone());
-        }
-    }
-
-    fn prune_badge_seen(&mut self) {
-        self.badge_seen.retain(|id| {
-            self.live.iter().any(|b| b.n.id == *id) || self.pile.iter().any(|n| n.id == *id)
-        });
     }
 
     /// Apps in recency order (newest item in the group first).
@@ -198,7 +143,6 @@ impl NotifyState {
         let before = self.pile.len();
         self.pile.retain(|n| !n.app_id.eq_ignore_ascii_case(app_id));
         self.prune_expanded();
-        self.prune_badge_seen();
         if self.pile.is_empty() {
             self.unseen = false;
         }
@@ -361,14 +305,12 @@ impl NotifyState {
     pub fn take(&mut self, id: &str) -> Option<AppNotification> {
         if let Some(pos) = self.live.iter().position(|b| b.n.id == id) {
             let n = self.live.remove(pos).n;
-            self.prune_badge_seen();
-            return Some(n);
+                return Some(n);
         }
         if let Some(pos) = self.pile.iter().position(|n| n.id == id) {
             let n = self.pile.remove(pos);
             self.prune_expanded();
-            self.prune_badge_seen();
-            if self.pile.is_empty() {
+                if self.pile.is_empty() {
                 self.unseen = false;
             }
             return Some(n);
@@ -380,14 +322,12 @@ impl NotifyState {
     pub fn dismiss(&mut self, id: &str) -> bool {
         if let Some(pos) = self.live.iter().position(|b| b.n.id == id) {
             self.live.remove(pos);
-            self.prune_badge_seen();
-            return true;
+                return true;
         }
         if let Some(pos) = self.pile.iter().position(|n| n.id == id) {
             self.pile.remove(pos);
             self.prune_expanded();
-            self.prune_badge_seen();
-            if self.pile.is_empty() {
+                if self.pile.is_empty() {
                 self.unseen = false;
             }
             return true;
@@ -404,7 +344,6 @@ impl NotifyState {
         }
         self.pile.insert(0, n);
         self.unseen = true;
-        self.prune_badge_seen();
     }
 }
 
@@ -590,34 +529,6 @@ mod tests {
             NotifyState::default().overlay_height(1000.0),
             PILE_MIN_HEIGHT
         );
-    }
-
-    #[test]
-    fn attention_counts_live_and_pile() {
-        let mut s = NotifyState::default();
-        let t0 = Instant::now();
-        s.push(slack("live"), t0);
-        pile_into(&mut s, slack("missed"));
-        assert_eq!(s.attention_count("slack"), 2);
-        assert_eq!(s.attention_count("sola-mail"), 0);
-    }
-
-    #[test]
-    fn badge_drops_on_ack_without_draining_pile() {
-        let mut s = NotifyState::default();
-        pile_into(&mut s, slack("a"));
-        pile_into(&mut s, slack("b"));
-        pile_into(&mut s, n("ws", None));
-        assert_eq!(s.attention_count("slack"), 2);
-        s.ack_app("slack");
-        assert_eq!(s.attention_count("slack"), 0);
-        assert_eq!(s.pile_count(), 3, "pile is history, not the badge");
-        assert_eq!(s.attention_count("sola-projects"), 1);
-        s.acknowledge();
-        assert_eq!(s.attention_count("sola-projects"), 0);
-        assert_eq!(s.pile_count(), 3);
-        pile_into(&mut s, slack("c"));
-        assert_eq!(s.attention_count("slack"), 1, "new item badges again");
     }
 
     #[test]

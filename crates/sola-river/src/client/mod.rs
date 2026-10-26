@@ -158,6 +158,14 @@ pub struct AppData {
     /// Latest pointer position in compositor logical coords (`pointer_position`
     /// event). Used to pick the grabbed corner when a resize starts.
     pub pointer_pos: Option<(i32, i32)>,
+    /// The pointer moved since the last manage sequence (River sends a
+    /// move's position as it happens, before the enter it causes). An
+    /// enter without it is still: the window under the pointer changed.
+    pub pointer_moved: bool,
+    /// Announce the hovered window again on the pointer's next move: its
+    /// enter was still, or keyboard focus went elsewhere without the
+    /// pointer. The shell's focus-follows-mouse then takes it up.
+    pub rehover: bool,
     /// The in-flight interactive move/resize, if any. See `client::op`.
     /// Started only from CSD (`pointer_move_requested` / resize).
     pub op: Option<op::OpState>,
@@ -259,6 +267,8 @@ impl AppData {
             tiled_sent: std::collections::HashMap::new(),
             pointer_window: None,
             pointer_pos: None,
+            pointer_moved: false,
+            rehover: false,
             op: None,
             cursor_shape_manager: None,
             wl_pointer: None,
