@@ -974,6 +974,10 @@ impl App {
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
         self.float.update(m);
         self.windows.update(m);
+        // Cinema drops the titlebar: the panes get its rows.
+        if matches!(Topic::parse(m), Some(Topic::WindowChrome(_))) {
+            self.resize_all_panes();
+        }
         // The tab bar's stoplight: as the window's own close.
         if let Some(window) = self.windows.close_request(m) {
             return self.on_window(window, window::Event::CloseRequested);
@@ -3009,11 +3013,17 @@ impl App {
         }
     }
 
-    /// Where a project window's panes sit: under its top bar (and the
-    /// hairline below it).
+    /// Where a project window's panes sit, in window coordinates: under
+    /// the kit frame's titlebar (none in Cinema), the top bar and the
+    /// hairline below it. Without the titlebar the grid had two rows more
+    /// than fit, the last ones below the window's edge.
     fn content_rect(&self, window: window::Id) -> term_state::Rect {
         let size = self.windows.size(window).unwrap_or(DEFAULT_WINDOW);
-        let top = topbar::HEIGHT + topbar::RULE;
+        let titlebar = match self.chrome(window) {
+            sola_kit::Chrome::Bare => 0.0,
+            _ => sola_kit::components::window_frame::HEIGHT,
+        };
+        let top = titlebar + topbar::HEIGHT + topbar::RULE;
         term_state::Rect {
             x: 0.0,
             y: top,

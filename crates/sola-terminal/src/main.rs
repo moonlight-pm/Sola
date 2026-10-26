@@ -981,14 +981,20 @@ impl App {
         Task::none()
     }
 
-    /// A tab window's content area (the whole window) in its coordinates.
+    /// A tab window's content area, in its coordinates.
     fn content_rect(&self, window: window::Id) -> state::Rect {
         let size = self.sizes.get(&window).copied().unwrap_or(DEFAULT_WINDOW);
+        // Under the kit frame's titlebar (none in Cinema). Without it the
+        // grid had two rows more than fit, the last ones below the window.
+        let top = match self.chrome(window) {
+            sola_kit::Chrome::Bare => 0.0,
+            _ => sola_kit::components::window_frame::HEIGHT,
+        };
         state::Rect {
             x: 0.0,
-            y: 0.0,
+            y: top,
             w: size.width,
-            h: size.height,
+            h: (size.height - top).max(0.0),
         }
     }
 
@@ -1064,6 +1070,10 @@ impl App {
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
         self.float.update(m);
         self.tab_windows.update(m);
+        // Cinema drops the titlebar: the panes get its rows.
+        if matches!(Topic::parse(m), Some(Topic::WindowChrome(_))) {
+            self.resize_all_panes();
+        }
         // The tab bar's stoplight: as the window's own close.
         if let Some(window) = self.tab_windows.close_request(m) {
             return self.on_window(window, window::Event::CloseRequested);
