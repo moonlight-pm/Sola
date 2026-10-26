@@ -153,7 +153,7 @@ No gaps and no titlebars on tiles yet (N8).
 | Super+KP_8, 2, 5, =, ., + | Unbound on the two-zone layout | Other snaps |
 | Super+Tab | Same app list; confirming shows that app's most recent tab in its zone. **Amended 2026-10-25:** the switcher is gone; Super+Tab / Super+Shift+Tab focus the next / previous zone with something to show (bar order, wrapping), showing its tab | Raises the app |
 | Super+H | Hides the app as today; its rows stay, dimmed; clicking one unhides it | Hides the app |
-| Launcher on a running app | Shows its most recent tab. **Amended 2026-10-25:** opens a new window (the browser a page window, Terminal a tab window); one-window apps (Design, Paint, Arcade) still raise | Raises it |
+| Launcher on a running app | Shows its most recent tab. **Amended 2026-10-26 (Projects):** Projects opens a project, not a second Projects — the launcher's second stage lists `~/Projects` (Joshua: "All projects always go in ~/Projects"; open ones show and selecting brings up their workspace and window; others open in the current workspace; or a new one by name), through Projects' `project.open`; see the shell manual's Launcher. **Amended 2026-10-25:** opens a new window (the browser a page window, Terminal a tab window); one-window apps (Design, Paint, Arcade) still raise | Raises it |
 
 ## Focus
 

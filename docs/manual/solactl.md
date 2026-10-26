@@ -368,6 +368,7 @@ solactl projects                           # list methods
 solactl projects ps
 solactl projects project.list
 solactl projects project.add --path ~/Workspace/Sola
+solactl projects project.open --path ~/Projects/Sola    # show it, or open it here
 solactl projects project.startup [--project Illuno]
 solactl projects project.startup --project Illuno --script 'cp -a "$PROJECT/.grok" "$WORKTREE/"'
 solactl projects project.rm --project Sola
@@ -394,7 +395,7 @@ solactl projects whoami                    # from a Projects pane; or --pane / -
 | Short | Long | Methods |
 |---|---|---|
 | `-p` | `--project` | `project.rm`, `project.startup`, `project.reorder`, `tab.list`, `tab.spawn` |
-| `-p` | `--path` | `project.add` |
+| `-p` | `--path` | `project.add`, `project.open` |
 | `-n` | `--name` | `tab.spawn`, `tab.set` |
 | `-b` | `--branch` | `tab.spawn`, `tab.set` |
 | `-a` | `--agent` | `tab.spawn`, `tab.exec` |
@@ -407,14 +408,14 @@ solactl projects whoami                    # from a Projects pane; or --pane / -
 | `-s` | `--status` | `pane.wait` |
 | `-f` | `--fresh` | `pane.wait` |
 
-Required arguments: `project.add --path`; `project.rm`, `project.reorder`
+Required arguments: `--path` on `project.add` and `project.open`; `project.rm`, `project.reorder`
 `--project`; `tab.spawn --project --name`; `--tab` on `tab.rm`,
 `tab.select`, `tab.set`, `tab.exec`; `pane.send --text`. `--project` on
 `project.startup` and `--tab` on `pane.list` default to the focused
 project window's selected tab; `--pane` on `pane.send`, `pane.read`, and `pane.wait`
 defaults to the focused pane, else the selected tab.
 
-Deadlines: `project.add` 15 s; `tab.spawn` and `tab.exec`
+Deadlines: `project.add` and `project.open` 15 s; `tab.spawn` and `tab.exec`
 60 s; `pane.wait` 302 s, or its `--timeout` plus 2 s; the rest 8 s.
 
 ### Spawn
@@ -478,7 +479,11 @@ closed) and selects the tab.
 
 `tab.list` replies `{"tabs": […]}`; `ps` nests each project's tabs under
 `projects[].tabs[]`; `whoami` names the tab as `tab` (id) and `tab_name`;
-`project.add` and `tab.exec` replies carry `tab`. Lists include `path`,
+`project.add` and `tab.exec` replies carry `tab`. `project.list` gives each
+project's `open` (it has a window). `project.open` brings a project's window
+up (the shell shows its workspace) or opens a closed one in the showing
+workspace, adding the folder first if it is not a project; its reply says
+`opened` (it was closed). The launcher's Projects chooser uses both. Lists include `path`,
 `kind`, and `parent`. `kind` is one of:
 
 - `main` — the project's own tab

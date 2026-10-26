@@ -19,6 +19,9 @@ pub struct LauncherState {
     /// `app_id`s that pass the current filter, in config order.
     pub filtered_ids: Vec<String>,
     pub selected: usize,
+    /// Projects was picked: the launcher shows `~/Projects` instead of
+    /// the apps ([`super::projects`]); `selected` indexes its rows.
+    pub chooser: Option<super::projects::Chooser>,
 }
 
 impl LauncherState {

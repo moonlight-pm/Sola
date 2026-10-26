@@ -62,7 +62,7 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | `crates/sola-core` | Shared primitives (env, process, config, log, …) |
 | `crates/sola-river` | River ↔ bus bridge |
 | `crates/sola-session` | User-app session manager (spawn / close / reap) |
-| `crates/sola-shell` | Menubar, launcher, switcher, Super+K shortcuts overlay, zoning, notification HUD, Bluetooth popover, volume popover + 12-band LED spectrum (iced daemon; BlueZ over system D-Bus; PipeWire via `pw-dump`/`wpctl`/`pw-cat`; Lamzu mouse battery over hidraw). Flower menu: Restart Shell, Quit Sola, Restart Computer, Shut Down (logind; on Oath `sudo oath set host:local power=reboot|halt` + `oath apply --confirm host:local`). |
+| `crates/sola-shell` | Menubar, launcher (its Projects chooser lists `~/Projects` and calls Projects' `project.list` / `project.open` on the call plane), switcher, Super+K shortcuts overlay, zoning, notification HUD, Bluetooth popover, volume popover + 12-band LED spectrum (iced daemon; BlueZ over system D-Bus; PipeWire via `pw-dump`/`wpctl`/`pw-cat`; Lamzu mouse battery over hidraw). Flower menu: Restart Shell, Quit Sola, Restart Computer, Shut Down (logind; on Oath `sudo oath set host:local power=reboot|halt` + `oath apply --confirm host:local`). |
 | `crates/sola-kit` | Iced app kit + storybook (incl. `FilePicker`, shared **Window** menu, compositor clipboard helper for images) |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, calendar accounts + shelf, …) |
 | `crates/sola-oath` | **Oath** catalog app: packages, Needs / Used by, pins, apply, over `oath --json` (sudo for writes). Launcher entry **Oath** only when `/oath/INDEX.md` exists |

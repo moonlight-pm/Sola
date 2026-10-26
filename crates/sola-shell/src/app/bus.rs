@@ -44,7 +44,7 @@ impl Shell {
                 self.on_windows(w);
                 self.resolve_pending_launch_if_window();
                 self.flush_calendar_event();
-                Task::none()
+                self.flush_project_pending()
             }
             Topic::SetAppMenu(m) => {
                 self.on_set_app_menu(m);
@@ -1030,7 +1030,7 @@ impl Shell {
                 return Task::done(Msg::CloseSelection);
             }
             if self.launcher.active {
-                return Task::done(Msg::CloseLauncher);
+                return Task::done(Msg::LauncherEscape);
             }
             if self.shortcuts.active {
                 return Task::done(Msg::CloseShortcuts);

@@ -28,6 +28,17 @@ pub fn methods() -> Vec<MethodSpec> {
             )],
             ADD_TIMEOUT_MS,
         ),
+        method_ms(
+            "project.open",
+            "Bring a project's window up (its workspace shows), opening it if closed (it lands in the showing workspace); a folder that is not a project yet is added first",
+            &[req(
+                "path",
+                Some('p'),
+                ArgType::Path,
+                "Folder path (`~` ok)",
+            )],
+            ADD_TIMEOUT_MS,
+        ),
         method(
             "project.rm",
             "Unregister a project and kill its tmux sessions",
@@ -289,6 +300,7 @@ mod tests {
             "ps",
             "project.list",
             "project.add",
+            "project.open",
             "project.rm",
             "project.startup",
             "project.reorder",

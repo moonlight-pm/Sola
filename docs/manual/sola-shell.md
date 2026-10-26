@@ -50,6 +50,21 @@ tab window, each right after the focused tab. Design, Paint and Arcade keep
 a single window and bring it up instead. An app you hid with Super+H is
 shown again rather than started twice.
 
+**Projects** opens a project, not another Projects. Every project lives in
+`~/Projects`; picking Projects turns the launcher into a list of those
+folders, the field scoped to "Projects". Type to filter.
+
+- A project with a window says **Open on** its workspace; picking it shows
+  that workspace and the window.
+- Any other folder opens in the workspace you are on, right after the
+  focused tab (a folder Projects did not know is added as a project).
+- **New project…** asks for a name (or takes the one you typed): Enter
+  makes `~/Projects/<name>` and opens it the same way.
+- Escape goes back to the apps; again closes the launcher.
+
+If Projects is not running, it starts, and the project comes up once its
+first window is there.
+
 ## Flower menu
 
 The left-end flower (and the **Shell** application menu when the Shell is

@@ -1951,8 +1951,15 @@ impl App {
         match method {
             "ps" => (Ok(self.ps_json()), Task::none()),
             "project.list" => {
-                let projects: Vec<serde_json::Value> =
-                    self.projects.iter().map(cli::project_json).collect();
+                let projects: Vec<serde_json::Value> = self
+                    .projects
+                    .iter()
+                    .map(|p| {
+                        let mut json = cli::project_json(p);
+                        json["open"] = serde_json::json!(self.windows.has(&p.id));
+                        json
+                    })
+                    .collect();
                 (
                     Ok(serde_json::json!({ "projects": projects })),
                     Task::none(),
@@ -1963,6 +1970,15 @@ impl App {
                     return (Err("missing path".into()), Task::none());
                 };
                 match self.cli_add_project(&path) {
+                    Ok((data, task)) => (Ok(data), task),
+                    Err(e) => (Err(e), Task::none()),
+                }
+            }
+            "project.open" => {
+                let Some(path) = param_str(params, "path") else {
+                    return (Err("missing path".into()), Task::none());
+                };
+                match self.cli_open_project(&path) {
                     Ok((data, task)) => (Ok(data), task),
                     Err(e) => (Err(e), Task::none()),
                 }
@@ -2472,6 +2488,37 @@ impl App {
             .ok_or_else(|| "project vanished".to_string())?;
         let mut data = cli::project_json(project);
         data["tab"] = serde_json::json!(main_id);
+        Ok((data, task))
+    }
+
+    /// `project.open` (the launcher's project chooser): the project at
+    /// `path` in front. Its window shows if open (the shell brings up its
+    /// workspace), else opens in front (it lands in the showing workspace);
+    /// a folder that is not a project yet is added first, on its root tab.
+    fn cli_open_project(&mut self, path: &str) -> Result<(serde_json::Value, Task<Msg>), String> {
+        let root = catalog::expand_user_path(path.trim())
+            .canonicalize()
+            .map_err(|e| format!("path: {e}"))?;
+        let known = self.projects.iter().find(|p| p.root == root).map(|p| p.id.clone());
+        let (project_id, added) = match known {
+            Some(id) => (id, None),
+            None => {
+                let (id, main_id, task) = self.register_project(path)?;
+                (id, Some((main_id, task)))
+            }
+        };
+        let was_open = self.windows.has(&project_id);
+        let mut task = self.show_project(&project_id);
+        if let Some((main_id, attach)) = added {
+            task = Task::batch([attach, task, self.select_tab(&main_id)]);
+        }
+        let project = self
+            .projects
+            .iter()
+            .find(|p| p.id == project_id)
+            .ok_or_else(|| "project vanished".to_string())?;
+        let mut data = cli::project_json(project);
+        data["opened"] = serde_json::json!(!was_open);
         Ok((data, task))
     }
 

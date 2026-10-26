@@ -26,6 +26,7 @@ use crate::zoning::ZoningState;
 pub mod adapt;
 pub mod agents;
 pub mod bus;
+pub mod chooser;
 pub mod workspaces;
 
 /// Set by flower **Quit Sola** so `main` can exit 0. Compositor death
@@ -152,6 +153,15 @@ pub enum Msg {
     Launch,
     /// Launch a specific app by id (row click — not the keyboard selection).
     LaunchApp(String),
+    /// Escape in the launcher: a stage back (naming → projects → apps),
+    /// else close.
+    LauncherEscape,
+    /// A row of the Projects chooser clicked.
+    LauncherPick(usize),
+    /// Projects' `project.list`, for the chooser's open marks.
+    ProjectsKnown(Result<Vec<(std::path::PathBuf, crate::launcher::projects::Known)>, String>),
+    /// Projects answered `project.open`.
+    ProjectOpened(Result<(), String>),
     /// Super+K / flower menu: show the keyboard-shortcuts overlay.
     OpenShortcuts,
     /// Dismiss the shortcuts overlay and restore prior focus.
@@ -467,6 +477,8 @@ pub struct Shell {
     /// An event to show once Calendar's window appears (the clock's panel
     /// launched it to open one).
     pub calendar_event_pending: Option<String>,
+    /// A project the chooser asked for while Projects was starting.
+    pub project_pending: Option<std::path::PathBuf>,
     /// Iced-reported live swapchain for menu / launcher /
     /// selection / notify / shortcuts. Composition waits on this so River
     /// does not show a stretched 2×2.
@@ -577,6 +589,7 @@ impl Shell {
             inbox_unread: None,
             calendar_agenda: None,
             calendar_event_pending: None,
+            project_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
 
@@ -1283,6 +1296,10 @@ impl Shell {
     /// A composition-hidden running app is unhidden and raised instead of
     /// spawned again.
     fn launch_from_launcher(&mut self, app_id: Option<&str>) -> iced::Task<Msg> {
+        // Projects opens a project, not another Projects: its chooser.
+        if app_id == Some(crate::launcher::projects::APP_ID) {
+            return self.enter_projects_chooser();
+        }
         let mut opening = iced::Task::none();
         if let Some(id) = app_id {
             if let Some(hidden) = self.mapped_hidden_app_id(id) {
@@ -2120,7 +2137,7 @@ impl Shell {
                 Event::KeyPressed {
                     key: Key::Named(Named::Escape),
                     ..
-                } => Msg::CloseLauncher,
+                } => Msg::LauncherEscape,
                 _ => Msg::Noop,
             }
         });
@@ -2543,6 +2560,7 @@ impl Shell {
                 }
                 self.launcher.prior_focus = self.focused_window_id;
                 self.launcher.active = true;
+                self.launcher.chooser = None;
                 let apps = self.applications.clone();
                 self.launcher.apply_query(&apps, "");
                 self.emit_composition();
@@ -2562,6 +2580,7 @@ impl Shell {
                     return iced::Task::none();
                 }
                 self.launcher.active = false;
+                self.launcher.chooser = None;
                 self.emit_composition();
                 self.emit_registered_chords();
                 // Restore focus to the previously focused app window.
@@ -2573,6 +2592,14 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::LauncherQuery(text) => {
+                if let Some(chooser) = self.launcher.chooser.as_mut() {
+                    if !chooser.naming {
+                        chooser.apply_query(&text);
+                    }
+                    self.launcher.query = text;
+                    self.launcher.selected = 0;
+                    return iced::Task::none();
+                }
                 let apps = self.applications.clone();
                 self.launcher.apply_query(&apps, &text);
                 iced::Task::none()
@@ -2587,7 +2614,10 @@ impl Shell {
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
-                let len = self.launcher.filtered_ids.len();
+                let len = match &self.launcher.chooser {
+                    Some(chooser) => chooser.rows().len(),
+                    None => self.launcher.filtered_ids.len(),
+                };
                 if len == 0 {
                     return iced::Task::none();
                 }
@@ -2604,6 +2634,9 @@ impl Shell {
                 }
                 if !self.launcher.active {
                     return iced::Task::none();
+                }
+                if self.launcher.chooser.is_some() {
+                    return self.chooser_pick(self.launcher.selected);
                 }
                 let app_id = self
                     .launcher
@@ -2626,6 +2659,35 @@ impl Shell {
                     self.launcher.selected = i;
                 }
                 self.launch_from_launcher(Some(&app_id))
+            }
+            Msg::LauncherEscape => {
+                if self.shortcuts.active {
+                    return iced::Task::done(Msg::CloseShortcuts);
+                }
+                if !self.launcher.active {
+                    return iced::Task::none();
+                }
+                self.launcher_back()
+            }
+            Msg::LauncherPick(i) => {
+                if !self.launcher.active {
+                    return iced::Task::none();
+                }
+                self.launcher.selected = i;
+                self.chooser_pick(i)
+            }
+            Msg::ProjectsKnown(known) => {
+                match (known, self.launcher.chooser.as_mut()) {
+                    (Ok(known), Some(chooser)) => chooser.known = known.into_iter().collect(),
+                    (Err(e), _) => tracing::debug!(error = %e, "project chooser: project.list"),
+                    _ => {}
+                }
+                iced::Task::none()
+            }
+            Msg::ProjectOpened(Ok(())) => iced::Task::none(),
+            Msg::ProjectOpened(Err(e)) => {
+                tracing::warn!(error = %e, "project chooser: project.open");
+                self.chooser_toast(format!("Projects: {e}"))
             }
             Msg::RaiseMail => {
                 self.activate_mail();
@@ -3081,6 +3143,7 @@ mod pending_launch_tests {
             inbox_unread: None,
             calendar_agenda: None,
             calendar_event_pending: None,
+            project_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
         shell.menubar.toast_generation = 1;
@@ -3202,6 +3265,7 @@ mod hide_tests {
             inbox_unread: None,
             calendar_agenda: None,
             calendar_event_pending: None,
+            project_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
         // Tabs: the first app on the Left, the second on the Right, the

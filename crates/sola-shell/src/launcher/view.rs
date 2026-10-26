@@ -5,6 +5,11 @@
 //!
 //! Chord wiring (Meta+Space toggle, Escape close, arrows nav, Enter launch)
 //! is handled in `on_chord`. Messages are defined on `Msg`.
+//!
+//! Picking Projects turns the card into the Projects chooser
+//! ([`crate::launcher::projects`]): the field scoped to "Projects", the
+//! folders of `~/Projects` as rows (open ones say where), then New.
+//! Escape steps back to the apps.
 
 use iced::widget::{Id as WidgetId, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Alignment, Element, Length, Padding};
@@ -18,6 +23,7 @@ use sola_kit::components::{
 use sola_kit::fonts;
 
 use crate::app::{Msg, Shell};
+use crate::launcher::projects::{Chooser, Row};
 
 /// Stable widget ID for the launcher query input — used to focus it on open.
 pub const QUERY_INPUT_ID: &str = "launcher-query";
@@ -45,8 +51,13 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
 
     let launcher = &shell.launcher;
 
+    let placeholder = match &launcher.chooser {
+        Some(c) if c.naming => "Name the new project",
+        Some(_) => "Open a project, or type a new name",
+        None => "Search…",
+    };
     // Search field — part of the card chrome, not a loud form control.
-    let query_input: Element<'_, Msg> = text_input("Search…", &launcher.query)
+    let query_input: Element<'_, Msg> = text_input(placeholder, &launcher.query)
         .id(WidgetId::new(QUERY_INPUT_ID))
         .on_input(Msg::LauncherQuery)
         .style(input_style)
@@ -54,8 +65,18 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .size(QUERY_SIZE)
         .width(Length::Fill)
         .into();
+    // In the chooser, the field is scoped: "Projects" before it.
+    let query_input: Element<'_, Msg> = match &launcher.chooser {
+        Some(_) => row![scope_chip("lucide/folders", "Projects"), query_input]
+            .padding(Padding::ZERO.left(QUERY_PAD))
+            .align_y(Alignment::Center)
+            .into(),
+        None => query_input,
+    };
 
-    let rows: Vec<Element<'_, Msg>> = if launcher.filtered_ids.is_empty() {
+    let rows: Vec<Element<'_, Msg>> = if let Some(chooser) = &launcher.chooser {
+        chooser_rows(shell, chooser)
+    } else if launcher.filtered_ids.is_empty() {
         vec![
             container(
                 text("No matching applications.")
@@ -157,4 +178,100 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+/// The stage's name before the field, on a quiet pill.
+fn scope_chip<'a>(icon_name: &str, label: &'a str) -> Element<'a, Msg> {
+    container(
+        row![icon(icon_name, 14), text(label).font(fonts::ui_medium()).size(13)]
+            .spacing(6)
+            .align_y(Alignment::Center),
+    )
+    .padding(Padding::from([4.0, 8.0]))
+    .style(|theme: &iced::Theme| iced::widget::container::Style {
+        background: Some(
+            iced::Color {
+                a: 0.08,
+                ..theme.palette().text
+            }
+            .into(),
+        ),
+        border: iced::Border {
+            radius: 6.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
+fn dim(theme: &iced::Theme) -> iced::widget::text::Style {
+    iced::widget::text::Style {
+        color: Some(iced::Color {
+            a: 0.55,
+            ..theme.palette().text
+        }),
+    }
+}
+
+/// The chooser's rows: each folder of `~/Projects` (open ones say where),
+/// then New.
+fn chooser_rows<'a>(shell: &'a Shell, chooser: &'a Chooser) -> Vec<Element<'a, Msg>> {
+    let selected = shell.launcher.selected;
+    chooser
+        .rows()
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let (icon_name, label, note): (&str, String, Option<String>) = match r {
+                Row::Folder(f) => {
+                    let folder = &chooser.folders[f];
+                    let open = chooser.known(folder).filter(|k| k.open);
+                    let note = open.map(|k| match shell.project_workspace(&k.id) {
+                        Some(ws) => format!("Open on {ws}"),
+                        None => "Open".to_string(),
+                    });
+                    let icon_name = if open.is_some() {
+                        "lucide/folder-open"
+                    } else {
+                        "lucide/folder"
+                    };
+                    (icon_name, folder.name.clone(), note)
+                }
+                Row::New => {
+                    let name = shell.launcher.query.trim();
+                    let label = match (chooser.naming, chooser.new_name()) {
+                        (true, _) if name.is_empty() => "A name for its folder in ~/Projects".into(),
+                        (true, _) => format!("Create ~/Projects/{name}"),
+                        (false, Some(n)) => format!("New project “{n}”"),
+                        (false, None) => "New project…".into(),
+                    };
+                    ("lucide/folder-plus", label, None)
+                }
+            };
+            let mut content = row![
+                icon(icon_name, ROW_ICON),
+                text(label).font(fonts::ui()).size(ROW_LABEL),
+            ]
+            .spacing(ROW_GAP)
+            .align_y(Alignment::Center);
+            if let Some(note) = note {
+                content = content
+                    .push(iced::widget::Space::new().width(Length::Fill))
+                    .push(text(note).font(fonts::chrome()).size(12).style(dim));
+            }
+            let lp = shell.style.launcher_pad;
+            iced::widget::button(content)
+                .on_press(Msg::LauncherPick(i))
+                .padding(Padding {
+                    top: lp,
+                    bottom: lp,
+                    left: lp + 4.0,
+                    right: lp + 8.0,
+                })
+                .width(Length::Fill)
+                .style(kit_btn::list_item(i == selected))
+                .into()
+        })
+        .collect()
 }
