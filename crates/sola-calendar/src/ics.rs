@@ -6,14 +6,23 @@ use crate::model::CalEvent;
 
 /// `X-WR-CALNAME` / `NAME` on the wrapping VCALENDAR, if present.
 pub fn calendar_name(ics: &str) -> Option<String> {
+    header_value(ics, &["X-WR-CALNAME", "NAME"])
+}
+
+/// iTIP `METHOD` on the wrapping VCALENDAR (`REQUEST`, `CANCEL`, …).
+pub fn method(ics: &str) -> Option<String> {
+    header_value(ics, &["METHOD"])
+}
+
+/// First non-empty VCALENDAR property in `names`, before any VEVENT.
+fn header_value(ics: &str, names: &[&str]) -> Option<String> {
     let unfolded = unfold(ics);
     for line in unfolded.lines() {
         if line.eq_ignore_ascii_case("BEGIN:VEVENT") {
             break;
         }
         if let Some((name, _, value)) = split_prop(line) {
-            let n = name.to_ascii_uppercase();
-            if n == "X-WR-CALNAME" || n == "NAME" {
+            if names.iter().any(|n| name.eq_ignore_ascii_case(n)) {
                 let s = unescape(value);
                 if !s.trim().is_empty() {
                     return Some(s);
@@ -58,6 +67,9 @@ pub fn parse_vevents(ics: &str) -> Vec<RawEvent> {
                 "RRULE" => cur.rrule = Some(value.to_string()),
                 "DTSTART" => cur.dtstart = parse_dt(params, value),
                 "DTEND" => cur.dtend = parse_dt(params, value),
+                "DURATION" => cur.duration = parse_duration(value),
+                "RECURRENCE-ID" => cur.recurrence_id = true,
+                "STATUS" => cur.cancelled = value.trim().eq_ignore_ascii_case("CANCELLED"),
                 "EXDATE" => {
                     if let Some(dt) = parse_dt(params, value.split(',').next().unwrap_or(value)) {
                         cur.exdates.push(dt.date);
@@ -121,24 +133,9 @@ pub fn to_cal_events(
     etag: Option<String>,
     window: (NaiveDate, NaiveDate),
 ) -> Vec<CalEvent> {
-    let Some(start_dt) = raw.dtstart else {
+    let (Some(start_dt), Some(end_dt)) = (raw.dtstart, raw.end()) else {
         return Vec::new();
     };
-    let end_dt = raw.dtend.unwrap_or_else(|| {
-        if start_dt.all_day {
-            Dt {
-                all_day: true,
-                date: start_dt.date + Duration::days(1),
-                utc: start_dt.utc + Duration::days(1),
-            }
-        } else {
-            Dt {
-                all_day: false,
-                date: start_dt.date,
-                utc: start_dt.utc + Duration::hours(1),
-            }
-        }
-    });
     let duration = end_dt.utc - start_dt.utc;
     let master_id = raw
         .uid
@@ -212,7 +209,39 @@ pub struct RawEvent {
     pub rrule: Option<String>,
     pub dtstart: Option<Dt>,
     pub dtend: Option<Dt>,
+    /// `DURATION`, used when there is no `DTEND`.
+    pub duration: Option<Duration>,
+    /// An override of one occurrence (`RECURRENCE-ID`), not a series.
+    pub recurrence_id: bool,
+    /// `STATUS:CANCELLED`.
+    pub cancelled: bool,
     pub exdates: Vec<NaiveDate>,
+}
+
+impl RawEvent {
+    /// `DTEND`, else `DTSTART` + `DURATION`, else a day (all-day) or an hour.
+    pub fn end(&self) -> Option<Dt> {
+        let start = self.dtstart?;
+        if let Some(end) = self.dtend {
+            return Some(end);
+        }
+        let span = self.duration.unwrap_or(if start.all_day {
+            Duration::days(1)
+        } else {
+            Duration::hours(1)
+        });
+        let utc = start.utc + span;
+        let date = if start.all_day {
+            start.date + Duration::days(span.num_days().max(1))
+        } else {
+            utc.with_timezone(&chrono::Local).date_naive()
+        };
+        Some(Dt {
+            all_day: start.all_day,
+            date,
+            utc,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -340,7 +369,9 @@ fn parse_datetime(s: &str, tzid: Option<&str>) -> Option<DateTime<Utc>> {
         return Some(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc));
     }
     if let Some(tzid) = tzid {
-        if let Ok(tz) = tzid.parse::<chrono_tz::Tz>() {
+        // Outlook / Exchange name zones the Windows way.
+        let iana = crate::wintz::iana(tzid).unwrap_or(tzid);
+        if let Ok(tz) = iana.parse::<chrono_tz::Tz>() {
             return tz
                 .from_local_datetime(&naive)
                 .single()
@@ -351,6 +382,38 @@ fn parse_datetime(s: &str, tzid: Option<&str>) -> Option<DateTime<Utc>> {
         .from_local_datetime(&naive)
         .single()
         .map(|d| d.with_timezone(&Utc))
+}
+
+/// RFC 5545 `DURATION` (`PT1H30M`, `P1D`, `P2W`, optional sign).
+fn parse_duration(value: &str) -> Option<Duration> {
+    let v = value.trim();
+    let (sign, v) = match v.strip_prefix('-') {
+        Some(rest) => (-1, rest),
+        None => (1, v.strip_prefix('+').unwrap_or(v)),
+    };
+    let v = v.strip_prefix('P').or_else(|| v.strip_prefix('p'))?;
+    let mut total = Duration::zero();
+    let mut num = String::new();
+    let mut in_time = false;
+    for c in v.chars() {
+        match c.to_ascii_uppercase() {
+            'T' => in_time = true,
+            d if d.is_ascii_digit() => num.push(d),
+            unit => {
+                let n: i64 = num.parse().ok()?;
+                num.clear();
+                total += match (unit, in_time) {
+                    ('W', false) => Duration::weeks(n),
+                    ('D', false) => Duration::days(n),
+                    ('H', true) => Duration::hours(n),
+                    ('M', true) => Duration::minutes(n),
+                    ('S', true) => Duration::seconds(n),
+                    _ => return None,
+                };
+            }
+        }
+    }
+    num.is_empty().then_some(total * sign)
 }
 
 fn expand_rrule(
@@ -477,6 +540,26 @@ mod tests {
         assert_eq!(ev[0].summary, "Off");
         assert!(!ev[1].dtstart.unwrap().all_day);
         assert_eq!(ev[1].summary, "Standup");
+    }
+
+    #[test]
+    fn duration_stands_in_for_dtend() {
+        let ics = "BEGIN:VEVENT\r\nUID:d@b\r\nSUMMARY:Call\r\nDTSTART:20261027T150000Z\r\nDURATION:PT30M\r\nEND:VEVENT\r\n";
+        let ev = &parse_vevents(ics)[0];
+        let end = ev.end().unwrap();
+        assert_eq!(end.utc - ev.dtstart.unwrap().utc, Duration::minutes(30));
+        assert_eq!(parse_duration("P1W2D"), Some(Duration::days(9)));
+        assert_eq!(parse_duration("-PT15M"), Some(Duration::minutes(-15)));
+        assert_eq!(parse_duration("PT"), Some(Duration::zero()));
+        assert_eq!(parse_duration("P1H"), None);
+    }
+
+    #[test]
+    fn windows_tzid_is_not_local_time() {
+        let ics = "BEGIN:VEVENT\r\nUID:w@b\r\nDTSTART;TZID=Pacific Standard Time:20261027T100000\r\nEND:VEVENT\r\n";
+        let start = parse_vevents(ics)[0].dtstart.unwrap();
+        // 10:00 PDT is 17:00 UTC.
+        assert_eq!(start.utc.format("%H:%M").to_string(), "17:00");
     }
 
     #[test]

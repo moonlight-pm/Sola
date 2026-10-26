@@ -16,6 +16,27 @@ Month is the default view (Sunday-start, the same as the menubar clock). Week an
 - Accounts, re-showing a hidden calendar, and editing its label or colour are in **Settings → Calendar**.
 - **Remind me** is at the bottom of an open event (including read-only ones). Checking it adds one reminder: 30 minutes before, or 9:00 on the morning of an all-day event. The chips add the other quick sets (at time, 5, 10, 15, and 30 minutes, 1 and 2 hours, 1 day, 1 week; for all-day events: morning of, 1 day before, 2 days before, 1 week before). × drops one. The last × unchecks Remind me.
 
+## Opening an invite
+
+Open a `.ics` file (an invite's **Open** in Mail, `xdg-open`, or
+`solactl open`) and Calendar comes forward with the event as a new draft,
+on its date. The **Calendar** row lists only calendars you can edit; it
+starts on your default. Change anything, then **Save** adds the event
+there. Escape discards it. A line under the title names the file.
+
+- Only one Calendar window runs. Opening a file while Calendar is open
+  hands it to that window.
+- An event that repeats is added once: its next date from today (its
+  first if the series has ended). The line under the title says which.
+- A file with several events adds the first; the line says how many were
+  left out.
+- A cancellation (`METHOD:CANCEL` or `STATUS:CANCELLED`) adds nothing and
+  says so.
+- An all-day event over several days keeps its length (a **Through** row
+  shows the last day).
+- Outlook's Windows time-zone names (`Pacific Standard Time`, …) are read
+  as their real zone, not as local time.
+
 ## Google
 
 **Settings → Calendar → Add account → Google → Sign in with Google.** Browser opens; pick the Google account. Tokens travel on `Topic::CalendarConfig` (age-encrypted on disk). Add another Google account the same way.
@@ -49,4 +70,4 @@ Calendar has to be open. When a reminder comes due, a card stays on the desk unt
 
 ## Limits
 
-Calendar does not support invites, provider alarms (Google / iCloud / CalDAV), authenticated ICS URLs, drag-to-create, a time zone picker, or showing these events in the menubar clock.
+Calendar does not reply to invites (no accept / decline) or add a whole repeating series from a file. It does not support provider alarms (Google / iCloud / CalDAV), authenticated ICS URLs, drag-to-create, a time zone picker, or showing these events in the menubar clock.

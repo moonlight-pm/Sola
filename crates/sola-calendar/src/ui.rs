@@ -1,5 +1,6 @@
 //! Kit UI: calendars rail, month/week/day board, inspector.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,8 +19,8 @@ use iced::{
 };
 use sola_bus::Message;
 use sola_bus::topics::{
-    AppNotification, CalendarConfig, CalendarShelf, NOTIFICATION_PERSIST_PREFIX, SplitDir, Topic,
-    google_calendar_client_id,
+    AppNotification, CalendarConfig, CalendarShelf, FocusTarget, NOTIFICATION_PERSIST_PREFIX,
+    SplitDir, Topic, google_calendar_client_id,
 };
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::color_picker;
@@ -82,6 +83,10 @@ pub struct App {
     reminders: ReminderBook,
     /// New-event reminders, held until the provider returns the saved id.
     pending_remind: Option<PendingRemind>,
+    /// First worker snapshot has arrived (calendars and default known).
+    loaded: bool,
+    /// `.ics` files to draft once [`Self::loaded`].
+    pending_files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +112,10 @@ struct Draft {
     href: Option<String>,
     etag: Option<String>,
     reminders: Vec<i64>,
+    /// All-day length in days (exclusive end − start); 1 for timed.
+    span_days: i64,
+    /// Caption under the title (an opened `.ics`: its file, what was left out).
+    note: Option<String>,
 }
 
 struct PendingRemind {
@@ -168,6 +177,8 @@ pub enum Msg {
     ToggleColor(String),
     ColorMsg(color_picker::Message),
     ColorDismiss,
+    /// `.ics` paths from another `sola-calendar` launch (empty: just raise).
+    OpenFiles(Vec<PathBuf>),
 }
 
 impl Default for App {
@@ -198,13 +209,16 @@ impl Default for App {
             last_shelf_fp: None,
             reminders: ReminderBook::load(&AppDirs::discover().reminders_file()),
             pending_remind: None,
+            loaded: false,
+            pending_files: Vec::new(),
         }
     }
 }
 
 impl App {
     pub fn boot() -> (Self, Task<Msg>) {
-        let app = Self::default();
+        let mut app = Self::default();
+        app.pending_files = crate::instance::launch_paths();
         bridge::send(CalCmd::Boot);
         (
             app,
@@ -232,6 +246,7 @@ impl App {
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
             bridge::subscription().map(Msg::Worker),
+            crate::instance::subscription().map(Msg::OpenFiles),
             iced::time::every(Duration::from_secs(5)).map(|_| Msg::Tick),
             event::listen_with(|event, _status, _id| match event {
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
@@ -541,7 +556,54 @@ impl App {
                 self.color_picker = None;
                 Task::none()
             }
+            Msg::OpenFiles(paths) => {
+                self.raise_self();
+                self.pending_files.extend(paths);
+                self.open_pending_files()
+            }
         }
+    }
+
+    fn raise_self(&self) {
+        let Some(window_id) = self.float.any_window_id() else {
+            return;
+        };
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
+        }
+    }
+
+    /// Draft each queued `.ics` (the last one stays open). Waits for the
+    /// first snapshot so the calendar picker knows what you can edit.
+    fn open_pending_files(&mut self) -> Task<Msg> {
+        if !self.loaded {
+            return Task::none();
+        }
+        let files = std::mem::take(&mut self.pending_files);
+        Task::batch(files.iter().map(|p| self.open_file(p)).collect::<Vec<_>>())
+    }
+
+    fn open_file(&mut self, path: &Path) -> Task<Msg> {
+        let invite = match crate::invite::read(path) {
+            Ok(invite) => invite,
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "open .ics");
+                return self.show_toast(e);
+            }
+        };
+        let mut ev = invite.event;
+        ev.calendar_id = self.draft_calendar();
+        let day = ev
+            .start_date
+            .unwrap_or_else(|| ev.start.with_timezone(&chrono::Local).date_naive());
+        tracing::info!(path = %path.display(), %day, title = %ev.title, "drafting .ics event");
+        let mut draft = draft_from_event(&ev, Vec::new()).tap_new();
+        draft.note = Some(invite.note);
+        self.cursor = day;
+        self.pane = Pane::Draft(draft);
+        self.cal_picker_open = false;
+        self.sync_visible();
+        Task::none()
     }
 
     fn on_bus(&mut self, message: &Message) -> Task<Msg> {
@@ -673,6 +735,10 @@ impl App {
                 self.store.ensure_local();
                 self.maybe_emit_shelf();
                 self.deliver_due();
+                if !self.loaded {
+                    self.loaded = true;
+                    return self.open_pending_files();
+                }
             }
             CalNotice::EventSaved {
                 requested_id,
@@ -725,7 +791,13 @@ impl App {
     }
 
     fn new_draft(&self, day: NaiveDate) -> Draft {
-        let cal_id = if self
+        let ev = CalEvent::new_local(&self.draft_calendar(), day, Utc::now());
+        draft_from_event(&ev, Vec::new()).tap_new()
+    }
+
+    /// Calendar a new event starts in: the default if you can edit it.
+    fn draft_calendar(&self) -> String {
+        if self
             .store
             .calendars
             .iter()
@@ -734,9 +806,7 @@ impl App {
             self.settings.default_calendar.clone()
         } else {
             self.store.pick_default(&self.settings.default_calendar)
-        };
-        let ev = CalEvent::new_local(&cal_id, day, Utc::now());
-        draft_from_event(&ev, Vec::new()).tap_new()
+        }
     }
 
     fn save_draft(&mut self) -> Task<Msg> {
@@ -1375,6 +1445,12 @@ impl App {
                 draft_value_input("10:00 AM", &d.end_time, Msg::DraftEnd),
             ));
         }
+        if let Some(last) = draft_last_day(d) {
+            when = when.push(draft_meta_row(
+                "Through",
+                kit_text::body(pretty_date(last)).wrapping(Wrapping::Word),
+            ));
+        }
         when = when.push(draft_meta_row(
             "All day",
             toggler(d.all_day)
@@ -1396,7 +1472,18 @@ impl App {
         .spacing(SPACE_MD)
         .width(Length::Fill);
 
-        let mut col = column![title, draft_hairline(), when, draft_hairline(), details]
+        let head: Element<'_, Msg> = match &d.note {
+            Some(note) => column![
+                title,
+                kit_text::caption(note.clone())
+                    .style(kit_text::muted)
+                    .wrapping(Wrapping::Word),
+            ]
+            .spacing(SPACE_XS)
+            .into(),
+            None => title.into(),
+        };
+        let mut col = column![head, draft_hairline(), when, draft_hairline(), details]
             .spacing(SPACE_LG)
             .padding(SPACE_LG)
             .width(Length::Fill);
@@ -1544,7 +1631,20 @@ fn draft_from_event(ev: &CalEvent, reminders: Vec<i64>) -> Draft {
         href: ev.href.clone(),
         etag: ev.etag.clone(),
         reminders,
+        span_days: match (ev.all_day, ev.start_date, ev.end_date) {
+            (true, Some(s), Some(e)) => (e - s).num_days().max(1),
+            _ => 1,
+        },
+        note: None,
     }
+}
+
+/// Last day of a multi-day all-day draft (the span is kept from the event).
+fn draft_last_day(d: &Draft) -> Option<NaiveDate> {
+    if !d.all_day || d.span_days <= 1 {
+        return None;
+    }
+    parse_pretty_date(&d.date).map(|start| start + chrono::Duration::days(d.span_days - 1))
 }
 
 fn draft_to_event(d: &Draft) -> Result<CalEvent, String> {
@@ -1583,15 +1683,16 @@ fn draft_to_event(d: &Draft) -> Result<CalEvent, String> {
     ev.location = d.location.clone();
     ev.all_day = d.all_day;
     if d.all_day {
+        let span = chrono::Duration::days(d.span_days.max(1));
         ev.start_date = Some(date);
-        ev.end_date = Some(date + chrono::Duration::days(1));
+        ev.end_date = Some(date + span);
         ev.start = date
             .and_time(NaiveTime::MIN)
             .and_local_timezone(chrono::Local)
             .single()
             .map(|t| t.with_timezone(&Utc))
             .unwrap_or_else(|| date.and_time(NaiveTime::MIN).and_utc());
-        ev.end = ev.start + chrono::Duration::days(1);
+        ev.end = ev.start + span;
     } else {
         let start_t = parse_time(&d.start_time)?;
         let end_t = parse_time(&d.end_time)?;

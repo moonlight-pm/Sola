@@ -93,7 +93,7 @@ fn default_sola_paint() -> PathBuf {
     crate::paths::bin_path("sola-paint")
 }
 
-fn strip_file_url(target: &str) -> &str {
+pub(crate) fn strip_file_url(target: &str) -> &str {
     target
         .strip_prefix("file://")
         .map(|rest| rest.split_once('?').map(|(p, _)| p).unwrap_or(rest))

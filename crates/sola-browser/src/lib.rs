@@ -28,7 +28,6 @@ pub mod profiles;
 pub mod run;
 pub mod session;
 pub mod shader;
-pub mod tab_cache;
 pub mod util;
 #[cfg(feature = "bitwarden")]
 pub mod vault;

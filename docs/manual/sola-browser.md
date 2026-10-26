@@ -142,9 +142,10 @@ click, highlight a row. Further typing refines the list.
   or Kagi's first result for a search.
 - **Shift+Enter** always loads the Kagi results page.
 
-A new blank tab that names a site already open switches to that tab and
-closes the blank. The exact URL of another open tab is focused instead of
-loaded again.
+Typed text always loads in the current tab, even when another tab already
+has that page or site. Only a highlighted row jumps: if its page is open
+in another tab, Enter switches to that tab (and closes an unused blank
+tab) instead of loading it twice.
 
 - The field **unfocuses on submit**, so the caret is gone while the page
   loads. The text changes from what you typed to the resolved URL, then
@@ -160,7 +161,9 @@ loaded again.
 
 ## Find and reload
 
-`⌘F` finds on the page; `⌘G` / `⌘⇧G` is next / previous.
+`⌘F` finds on the page; `⌘G` / `⌘⇧G` is next / previous. The location
+bar still works while the find bar is open: Enter goes to whichever field
+has focus.
 
 `⌘R` reloads. `⌘⇧R` (Browser → **Hard Reload**) bypasses the HTTP cache
 for this navigation. Shift-click on the reload button does the same. It

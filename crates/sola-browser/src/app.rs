@@ -834,7 +834,9 @@ impl<E: Engine> App<E> {
     pub(crate) fn set_url_bar_focused(&mut self, on: bool) {
         self.url_bar_focused = on;
         URL_BAR_FOCUSED.store(on, Ordering::Relaxed);
-        if !on {
+        if on {
+            self.find_field_focused = false;
+        } else {
             self.omnibox_sel = None;
             self.omnibox_armed = false;
         }
@@ -851,26 +853,21 @@ impl<E: Engine> App<E> {
         self.visits.record(url, title);
     }
 
-    fn open_omnibox_url(&mut self, url: String) -> Task<Msg> {
+    /// Enter on a highlighted history row: focus the tab already showing
+    /// that page, else load it here. Typed text never jumps tabs.
+    fn open_history_pick(&mut self, url: String) -> Task<Msg> {
         if url.is_empty() {
             return Task::none();
         }
-        let scratch = self
-            .cached_tabs
-            .iter()
-            .find(|t| t.id == self.cached_active)
-            .is_some_and(tab_is_scratch_blank);
-        if let Some(id) = omnibox_existing_tab(
+        if let Some(id) = tab_showing_url(
             self.cached_tabs.iter().map(|t| (t.id, t.url.as_str())),
-            self.cached_active,
-            scratch,
             &url,
         ) {
             let leaving = self.cached_active;
             if id != leaving {
                 self.switch_active_tab(id);
-                // New-tab (⌘T) + jump to an already-open site must not
-                // leave the unused about:blank behind.
+                // New-tab (⌘T) + a picked row that is already open must
+                // not leave the unused about:blank behind.
                 self.discard_scratch_tab(leaving);
             }
             self.omnibox_sel = None;
@@ -944,17 +941,22 @@ impl<E: Engine> App<E> {
             self.omnibox_armed,
         );
         let url = crate::util::omnibox_submit_url(&typed, highlighted, search_results);
+        let picked = highlighted.is_some() && !search_results;
         tracing::debug!(
             %typed,
             selected = ?self.omnibox_sel,
             armed = self.omnibox_armed,
-            history = highlighted.is_some(),
+            history = picked,
             %url,
             "omnibox submit"
         );
         self.omnibox_sel = None;
         self.omnibox_armed = false;
-        self.open_omnibox_url(url)
+        if picked {
+            self.open_history_pick(url)
+        } else {
+            self.navigate_to(url)
+        }
     }
 
     /// Keep a submitted URL on the active tab while the engine is still
@@ -4376,6 +4378,9 @@ impl<E: Engine> App<E> {
     }
 
     fn begin_find(&mut self) {
+        // ⌘F from the omnibox moves focus here; the omnibox must not keep
+        // claiming Enter (the key route follows URL_BAR_FOCUSED).
+        self.set_url_bar_focused(false);
         self.find_open = true;
         self.find_field_focused = true;
         FIND_OPEN.store(true, Ordering::Relaxed);
@@ -6252,7 +6257,6 @@ impl<E: Engine> App<E> {
                         modifiers,
                         ..
                     }) if URL_BAR_FOCUSED.load(Ordering::Relaxed)
-                        && !FIND_OPEN.load(Ordering::Relaxed)
                         && !crate::js_dialog::is_open()
                         && !crate::http_auth::is_open() =>
                     {
@@ -6751,35 +6755,15 @@ fn tab_is_scratch_blank(t: &TabInfo) -> bool {
     is_transient_nav_url(&t.url) && t.history.iter().all(|e| is_transient_nav_url(&e.url))
 }
 
-/// Tab to focus instead of loading `url`. `None` means load it here.
-///
-/// An exact URL focuses that tab. A different path on the same site loads
-/// in the current tab — matching only the host used to unfocus and leave
-/// the page where it was. A fresh blank tab still jumps to a tab already
-/// on that site (⌘T). Kagi search URLs always load, so a new query is not
-/// dropped onto an older results tab.
-fn omnibox_existing_tab<'a, I>(
-    tabs: I,
-    active: TabId,
-    active_is_scratch: bool,
-    url: &str,
-) -> Option<TabId>
+/// Open tab already on exactly `url` (a picked history row focuses it
+/// rather than loading the page twice). `None` means load it here.
+fn tab_showing_url<'a, I>(tabs: I, url: &str) -> Option<TabId>
 where
     I: IntoIterator<Item = (TabId, &'a str)>,
 {
-    let tabs: Vec<(TabId, &str)> = tabs.into_iter().collect();
     let want = crate::util::normalize_url(url);
-    if let Some((id, _)) = tabs
-        .iter()
-        .find(|(_, tab_url)| crate::util::normalize_url(tab_url) == want)
-    {
-        return Some(*id);
-    }
-    if !active_is_scratch || crate::util::is_kagi_search_url(&want) {
-        return None;
-    }
     tabs.into_iter()
-        .find(|(id, tab_url)| *id != active && crate::util::same_site(tab_url, url))
+        .find(|(_, tab_url)| crate::util::normalize_url(tab_url) == want)
         .map(|(id, _)| id)
 }
 
@@ -6978,48 +6962,16 @@ mod tests {
     }
 
     #[test]
-    fn omnibox_edit_loads_a_new_path_on_the_same_site() {
-        let tabs = [
-            (TabId(1), "https://exitgroup.dev/home"),
-            (TabId(2), "https://github.com/sola/app"),
-        ];
-        assert_eq!(
-            omnibox_existing_tab(tabs, TabId(1), false, "https://exitgroup.dev/pricing"),
-            None
-        );
-        assert_eq!(
-            omnibox_existing_tab(tabs, TabId(1), false, "https://example.com/"),
-            None
-        );
-        assert_eq!(
-            omnibox_existing_tab(tabs, TabId(1), false, "https://exitgroup.dev/home"),
-            Some(TabId(1))
-        );
-        assert_eq!(
-            omnibox_existing_tab(tabs, TabId(1), false, "https://github.com/sola/app"),
-            Some(TabId(2))
-        );
-    }
-
-    #[test]
-    fn omnibox_blank_tab_jumps_to_an_open_site() {
+    fn picked_row_focuses_only_an_exact_open_page() {
         let tabs = [
             (TabId(1), "about:blank"),
             (TabId(2), "https://github.com/sola/app"),
         ];
         assert_eq!(
-            omnibox_existing_tab(tabs, TabId(1), true, "https://github.com/other"),
+            tab_showing_url(tabs, "https://github.com/sola/app"),
             Some(TabId(2))
         );
-        assert_eq!(
-            omnibox_existing_tab(
-                tabs,
-                TabId(1),
-                true,
-                "https://kagi.com/search?q=%5Cweather"
-            ),
-            None
-        );
+        assert_eq!(tab_showing_url(tabs, "https://github.com/other"), None);
     }
 
     #[test]

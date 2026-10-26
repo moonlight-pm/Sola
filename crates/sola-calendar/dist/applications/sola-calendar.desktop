@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Sola Calendar
+Comment=Sola calendar — opening an .ics drafts the event in a calendar you pick
+Exec=/opt/sola/bin/sola-calendar %F
+Terminal=false
+Categories=Office;Calendar;
+MimeType=text/calendar;
+StartupNotify=true
+StartupWMClass=sola-calendar

@@ -452,7 +452,7 @@ struct CefThreadState {
     /// Live profile id (for parking under the right key).
     live_profile_id: RefCell<String>,
     /// Parked profile workspaces — CEF browsers kept alive so switching
-    /// back does not reload pages. Evicted by [`crate::tab_cache`] policy.
+    /// back does not reload pages.
     /// Cleared on CEF recycle (profile-as-root cannot keep two user-data dirs).
     parked: RefCell<std::collections::HashMap<String, ParkedWorkspace>>,
     /// Leftover from a failed in-process CEF recycle (cannot re-init).
@@ -5565,38 +5565,6 @@ fn drop_parked_profile(state: &CefThreadState, profile_id: &str) {
         let n = park.tab_count;
         destroy_parked(park);
         tracing::info!(profile = %profile_id, tabs = n, "dropped parked profile workspace");
-    }
-}
-
-#[allow(dead_code)]
-fn cef_evict_parks(state: &CefThreadState) {
-    use crate::engine::TabInfo;
-    use crate::tab_cache::{eviction_victims, WorkspaceSnapshot};
-    use std::collections::HashMap;
-    use std::time::Instant;
-
-    // Build lightweight snapshots for the policy (tab counts + last_used).
-    let mut synthetic: HashMap<String, WorkspaceSnapshot> = HashMap::new();
-    {
-        let parked = state.parked.borrow();
-        for (id, p) in parked.iter() {
-            synthetic.insert(
-                id.clone(),
-                WorkspaceSnapshot {
-                    tabs: (0..p.tab_count)
-                        .map(|i| TabInfo::chrome(TabId(i as u64), String::new(), String::new()))
-                        .collect(),
-                    active: TabId(0),
-                    last_used: p.last_used,
-                    recently_closed: Vec::new(),
-                },
-            );
-        }
-    }
-    let live = state.tabs.borrow().len();
-    let victims = eviction_victims(&synthetic, live, Instant::now());
-    for id in victims {
-        drop_parked_profile(state, &id);
     }
 }
 
