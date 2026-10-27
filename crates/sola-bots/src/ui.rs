@@ -37,7 +37,7 @@ pub const APP_ID: &str = "sola-bots";
 
 const SIDEBAR_W_MIN: f32 = 180.0;
 const SIDEBAR_W_MAX: f32 = 420.0;
-const HEADER_H: f32 = 44.0;
+const HEADER_H: f32 = sola_kit::components::style::BAR_H;
 const THREAD_RATIO_MIN: f32 = 0.35;
 const THREAD_RATIO_MAX: f32 = 0.92;
 

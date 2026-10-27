@@ -78,6 +78,11 @@ pub enum ToEngine {
         success: bool,
         input: String,
     },
+    /// Chrome answered a page's file chooser (`None`: cancelled).
+    FileDialog {
+        id: u64,
+        paths: Option<Vec<String>>,
+    },
     /// Chrome answered HTTP Basic / Digest auth.
     HttpAuth {
         id: u64,
@@ -179,6 +184,8 @@ pub enum FromEngine {
     },
     /// Page `alert` / `confirm` / `prompt` / leave-page (or a reset).
     JsDialog(crate::js_dialog::Event),
+    /// A page's file chooser.
+    FileDialog(crate::file_dialog::Ipc),
     /// HTTP Basic / Digest auth prompt (or a reset).
     HttpAuth(crate::http_auth::Event),
     FindResult(crate::engine::FindResult),
@@ -568,6 +575,45 @@ mod tests {
             FromEngine::Notify(crate::notify::Ipc::Media(m)) => {
                 assert_eq!(m.access_id, Some(7));
                 assert!(m.audio);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_file_dialog() {
+        let (mut a, mut b) = Pair::pair().unwrap();
+        write_msg(
+            &mut a,
+            &FromEngine::FileDialog(crate::file_dialog::Ipc {
+                id: 9,
+                tab_id: 3,
+                mode: crate::file_dialog::Mode::OpenMultiple,
+                title: String::new(),
+                default_path: String::new(),
+                accept: vec!["image/*".into()],
+            }),
+        )
+        .unwrap();
+        match read_msg::<FromEngine>(&mut b).unwrap() {
+            FromEngine::FileDialog(d) => {
+                assert_eq!(d.id, 9);
+                assert_eq!(d.mode, crate::file_dialog::Mode::OpenMultiple);
+            }
+            other => panic!("{other:?}"),
+        }
+        write_msg(
+            &mut a,
+            &ToEngine::FileDialog {
+                id: 9,
+                paths: Some(vec!["/tmp/a.png".into()]),
+            },
+        )
+        .unwrap();
+        match read_msg::<ToEngine>(&mut b).unwrap() {
+            ToEngine::FileDialog { id, paths } => {
+                assert_eq!(id, 9);
+                assert_eq!(paths, Some(vec!["/tmp/a.png".to_string()]));
             }
             other => panic!("{other:?}"),
         }

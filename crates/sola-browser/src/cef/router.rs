@@ -24,7 +24,8 @@ use crate::cef::engine::{CefEngine, CefFrame};
 use crate::cef::ipc::{self, FromEngine, ToEngine};
 use crate::engine::{
     BackgroundTabsHandle, ClipboardHandle, Cmd, DevToolsHandle, DownloadsHandle, FaviconsHandle,
-    FindResultsHandle, FrameMailbox, FrameReceiver, FrontProfileHandle, HttpAuthHandle, ImeCaret,
+    FileDialogsHandle, FindResultsHandle, FrameMailbox, FrameReceiver, FrontProfileHandle,
+    HttpAuthHandle, ImeCaret,
     ImeHandle, JsDialogsHandle, NotificationsHandle, PageMenusHandle, PasskeysHandle, TabId,
     TabInfo, TabsHandle,
 };
@@ -55,6 +56,7 @@ struct Shared {
     background_tabs: BackgroundTabsHandle,
     notifications: NotificationsHandle,
     js_dialogs: JsDialogsHandle,
+    file_dialogs: FileDialogsHandle,
     http_auth: HttpAuthHandle,
     favicons: FaviconsHandle,
     find_results: FindResultsHandle,
@@ -84,6 +86,7 @@ struct Shared {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Prompt {
     Js,
+    File,
     Auth,
     Notify,
     Media,
@@ -105,6 +108,7 @@ pub struct RouterHandles {
     pub background_tabs: BackgroundTabsHandle,
     pub notifications: NotificationsHandle,
     pub js_dialogs: JsDialogsHandle,
+    pub file_dialogs: FileDialogsHandle,
     pub http_auth: HttpAuthHandle,
     pub favicons: FaviconsHandle,
     pub find_results: FindResultsHandle,
@@ -128,6 +132,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let background_tabs: BackgroundTabsHandle = Arc::new(Mutex::new(Vec::new()));
     let notifications: NotificationsHandle = Arc::new(Mutex::new(Vec::new()));
     let js_dialogs: JsDialogsHandle = Arc::new(Mutex::new(Vec::new()));
+    let file_dialogs: FileDialogsHandle = Arc::new(Mutex::new(Vec::new()));
     let http_auth: HttpAuthHandle = Arc::new(Mutex::new(Vec::new()));
     let favicons: FaviconsHandle = Arc::new(Mutex::new(Vec::new()));
     let find_results: FindResultsHandle = Arc::new(Mutex::new(Vec::new()));
@@ -149,6 +154,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         background_tabs: background_tabs.clone(),
         notifications: notifications.clone(),
         js_dialogs: js_dialogs.clone(),
+        file_dialogs: file_dialogs.clone(),
         http_auth: http_auth.clone(),
         favicons: favicons.clone(),
         find_results: find_results.clone(),
@@ -187,6 +193,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         background_tabs,
         notifications,
         js_dialogs,
+        file_dialogs,
         http_auth,
         favicons,
         find_results,
@@ -392,6 +399,7 @@ fn route(shared: &Shared, cmd: &Cmd<CefEngine>) -> Option<String> {
         | Cmd::SetActiveTab(tab) => owner(tab.0),
         Cmd::Agent(req) => owner(req.tab),
         Cmd::JsDialog { id, .. } => asker(Prompt::Js, *id),
+        Cmd::FileDialog { id, .. } => asker(Prompt::File, *id),
         Cmd::HttpAuth { id, .. } => asker(Prompt::Auth, *id),
         Cmd::NotifyPermission { prompt_id, .. } => asker(Prompt::Notify, *prompt_id),
         Cmd::MediaPermission { req_id, .. } => asker(Prompt::Media, *req_id),
@@ -838,6 +846,11 @@ fn handle_from(
             shared.js_dialogs.lock().unwrap().push(ev);
             crate::chrome_wake::wake();
         }
+        FromEngine::FileDialog(d) => {
+            ask(Prompt::File, d.id);
+            shared.file_dialogs.lock().unwrap().push(d);
+            crate::chrome_wake::wake();
+        }
         FromEngine::HttpAuth(ev) => {
             if let crate::http_auth::Event::Open(d) = &ev {
                 ask(Prompt::Auth, d.id);
@@ -964,6 +977,7 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
             Some(ToEngine::MediaPermission { req_id, granted })
         }
         Cmd::JsDialog { id, success, input } => Some(ToEngine::JsDialog { id, success, input }),
+        Cmd::FileDialog { id, paths } => Some(ToEngine::FileDialog { id, paths }),
         Cmd::HttpAuth {
             id,
             success,

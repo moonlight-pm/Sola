@@ -21,7 +21,7 @@ use crate::catalog::{self, Tab};
 use crate::status::PaneStatus;
 
 /// The bar's height, above the panes.
-pub const HEIGHT: f32 = 36.0;
+pub const HEIGHT: f32 = sola_kit::components::style::BAR_H;
 /// The hairline between the bar and the panes.
 pub const RULE: f32 = sola_kit::components::LINE_PX;
 pub const RENAME_INPUT_ID: &str = "ws-tab-rename";

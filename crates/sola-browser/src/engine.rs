@@ -317,6 +317,12 @@ pub enum Cmd<E: Engine> {
         success: bool,
         input: String,
     },
+    /// Answer a page's file chooser: the files (or folder) chosen, or
+    /// `None` when cancelled.
+    FileDialog {
+        id: u64,
+        paths: Option<Vec<String>>,
+    },
     /// Complete HTTP Basic / Digest auth.
     HttpAuth {
         id: u64,
@@ -891,6 +897,8 @@ pub type BackgroundTabsHandle = Arc<Mutex<Vec<ChromeTabRequest>>>;
 pub type NotificationsHandle = Arc<Mutex<Vec<crate::notify::Ipc>>>;
 /// Helper → chrome: `alert` / `confirm` / `prompt` / leave-page.
 pub type JsDialogsHandle = Arc<Mutex<Vec<crate::js_dialog::Event>>>;
+/// Helper → chrome: a page's file chooser.
+pub type FileDialogsHandle = Arc<Mutex<Vec<crate::file_dialog::Ipc>>>;
 /// Helper → chrome: HTTP Basic / Digest auth prompt.
 pub type HttpAuthHandle = Arc<Mutex<Vec<crate::http_auth::Event>>>;
 /// Helper → chrome: tab favicon PNG (empty bytes = clear).
@@ -972,6 +980,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn background_tabs_handle(&self) -> BackgroundTabsHandle;
     fn notifications_handle(&self) -> NotificationsHandle;
     fn js_dialogs_handle(&self) -> JsDialogsHandle;
+    fn file_dialogs_handle(&self) -> FileDialogsHandle;
     fn http_auth_handle(&self) -> HttpAuthHandle;
     fn favicons_handle(&self) -> FaviconsHandle;
     fn find_results_handle(&self) -> FindResultsHandle;

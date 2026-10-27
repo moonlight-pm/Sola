@@ -375,13 +375,17 @@ defaults), `bus_theme_with_shell` writes back. The shell refreshes it on every
 ### Components (`src/components/`)
 
 `badge`, `button`, `card`, `divider`, `field` (incl. `form_row`, error
-caption, checkbox/toggle styles), `icon`, `popover`, `prose` (letter
+caption, checkbox/toggle styles), `file_picker` (the one Open / Save /
+Choose Folder panel for every app, as macOS has one — fold
+`FilePicker::keys()` into the subscription while it is up), `icon`,
+`popover`, `prose` (letter
 reading: paragraphs, quotes, inline links; `prose_letter` adds rules and
 pictures), `readable`, `scroll` (the kit scrollbar — use
 `scroll::scrollable`, not iced's bare `scrollable`), `sidebar`, `split`,
 `swatch`, `text`, `text_input` (fork — style/padding only; see module
 docs), `toolbar`. Prefer `button::labeled` / `labeled_sm` and named
-`PAD_CONTROL*` pads. Each has a storybook page under `src/storybook/pages/`.
+`PAD_CONTROL*` pads. An app's bar under its titlebar (tabs, a toolbar, a
+heading with its controls) is `style::BAR_H` tall. Each has a storybook page under `src/storybook/pages/`.
 **Always update that page in the same change** as the component (see
 `.grok/rules/kit-storybook-pages.md`). Grow this surface only as real
 apps need shared pieces — no speculative widgets.

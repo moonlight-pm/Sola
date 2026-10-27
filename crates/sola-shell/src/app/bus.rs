@@ -91,6 +91,10 @@ impl Shell {
                 }
                 Task::none()
             }
+            Topic::ShowWindow(wid) => {
+                self.activate_window(wid);
+                Task::none()
+            }
             Topic::ShowTab(s) => {
                 match self.pairing.window_of(&s.key) {
                     Some(wid) => self.activate_window(wid),
@@ -903,7 +907,9 @@ impl Shell {
         if e.app_id.eq_ignore_ascii_case("sola-mail") {
             self.inbox_unread = None;
         }
-        let pending = self.take_pending_for_app(&e.app_id);
+        // Mid-open, the ghost row goes either way (a clean exit is often a
+        // second copy handing off to the running one).
+        let _ = self.take_pending_for_app(&e.app_id);
         let msg = if let Some(sig) = e.signal {
             format!("{} killed (signal {})", e.app_id, sig)
         } else {
@@ -911,11 +917,6 @@ impl Shell {
             if code != 0 {
                 format!("{} exited (code {})", e.app_id, code)
             } else {
-                // Clean exit: if we were mid-open, drop the opening toast so
-                // it does not sit until the 20s timeout with no window.
-                if let Some(p) = pending {
-                    self.menubar.expire_toast(p.toast_generation);
-                }
                 return Task::none();
             }
         };

@@ -1836,6 +1836,12 @@ define_topics! {
     // events while Calendar is closed. Appended last.
     #[persistent(namespace = "calendar/agenda")]
     CalendarAgenda(CalendarAgenda),
+
+    // Show this sola-river window in its zone and focus it, as a click on
+    // its tab-bar row would (an app bringing itself forward → shell). Not
+    // `Focus`, which is the shell's word to sola-river and does not show
+    // a window its zone is not showing. Appended last.
+    ShowWindow(u32),
 }
 
 /// TopicKinds added after `MailStatus`. An older bus host cannot
@@ -1865,6 +1871,7 @@ pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
             | TopicKind::IdleKeep
             | TopicKind::IdleFade
             | TopicKind::CalendarAgenda
+            | TopicKind::ShowWindow
     )
 }
 

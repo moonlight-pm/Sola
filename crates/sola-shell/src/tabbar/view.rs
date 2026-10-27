@@ -7,8 +7,11 @@
 //! working or waiting on a decision (`Topic::TabActivity`) shows that mark
 //! in the icon's place, so the title does not move. Hovering a row shows
 //! the titlebar's red stoplight: it closes the window (`Topic::CloseWindow`).
+//! While an app starts from the launcher, a ghost row (its name, faint, a
+//! turning ring) stands where its window will land.
 
-use iced::Element;
+use iced::widget::{row, text};
+use iced::{Alignment, Color, Element, Theme};
 use sola_bus::topics::{Activity, Zone};
 use sola_kit::components::{
     LEADING_SLOT, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection, icon, island,
@@ -26,6 +29,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     let focused = shell
         .focused_window_id
         .map(|w| shell.tabs.parent_of(w).unwrap_or(w));
+    let ghost = shell.launch_ghost();
     let mut sections = Vec::new();
     for zone in ZONES {
         let tabs = shell.tabs.tabs(zone);
@@ -34,7 +38,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         } else {
             (shell.tabs.visible_shown(zone, &hidden), on_screen.contains(&zone))
         };
-        let items: Vec<SidebarItem<'_, Msg>> = tabs
+        let mut items: Vec<SidebarItem<'_, Msg>> = tabs
             .iter()
             .map(|t| {
                 let title = shell
@@ -71,6 +75,11 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                 item
             })
             .collect();
+        if let Some((ghost_zone, at, label)) = ghost
+            && ghost_zone == zone
+        {
+            items.insert(at.min(items.len()), ghost_row(label));
+        }
         sections.push(SidebarSection::new(zone_label(zone), items).id(section_id(zone)));
     }
 
@@ -84,6 +93,28 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     // its corners cleared to the ground.
     island(panel)
 }
+
+/// Where a starting app's window will land: its name, faint, beside a
+/// turning ring. Not a tab: no click, no close, no drag.
+fn ghost_row(label: &str) -> SidebarItem<'_, Msg> {
+    let body = row![
+        status_mark(SidebarIndicator::Working),
+        text(label.to_string())
+            .size(13)
+            .style(|theme: &Theme| text::Style {
+                color: Some(Color {
+                    a: 0.42,
+                    ..theme.extended_palette().background.base.text
+                }),
+            }),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    SidebarItem::new(label, Msg::Noop).id(GHOST_ID).content(body)
+}
+
+/// The ghost row's id (never a window's: those are `w<id>`).
+const GHOST_ID: &str = "ghost";
 
 /// The mark a row shows for its tab's activity; none when idle.
 fn mark(activity: Option<Activity>) -> Option<SidebarIndicator> {

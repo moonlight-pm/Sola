@@ -8,6 +8,9 @@ Paint (`sola-paint`) is Sola's default image viewer and editor.
 - `xdg-open photo.png` or the file manager (MIME via `sola-paint.desktop`)
 - `solactl open /path/to/photo.png`
 - `sola-paint /path/to/photo.png`
+- **File → Open…** (⌘O): Sola's file panel — choose one image or several
+  (Shift, ⌘); each opens in its own window. **Save As** (⌘⇧S) asks before
+  it replaces a file.
 
 Each open image is its own window — a row in the shell's tab bar, named
 for the file. A second open (MIME, `solactl open`, or `sola-paint path`)

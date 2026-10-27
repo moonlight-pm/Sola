@@ -622,3 +622,20 @@ fn a_restarting_app_comes_back_to_its_workspace() {
     assert_eq!(s.workspace_of(7), Some(s.workspaces()[1].id.as_str()));
     assert_eq!(s.showing(), 0);
 }
+
+#[test]
+fn the_landing_slot_is_where_the_window_lands() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    s.place(1, "sola-terminal", "sola-terminal", false, false, t);
+    s.place(2, "sola-browser", "sola-browser", false, false, t);
+    s.place(3, "sola-mail", "sola-mail", false, false, t);
+    s.focus(1);
+    // After the focused tab, before the ones after it.
+    let (zone, at, opener) = s.landing_slot(false);
+    assert_eq!((zone, at, opener), (FULL, 1, Some(1)));
+    s.place(4, "sola-calendar", "sola-calendar", false, false, t);
+    assert_eq!(ids(&s, FULL), vec![1, 4, 2, 3]);
+    // A floating app lands at the end of Float.
+    assert_eq!(s.landing_slot(true).0, Zone::Float);
+}

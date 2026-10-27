@@ -36,7 +36,7 @@ use crate::APP_ID;
 use crate::grid::{self, Patch, ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN};
 use crate::sample;
 
-const TOOLBAR_H: f32 = 48.0;
+const TOOLBAR_H: f32 = sola_kit::components::style::BAR_H;
 const READOUT_H: f32 = 56.0;
 const SAMPLE_MS: u64 = 100;
 const COPY_FEEDBACK_MS: u64 = 1500;

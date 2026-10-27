@@ -205,6 +205,17 @@ Right-click the page:
 **Menubar → Browser → Developer Tools** (`⌘⌥I`) opens the console. There
 is no F12 binding (media-key keyboards).
 
+## Uploads
+
+A page that asks for a file (**Choose File**, a drop zone's picker) opens
+Sola's file panel over the page — the same one every Sola app opens and
+saves with: Places, the folder trail, the files (only the kinds the page
+accepts, when it says), **Upload**. Pages that take several files let you
+choose several (Shift, ⌘); a page that wants a folder gets **Choose a
+folder**. Keys: arrows, Return, Escape, ⌘↑ (up a folder), typing a name to
+jump to it, ⌘⇧. for hidden files. The next upload starts in the folder the
+last one came from (Downloads, the first time).
+
 ## Downloads
 
 The toolbar **download** icon (right of the vault) is always there.

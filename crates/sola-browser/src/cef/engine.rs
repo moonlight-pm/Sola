@@ -205,6 +205,7 @@ pub struct CefEngine {
     background_tabs: crate::engine::BackgroundTabsHandle,
     notifications: NotificationsHandle,
     js_dialogs: crate::engine::JsDialogsHandle,
+    file_dialogs: crate::engine::FileDialogsHandle,
     http_auth: crate::engine::HttpAuthHandle,
     favicons: crate::engine::FaviconsHandle,
     find_results: crate::engine::FindResultsHandle,
@@ -285,6 +286,7 @@ impl Engine for CefEngine {
             background_tabs: handles.background_tabs,
             notifications: handles.notifications,
             js_dialogs: handles.js_dialogs,
+            file_dialogs: handles.file_dialogs,
             http_auth: handles.http_auth,
             favicons: handles.favicons,
             find_results: handles.find_results,
@@ -351,6 +353,10 @@ impl Engine for CefEngine {
 
     fn js_dialogs_handle(&self) -> crate::engine::JsDialogsHandle {
         self.js_dialogs.clone()
+    }
+
+    fn file_dialogs_handle(&self) -> crate::engine::FileDialogsHandle {
+        self.file_dialogs.clone()
     }
 
     fn http_auth_handle(&self) -> crate::engine::HttpAuthHandle {
@@ -479,6 +485,9 @@ struct CefThreadState {
     /// In-flight `OnJSDialog` / `OnBeforeUnloadDialog` callbacks.
     pending_js_dialog: RefCell<std::collections::HashMap<u64, (cef::JsdialogCallback, i32)>>,
     next_js_dialog_id: Cell<u64>,
+    /// In-flight `OnFileDialog` callbacks (a page's file chooser).
+    pending_file_dialog: RefCell<std::collections::HashMap<u64, cef::FileDialogCallback>>,
+    next_file_dialog_id: Cell<u64>,
     /// In-flight HTTP auth callbacks (IO thread posts to UI).
     pending_http_auth:
         RefCell<std::collections::HashMap<u64, (cef::AuthCallback, crate::http_auth::Key)>>,
@@ -742,6 +751,8 @@ pub(super) fn run_worker(
         next_media_id: Cell::new(1),
         pending_js_dialog: RefCell::new(std::collections::HashMap::new()),
         next_js_dialog_id: Cell::new(1),
+        pending_file_dialog: RefCell::new(std::collections::HashMap::new()),
+        next_file_dialog_id: Cell::new(1),
         pending_http_auth: RefCell::new(std::collections::HashMap::new()),
         next_http_auth_id: Cell::new(1),
         http_auth_offered: RefCell::new(std::collections::HashSet::new()),
@@ -1483,6 +1494,7 @@ fn make_osr_client() -> cef::Client {
     let context_menu_handler = BrowserContextMenuHandler::new();
     let permission_handler = BrowserPermissionHandler::new();
     let jsdialog_handler = BrowserJsdialogHandler::new();
+    let dialog_handler = BrowserDialogHandler::new();
     let find_handler = BrowserFindHandler::new();
     BrowserClient::new(
         render_handler,
@@ -1494,6 +1506,7 @@ fn make_osr_client() -> cef::Client {
         context_menu_handler,
         permission_handler,
         jsdialog_handler,
+        dialog_handler,
         find_handler,
     )
 }
@@ -2727,6 +2740,75 @@ cef::wrap_jsdialog_handler! {
     }
 }
 
+cef::wrap_dialog_handler! {
+    pub struct BrowserDialogHandler {}
+
+    impl DialogHandler {
+        /// A page's file chooser: the chrome shows the kit's panel and
+        /// answers (`Cmd::FileDialog`). Handled (1) so CEF opens nothing.
+        fn on_file_dialog(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            mode: cef::FileDialogMode,
+            title: Option<&cef::CefString>,
+            default_file_path: Option<&cef::CefString>,
+            accept_filters: Option<&mut cef::CefStringList>,
+            accept_extensions: Option<&mut cef::CefStringList>,
+            _accept_descriptions: Option<&mut cef::CefStringList>,
+            callback: Option<&mut cef::FileDialogCallback>,
+        ) -> ::std::os::raw::c_int {
+            let Some(callback) = callback else {
+                return 0;
+            };
+            let state = cef_state();
+            if !state.is_front.get() {
+                callback.cancel();
+                return 1;
+            }
+            let raw = *mode.as_ref();
+            let mode = if raw == cef::sys::cef_file_dialog_mode_t::FILE_DIALOG_OPEN_MULTIPLE {
+                crate::file_dialog::Mode::OpenMultiple
+            } else if raw == cef::sys::cef_file_dialog_mode_t::FILE_DIALOG_OPEN_FOLDER {
+                crate::file_dialog::Mode::OpenFolder
+            } else if raw == cef::sys::cef_file_dialog_mode_t::FILE_DIALOG_SAVE {
+                crate::file_dialog::Mode::Save
+            } else {
+                crate::file_dialog::Mode::Open
+            };
+            // `accept`: the page's filters, and any extensions CEF resolved
+            // for its MIME types.
+            let mut accept: Vec<String> = Vec::new();
+            for list in [accept_filters, accept_extensions].into_iter().flatten() {
+                let items: Vec<String> = list.clone().into_iter().collect();
+                for item in items {
+                    if !accept.contains(&item) {
+                        accept.push(item);
+                    }
+                }
+            }
+            let id = state.next_file_dialog_id.get();
+            state.next_file_dialog_id.set(id.saturating_add(1));
+            state
+                .pending_file_dialog
+                .borrow_mut()
+                .insert(id, callback.clone());
+            let ipc = crate::file_dialog::Ipc {
+                id,
+                tab_id: notify_tab_id(browser.as_ref().map(|b| &**b)),
+                mode,
+                title: title.map(|s| s.to_string()).unwrap_or_default(),
+                default_path: default_file_path.map(|s| s.to_string()).unwrap_or_default(),
+                accept,
+            };
+            tracing::info!(id, ?ipc.mode, accept = ?ipc.accept, "file dialog");
+            if let Some(tx) = &state.ipc_events {
+                let _ = tx.send(crate::cef::ipc::FromEngine::FileDialog(ipc));
+            }
+            1
+        }
+    }
+}
+
 fn js_dialog_kind(dialog_type: cef::JsdialogType) -> crate::js_dialog::Kind {
     let raw = *dialog_type.as_ref();
     if raw == cef::sys::cef_jsdialog_type_t::JSDIALOGTYPE_PROMPT {
@@ -2990,6 +3072,7 @@ cef::wrap_client! {
         pub context_menu_handler: cef::ContextMenuHandler,
         pub permission_handler: cef::PermissionHandler,
         pub jsdialog_handler: cef::JsdialogHandler,
+        pub dialog_handler: cef::DialogHandler,
         pub find_handler: cef::FindHandler,
     }
 
@@ -3028,6 +3111,10 @@ cef::wrap_client! {
 
         fn jsdialog_handler(&self) -> Option<cef::JsdialogHandler> {
             Some(self.jsdialog_handler.clone())
+        }
+
+        fn dialog_handler(&self) -> Option<cef::DialogHandler> {
+            Some(self.dialog_handler.clone())
         }
 
         fn find_handler(&self) -> Option<cef::FindHandler> {
@@ -3590,6 +3677,24 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 continue_js_dialog(&cb, success, &input);
             } else {
                 tracing::warn!(id, success, "js dialog continue: no pending callback");
+            }
+        }
+        Cmd::FileDialog { id, paths } => {
+            let cb = state.pending_file_dialog.borrow_mut().remove(&id);
+            match (cb, paths) {
+                (Some(cb), Some(paths)) => {
+                    tracing::info!(id, files = paths.len(), "file dialog chosen");
+                    let mut list = cef::CefStringList::new();
+                    for p in &paths {
+                        list.append(p);
+                    }
+                    cb.cont(Some(&mut list));
+                }
+                (Some(cb), None) => {
+                    tracing::info!(id, "file dialog cancelled");
+                    cb.cancel();
+                }
+                (None, _) => tracing::warn!(id, "file dialog answer: no pending callback"),
             }
         }
         Cmd::HttpAuth {

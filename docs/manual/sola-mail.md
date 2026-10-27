@@ -96,7 +96,9 @@ search.
 - **Forward** brings the original’s files along (remove any you don’t
   want).
 - **Attach**: **Attach** next to Send, or ⌘⇧A. Opens
-  the kit file picker. Files go out as `multipart/mixed`.
+  Sola's file panel; choose one file or several (Shift, ⌘). Files go out
+  as `multipart/mixed`. **Save** on a received file asks before it
+  replaces one already there.
 - **Send** shows *Sending…* until the server takes it; a failure keeps
   the draft open. If the server refuses a recipient, the message names
   the address and the server's reason. `5.1.2 Mailbox does not exist`

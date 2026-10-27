@@ -294,6 +294,11 @@ impl App {
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
             bridge::mail_subscription().map(Msg::Worker),
+            if self.picker.is_some() {
+                FilePicker::keys().map(Msg::Picker)
+            } else {
+                Subscription::none()
+            },
             event::listen_with(|event, status, _id| match event {
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     Some(Msg::KeyPressed {
@@ -1281,7 +1286,9 @@ impl App {
             self.compose = Some(Box::new(Compose::new(compose::blank(self.default_from()))));
         }
         let picker = FilePicker::open()
-            .title("Attach file")
+            .multiple()
+            .title("Attach files")
+            .action("Attach")
             .start_dir(self.picker_start_dir());
         self.picker = Some((PickerKind::Attach, picker));
     }
@@ -1375,10 +1382,19 @@ impl App {
             return Task::none();
         };
         let kind = *kind;
-        match picker.update(msg) {
+        let outcome = picker.update(msg);
+        let follow = picker.scroll_task().map(Msg::Picker);
+        match outcome {
             Some(Outcome::Cancelled) => {
                 self.picker = None;
                 Task::none()
+            }
+            Some(Outcome::PickedMany(paths)) => {
+                if let Some(parent) = paths.first().and_then(|p| p.parent()) {
+                    self.last_picker_dir = Some(parent.to_path_buf());
+                }
+                self.picker = None;
+                Task::batch(paths.into_iter().map(|path| self.attach_path(path)).collect::<Vec<_>>())
             }
             Some(Outcome::Picked(path)) => {
                 if let Some(parent) = path.parent() {
@@ -1402,7 +1418,7 @@ impl App {
                     }
                 }
             }
-            None => Task::none(),
+            None => follow,
         }
     }
 

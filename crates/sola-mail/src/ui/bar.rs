@@ -26,8 +26,8 @@ use crate::protocol::FolderRef;
 use crate::protocol::boxes::CANONICAL;
 use crate::protocol::types::folder_label;
 
-/// The bar's height (Next's `.mail__head`).
-pub const BAR_H: f32 = 42.0;
+/// The bar's height: the kit's for every app bar.
+pub const BAR_H: f32 = sola_kit::components::style::BAR_H;
 /// The search field's width.
 const SEARCH_W: f32 = 240.0;
 

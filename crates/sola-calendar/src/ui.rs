@@ -19,7 +19,7 @@ use iced::{
 };
 use sola_bus::Message;
 use sola_bus::topics::{
-    AppNotification, CalendarConfig, CalendarShelf, FocusTarget, NOTIFICATION_PERSIST_PREFIX,
+    AppNotification, CalendarConfig, CalendarShelf, NOTIFICATION_PERSIST_PREFIX,
     SplitDir, Topic, google_calendar_client_id,
 };
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
@@ -583,11 +583,8 @@ impl App {
     }
 
     fn raise_self(&self) {
-        let Some(window_id) = self.float.any_window_id() else {
-            return;
-        };
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-            let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
+        if let Some(window_id) = self.float.any_window_id() {
+            sola_kit::show_window(window_id);
         }
     }
 

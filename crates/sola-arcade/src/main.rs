@@ -29,7 +29,7 @@ use iced::{
 
 use sola_bus::Message;
 use sola_bus::topics::{
-    AppMenuPayload, Application, FocusTarget, LaunchAppPayload, MenuDefinition, Topic, TopicKind,
+    AppMenuPayload, Application, LaunchAppPayload, MenuDefinition, Topic, TopicKind,
     Window, WindowGeometry,
 };
 use sola_core::KeyCode;
@@ -698,9 +698,7 @@ impl App {
         let Some(window_id) = self.float.any_window_id() else {
             return;
         };
-        if let Ok(mut b) = bus().lock() {
-            let _ = b.emit(Topic::Focus(FocusTarget { window_id }));
-        }
+        sola_kit::show_window(window_id);
         tracing::info!(window_id, "arcade raised existing window");
     }
 

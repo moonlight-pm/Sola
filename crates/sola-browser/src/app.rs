@@ -53,7 +53,7 @@ pub const DEFAULT_URL: &str = "about:blank";
 pub const BLANK_URL: &str = "about:blank";
 pub const VIEW_W: u32 = 1280;
 pub const VIEW_H: u32 = 800;
-pub const CHROME_HEIGHT: f32 = 46.0;
+pub const CHROME_HEIGHT: f32 = sola_kit::components::style::BAR_H;
 const NAV_BTN_W: f32 = 34.0;
 
 /// Left/right padding so the history tray matches the location field.
@@ -308,6 +308,8 @@ pub enum Msg {
     MediaBlock,
     /// Page `alert` / `confirm` / `prompt` / leave-page.
     JsDialogOk,
+    /// The kit panel over a page answering its file chooser.
+    FileDialog(sola_kit::components::file_picker::Message),
     JsDialogCancel,
     JsDialogInput(String),
     HttpAuthUser(String),
@@ -634,6 +636,11 @@ pub struct App<E: Engine> {
     /// In-chrome `alert` / `confirm` / `prompt` / leave-page.
     pending_js_dialog: Option<crate::js_dialog::Ipc>,
     js_dialog_queue: VecDeque<crate::js_dialog::Ipc>,
+    /// A page's file chooser on screen (the kit panel), and those waiting.
+    file_dialog: Option<(crate::file_dialog::Ipc, sola_kit::components::FilePicker)>,
+    file_dialog_queue: VecDeque<crate::file_dialog::Ipc>,
+    /// Where the last upload came from: the next panel starts there.
+    upload_dir: Option<std::path::PathBuf>,
     js_dialog_prompt: String,
     pending_http_auth: Option<crate::http_auth::Ipc>,
     http_auth_user: String,
@@ -791,6 +798,9 @@ impl<E: Engine> App<E> {
             pending_media: None,
             pending_js_dialog: None,
             js_dialog_queue: VecDeque::new(),
+            file_dialog: None,
+            file_dialog_queue: VecDeque::new(),
+            upload_dir: None,
             js_dialog_prompt: String::new(),
             pending_http_auth: None,
             http_auth_user: String::new(),
@@ -1940,6 +1950,7 @@ impl<E: Engine> App<E> {
             Msg::MediaAllow => self.resolve_media_permission("granted"),
             Msg::MediaBlock => self.resolve_media_permission("denied"),
             Msg::JsDialogOk => return self.resolve_js_dialog(true),
+            Msg::FileDialog(m) => return self.on_file_dialog(m),
             Msg::JsDialogCancel => return self.resolve_js_dialog(false),
             Msg::JsDialogInput(s) => {
                 self.js_dialog_prompt = s;
@@ -2374,6 +2385,7 @@ impl<E: Engine> App<E> {
                     .collect();
                 self.drain_notify_ipc();
                 let js_dlg = self.drain_js_dialogs();
+                self.drain_file_dialogs();
                 let http_auth = self.drain_http_auth();
                 self.drain_find_results();
                 self.drain_favicons();
@@ -2997,6 +3009,7 @@ impl<E: Engine> App<E> {
         let chrome_keys = !self.url_bar_focused
             && !self.find_field_focused
             && self.pending_js_dialog.is_none()
+            && self.file_dialog.is_none()
             && self.wallpaper.is_none()
             && !self.downloads_panel_open
             && {
@@ -3111,7 +3124,9 @@ impl<E: Engine> App<E> {
     /// microphone, notifications): over the active page's window, a
     /// browser page's or a web app's.
     fn page_modal(&self) -> Option<Element<'_, Msg>> {
-        if self.pending_http_auth.is_some() {
+        if let Some((_, picker)) = &self.file_dialog {
+            Some(picker.overlay().map(Msg::FileDialog))
+        } else if self.pending_http_auth.is_some() {
             Some(self.view_http_auth())
         } else if self.pending_js_dialog.is_some() {
             Some(self.view_js_dialog())
@@ -4315,6 +4330,71 @@ impl<E: Engine> App<E> {
             }
         }
         focus
+    }
+
+    fn drain_file_dialogs(&mut self) {
+        let asks: Vec<crate::file_dialog::Ipc> = self
+            .engine
+            .file_dialogs_handle()
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect();
+        for ask in asks {
+            tracing::info!(id = ask.id, mode = ?ask.mode, "file dialog");
+            if self.file_dialog.is_none() {
+                self.show_file_dialog(ask);
+            } else {
+                self.file_dialog_queue.push_back(ask);
+            }
+        }
+    }
+
+    /// The page that asked comes forward, the panel over it.
+    fn show_file_dialog(&mut self, ask: crate::file_dialog::Ipc) {
+        if ask.tab_id != 0
+            && self.cached_active.0 != ask.tab_id
+            && self.cached_tabs.iter().any(|t| t.id.0 == ask.tab_id)
+        {
+            self.switch_active_tab(TabId(ask.tab_id));
+        }
+        let picker = crate::file_dialog::picker(&ask, self.upload_dir.as_deref());
+        crate::file_dialog::set_open(true);
+        self.file_dialog = Some((ask, picker));
+    }
+
+    fn on_file_dialog(&mut self, m: sola_kit::components::file_picker::Message) -> Task<Msg> {
+        use sola_kit::components::file_picker::Outcome;
+        let Some((ask, picker)) = self.file_dialog.as_mut() else {
+            return Task::none();
+        };
+        let outcome = picker.update(m);
+        let follow = picker.scroll_task().map(Msg::FileDialog);
+        let paths: Option<Vec<std::path::PathBuf>> = match outcome {
+            None => return follow,
+            Some(Outcome::Cancelled) => None,
+            Some(Outcome::Picked(p)) => Some(vec![p]),
+            Some(Outcome::PickedMany(ps)) => Some(ps),
+        };
+        let id = ask.id;
+        if let Some(first) = paths.as_ref().and_then(|ps| ps.first()) {
+            let dir = if first.is_dir() { Some(first.as_path()) } else { first.parent() };
+            self.upload_dir = dir.map(std::path::Path::to_path_buf);
+        }
+        let _ = self.cmd_tx.send(Cmd::FileDialog {
+            id,
+            paths: paths.map(|ps| {
+                ps.into_iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect()
+            }),
+        });
+        self.file_dialog = None;
+        match self.file_dialog_queue.pop_front() {
+            Some(next) => self.show_file_dialog(next),
+            None => crate::file_dialog::set_open(false),
+        }
+        Task::none()
     }
 
     fn show_js_dialog(&mut self, dlg: crate::js_dialog::Ipc) -> Task<Msg> {
@@ -6151,6 +6231,11 @@ impl<E: Engine> App<E> {
             sola_kit::app::bus_subscription().map(Msg::Bus),
             sola_kit::call_subscription().map(Msg::Call),
             chrome_drain_subscription(),
+            if self.file_dialog.is_some() {
+                sola_kit::components::FilePicker::keys().map(Msg::FileDialog)
+            } else {
+                Subscription::none()
+            },
             event::listen_with(|event, status, _| {
                 match &event {
                     Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
@@ -6269,8 +6354,9 @@ impl<E: Engine> App<E> {
                     Event::Keyboard(keyboard::Event::KeyPressed {
                         key: keyboard::Key::Named(keyboard::key::Named::Escape),
                         ..
-                    }) if FIND_OPEN.load(Ordering::Relaxed)
-                        || status == event::Status::Ignored =>
+                    }) if !crate::file_dialog::is_open()
+                        && (FIND_OPEN.load(Ordering::Relaxed)
+                            || status == event::Status::Ignored) =>
                     {
                         Some(Msg::NavStop)
                     }

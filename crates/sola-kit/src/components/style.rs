@@ -52,6 +52,12 @@ pub const SPACE_MD: f32 = 8.0;
 pub const SPACE_LG: f32 = 12.0;
 pub const SPACE_XL: f32 = 16.0;
 
+/// An app's bar under its titlebar — a strip of tabs (Projects, Design), a
+/// toolbar (Browser, Paint, Preview, Scope, Monitor), a heading with its
+/// controls (Mail, Calendar, Bots). One height, so windows side by side
+/// line up under their titlebars.
+pub const BAR_H: f32 = 42.0;
+
 /// Regular control content padding `[vertical, horizontal]` — buttons,
 /// default actions. Prefer this over inventing pad literals in apps.
 pub const PAD_CONTROL: [u16; 2] = [7, 14];

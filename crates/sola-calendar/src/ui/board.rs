@@ -29,7 +29,7 @@ use crate::timeutil::{
 use sola_kit::components::scroll;
 
 /// The bar over the board.
-pub(super) const BAR_H: f32 = 44.0;
+pub(super) const BAR_H: f32 = sola_kit::components::style::BAR_H;
 /// The weekday captions over the month.
 const WEEKDAY_H: f32 = 24.0;
 /// A day's date, and today's circle.

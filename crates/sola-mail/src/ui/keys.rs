@@ -11,10 +11,8 @@ impl App {
     /// used the key — single-letter shortcuts must not fire then.
     pub(super) fn on_key(&mut self, key: Key, mods: Modifiers, captured: bool) -> Task<Msg> {
         let escape = matches!(key, Key::Named(Named::Escape));
+        // The panel takes its own keys (FilePicker::keys).
         if self.picker.is_some() {
-            if escape {
-                self.picker = None;
-            }
             return Task::none();
         }
         if escape && self.confirm.is_some() {

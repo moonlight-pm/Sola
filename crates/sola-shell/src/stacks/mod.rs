@@ -165,17 +165,9 @@ impl Stacks {
                 return self.insert_slot(tab, &slot, Some(at));
             }
         }
+        let (zone, at, opener) = self.landing_slot(floats);
         let desk = &mut self.desks[self.showing];
-        let zone = if floats { Zone::Float } else { desk.landing() };
         let show = !(returning && desk.column(zone).shown.is_some());
-        let tabs = &desk.column(zone).tabs;
-        let index_of = |w: u32| tabs.iter().position(|t| t.window_id == w);
-        let opener = self.focused.filter(|&f| index_of(f).is_some());
-        let after = match (opener, self.opened) {
-            (Some(f), Some((from, last))) if from == f && index_of(last).is_some() => Some(last),
-            _ => opener,
-        };
-        let at = after.and_then(index_of).map_or(tabs.len(), |i| i + 1);
         let shown = desk.insert(tab, zone, at, show);
         if shown {
             desk.pick(zone);
@@ -186,6 +178,25 @@ impl Stacks {
             shown,
             returning,
         }
+    }
+
+    /// Where [`Self::place`] puts a new window that has no remembered slot:
+    /// the zone (Float, or the showing workspace's landing zone), the index
+    /// there — right after the focused tab, after the last window opened
+    /// from it while it kept focus — and that focused tab (the opener).
+    /// The launcher's ghost row stands there while an app starts.
+    pub fn landing_slot(&self, floats: bool) -> (Zone, usize, Option<u32>) {
+        let desk = &self.desks[self.showing];
+        let zone = if floats { Zone::Float } else { desk.landing() };
+        let tabs = &desk.column(zone).tabs;
+        let index_of = |w: u32| tabs.iter().position(|t| t.window_id == w);
+        let opener = self.focused.filter(|&f| index_of(f).is_some());
+        let after = match (opener, self.opened) {
+            (Some(f), Some((from, last))) if from == f && index_of(last).is_some() => Some(last),
+            _ => opener,
+        };
+        let at = after.and_then(index_of).map_or(tabs.len(), |i| i + 1);
+        (zone, at, opener)
     }
 
     fn insert_slot(&mut self, tab: Tab, slot: &Slot, rank: Option<usize>) -> Placed {

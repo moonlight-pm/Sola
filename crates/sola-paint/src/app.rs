@@ -22,7 +22,7 @@ use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcom
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::popover;
 use sola_kit::components::style::{
-    chrome_surface, HAIRLINE_A, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, mix_white,
+    chrome_surface, HAIRLINE_A, SPACE_LG, SPACE_SM, SPACE_XL, mix_white,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::toolbar::toolbar_icon;
@@ -36,7 +36,7 @@ use crate::stage::{self, CropGesture};
 use crate::windows::{EMPTY, PaintWindows};
 
 pub const APP_ID: &str = "sola-paint";
-const HEADER_H: f32 = 52.0;
+const HEADER_H: f32 = sola_kit::components::style::BAR_H;
 const MAX_DOCS: usize = 32;
 /// How long boot waits for the saved session before showing the empty
 /// window.
@@ -228,6 +228,11 @@ impl App {
     pub fn subscription(&self) -> Subscription<Msg> {
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
+            if self.picker.is_some() {
+                FilePicker::keys().map(Msg::Picker)
+            } else {
+                Subscription::none()
+            },
             event::listen_with(|event, _status, id| match event {
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => Some(
                     Msg::At(id, Box::new(Msg::KeyPressed(key, modifiers))),
@@ -877,19 +882,17 @@ impl App {
     }
 
     fn on_key(&mut self, key: keyboard::Key, mods: keyboard::Modifiers) -> Task<Msg> {
+        // The panel takes its own keys (FilePicker::keys).
+        if self.picker.is_some() {
+            return Task::none();
+        }
         if matches!(key, keyboard::Key::Named(NamedKey::Escape)) {
-            if self.picker.is_some() {
-                return self.on_picker(PickerMsg::Cancel);
-            }
             if self.cropping {
                 self.cancel_crop();
                 return Task::none();
             }
         }
         if matches!(key, keyboard::Key::Named(NamedKey::Enter)) {
-            if self.picker.is_some() {
-                return self.on_picker(PickerMsg::Confirm);
-            }
             if self.cropping {
                 return self.update(Msg::ApplyCrop);
             }
@@ -924,7 +927,8 @@ impl App {
 
     fn open_picker(&mut self) {
         let picker = FilePicker::open()
-            .title("Open image")
+            .multiple()
+            .title("Open images")
             .filter("Images", sola_core::open_image::IMAGE_EXTENSIONS)
             .start_dir(self.start_dir());
         if let Some(window) = self.windows.focused {
@@ -960,9 +964,21 @@ impl App {
             return Task::none();
         };
         let kind = *kind;
-        match picker.update(msg) {
+        let outcome = picker.update(msg);
+        let follow = picker.scroll_task().map(Msg::Picker);
+        match outcome {
             Some(Outcome::Cancelled) => {
                 self.picker = None;
+            }
+            // Each image its own window.
+            Some(Outcome::PickedMany(paths)) => {
+                if let Some(parent) = paths.first().and_then(|p| p.parent()) {
+                    self.last_dir = Some(parent.to_path_buf());
+                }
+                self.picker = None;
+                let opens: Vec<Task<Msg>> =
+                    paths.into_iter().map(|path| self.open_path(path)).collect();
+                return Task::batch(opens);
             }
             Some(Outcome::Picked(path)) => {
                 if let Some(parent) = path.parent() {
@@ -983,7 +999,7 @@ impl App {
                     },
                 }
             }
-            None => {}
+            None => return follow,
         }
         Task::none()
     }
@@ -1096,14 +1112,15 @@ impl App {
                 .align_y(Alignment::Center)
                 .width(Length::Fill)
                 .padding(Padding {
-                    top: SPACE_MD,
+                    top: 0.0,
                     right: SPACE_LG,
-                    bottom: SPACE_MD,
+                    bottom: 0.0,
                     left: SPACE_LG,
                 }),
         )
         .width(Length::Fill)
         .height(Length::Fixed(HEADER_H))
+        .center_y(Length::Fixed(HEADER_H))
         .style(header_style)
         .into()
     }

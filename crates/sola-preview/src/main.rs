@@ -33,7 +33,7 @@ const MAX_HISTORY: usize = 64;
 /// How long the header button shows “Copied” after a path click.
 const COPY_FEEDBACK_MS: u64 = 1500;
 /// Top chrome strip height (matches agent/settings toolbar density).
-const HEADER_H: f32 = 52.0;
+const HEADER_H: f32 = sola_kit::components::style::BAR_H;
 
 fn main() -> iced::Result {
     startup(APP_ID);
@@ -325,9 +325,9 @@ impl App {
         };
 
         container(container(content).width(Length::Fill).padding(Padding {
-            top: SPACE_MD,
+            top: 0.0,
             right: SPACE_LG,
-            bottom: SPACE_MD,
+            bottom: 0.0,
             left: SPACE_LG,
         }))
         .width(Length::Fill)

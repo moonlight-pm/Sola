@@ -271,10 +271,12 @@ new tab, or a request to come forward) to the running one and exits.
 `sola-session` reaps it like any other exit. A second Projects shows the
 running one's current project.
 
-The launcher does not start a second copy of an application hidden with
-Super+H: choosing it shows and raises the hidden one
-([Shell § Hide](sola-shell.md#hide)). For a visible application without
-its own single-instance handling, the launcher starts another copy.
+The launcher does not start a second copy of an application that has a
+window: choosing it brings that window forward (a hidden one is shown
+again, [Shell § Hide](sola-shell.md#hide)). Only the browser and Terminal
+are started again from the launcher — their launch is a new window. Other
+ways in (`solactl session launch`, opening a file) still reach the app's
+own single-instance handling, if it has one.
 
 ## Opening URLs and files
 

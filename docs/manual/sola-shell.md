@@ -44,11 +44,16 @@ the desk pass through: the overlay is the card, not a full-output dim.
 ### Launcher
 
 Super+Space opens the launcher; type to filter and press Enter (or click)
-to launch. Launching always opens a new window of the app you pick, even
-when it is running: the browser opens a new page window and Terminal a new
-tab window, each right after the focused tab. Design, Paint and Arcade keep
-a single window and bring it up instead. An app you hid with Super+H is
-shown again rather than started twice.
+to launch. An app that is already running comes forward instead of
+starting again — its window (the last one you used, if it has several) is
+shown in its zone, on its workspace, and takes focus. The browser and
+Terminal are the exceptions: picking them opens a new window (a new page,
+a new tab window) right after the focused tab. An app you hid with Super+H
+is shown again rather than started twice.
+
+While an app starts, a faint row with a turning ring stands in the tab bar
+where its window will land (after the focused tab); the window takes its
+place when it opens. A launch that fails says so on the top row.
 
 **Projects** opens a project, not another Projects. Every project lives in
 `~/Projects`; picking Projects turns the launcher into a list of those

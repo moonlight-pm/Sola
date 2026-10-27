@@ -21,7 +21,7 @@ use crate::canvas;
 use crate::projects::CanvasRef;
 
 /// The bar's height, above the plane.
-pub const HEIGHT: f32 = 36.0;
+pub const HEIGHT: f32 = sola_kit::components::style::BAR_H;
 
 /// What the bar shows of the app's state.
 pub struct Bar<'a> {

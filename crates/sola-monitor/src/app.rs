@@ -683,9 +683,11 @@ impl App {
             ]
             .spacing(SPACE_MD)
             .align_y(Alignment::Center)
-            .padding(Padding::from([SPACE_MD, SPACE_LG])),
+            .padding(Padding::from([0.0, SPACE_LG])),
         )
         .width(Length::Fill)
+        .height(Length::Fixed(sola_kit::components::style::BAR_H))
+        .center_y(Length::Fixed(sola_kit::components::style::BAR_H))
         .style(toolbar_style)
         .into()
     }

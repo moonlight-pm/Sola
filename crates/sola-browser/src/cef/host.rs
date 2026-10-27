@@ -371,6 +371,7 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
         }
         ToEngine::MediaPermission { req_id, granted } => Cmd::MediaPermission { req_id, granted },
         ToEngine::JsDialog { id, success, input } => Cmd::JsDialog { id, success, input },
+        ToEngine::FileDialog { id, paths } => Cmd::FileDialog { id, paths },
         ToEngine::HttpAuth {
             id,
             success,

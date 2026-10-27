@@ -134,8 +134,9 @@ pub enum Msg {
     /// just opens Calendar).
     CalendarOpenEvent(String),
     /// Expire the toast for `generation` if it matches the current generation.
-    /// Also clears a matching pending launch (opening feedback timeout).
     ToastExpire(u64),
+    /// A launch's ghost row times out (its window never came).
+    LaunchExpire(u64),
     /// End a menubar shortcut-flash for `generation` if it's still current.
     MenuFlashExpire(u64),
     // --- Launcher messages ---
@@ -320,17 +321,18 @@ pub enum Panel {
 pub struct PendingLaunch {
     /// Catalog `app_id` from the launcher entry.
     pub app_id: String,
-    /// `MenubarState::toast_generation` at the moment the opening toast was
-    /// pushed — used to ignore stale timeouts and clear only our toast.
-    pub toast_generation: u64,
+    /// The app's name, for the tab bar's ghost row.
+    pub label: String,
+    /// Bumped per launch: a timeout clears only its own.
+    pub generation: u64,
     /// Window ids already present for this app at launch time. A resolve
     /// requires a **new** window so re-launching an already-open app does not
     /// dismiss against the existing surface.
     pub existing_wids: HashSet<u32>,
 }
 
-/// How long the "Opening …" toast stays up if no matching window appears.
-const OPENING_TOAST_SECS: u64 = 20;
+/// How long the ghost row waits for the app's window before it goes.
+const OPENING_SECS: u64 = 20;
 
 pub struct Shell {
     pub theme: iced::Theme,
@@ -1292,9 +1294,33 @@ impl Shell {
             .is_some_and(|a| a.app_id == pending_app_id)
     }
 
-    /// Emit LaunchApp for `app_id`, show opening toast, close launcher.
-    /// A composition-hidden running app is unhidden and raised instead of
-    /// spawned again.
+    /// Apps whose launch is a new window (their ⌘N): the launcher starts
+    /// them even while they have windows. Every other app that has one is
+    /// brought forward instead (the Dock's way).
+    const NEW_WINDOW_APPS: &'static [&'static str] = &["sola-browser", "sola-terminal"];
+
+    /// The window to bring forward for `app_id`: its last used, else its
+    /// newest.
+    pub fn running_window_of(&self, app_id: &str) -> Option<u32> {
+        let windows: Vec<&Window> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Self::APP_ID && self.matches_pending_app(&w.app_id, app_id))
+            .collect();
+        windows
+            .iter()
+            .find_map(|w| {
+                self.mru_window_by_app
+                    .get(&w.app_id)
+                    .copied()
+                    .filter(|m| windows.iter().any(|x| x.window_id == *m))
+            })
+            .or_else(|| windows.last().map(|w| w.window_id))
+    }
+
+    /// Emit LaunchApp for `app_id`, show the opening ghost, close launcher.
+    /// A running app comes forward instead of starting again (Browser and
+    /// Terminal open a new window); a composition-hidden one is unhidden.
     fn launch_from_launcher(&mut self, app_id: Option<&str>) -> iced::Task<Msg> {
         // Projects opens a project, not another Projects: its chooser.
         if app_id == Some(crate::launcher::projects::APP_ID) {
@@ -1306,6 +1332,15 @@ impl Shell {
                 self.launcher.active = false;
                 self.unhide_app(&hidden);
                 self.emit_registered_chords();
+                return iced::Task::none();
+            }
+            if !Self::NEW_WINDOW_APPS.contains(&id)
+                && let Some(wid) = self.running_window_of(id)
+            {
+                self.launcher.active = false;
+                self.emit_composition();
+                self.emit_registered_chords();
+                self.activate_window(wid);
                 return iced::Task::none();
             }
             if let Some(app) = self.applications.get(id) {
@@ -1331,8 +1366,9 @@ impl Shell {
         opening
     }
 
-    /// Push `Opening {label}…`, record pending launch state, schedule a 20s
-    /// timeout that clears both toast and pending if still current.
+    /// Record the pending launch: the tab bar shows a ghost row where the
+    /// window will land until it maps, the launch fails, or [`OPENING_SECS`]
+    /// pass.
     pub fn begin_opening(&mut self, app_id: &str, label: &str) -> iced::Task<Msg> {
         let existing_wids: HashSet<u32> = self
             .known_windows
@@ -1340,17 +1376,30 @@ impl Shell {
             .filter(|w| self.matches_pending_app(&w.app_id, app_id))
             .map(|w| w.window_id)
             .collect();
-        self.menubar.push_toast(format!("Opening {label}…"));
-        let toast_generation = self.menubar.toast_generation;
+        let generation = self
+            .pending_launch
+            .as_ref()
+            .map_or(0, |p| p.generation)
+            .wrapping_add(1);
         self.pending_launch = Some(PendingLaunch {
             app_id: app_id.to_string(),
-            toast_generation,
+            label: label.to_string(),
+            generation,
             existing_wids,
         });
         iced::Task::perform(
-            tokio::time::sleep(Duration::from_secs(OPENING_TOAST_SECS)),
-            move |_| Msg::ToastExpire(toast_generation),
+            tokio::time::sleep(Duration::from_secs(OPENING_SECS)),
+            move |_| Msg::LaunchExpire(generation),
         )
+    }
+
+    /// The ghost row for a launch in flight: its zone, index and name.
+    pub fn launch_ghost(&self) -> Option<(Zone, usize, &str)> {
+        let p = self.pending_launch.as_ref()?;
+        let floats =
+            crate::zoning::floats_by_default(&p.app_id) || self.zoning.remembers(&p.app_id);
+        let (zone, at, _) = self.tabs.landing_slot(floats);
+        Some((zone, at, p.label.as_str()))
     }
 
     /// Drop pending launch (and its toast, if still current) when a matching
@@ -1361,33 +1410,16 @@ impl Shell {
         };
         let app_id = pending.app_id.clone();
         let existing = pending.existing_wids.clone();
-        let toast_gen = pending.toast_generation;
         let appeared = self.known_windows.iter().any(|w| {
             !existing.contains(&w.window_id) && self.matches_pending_app(&w.app_id, &app_id)
         });
         if appeared {
-            self.clear_pending_launch(Some(toast_gen));
-        }
-    }
-
-    /// Clear `pending_launch`. When `toast_generation` is `Some` and still
-    /// matches the menubar toast, expire that toast too. When `None`, clear
-    /// pending without touching a toast that may already have been replaced
-    /// (caller will push a failure/exit toast next).
-    pub fn clear_pending_launch(&mut self, toast_generation: Option<u64>) {
-        let Some(pending) = self.pending_launch.take() else {
-            return;
-        };
-        if let Some(toast_gen) = toast_generation {
-            if pending.toast_generation == toast_gen {
-                self.menubar.expire_toast(toast_gen);
-            }
+            self.pending_launch = None;
         }
     }
 
     /// If there is a pending launch for `app_id` (case-insensitive), take it
-    /// without expiring its toast — the caller will push a replacement toast
-    /// or clear the opening toast via the returned generation.
+    /// (its ghost row goes; the caller may toast a failure).
     pub fn take_pending_for_app(&mut self, app_id: &str) -> Option<PendingLaunch> {
         let matches = self
             .pending_launch
@@ -2371,10 +2403,13 @@ impl Shell {
             }
             Msg::ToastExpire(toast_gen) => {
                 self.menubar.expire_toast(toast_gen);
+                iced::Task::none()
+            }
+            Msg::LaunchExpire(generation) => {
                 if self
                     .pending_launch
                     .as_ref()
-                    .is_some_and(|p| p.toast_generation == toast_gen)
+                    .is_some_and(|p| p.generation == generation)
                 {
                     self.pending_launch = None;
                 }
@@ -3131,7 +3166,8 @@ mod pending_launch_tests {
             menubar: MenubarState::new(),
             pending_launch: Some(PendingLaunch {
                 app_id: "sola-terminal".into(),
-                toast_generation: 1,
+                label: "Terminal".into(),
+                generation: 1,
                 existing_wids: HashSet::from([1]),
             }),
             stats: std::sync::Arc::new(crate::stats::Snapshot::default()),
@@ -3146,13 +3182,11 @@ mod pending_launch_tests {
             project_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
-        shell.menubar.toast_generation = 1;
-        shell.menubar.toast = Some("Opening Terminal…".into());
-
-        // Existing window only — still pending.
+        // Existing window only — still pending, the ghost in the tab bar.
         shell.resolve_pending_launch_if_window();
         assert!(shell.pending_launch.is_some());
-        assert_eq!(shell.menubar.toast.as_deref(), Some("Opening Terminal…"));
+        assert_eq!(shell.launch_ghost().map(|(_, _, label)| label), Some("Terminal"));
+        assert!(shell.menubar.toast.is_none());
 
         // New matching window resolves.
         shell.known_windows.push(Window {
@@ -3163,7 +3197,7 @@ mod pending_launch_tests {
         });
         shell.resolve_pending_launch_if_window();
         assert!(shell.pending_launch.is_none());
-        assert!(shell.menubar.toast.is_none());
+        assert!(shell.launch_ghost().is_none());
     }
 }
 
@@ -3454,6 +3488,26 @@ mod hide_tests {
 
         assert!(!shell.is_app_hidden("sola-terminal"));
         assert_eq!(shell.focused_app_id.as_deref(), Some("sola-terminal"));
+    }
+
+    #[test]
+    fn a_running_app_is_brought_forward_not_started_again() {
+        let mut shell = test_shell(
+            vec![
+                win(1, Shell::APP_ID, "menubar"),
+                win(2, "sola-calendar", "Calendar"),
+                win(3, "sola-paint", "a.png"),
+                win(4, "sola-paint", "b.png"),
+            ],
+            Some("sola-calendar"),
+            &["sola-calendar", "sola-paint"],
+        );
+        assert_eq!(shell.running_window_of("sola-calendar"), Some(2));
+        // The last used of several.
+        shell.mru_window_by_app.insert("sola-paint".into(), 4);
+        assert_eq!(shell.running_window_of("sola-paint"), Some(4));
+        assert_eq!(shell.running_window_of("sola-mail"), None);
+        assert!(Shell::NEW_WINDOW_APPS.contains(&"sola-browser"));
     }
 
     #[test]

@@ -170,6 +170,16 @@ pub fn drag_resize<Message>(
     }
 }
 
+/// Bring one of this app's windows forward: the shell shows it in its zone
+/// (switching workspace if it must) and focuses it (`Topic::ShowWindow`) —
+/// a single-instance app answering a second launch. `window_id` is the
+/// sola-river id ([`FloatState::any_window_id`]).
+pub fn show_window(window_id: u32) {
+    if let Ok(mut bus) = crate::app::bus().lock() {
+        let _ = bus.emit(Topic::ShowWindow(window_id));
+    }
+}
+
 /// Ask the session to close this app (`Topic::CloseApp`).
 pub fn close_app(app_id: &str) {
     if let Ok(mut bus) = crate::app::bus().lock() {

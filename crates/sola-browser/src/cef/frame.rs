@@ -289,6 +289,11 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                     state.modifiers = *m;
                     crate::input::store_modifiers(*m);
                 }
+                // The file panel over the page takes its keys (as keys no
+                // widget used): the page gets none, and none are captured.
+                if crate::file_dialog::is_open() {
+                    return None;
+                }
                 // Chrome Edit menu owns ⌘C/X/V/A/Z — do not also send them
                 // to CEF or a page field pastes twice (JS + native).
                 if let keyboard::Event::KeyPressed { key, modifiers, .. }
