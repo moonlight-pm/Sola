@@ -69,13 +69,19 @@ impl TabWindows {
     /// Open tab `id`'s window as app `app_id`: the tab is that app's (its
     /// key `<app_id>/<id>`), and `settings` should carry the same Wayland
     /// app id ([`crate::app::window_settings_transparent`]).
+    ///
+    /// A close request from the compositor (the tab bar's close on a
+    /// window, a keyboard close) reaches the app as `CloseRequested`, so it
+    /// closes the tab its own way. Left to iced, the window would just go
+    /// and the app, with the tab still open, would put up a new one.
     pub fn open_as(
         &mut self,
         app_id: &str,
         id: &str,
-        settings: window::Settings,
+        mut settings: window::Settings,
         background: bool,
     ) -> (window::Id, Task<window::Id>) {
+        settings.exit_on_close_request = false;
         self.opened += 1;
         let key = format!("{app_id}/{id}");
         announce(&tab(&key, app_id, self.opened, None, background));

@@ -22,6 +22,9 @@ pub struct LauncherState {
     /// Projects was picked: the launcher shows `~/Projects` instead of
     /// the apps ([`super::projects`]); `selected` indexes its rows.
     pub chooser: Option<super::projects::Chooser>,
+    /// Browser was picked: the field is an address or a search
+    /// ([`super::web`]); `selected` indexes its rows.
+    pub web: Option<super::web::WebChooser>,
 }
 
 impl LauncherState {

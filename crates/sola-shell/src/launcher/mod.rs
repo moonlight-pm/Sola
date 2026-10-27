@@ -5,6 +5,7 @@
 pub mod projects;
 pub mod state;
 pub mod view;
+pub mod web;
 
 use iced::window;
 use sola_kit::app::window_settings;

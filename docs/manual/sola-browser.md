@@ -7,9 +7,11 @@ Chromium (CEF) engine that renders off-screen on the CPU.
 
 ## Launch
 
-Open **Browser** from the shell launcher, or run
-`/opt/sola/bin/sola-browser`. With the browser running, either opens a new
-page window (as ⌘T does), placed right after the focused tab.
+Pick **Browser** in the shell launcher and type an address or a search
+(see [the shell manual](sola-shell.md#launcher)): it opens in a new page
+window right after the focused tab, as Enter in the location bar would.
+Running `/opt/sola/bin/sola-browser` with the browser running opens a
+blank page window (as ⌘T does), placed right after the focused tab.
 
 The same window is also a call-plane owner: `solactl browser` lists tabs,
 opens and moves them, and snapshots and clicks the page (YAML with refs).
@@ -107,8 +109,8 @@ behind the shown one in a zone rest until shown.
 `⌘T` opens a blank page window right after the focused one, in its zone.
 `⌘W` closes the page and its window, and the zone shows the page it showed
 before (the one you opened it from, if you did not switch away); the
-location bar there starts unfocused. Closing the last page window quits
-the browser.
+location bar there starts unfocused. Closing a page window from the tab
+bar does the same. Closing the last page window quits the browser.
 
 `⌘⇧T` (Browser → **Reopen Closed Tab**) reopens the most recently closed
 page in a new window; press it again for the one before that. The stack is

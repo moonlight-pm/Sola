@@ -27,6 +27,7 @@ pub mod adapt;
 pub mod agents;
 pub mod bus;
 pub mod chooser;
+pub mod web;
 pub mod workspaces;
 
 /// Set by flower **Quit Sola** so `main` can exit 0. Compositor death
@@ -1326,6 +1327,10 @@ impl Shell {
         if app_id == Some(crate::launcher::projects::APP_ID) {
             return self.enter_projects_chooser();
         }
+        // Browser asks where to, not for a blank page.
+        if app_id == Some(crate::launcher::web::APP_ID) {
+            return self.enter_web_chooser();
+        }
         let mut opening = iced::Task::none();
         if let Some(id) = app_id {
             if let Some(hidden) = self.mapped_hidden_app_id(id) {
@@ -2596,6 +2601,7 @@ impl Shell {
                 self.launcher.prior_focus = self.focused_window_id;
                 self.launcher.active = true;
                 self.launcher.chooser = None;
+                self.launcher.web = None;
                 let apps = self.applications.clone();
                 self.launcher.apply_query(&apps, "");
                 self.emit_composition();
@@ -2616,6 +2622,7 @@ impl Shell {
                 }
                 self.launcher.active = false;
                 self.launcher.chooser = None;
+                self.launcher.web = None;
                 self.emit_composition();
                 self.emit_registered_chords();
                 // Restore focus to the previously focused app window.
@@ -2627,6 +2634,12 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::LauncherQuery(text) => {
+                if let Some(web) = self.launcher.web.as_mut() {
+                    web.apply_query(&text);
+                    self.launcher.query = text;
+                    self.launcher.selected = 0;
+                    return iced::Task::none();
+                }
                 if let Some(chooser) = self.launcher.chooser.as_mut() {
                     if !chooser.naming {
                         chooser.apply_query(&text);
@@ -2649,9 +2662,10 @@ impl Shell {
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
-                let len = match &self.launcher.chooser {
-                    Some(chooser) => chooser.rows().len(),
-                    None => self.launcher.filtered_ids.len(),
+                let len = match (&self.launcher.web, &self.launcher.chooser) {
+                    (Some(web), _) => web.rows().len(),
+                    (None, Some(chooser)) => chooser.rows().len(),
+                    (None, None) => self.launcher.filtered_ids.len(),
                 };
                 if len == 0 {
                     return iced::Task::none();
@@ -2669,6 +2683,9 @@ impl Shell {
                 }
                 if !self.launcher.active {
                     return iced::Task::none();
+                }
+                if self.launcher.web.is_some() {
+                    return self.web_pick(self.launcher.selected);
                 }
                 if self.launcher.chooser.is_some() {
                     return self.chooser_pick(self.launcher.selected);
@@ -2709,6 +2726,9 @@ impl Shell {
                     return iced::Task::none();
                 }
                 self.launcher.selected = i;
+                if self.launcher.web.is_some() {
+                    return self.web_pick(i);
+                }
                 self.chooser_pick(i)
             }
             Msg::ProjectsKnown(known) => {

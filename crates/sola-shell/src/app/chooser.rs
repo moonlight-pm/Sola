@@ -50,6 +50,12 @@ impl Shell {
 
     /// Escape: out of naming, else back to the apps, else close.
     pub(crate) fn launcher_back(&mut self) -> iced::Task<Msg> {
+        // The Browser field: back to the apps.
+        if self.launcher.web.take().is_some() {
+            let apps = self.applications.clone();
+            self.launcher.apply_query(&apps, "");
+            return refocus_query();
+        }
         let Some(chooser) = self.launcher.chooser.as_mut() else {
             return iced::Task::done(Msg::CloseLauncher);
         };

@@ -46,9 +46,9 @@ the desk pass through: the overlay is the card, not a full-output dim.
 Super+Space opens the launcher; type to filter and press Enter (or click)
 to launch. An app that is already running comes forward instead of
 starting again — its window (the last one you used, if it has several) is
-shown in its zone, on its workspace, and takes focus. The browser and
-Terminal are the exceptions: picking them opens a new window (a new page,
-a new tab window) right after the focused tab. An app you hid with Super+H
+shown in its zone, on its workspace, and takes focus. Terminal is the
+exception: picking it opens a new tab window right after the focused tab.
+The browser asks where to go (below). An app you hid with Super+H
 is shown again rather than started twice.
 
 While an app starts, a faint row with a turning ring stands in the tab bar
@@ -69,6 +69,20 @@ folders, the field scoped to "Projects". Type to filter.
 
 If Projects is not running, it starts, and the project comes up once its
 first window is there.
+
+**Browser** asks where to go. Picking Browser turns the launcher into a
+field scoped to "Browser": type an address or what to search for, as in
+the browser's location bar.
+
+- With nothing typed, your latest visits are listed.
+- The first row is what Enter does: open the address, or go straight to
+  the top result of the search (Kagi). A search also offers Kagi's
+  results page.
+- Under them, the pages you have visited that match: by site first, then
+  by title and address.
+- Picking a row opens it in a new page window right after the focused
+  tab; the browser starts if it is not running.
+- Escape goes back to the apps; again closes the launcher.
 
 ## Flower menu
 

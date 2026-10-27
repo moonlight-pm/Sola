@@ -204,44 +204,15 @@ pub const SCROLL_STRESS_URL: &str = "sola:scroll-stress";
 /// never present a trusted cert), `https://` otherwise. `host:port` (digits
 /// after the colon) counts as a bare host, not a scheme.
 pub fn normalize_url(s: &str) -> String {
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    // xdg-open `%u` for `text/html` is often a path, not a file:// URL.
-    // Resolve here (opener cwd) so chrome.sock handoff is not relative.
-    if let Some(file) = sola_core::open_url::file_url_from_local_path(trimmed) {
-        return file;
-    }
     // Shortcuts → built-in stress page.
-    let lower = trimmed.to_ascii_lowercase();
+    let lower = s.trim().to_ascii_lowercase();
     if matches!(
         lower.as_str(),
         "sola:scroll-stress" | "sola://scroll-stress" | "about:scroll-stress" | "scroll-stress"
     ) {
         return SCROLL_STRESS_URL.to_string();
     }
-    if explicit_scheme(trimmed).is_some() {
-        return trimmed.to_string();
-    }
-    with_default_scheme(trimmed)
-}
-
-/// Prefix a scheme-less token. Loopback is `http://`; everything else
-/// is `https://`. Unbracketed IPv6 loopback (`::1`) is wrapped.
-fn with_default_scheme(s: &str) -> String {
-    let host = scheme_less_host(s);
-    let scheme = if is_loopback_host(host) {
-        "http"
-    } else {
-        "https"
-    };
-    if host.contains(':') && !s.starts_with('[') {
-        let rest = &s[host.len()..];
-        format!("{scheme}://[{host}]{rest}")
-    } else {
-        format!("{scheme}://{s}")
-    }
+    sola_core::omnibox::normalize_url(s)
 }
 
 /// HTML for [`SCROLL_STRESS_URL`] (embedded asset).
@@ -249,80 +220,9 @@ pub fn scroll_stress_html() -> &'static str {
     include_str!("../assets/scroll-stress.html")
 }
 
-/// Base URL for chrome input that doesn't parse as a URL — searched on Kagi.
-const SEARCH_PREFIX: &str = "https://kagi.com/search?q=";
-
-/// Decide whether chrome input should be loaded as a URL (vs. searched).
-/// The common browser-omnibox heuristic, deliberately simple:
-/// - whitespace anywhere → search ("how to tie a tie")
-/// - an explicit scheme, a dotted host, or loopback → URL
-///   ("https://x", "about:blank", "github.com", "localhost:3000", "[::1]")
-/// - anything else (a single bare word) → search ("weather", "rust")
-pub fn looks_like_url(s: &str) -> bool {
-    let t = s.trim();
-    if t.is_empty() || t.chars().any(char::is_whitespace) {
-        return false;
-    }
-    if explicit_scheme(t).is_some() {
-        return true;
-    }
-    if t.eq_ignore_ascii_case("scroll-stress") || t.to_ascii_lowercase().starts_with("sola:") {
-        return true;
-    }
-    if is_loopback_host(scheme_less_host(t)) {
-        return true;
-    }
-    // A dotted host like "github.com" or "a.b/c": a dot that is neither the
-    // first nor the last character.
-    matches!(t.find('.'), Some(i) if i > 0 && i < t.len() - 1)
-}
-
-/// Host of a scheme-less omnibox token (`host`, `host:port`, `host/path`,
-/// `[::1]`, `[::1]:8080`).
-fn scheme_less_host(s: &str) -> &str {
-    if let Some(rest) = s.strip_prefix('[') {
-        if let Some(end) = rest.find(']') {
-            return &rest[..end];
-        }
-    }
-    let no_path = s.split_once('/').map(|(h, _)| h).unwrap_or(s);
-    if let Some((host, port)) = no_path.rsplit_once(':') {
-        if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) && !host.contains(':') {
-            return host;
-        }
-    }
-    no_path
-}
-
-/// `localhost`, `*.localhost`, `127.0.0.0/8`, and IPv6 `::1`.
-fn is_loopback_host(host: &str) -> bool {
-    let h = host.trim_end_matches('.').to_ascii_lowercase();
-    if h == "localhost" || h.ends_with(".localhost") {
-        return true;
-    }
-    if is_ipv4_loopback(&h) {
-        return true;
-    }
-    h == "::1" || h == "0:0:0:0:0:0:0:1" || h.strip_prefix("::ffff:").is_some_and(is_ipv4_loopback)
-}
-
-fn is_ipv4_loopback(s: &str) -> bool {
-    let mut parts = s.split('.');
-    let Some(first) = parts.next().and_then(|p| p.parse::<u8>().ok()) else {
-        return false;
-    };
-    if first != 127 {
-        return false;
-    }
-    let mut n = 1usize;
-    for p in parts {
-        if p.parse::<u8>().is_err() {
-            return false;
-        }
-        n += 1;
-    }
-    n == 4
-}
+// Address-or-search and Kagi URLs are shared with the launcher's Browser
+// field: `sola_core::omnibox`.
+pub use sola_core::omnibox::{is_kagi_search_url, kagi_lucky_url, kagi_search_url, looks_like_url};
 
 /// Turn chrome input into a final navigation target: the URL itself when it
 /// looks like one, otherwise a Kagi search for the text. Empty input yields an
@@ -337,21 +237,6 @@ pub fn resolve_query(s: &str) -> String {
     } else {
         kagi_search_url(t)
     }
-}
-
-/// Kagi results page for the typed query (Shift+Enter).
-pub fn kagi_search_url(q: &str) -> String {
-    format!("{SEARCH_PREFIX}{}", encode_query(q.trim()))
-}
-
-/// Kagi "I'm feeling lucky" (`\query`) — first result for the typed query.
-pub fn kagi_lucky_url(q: &str) -> String {
-    format!("{SEARCH_PREFIX}%5C{}", encode_query(q.trim()))
-}
-
-/// Kagi SERP / lucky URL (kept out of visit history).
-pub fn is_kagi_search_url(url: &str) -> bool {
-    url.to_ascii_lowercase().contains("kagi.com/search")
 }
 
 /// Enter / Shift+Enter target for the location bar.
@@ -381,38 +266,6 @@ pub fn omnibox_submit_url(typed: &str, highlighted: Option<&str>, search_results
 /// One-line history subtitle: no query string, middle-ellipsis if long.
 pub fn compact_history_url(url: &str) -> String {
     truncate(&idle_display_url(url), 72)
-}
-
-/// Return the explicit URL scheme of `s` (the alphabetic run before the first
-/// `:`), but NOT for `host:port`, where the colon is followed only by digits.
-fn explicit_scheme(s: &str) -> Option<&str> {
-    let colon = s.find(':')?;
-    let scheme = &s[..colon];
-    if scheme.is_empty() || !scheme.chars().all(|c| c.is_ascii_alphabetic()) {
-        return None;
-    }
-    // `host:port` — the segment after the colon (up to any `/`) is all digits.
-    let after = &s[colon + 1..];
-    let port = after.split('/').next().unwrap_or("");
-    if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    Some(scheme)
-}
-
-/// Percent-encode `s` as a URL query value: RFC 3986 unreserved bytes pass
-/// through, everything else (including spaces) becomes `%XX`.
-fn encode_query(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for &b in s.as_bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 #[cfg(test)]

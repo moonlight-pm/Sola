@@ -31,8 +31,8 @@ solactl session launch firefox --command firefox
 ```
 
 `LaunchApp` is not kept on the bus. If `sola-session` is not running when
-the launcher sends it, nothing starts, and the launcher's **Opening …**
-toast clears after 20 s.
+the launcher sends it, nothing starts, and the launcher's ghost row in
+the tab bar goes after 20 s.
 
 ### The command
 
@@ -117,7 +117,7 @@ An app id names an application in four places:
 - `CloseApp`, which the shell sends with the focused window's app id.
 
 The shell matches windows to catalog entries exactly, then ignoring case,
-for icons, names, and the **Opening …** toast. `sola-session` and
+for icons, names, and the ghost row of an app that is starting. `sola-session` and
 `sola-river` match exactly. If a catalog id is `Orca` and the window says
 `orca`, Super+Q still closes the window, but `sola-session` does not stop
 the scope it started, and a restart of `sola-session` starts the

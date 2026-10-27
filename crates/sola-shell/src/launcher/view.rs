@@ -9,7 +9,9 @@
 //! Picking Projects turns the card into the Projects chooser
 //! ([`crate::launcher::projects`]): the field scoped to "Projects", the
 //! folders of `~/Projects` as rows (open ones say where), then New.
-//! Escape steps back to the apps.
+//! Escape steps back to the apps. Picking Browser turns it into the
+//! Browser field ([`crate::launcher::web`]): the field scoped to
+//! "Browser", what Return opens, then matching visits.
 
 use iced::widget::{Id as WidgetId, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Element, Length, Padding};
@@ -24,6 +26,7 @@ use sola_kit::fonts;
 
 use crate::app::{Msg, Shell};
 use crate::launcher::projects::{Chooser, Row};
+use crate::launcher::web::{self, WebChooser};
 use sola_kit::components::scroll;
 
 /// Stable widget ID for the launcher query input — used to focus it on open.
@@ -38,6 +41,9 @@ const ROW_GAP: f32 = 10.0;
 const LIST_SPACING: f32 = 2.0;
 const LIST_MAX_H: f32 = 360.0;
 const LIST_INSET: f32 = 6.0;
+/// A Browser row's address: its type, and the most of the row it takes.
+const NOTE_SIZE: f32 = 12.0;
+const NOTE_SHARE: f32 = 0.45;
 
 /// Render the launcher overlay for `shell`.
 ///
@@ -52,10 +58,11 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
 
     let launcher = &shell.launcher;
 
-    let placeholder = match &launcher.chooser {
-        Some(c) if c.naming => "Name the new project",
-        Some(_) => "Open a project, or type a new name",
-        None => "Search…",
+    let placeholder = match (&launcher.web, &launcher.chooser) {
+        (Some(_), _) => "Search or enter an address",
+        (None, Some(c)) if c.naming => "Name the new project",
+        (None, Some(_)) => "Open a project, or type a new name",
+        (None, None) => "Search…",
     };
     // Search field — part of the card chrome, not a loud form control.
     let query_input: Element<'_, Msg> = text_input(placeholder, &launcher.query)
@@ -67,15 +74,22 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .width(Length::Fill)
         .into();
     // In the chooser, the field is scoped: "Projects" before it.
-    let query_input: Element<'_, Msg> = match &launcher.chooser {
-        Some(_) => row![scope_chip("lucide/folders", "Projects"), query_input]
+    let scope = match (&launcher.web, &launcher.chooser) {
+        (Some(_), _) => Some(("lucide/globe", "Browser")),
+        (None, Some(_)) => Some(("lucide/folders", "Projects")),
+        (None, None) => None,
+    };
+    let query_input: Element<'_, Msg> = match scope {
+        Some((icon_name, label)) => row![scope_chip(icon_name, label), query_input]
             .padding(Padding::ZERO.left(QUERY_PAD))
             .align_y(Alignment::Center)
             .into(),
         None => query_input,
     };
 
-    let rows: Vec<Element<'_, Msg>> = if let Some(chooser) = &launcher.chooser {
+    let rows: Vec<Element<'_, Msg>> = if let Some(web) = &launcher.web {
+        web_rows(shell, web)
+    } else if let Some(chooser) = &launcher.chooser {
         chooser_rows(shell, chooser)
     } else if launcher.filtered_ids.is_empty() {
         vec![
@@ -213,6 +227,97 @@ fn dim(theme: &iced::Theme) -> iced::widget::text::Style {
             ..theme.palette().text
         }),
     }
+}
+
+/// The Browser field's rows: what Return opens (an address, or the first
+/// result for a search), Kagi's results page, then visits.
+fn web_rows<'a>(shell: &'a Shell, chooser: &'a WebChooser) -> Vec<Element<'a, Msg>> {
+    let selected = shell.launcher.selected;
+    let query = chooser.query();
+    let rows = chooser.rows();
+    if rows.is_empty() {
+        return vec![
+            container(
+                text("Type an address, or what to search for")
+                    .font(fonts::chrome())
+                    .size(13)
+                    .style(dim),
+            )
+            .padding(Padding::new(12.0))
+            .width(Length::Fill)
+            .into(),
+        ];
+    }
+    rows.into_iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let (icon_name, label, note): (&str, String, Option<String>) = match &r {
+                web::Row::Go { url, address: true } => (
+                    "lucide/globe",
+                    url.split_once("://").map_or(url.as_str(), |(_, rest)| rest).to_string(),
+                    Some("Open".into()),
+                ),
+                web::Row::Go { address: false, .. } => (
+                    "lucide/search",
+                    format!("“{query}”"),
+                    Some("Top result".into()),
+                ),
+                web::Row::Results(_) => (
+                    "lucide/list",
+                    format!("Search Kagi for “{query}”"),
+                    None,
+                ),
+                web::Row::Visit(v) => {
+                    let visit = &chooser.hits[*v];
+                    ("lucide/clock", web::visit_label(visit), Some(web::visit_note(visit)))
+                }
+            };
+            // Both lines end in "…" where they meet: the address takes at
+            // most NOTE_SHARE of the row, the title the rest.
+            let lp = shell.style.launcher_pad;
+            let inner = shell.style.launcher_width
+                - LIST_INSET * 2.0
+                - (lp + 4.0)
+                - (lp + 8.0)
+                - ROW_ICON as f32
+                - ROW_GAP;
+            let note = note.map(|n| fonts::fit_line(&n, NOTE_SIZE, fonts::chrome(), inner * NOTE_SHARE));
+            let note_w = note
+                .as_deref()
+                .map_or(0.0, |n| fonts::line_width(n, NOTE_SIZE, fonts::chrome()) + ROW_GAP);
+            let label = fonts::fit_line(&label, ROW_LABEL, fonts::ui(), inner - note_w - 1.0);
+            let mut content = row![
+                icon(icon_name, ROW_ICON),
+                text(label)
+                    .font(fonts::ui())
+                    .size(ROW_LABEL)
+                    .wrapping(iced::widget::text::Wrapping::None)
+                    .width(Length::Fill),
+            ]
+            .spacing(ROW_GAP)
+            .align_y(Alignment::Center);
+            if let Some(note) = note {
+                content = content.push(
+                    text(note)
+                        .font(fonts::chrome())
+                        .size(NOTE_SIZE)
+                        .wrapping(iced::widget::text::Wrapping::None)
+                        .style(dim),
+                );
+            }
+            iced::widget::button(content)
+                .on_press(Msg::LauncherPick(i))
+                .padding(Padding {
+                    top: lp,
+                    bottom: lp,
+                    left: lp + 4.0,
+                    right: lp + 8.0,
+                })
+                .width(Length::Fill)
+                .style(kit_btn::list_item(i == selected))
+                .into()
+        })
+        .collect()
 }
 
 /// The chooser's rows: each folder of `~/Projects` (open ones say where),
