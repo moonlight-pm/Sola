@@ -1,11 +1,12 @@
 //! Letter HTML → prose blocks: a safe subset, drawn by the kit.
 //!
 //! Only what is understood is drawn: text with CSS whitespace collapsing,
-//! bold / italic / code, links (http, https, mailto), headings, quotes,
+//! bold / italic / code / strike-through, links (http, https, mailto), headings, quotes,
 //! lists, preformatted text, rules, and pictures. Nothing runs: scripts,
 //! styles, forms, frames and embeds are dropped with their contents, and
 //! no stylesheet is read. Inline `style` is read only to drop hidden
-//! elements (preheaders), for bold / italic, and for a zero font size,
+//! elements (preheaders), for bold / italic / line-through, and for a
+//! zero font size,
 //! which hides text the way CSS does: inherited, until an element sets a
 //! size of its own (layout cells zero it to close gaps between pictures). Tables are read as rows:
 //! a row of short cells stays one line, anything else stacks its cells.
@@ -59,6 +60,7 @@ struct Walker {
     bold: u32,
     italic: u32,
     code: u32,
+    strike: u32,
     link: Option<String>,
     quote: u32,
     heading: Option<u8>,
@@ -73,12 +75,13 @@ struct Walker {
     mute: bool,
 }
 
-/// Bold, italic, code, link: what a run carries.
+/// Bold, italic, code, strike-through, link: what a run carries.
 #[derive(Debug, Clone, PartialEq, Default)]
 struct Style {
     bold: bool,
     italic: bool,
     code: bool,
+    strike: bool,
     link: Option<String>,
 }
 
@@ -97,6 +100,7 @@ impl Walker {
             link: self.link.clone(),
             bold: self.bold,
             italic: self.italic,
+            strike: self.strike,
             data_images: self.data_images,
             mute: self.mute,
             ..Self::default()
@@ -225,14 +229,16 @@ impl Walker {
                 if block || line {
                     self.joinable = false;
                 }
-                let (b, i, c) = inline_style(&tag, node);
-                self.bold += b as u32;
-                self.italic += i as u32;
-                self.code += c as u32;
+                let m = marks(&tag, node);
+                self.bold += m.bold as u32;
+                self.italic += m.italic as u32;
+                self.code += m.code as u32;
+                self.strike += m.strike as u32;
                 self.children(node, depth);
-                self.bold -= b as u32;
-                self.italic -= i as u32;
-                self.code -= c as u32;
+                self.bold -= m.bold as u32;
+                self.italic -= m.italic as u32;
+                self.code -= m.code as u32;
+                self.strike -= m.strike as u32;
                 if block {
                     self.end_block();
                 }
@@ -291,6 +297,7 @@ impl Walker {
             bold: self.bold > 0,
             italic: self.italic > 0,
             code: self.code > 0,
+            strike: self.strike > 0,
             link: self.link.clone(),
         }
     }
@@ -335,6 +342,7 @@ impl Walker {
             && last.bold == style.bold
             && last.italic == style.italic
             && last.code == style.code
+            && last.strike == style.strike
         {
             last.text.push(ch);
             return;
@@ -345,6 +353,7 @@ impl Walker {
             bold: style.bold,
             italic: style.italic,
             code: style.code,
+            strike: style.strike,
         });
     }
 
@@ -465,9 +474,10 @@ impl Walker {
                 sub.mute = zero_font(cell).unwrap_or(row_mute);
                 // A header cell is bold unless its style says otherwise
                 // (layouts use `th` columns set to `font-weight: normal`).
-                let (b, i, _) = inline_style(tag.as_ref(), cell);
-                sub.bold += b as u32;
-                sub.italic += i as u32;
+                let m = marks(tag.as_ref(), cell);
+                sub.bold += m.bold as u32;
+                sub.italic += m.italic as u32;
+                sub.strike += m.strike as u32;
                 sub.children(cell, depth + 1);
                 let walked = sub.finish();
                 self.data_images += walked
@@ -570,23 +580,40 @@ const INVISIBLE: &[char] = &[
     '\u{200b}', '\u{200c}', '\u{200d}', '\u{2060}', '\u{feff}', '\u{34f}', '\u{ad}',
 ];
 
-/// Bold / italic / code from the tag and its inline style.
-fn inline_style(tag: &str, node: &Handle) -> (bool, bool, bool) {
-    let mut bold = matches!(tag, "b" | "strong" | "th");
-    let mut italic = matches!(tag, "i" | "em" | "cite" | "var" | "dfn");
-    let code = matches!(tag, "code" | "tt" | "kbd" | "samp");
+/// What an element adds to its text.
+#[derive(Debug, Clone, Copy, Default)]
+struct Marks {
+    bold: bool,
+    italic: bool,
+    code: bool,
+    strike: bool,
+}
+
+/// Bold / italic / code / strike-through from the tag and its inline style.
+fn marks(tag: &str, node: &Handle) -> Marks {
+    let mut m = Marks {
+        bold: matches!(tag, "b" | "strong" | "th"),
+        italic: matches!(tag, "i" | "em" | "cite" | "var" | "dfn"),
+        code: matches!(tag, "code" | "tt" | "kbd" | "samp"),
+        strike: matches!(tag, "s" | "strike" | "del"),
+    };
     if let Some(style) = node.attr("style") {
         let style = squash(&style);
         if let Some(weight) = property(&style, "font-weight") {
-            bold = weight == "bold"
+            m.bold = weight == "bold"
                 || weight == "bolder"
                 || weight.parse::<u32>().is_ok_and(|w| w >= 600);
         }
         if property(&style, "font-style").is_some_and(|s| s == "italic" || s == "oblique") {
-            italic = true;
+            m.italic = true;
+        }
+        let decoration = property(&style, "text-decoration-line")
+            .or_else(|| property(&style, "text-decoration"));
+        if decoration.is_some_and(|d| d.contains("line-through")) {
+            m.strike = true;
         }
     }
-    (bold, italic, code)
+    m
 }
 
 /// Not shown by the sender: `hidden`, `display:none`, zero height, width
@@ -917,6 +944,20 @@ mod tests {
             })
             .collect();
         assert_eq!(words, ["On sale", "A game you wished for"]);
+    }
+
+    #[test]
+    fn struck_text_stays_struck() {
+        let b = blocks(
+            "<p><span style=\"text-decoration: line-through;\">$14.99</span>&nbsp; $9.74 \
+             <del>gone</del> <s>old</s></p>",
+        );
+        let ProseBlock::Paragraph(runs) = &b[0] else {
+            panic!("{b:?}")
+        };
+        let struck: Vec<&str> = runs.iter().filter(|r| r.strike).map(|r| r.text.as_str()).collect();
+        assert_eq!(struck, ["$14.99", "gone", "old"], "{runs:?}");
+        assert!(runs.iter().any(|r| r.text.contains("$9.74") && !r.strike));
     }
 
     #[test]

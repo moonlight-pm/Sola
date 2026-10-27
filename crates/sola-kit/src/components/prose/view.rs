@@ -604,6 +604,26 @@ where
                         );
                     }
                 }
+                // Through the middle of the x-height, as iced's rich text.
+                if span.strikethrough {
+                    let size = span.size.unwrap_or(Pixels(PROSE_SIZE));
+                    let line_height = span.line_height.unwrap_or(LINE_HEIGHT).to_absolute(size);
+                    let color = span.color.unwrap_or(defaults.text_color);
+                    let baseline = translation
+                        + iced::Vector::new(0.0, size.0 + (line_height.0 - size.0) / 2.0);
+                    for bounds in &regions {
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle::new(
+                                    bounds.position() + baseline - iced::Vector::new(0.0, size.0 / 2.0),
+                                    Size::new(bounds.width, 1.0),
+                                ),
+                                ..Default::default()
+                            },
+                            color,
+                        );
+                    }
+                }
             }
             let color = if line.quote {
                 self.quote_ink
@@ -789,14 +809,16 @@ fn layout_paragraph<Renderer: text::Renderer<Font = iced::Font>>(
 }
 
 /// Span equality for paragraph reuse. iced's `Span: PartialEq` ignores
-/// highlight (our selection), links and underline.
+/// highlight (our selection), links, underline and strike-through.
 fn same_spans(
     a: &[Span<'static, String, iced::Font>],
     b: &[Span<'static, String, iced::Font>],
 ) -> bool {
     a.len() == b.len()
         && a.iter().zip(b).all(|(x, y)| {
-            x == y && x.highlight == y.highlight && x.link == y.link && x.underline == y.underline
+            x == y && x.highlight == y.highlight && x.link == y.link
+                && x.underline == y.underline
+                && x.strikethrough == y.strikethrough
         })
 }
 
@@ -890,7 +912,8 @@ fn styled_span(
     let mut s = Span::new(text.to_string())
         .font(run_font(run, line))
         .size(size)
-        .line_height(line_height_for(line));
+        .line_height(line_height_for(line))
+        .strikethrough(run.strike);
     if run.url.is_some() {
         s = s.link(run.url.clone().unwrap()).underline(true).color(link);
     } else if run.code || line.code {

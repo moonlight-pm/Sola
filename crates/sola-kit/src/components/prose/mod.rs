@@ -45,6 +45,8 @@ pub struct ProseRun {
     pub bold: bool,
     pub italic: bool,
     pub code: bool,
+    /// Struck through (an old price, a withdrawn word).
+    pub strike: bool,
 }
 
 impl ProseRun {
@@ -55,6 +57,7 @@ impl ProseRun {
             bold: false,
             italic: false,
             code: false,
+            strike: false,
         }
     }
 
@@ -65,6 +68,7 @@ impl ProseRun {
             bold: false,
             italic: false,
             code: false,
+            strike: false,
         }
     }
 }
@@ -282,6 +286,7 @@ pub(crate) fn iter_lines(blocks: &[ProseBlock]) -> Vec<LayoutLine> {
                             bold: false,
                             italic: false,
                             code: !*verse,
+                            strike: false,
                         }]
                     };
                     out.push(LayoutLine {
@@ -464,6 +469,7 @@ fn split_runs_on_newline(runs: &[ProseRun]) -> Vec<Vec<ProseRun>> {
                             bold: run.bold,
                             italic: run.italic,
                             code: run.code,
+                            strike: run.strike,
                         });
                     }
                     lines.push(Vec::new());
@@ -477,6 +483,7 @@ fn split_runs_on_newline(runs: &[ProseRun]) -> Vec<Vec<ProseRun>> {
                             bold: run.bold,
                             italic: run.italic,
                             code: run.code,
+                            strike: run.strike,
                         });
                     }
                     break;

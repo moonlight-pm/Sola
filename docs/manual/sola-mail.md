@@ -59,7 +59,7 @@ titlebar lists them too. The titlebar names the mailbox and its unread
   you file in a calendar, everything else in Browser). Copy Message is
   in **Edit**; Undo is on the toast after a move (and **u**).
 - **HTML letters** are drawn by Mail itself, safely: paragraphs and line
-  breaks as the sender wrote them, bold and italic, links, headings,
+  breaks as the sender wrote them, bold, italic and struck text, links, headings,
   quotes, lists, rules, and tables read as rows. Nothing in a letter
   runs, and its styles are not applied, so a newsletter reads as one
   column. Pictures carried in the message show; **pictures from the web

@@ -87,6 +87,14 @@ fn letter(theme: &iced::Theme) -> Element<'static, Msg> {
                 })
                 .collect(),
         ),
+        ProseBlock::Paragraph(vec![
+            ProseRun::text("A run can be struck through, as an old price: "),
+            ProseRun {
+                strike: true,
+                ..ProseRun::text("$14.99")
+            },
+            ProseRun::text("  $9.74"),
+        ]),
         ProseBlock::Rule,
         ProseBlock::Paragraph(vec![ProseRun::text("A rule sits between sections. A picture the app has not supplied takes no room.")]),
         ProseBlock::Images(vec![ProseImage {
