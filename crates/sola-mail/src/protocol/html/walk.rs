@@ -5,7 +5,9 @@
 //! lists, preformatted text, rules, and pictures. Nothing runs: scripts,
 //! styles, forms, frames and embeds are dropped with their contents, and
 //! no stylesheet is read. Inline `style` is read only to drop hidden
-//! elements (preheaders) and for bold / italic. Tables are read as rows:
+//! elements (preheaders), for bold / italic, and for a zero font size,
+//! which hides text the way CSS does: inherited, until an element sets a
+//! size of its own (layout cells zero it to close gaps between pictures). Tables are read as rows:
 //! a row of short cells stays one line, anything else stacks its cells.
 
 use sola_kit::components::prose::{ProseBlock, ProseImage, ProseRun};
@@ -66,6 +68,9 @@ struct Walker {
     /// The last block is a line of pictures and nothing has come between:
     /// the next picture joins it (inline pictures sit side by side).
     joinable: bool,
+    /// The text here is zero-sized (`font-size: 0`, inherited): not shown.
+    /// Pictures still are.
+    mute: bool,
 }
 
 /// Bold, italic, code, link: what a run carries.
@@ -93,6 +98,7 @@ impl Walker {
             bold: self.bold,
             italic: self.italic,
             data_images: self.data_images,
+            mute: self.mute,
             ..Self::default()
         }
     }
@@ -126,7 +132,12 @@ impl Walker {
                 self.text(&text);
             }
             Data::Other => {}
-            Data::Element { .. } => self.element(node, depth),
+            Data::Element { .. } => {
+                let outer = self.mute;
+                self.mute = zero_font(node).unwrap_or(outer);
+                self.element(node, depth);
+                self.mute = outer;
+            }
         }
     }
 
@@ -238,6 +249,9 @@ impl Walker {
     // ── Inline content ────────────────────────────────────────────────
 
     fn text(&mut self, text: &str) {
+        if self.mute {
+            return;
+        }
         for ch in text.chars() {
             if INVISIBLE.contains(&ch) {
                 continue;
@@ -438,6 +452,7 @@ impl Walker {
         let mut rows = Vec::new();
         collect_rows(node, &mut rows, 0);
         for row in rows {
+            let row_mute = zero_font(&row).unwrap_or(self.mute);
             let mut cells = Vec::new();
             for cell in row.children.borrow().iter() {
                 let Some(tag) = cell.tag() else {
@@ -447,10 +462,13 @@ impl Walker {
                     continue;
                 }
                 let mut sub = self.sub();
-                let th = tag.as_ref() == "th";
-                sub.bold += th as u32;
+                sub.mute = zero_font(cell).unwrap_or(row_mute);
+                // A header cell is bold unless its style says otherwise
+                // (layouts use `th` columns set to `font-weight: normal`).
+                let (b, i, _) = inline_style(tag.as_ref(), cell);
+                sub.bold += b as u32;
+                sub.italic += i as u32;
                 sub.children(cell, depth + 1);
-                sub.bold -= th as u32;
                 let walked = sub.finish();
                 self.data_images += walked
                     .images
@@ -554,7 +572,7 @@ const INVISIBLE: &[char] = &[
 
 /// Bold / italic / code from the tag and its inline style.
 fn inline_style(tag: &str, node: &Handle) -> (bool, bool, bool) {
-    let mut bold = matches!(tag, "b" | "strong");
+    let mut bold = matches!(tag, "b" | "strong" | "th");
     let mut italic = matches!(tag, "i" | "em" | "cite" | "var" | "dfn");
     let code = matches!(tag, "code" | "tt" | "kbd" | "samp");
     if let Some(style) = node.attr("style") {
@@ -571,8 +589,9 @@ fn inline_style(tag: &str, node: &Handle) -> (bool, bool, bool) {
     (bold, italic, code)
 }
 
-/// Not shown by the sender: `hidden`, `display:none`, zero size or
-/// opacity, `mso-hide:all` (the preheader idiom).
+/// Not shown by the sender: `hidden`, `display:none`, zero height, width
+/// or opacity, `mso-hide:all` (the preheader idiom). A zero font size is
+/// not here: it hides only text that does not set its own ([`zero_font`]).
 fn hidden(node: &Handle) -> bool {
     if node.attr("hidden").is_some() {
         return true;
@@ -584,9 +603,17 @@ fn hidden(node: &Handle) -> bool {
     property(&style, "display").is_some_and(|v| v == "none")
         || property(&style, "visibility").is_some_and(|v| v == "hidden")
         || property(&style, "mso-hide").is_some_and(|v| v == "all")
-        || ["max-height", "font-size", "opacity", "max-width"]
+        || ["max-height", "opacity", "max-width"]
             .iter()
             .any(|p| property(&style, p).is_some_and(is_zero))
+}
+
+/// Whether the `font-size` this element sets is zero; `None` when it sets
+/// none (it inherits).
+fn zero_font(node: &Handle) -> Option<bool> {
+    let style = squash(&node.attr("style")?);
+    let size = property(&style, "font-size")?;
+    (!matches!(size, "inherit" | "unset")).then(|| is_zero(size))
 }
 
 /// Lowercase with the whitespace removed, `!important` dropped.
@@ -868,6 +895,40 @@ mod tests {
             ["shown"]
         );
         assert!(texts("<form><input value=v><textarea>t</textarea></form>").is_empty());
+    }
+
+    /// Steam's wishlist mail zeroes the font of the cell around the whole
+    /// letter; only its footer, outside it, was drawn.
+    #[test]
+    fn a_zero_font_hides_only_text_that_keeps_it() {
+        let b = blocks(
+            "<table><tr><td style=\"font-size:0pt; line-height:0pt\">&nbsp;\
+               <img src=\"cid:logo\" alt=\"Logo\" width=\"600\" height=\"80\">\
+               <table><tr><td style=\"font-size:28px\"><strong>On sale</strong></td></tr></table>\
+               <div style=\"font-size:14px\">A game <span style=\"font-size:0\">gap</span>you wished for</div>\
+             </td></tr></table>",
+        );
+        assert!(matches!(&b[0], ProseBlock::Images(i) if i[0].alt == "Logo"), "{b:?}");
+        let words: Vec<String> = b
+            .iter()
+            .filter_map(|b| match b {
+                ProseBlock::Paragraph(runs) => Some(runs.iter().map(|r| r.text.as_str()).collect()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(words, ["On sale", "A game you wished for"]);
+    }
+
+    #[test]
+    fn a_header_cell_takes_its_own_weight() {
+        let b = blocks(
+            "<table><tr><th>Head</th><th style=\"font-weight:normal\">Plain</th></tr></table>",
+        );
+        let ProseBlock::Paragraph(runs) = &b[0] else {
+            panic!("{b:?}")
+        };
+        assert!(runs.iter().any(|r| r.text == "Head" && r.bold), "{runs:?}");
+        assert!(runs.iter().any(|r| r.text == "Plain" && !r.bold), "{runs:?}");
     }
 
     #[test]
