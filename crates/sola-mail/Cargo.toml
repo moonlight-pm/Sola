@@ -28,4 +28,7 @@ rustls-connector = { workspace = true }
 lettre = { workspace = true }
 mail-parser = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-html2text = { workspace = true }
+html5ever = "0.31"
+base64 = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+ureq = { workspace = true }

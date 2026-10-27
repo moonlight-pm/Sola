@@ -8,7 +8,34 @@ mod markdown;
 mod view;
 
 pub use markdown::parse_markdown;
-pub use view::{prose, prose_selectable};
+pub use view::{prose, prose_letter, prose_selectable};
+
+/// A picture's pixels, keyed by [`ProseImage::key`]. A picture the app
+/// has not supplied takes no room.
+#[derive(Debug, Clone)]
+pub struct ImagePixels {
+    pub handle: iced::advanced::image::Handle,
+    pub width: u32,
+    pub height: u32,
+    /// Draw it on a light plate (dark ink on a clear ground, made for
+    /// white pages).
+    pub plate: bool,
+}
+
+pub type ProseImages = std::sync::Arc<std::collections::HashMap<String, ImagePixels>>;
+
+/// A picture in a letter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProseImage {
+    /// The app's name for the pixels ([`ProseImages`]).
+    pub key: String,
+    pub alt: String,
+    /// The size the author asked for, in CSS px (the column caps it).
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    /// Where a click goes.
+    pub url: Option<String>,
+}
 
 /// One styled run inside a block.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -60,6 +87,11 @@ pub enum ProseBlock {
         ordered: bool,
         items: Vec<Vec<ProseRun>>,
     },
+    /// A horizontal rule.
+    Rule,
+    /// A line of pictures: one, or several side by side (a row of icons),
+    /// scaled together to fit the column.
+    Images(Vec<ProseImage>),
 }
 
 /// Parse plain text into paragraphs, `>` quotes, and http(s) link runs.
@@ -136,6 +168,11 @@ pub fn flatten(blocks: &[ProseBlock]) -> String {
                 }
             }
             ProseBlock::Code { text, .. } => out.push_str(text),
+            ProseBlock::Rule => out.push('—'),
+            ProseBlock::Images(images) => {
+                let alts: Vec<&str> = images.iter().map(|i| i.alt.as_str()).collect();
+                out.push_str(&alts.join(" "));
+            }
             ProseBlock::List { ordered, items } => {
                 for (n, item) in items.iter().enumerate() {
                     if n > 0 {
@@ -187,6 +224,14 @@ pub(crate) struct LayoutLine {
     pub heading: u8,
     pub code: bool,
     pub verse: bool,
+    /// A rule or a picture in place of text.
+    pub figure: Option<Figure>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum Figure {
+    Rule,
+    Images(Vec<ProseImage>),
 }
 
 pub(crate) fn iter_lines(blocks: &[ProseBlock]) -> Vec<LayoutLine> {
@@ -248,9 +293,17 @@ pub(crate) fn iter_lines(blocks: &[ProseBlock]) -> Vec<LayoutLine> {
                         heading: 0,
                         code: !*verse,
                         verse: *verse,
+                        figure: None,
                     });
                 }
             }
+            ProseBlock::Rule => push_figure(&mut out, &mut offset, Figure::Rule, last_block),
+            ProseBlock::Images(images) => push_figure(
+                &mut out,
+                &mut offset,
+                Figure::Images(images.clone()),
+                last_block,
+            ),
             ProseBlock::List { ordered, items } => {
                 let n = items.len();
                 for (li, item) in items.iter().enumerate() {
@@ -320,8 +373,27 @@ fn push_hard_lines(
             heading,
             code,
             verse,
+            figure: None,
         });
     }
+}
+
+/// A rule or a picture: a line with no text.
+fn push_figure(out: &mut Vec<LayoutLine>, offset: &mut usize, figure: Figure, last_block: bool) {
+    let gap = if last_block { 0 } else { 2 };
+    let start = *offset;
+    *offset += gap as usize;
+    out.push(LayoutLine {
+        runs: Vec::new(),
+        text: String::new(),
+        start,
+        gap,
+        quote: false,
+        heading: 0,
+        code: false,
+        verse: false,
+        figure: Some(figure),
+    });
 }
 
 pub(crate) fn snap_byte(s: &str, mut i: usize) -> usize {
@@ -732,7 +804,7 @@ mod tests {
                 ProseBlock::Paragraph(r) | ProseBlock::Quote(r) => r.iter().collect::<Vec<_>>(),
                 ProseBlock::Heading { runs, .. } => runs.iter().collect(),
                 ProseBlock::List { items, .. } => items.iter().flatten().collect(),
-                ProseBlock::Code { .. } => Vec::new(),
+                ProseBlock::Code { .. } | ProseBlock::Rule | ProseBlock::Images(_) => Vec::new(),
             })
             .filter(|r| r.url.is_some())
             .collect();

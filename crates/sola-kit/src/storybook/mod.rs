@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length, Padding, Subscription};
 
 use sola_bus::topics::{MenuActionPayload, Topic};
@@ -28,6 +28,7 @@ use sola_kit::components::{
     text_input as kit_text_input,
 };
 use sola_kit::theme;
+use sola_kit::components::scroll;
 
 pub mod pages;
 
@@ -49,6 +50,7 @@ pub enum Page {
     Icon,
     NumberInput,
     Readable,
+    Scroll,
     Prose,
     ColorPicker,
     FilePicker,
@@ -83,6 +85,7 @@ impl Page {
         Page::Icon,
         Page::NumberInput,
         Page::Readable,
+        Page::Scroll,
         Page::Prose,
         Page::ColorPicker,
         Page::FilePicker,
@@ -107,6 +110,7 @@ impl Page {
             Page::Icon => "Icon",
             Page::NumberInput => "NumberInput",
             Page::Readable => "Readable",
+            Page::Scroll => "Scroll",
             Page::Prose => "Prose",
             Page::ColorPicker => "ColorPicker",
             Page::FilePicker => "FilePicker",
@@ -138,6 +142,7 @@ impl Page {
             | Page::Icon
             | Page::NumberInput
             | Page::Readable
+            | Page::Scroll
             | Page::Prose
             | Page::ColorPicker
             | Page::FilePicker
@@ -178,6 +183,7 @@ impl Page {
             Page::Icon => &[Fg, FgMuted, Accent],
             Page::NumberInput => &[Bg, Border, Fg, FgMuted, Accent],
             Page::Readable => &[Bg, BgRaised, Fg, FgMuted],
+            Page::Scroll => &[Bg, BgRaised, Fg],
             Page::Prose => &[Bg, BgRaised, Fg, FgMuted, Accent],
             Page::ColorPicker => &[Bg, BgRaised, Border, Fg, Accent],
             Page::FilePicker => &[Bg, BgRaised, BgHover, Border, Fg, FgMuted, Accent],
@@ -1166,7 +1172,7 @@ impl Storybook {
             })
             .collect();
 
-        let content = scrollable(
+        let content = scroll::scrollable(
             container(self.page_view())
                 .padding(Padding::from([24, 32]))
                 .width(Length::Fill),
@@ -1416,6 +1422,7 @@ impl Storybook {
                 pages::number_input::view(&self.number_input).map(Msg::NumberInput)
             }
             Page::Readable => pages::readable::view(),
+            Page::Scroll => pages::scroll::view(),
             Page::Prose => pages::prose::view(&self.theme),
             Page::ColorPicker => {
                 pages::color_picker::view(&self.color_picker).map(Msg::ColorPicker)
@@ -1482,6 +1489,7 @@ mod tests {
             Page::Icon,
             Page::NumberInput,
             Page::Readable,
+            Page::Scroll,
             Page::Prose,
             Page::ColorPicker,
             Page::FilePicker,
@@ -1512,6 +1520,7 @@ mod tests {
                 | Page::Icon
                 | Page::NumberInput
                 | Page::Readable
+                | Page::Scroll
                 | Page::Prose
                 | Page::ColorPicker
                 | Page::FilePicker

@@ -9,7 +9,7 @@
 //! Chrome matches the launcher card (raised modal, filter field,
 //! list_item rows). Group labels are quiet section heads.
 
-use iced::widget::{Id as WidgetId, column, container, mouse_area, row, scrollable, stack, text};
+use iced::widget::{Id as WidgetId, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Element, Length, Padding};
 
 use sola_kit::components::{
@@ -21,6 +21,7 @@ use sola_kit::components::{
 use sola_kit::fonts;
 
 use crate::app::{Msg, Shell};
+use sola_kit::components::scroll;
 
 pub const QUERY_INPUT_ID: &str = "shortcuts-query";
 
@@ -146,7 +147,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         }
     }
 
-    let list: Element<'_, Msg> = scrollable(column(rows).width(Length::Fill).spacing(LIST_SPACING))
+    let list: Element<'_, Msg> = scroll::scrollable(column(rows).width(Length::Fill).spacing(LIST_SPACING))
         .width(Length::Fill)
         .height(Length::Fixed(LIST_MAX_H))
         .into();

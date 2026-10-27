@@ -126,6 +126,30 @@ pub struct MessageBody {
     pub attachments: Vec<MailAttachment>,
     /// Letter blocks for the reading pane, converted on the worker.
     pub blocks: Vec<ProseBlock>,
+    /// Pictures carried by the message (`cid:` parts, `data:` URIs),
+    /// decoded on the worker.
+    pub images: Vec<LetterImage>,
+    /// Pictures on the web the blocks show, fetched only when asked.
+    pub remote_images: Vec<String>,
+}
+
+/// A decoded picture for the letter, named as its image block names it.
+#[derive(Clone)]
+pub struct LetterImage {
+    pub key: String,
+    pub width: u32,
+    pub height: u32,
+    /// RGBA, `width × height × 4` bytes.
+    pub rgba: Vec<u8>,
+    /// Made for white mail (transparent, dark where it is not): drawn on a
+    /// light plate so it shows on a dark letter.
+    pub plate: bool,
+}
+
+impl std::fmt::Debug for LetterImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "LetterImage({} {}×{})", self.key, self.width, self.height)
+    }
 }
 
 impl MessageBody {

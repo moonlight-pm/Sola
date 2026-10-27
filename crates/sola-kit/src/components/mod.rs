@@ -50,6 +50,7 @@ pub mod number_input;
 pub mod popover;
 pub mod prose;
 pub mod readable;
+pub mod scroll;
 pub mod select;
 pub mod sidebar;
 pub mod spectrum;

@@ -3,11 +3,11 @@
 //! the letter, on the window's face.
 
 use iced::font::Weight;
-use iced::widget::{Space, column, container, rich_text, row, scrollable, span, text};
+use iced::widget::{Space, column, container, rich_text, row, span, text};
 use iced::{Alignment, Element, Font, Length, Padding};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::icon::icon_svg;
-use sola_kit::components::prose::prose_selectable;
+use sola_kit::components::prose::{ImagePixels, ProseImages, prose_letter};
 use sola_kit::components::readable;
 use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS};
 use sola_kit::components::text as kit_text;
@@ -17,7 +17,8 @@ use super::format::split_address;
 use super::widgets::{icon, tool};
 use super::{App, Msg, style};
 use crate::protocol::date::{letter_date, letter_time};
-use crate::protocol::{MailAttachment, MessageBody, MessageSummary, attachments};
+use crate::protocol::{LetterImage, MailAttachment, MessageBody, MessageSummary, attachments};
+use sola_kit::components::scroll;
 
 /// Comfortable reading measure (~65ch at 14px prose).
 const READ_MAX_W: f32 = 640.0;
@@ -41,6 +42,56 @@ pub struct Letter {
     pub selection: Option<String>,
     /// Bump to make the letter widget select everything.
     pub select_all: u64,
+    /// The pictures the letter shows, by key (its own now, the web's
+    /// once asked for).
+    pub images: ProseImages,
+    pub web: Web,
+}
+
+/// The letter's pictures from the web.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Web {
+    /// It has none.
+    None,
+    /// Not fetched: nothing is asked of the web until the reader says.
+    Hidden,
+    Loading,
+}
+
+impl Letter {
+    /// The pictures move out of the body into the view's map.
+    pub fn new(mut body: MessageBody) -> Self {
+        let images = std::mem::take(&mut body.images)
+            .into_iter()
+            .map(|i| (i.key.clone(), pixels(i)))
+            .collect();
+        let web = if body.remote_images.is_empty() {
+            Web::None
+        } else {
+            Web::Hidden
+        };
+        Self {
+            body,
+            selection: None,
+            select_all: 0,
+            images: std::sync::Arc::new(images),
+            web,
+        }
+    }
+
+    /// A web picture arrived.
+    pub fn add_image(&mut self, image: LetterImage) {
+        std::sync::Arc::make_mut(&mut self.images).insert(image.key.clone(), pixels(image));
+    }
+}
+
+fn pixels(image: LetterImage) -> ImagePixels {
+    ImagePixels {
+        handle: iced::advanced::image::Handle::from_rgba(image.width, image.height, image.rgba),
+        width: image.width,
+        height: image.height,
+        plate: image.plate,
+    }
 }
 
 impl Reader {
@@ -108,16 +159,20 @@ impl App {
             }),
         ]
         .width(Length::Fill);
+        if letter.web != Web::None {
+            col = col.push(container(web_strip(letter.web)).padding(Padding::ZERO.bottom(18.0)));
+        }
         if !body.attachments.is_empty() {
             col = col.push(
                 container(received_attachments(&body.attachments))
                     .padding(Padding::ZERO.bottom(18.0)),
             );
         }
-        col = col.push(prose_selectable(
+        col = col.push(prose_letter(
             body.blocks.clone(),
             &self.theme,
             letter.select_all,
+            letter.images.clone(),
             Msg::OpenUrl,
             Msg::BodySelect,
         ));
@@ -131,7 +186,7 @@ impl App {
             READ_MAX_W + PAD_SIDE * 2.0,
         )
         .width(Length::Fill);
-        container(scrollable(page).height(Length::Fill).width(Length::Fill))
+        container(scroll::scrollable(page).height(Length::Fill).width(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
             .style(style::canvas)
@@ -245,6 +300,23 @@ impl App {
         }
         bar.width(Length::Fill).into()
     }
+}
+
+/// Pictures from the web are not fetched until asked (a fetch tells the
+/// sender the letter was opened, and from where).
+fn web_strip(web: Web) -> Element<'static, Msg> {
+    let line = match web {
+        Web::Loading => row![
+            kit_text::caption("Loading pictures from the web…").style(kit_text::muted),
+            Space::new().width(Length::Fill),
+        ],
+        _ => row![
+            kit_text::caption("Pictures from the web are hidden").style(kit_text::muted),
+            Space::new().width(Length::Fill),
+            kit_btn::labeled_sm("Load Pictures", kit_btn::secondary).on_press(Msg::LoadImages),
+        ],
+    };
+    attachment_well(line.spacing(SPACE_MD).align_y(Alignment::Center))
 }
 
 /// `26 Oct 2026, 13:40`.

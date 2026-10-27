@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use iced::widget::{
-    Shader, Space, button, column, container, mouse_area, row, scrollable, stack, text,
+    Shader, Space, button, column, container, mouse_area, row, stack, text,
 };
 use iced::{Alignment, Element, Event, Length, Padding, Subscription, Task, event, keyboard, mouse};
 use sola_kit::components::badge::{self, Tone as BadgeTone};
@@ -44,6 +44,7 @@ use crate::vault::{
 };
 #[cfg(feature = "bitwarden")]
 use zeroize::Zeroize;
+use sola_kit::components::scroll;
 
 /// Cold-start default when the profile session is empty (and for new profiles).
 pub const DEFAULT_URL: &str = "about:blank";
@@ -4893,7 +4894,7 @@ impl<E: Engine> App<E> {
 
         let list_h = if suggest.is_empty() { 400.0 } else { LIST_H };
         col = col.push(
-            scrollable(container(list).width(Length::Fill).padding(Padding {
+            scroll::scrollable(container(list).width(Length::Fill).padding(Padding {
                 top: 0.0,
                 right: SCROLL_GUTTER,
                 bottom: 0.0,
@@ -5163,7 +5164,7 @@ impl<E: Engine> App<E> {
         }
 
         col = col.push(
-            scrollable(container(fields).width(Length::Fill).padding(Padding {
+            scroll::scrollable(container(fields).width(Length::Fill).padding(Padding {
                 top: 0.0,
                 right: 14.0,
                 bottom: 0.0,
@@ -5356,7 +5357,7 @@ impl<E: Engine> App<E> {
         fields = fields.push(field("Notes", notes, None, None));
 
         col = col.push(
-            scrollable(container(fields).width(Length::Fill).padding(Padding {
+            scroll::scrollable(container(fields).width(Length::Fill).padding(Padding {
                 top: 0.0,
                 right: 14.0,
                 bottom: 0.0,
@@ -5563,7 +5564,7 @@ impl<E: Engine> App<E> {
                     list = list.push(btn);
                 }
                 col = col.push(
-                    scrollable(list)
+                    scroll::scrollable(list)
                         .height(Length::Fixed(220.0))
                         .width(Length::Fill),
                 );
@@ -5678,7 +5679,7 @@ impl<E: Engine> App<E> {
                         list = list.push(btn);
                     }
                     col = col.push(
-                        scrollable(list)
+                        scroll::scrollable(list)
                             .height(Length::Fixed(MATCH_LIST_H))
                             .width(Length::Fill),
                     );
@@ -6092,7 +6093,7 @@ impl<E: Engine> App<E> {
             }
 
             let list: Element<'_, Msg> = if items.len() > 7 {
-                scrollable(list)
+                scroll::scrollable(list)
                     .height(Length::Fixed(7.0 * 38.0))
                     .width(Length::Fill)
                     .into()

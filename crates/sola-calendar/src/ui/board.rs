@@ -11,7 +11,7 @@
 use chrono::{Datelike, NaiveDate, Timelike};
 use iced::font::Weight;
 use iced::widget::text::Wrapping;
-use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, text};
+use iced::widget::{Space, button, column, container, mouse_area, row, text};
 use iced::{Alignment, Border, Color, Element, Font, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::icon::{icon_handle, icon_svg_colored};
@@ -26,6 +26,7 @@ use crate::timeutil::{
     WEEKDAYS, day_title, first_of_month, month_title, month_weeks_filled, today, week_of,
     week_title,
 };
+use sola_kit::components::scroll;
 
 /// The bar over the board.
 pub(super) const BAR_H: f32 = 44.0;
@@ -323,7 +324,7 @@ impl App {
             .into()
         };
         mouse_area(
-            scrollable(container(body).padding(Padding::from([14.0, 18.0])).width(Length::Fill))
+            scroll::scrollable(container(body).padding(Padding::from([14.0, 18.0])).width(Length::Fill))
                 .width(Length::Fill)
                 .height(Length::Fill),
         )

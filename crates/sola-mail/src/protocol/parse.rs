@@ -7,9 +7,10 @@
 use imap::types::{Fetch, Flag};
 use mail_parser::{Addr, Address, HeaderValue, MessageParser};
 
-use super::attachments::collect_attachments;
-use super::html_text::reading_blocks;
-use super::types::{MailId, MessageBody, MessageSummary};
+use super::attachments::{collect_attachments_except, content_id};
+use super::html::{self, ImageSource};
+use super::picture;
+use super::types::{LetterImage, MailId, MessageBody, MessageSummary};
 
 /// Flags + structure (list paperclip) + the headers a list row shows.
 pub const SUMMARY_ITEMS: &str = "(UID FLAGS INTERNALDATE BODYSTRUCTURE \
@@ -72,7 +73,8 @@ pub fn parse_body(fetch: &Fetch, id: MailId) -> anyhow::Result<MessageBody> {
         .body_text(0)
         .map(|s| s.into_owned())
         .unwrap_or_default();
-    let blocks = reading_blocks(html.as_deref(), &text);
+    let letter = html::letter(html.as_deref(), &text);
+    let (images, remote_images, shown) = pictures(&parsed, letter.images);
 
     Ok(MessageBody {
         id,
@@ -94,9 +96,40 @@ pub fn parse_body(fetch: &Fetch, id: MailId) -> anyhow::Result<MessageBody> {
         message_id: parsed.message_id().map(str::to_string),
         in_reply_to: text_list(parsed.in_reply_to()).into_iter().next(),
         references: text_list(parsed.references()),
-        attachments: collect_attachments(&parsed),
-        blocks,
+        attachments: collect_attachments_except(&parsed, &shown),
+        blocks: letter.blocks,
+        images,
+        remote_images,
     })
+}
+
+/// The letter's pictures: the message's own parts and `data:` URIs
+/// decoded now, web addresses kept for Load Images. Also the `cid:`s
+/// shown, so the attachment list leaves them out.
+fn pictures(
+    parsed: &mail_parser::Message<'_>,
+    sources: Vec<(String, ImageSource)>,
+) -> (Vec<LetterImage>, Vec<String>, Vec<String>) {
+    let mut decoded = Vec::new();
+    let mut remote = Vec::new();
+    let mut shown = Vec::new();
+    for (key, source) in sources {
+        match source {
+            ImageSource::Cid(id) => {
+                let part = parsed
+                    .parts
+                    .iter()
+                    .find(|p| content_id(p).is_some_and(|c| c == id));
+                if let Some(part) = part {
+                    shown.push(id);
+                    decoded.extend(picture::decode(key, part.contents()));
+                }
+            }
+            ImageSource::Data(bytes) => decoded.extend(picture::decode(key, &bytes)),
+            ImageSource::Remote(url) => remote.push(url),
+        }
+    }
+    (decoded, remote, shown)
 }
 
 /// `Name <addr>`, or the bare address when there is no display name.

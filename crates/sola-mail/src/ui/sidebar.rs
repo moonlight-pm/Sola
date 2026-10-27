@@ -8,7 +8,7 @@ use sola_kit::components::text as kit_text;
 use sola_kit::components::{SidebarItem, SidebarSection, sidebar};
 
 use super::format::{format_count, truncate};
-use super::list::mailbox_icon;
+use super::bar::mailbox_icon;
 use super::widgets::{muted_icon, status_dot};
 use super::{App, Msg, style};
 use crate::protocol::FolderRef;

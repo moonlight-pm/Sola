@@ -21,7 +21,7 @@ use iced::widget::operation;
 use iced::widget::scrollable::{AbsoluteOffset, Viewport};
 use iced::widget::tooltip::Position as TooltipPosition;
 use iced::widget::{
-    Space, button, column, container, image as iced_image, row, scrollable, stack, text, tooltip,
+    Space, button, column, container, image as iced_image, row, stack, text, tooltip,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme,
@@ -58,6 +58,7 @@ use prefs::ArcadePrefs;
 use steam::{
     SortMode, SteamGame, load_library_cache, save_library_cache, scan_library_games, sort_games,
 };
+use sola_kit::components::scroll;
 
 const APP_ID: &str = "sola-arcade";
 /// Wayland app_id gamescope reports (after river pid inference when empty).
@@ -1004,7 +1005,7 @@ impl App {
                     })
                     .into()
             };
-            scrollable(body)
+            scroll::scrollable(body)
                 .id(gallery_scroll_id())
                 .on_scroll(Msg::GalleryScrolled)
                 .height(Length::Fill)

@@ -8,7 +8,7 @@ use iced::widget::Id as ScrollId;
 use iced::widget::operation;
 use iced::widget::scrollable::{RelativeOffset, Viewport};
 use iced::widget::text::Wrapping;
-use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, stack, text};
+use iced::widget::{Space, button, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Element, Event, Length, Padding, Subscription, Task, Theme, event, mouse};
 
 use sola_bus::Message;
@@ -29,6 +29,7 @@ use sola_kit::fonts;
 use sola_kit::sola_call::{ObserveEvent, OwnerCatalog, TraceEvent, TraceKind};
 use sola_kit::theme::default_theme;
 use sola_kit::theme_for;
+use sola_kit::components::scroll;
 
 const APP_ID: &str = "sola-monitor";
 const MAX_MESSAGES: usize = 5_000;
@@ -844,7 +845,7 @@ impl App {
                 .padding(Padding::from([SPACE_SM, SPACE_LG]))
                 .width(Length::Fill)
                 .style(header_style),
-            scrollable(container(body).padding(Padding::from([SPACE_MD, SPACE_LG])))
+            scroll::scrollable(container(body).padding(Padding::from([SPACE_MD, SPACE_LG])))
                 .height(Length::Fill)
                 .width(Length::Fill),
         ]
@@ -1146,7 +1147,7 @@ fn log_row<'a>(
 }
 
 fn log_scroll<'a>(header: Element<'a, Msg>, rows: Vec<Element<'a, Msg>>) -> Element<'a, Msg> {
-    let body = scrollable(column(rows).spacing(0).width(Length::Fill))
+    let body = scroll::scrollable(column(rows).spacing(0).width(Length::Fill))
         .id(log_scroll_id())
         .on_scroll(Msg::LogScrolled)
         .height(Length::Fill)

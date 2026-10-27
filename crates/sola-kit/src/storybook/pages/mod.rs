@@ -33,6 +33,7 @@ pub mod overview;
 pub mod popover;
 pub mod prose;
 pub mod readable;
+pub mod scroll;
 pub mod select;
 pub mod shell;
 pub mod sidebar;

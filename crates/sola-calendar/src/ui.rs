@@ -11,7 +11,7 @@ use iced::keyboard::key::Named as NamedKey;
 use iced::mouse;
 use iced::widget::text::Wrapping;
 use iced::widget::{
-    Space, button, checkbox, column, container, mouse_area, row, scrollable, stack, toggler,
+    Space, button, checkbox, column, container, mouse_area, row, stack, toggler,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Event, Length, Padding, Subscription, Task,
@@ -51,6 +51,7 @@ use crate::timeutil::{
     prev_week, short_day, today, week_of,
 };
 use crate::worker::{CalCmd, CalNotice};
+use sola_kit::components::scroll;
 
 const APP_ID: &str = "sola-calendar";
 const SIDEBAR_W_MIN: f32 = 180.0;
@@ -1206,7 +1207,7 @@ impl App {
             Pane::Draft(d) if d.read_only => (self.view_draft_read(d), None),
             Pane::Draft(d) => (self.view_draft_edit(d), Some(self.view_draft_actions(d))),
         };
-        let mut col = column![scrollable(body).height(Length::Fill)]
+        let mut col = column![scroll::scrollable(body).height(Length::Fill)]
             .width(Length::Fill)
             .height(Length::Fill);
         if let Some(actions) = actions {

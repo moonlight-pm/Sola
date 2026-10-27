@@ -7,7 +7,7 @@
 
 use std::sync::OnceLock;
 
-use iced::widget::{Column, Space, button, column, container, row, scrollable, svg, text};
+use iced::widget::{Column, Space, button, column, container, row, svg, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::style::{
@@ -16,6 +16,7 @@ use sola_kit::components::style::{
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::fonts;
+use sola_kit::components::scroll;
 
 /// The widest a page's column grows.
 pub const PAGE_WIDTH: f32 = 600.0;
@@ -35,7 +36,7 @@ pub fn page<'a, M: 'a>(sections: Vec<Element<'a, M>>) -> Element<'a, M> {
         .spacing(SPACE_XL + SPACE_LG)
         .width(Length::Fill)
         .max_width(PAGE_WIDTH);
-    scrollable(container(col).padding(Padding {
+    scroll::scrollable(container(col).padding(Padding {
         right: SPACE_LG,
         bottom: SPACE_XL,
         ..Padding::ZERO

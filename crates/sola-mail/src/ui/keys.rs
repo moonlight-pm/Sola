@@ -52,7 +52,7 @@ impl App {
             return Task::none();
         }
         if escape {
-            if self.search_shown() {
+            if self.searching() {
                 return self.update(Msg::SearchClear);
             }
             return Task::none();
@@ -76,7 +76,7 @@ impl App {
             "u" => self.update(Msg::Undo),
             "w" => self.select_prev(false),
             "s" => self.select_next(false),
-            "/" => self.update(Msg::SearchOpen),
+            "/" => self.update(Msg::SearchFocus),
             _ => Task::none(),
         }
     }

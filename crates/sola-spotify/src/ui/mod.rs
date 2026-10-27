@@ -49,6 +49,7 @@ use crate::worker::{
 };
 
 use self::nav::{NavEntry, NavHistory};
+use sola_kit::components::scroll;
 
 const APP_ID: &str = "sola-spotify";
 const SIDEBAR_W: f32 = 220.0;
@@ -1880,7 +1881,7 @@ impl App {
                 .into()
             })
             .collect();
-        scrollable(
+        scroll::scrollable(
             column![header, column(rows).spacing(SPACE_XS)]
                 .spacing(SPACE_XL)
                 .padding(SPACE_XL)
@@ -1937,7 +1938,7 @@ impl App {
             col = col.push(kit_text::subheading("Top artists"));
             col = col.push(self.artist_tiles(top_artists));
         }
-        scrollable(col.padding(SPACE_XL).width(Length::Fill))
+        scroll::scrollable(col.padding(SPACE_XL).width(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -1958,7 +1959,7 @@ impl App {
         } else {
             col = col.push(self.playlist_grid(made));
         }
-        scrollable(col.spacing(SPACE_XL).padding(SPACE_XL).width(Length::Fill))
+        scroll::scrollable(col.spacing(SPACE_XL).padding(SPACE_XL).width(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -1998,7 +1999,7 @@ impl App {
                 col = col.push(self.playlist_tiles(&page.items));
             }
         }
-        scrollable(col.width(Length::Fill))
+        scroll::scrollable(col.width(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -2062,7 +2063,7 @@ impl App {
         if next.is_some() {
             col = col.push(self.load_more_btn());
         }
-        scrollable(col.width(Length::Fill))
+        scroll::scrollable(col.width(Length::Fill))
             .id(tracks_scroll_id())
             .width(Length::Fill)
             .height(Length::Fill)
@@ -2079,7 +2080,7 @@ impl App {
         if next.is_some() {
             col = col.push(self.load_more_btn());
         }
-        scrollable(col.width(Length::Fill))
+        scroll::scrollable(col.width(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -2099,7 +2100,7 @@ impl App {
         let Some(PageBody::Artists { items }) = &self.body else {
             return Space::new().into();
         };
-        scrollable(
+        scroll::scrollable(
             column![kit_text::heading("Artists"), self.artist_grid(items)]
                 .spacing(SPACE_XL)
                 .padding(SPACE_XL)
@@ -2152,7 +2153,7 @@ impl App {
             col = col.push(kit_text::subheading("Discography"));
             col = col.push(self.album_tiles(albums));
         }
-        scrollable(col.width(Length::Fill))
+        scroll::scrollable(col.width(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -2218,7 +2219,7 @@ impl App {
                 .into()
             })
             .collect();
-        scrollable(
+        scroll::scrollable(
             column![kit_text::heading("Queue"), column(rows).spacing(SPACE_XS)]
                 .spacing(SPACE_XL)
                 .padding(SPACE_XL)
@@ -2252,7 +2253,7 @@ impl App {
             Some(false) => "Free (browse only on this computer)",
             None => "—",
         };
-        scrollable(
+        scroll::scrollable(
             column![
                 kit_text::heading("Settings"),
                 kit_text::subheading("Account"),
@@ -2479,9 +2480,9 @@ impl App {
         playlists: impl IntoIterator<Item = &'a Playlist>,
     ) -> Element<'a, Msg> {
         let items = self.playlist_tile_widgets(playlists);
-        scrollable(row(items).spacing(SPACE_MD))
+        scroll::scrollable(row(items).spacing(SPACE_MD))
             .direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::new(),
+                scroll::bar(),
             ))
             .width(Length::Fill)
             .into()
@@ -2616,9 +2617,9 @@ impl App {
         tiles: Vec<(String, String, Option<String>, Msg)>,
     ) -> Element<'a, Msg> {
         let items = self.tile_widgets(tiles);
-        scrollable(row(items).spacing(SPACE_MD))
+        scroll::scrollable(row(items).spacing(SPACE_MD))
             .direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::new(),
+                scroll::bar(),
             ))
             .width(Length::Fill)
             .into()
@@ -2984,7 +2985,7 @@ impl App {
         } else if !rows.is_empty() {
             let height = (count as f32 * 48.0).clamp(48.0, 240.0);
             list = list.push(
-                scrollable(column(rows).spacing(SPACE_XS).width(Length::Fill))
+                scroll::scrollable(column(rows).spacing(SPACE_XS).width(Length::Fill))
                     .height(Length::Fixed(height))
                     .width(Length::Fill),
             );

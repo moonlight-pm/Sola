@@ -14,7 +14,7 @@ use iced::widget::operation;
 use iced::widget::scrollable::Viewport;
 use iced::widget::text_editor;
 use iced::widget::{
-    Space, column, container, row, scrollable, stack, text_editor as text_editor_widget,
+    Space, column, container, row, stack, text_editor as text_editor_widget,
 };
 use iced::{Background, Border, Color, Element, Event, Length, Padding, Subscription, Task, Theme};
 use serde_json::Value;
@@ -31,6 +31,7 @@ use sola_kit::components::{
 };
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
+use sola_kit::components::scroll;
 
 pub const APP_ID: &str = "sola-bots";
 
@@ -762,7 +763,7 @@ impl App {
         if !self.status.is_empty() {
             msgs = msgs.push(kit_text::body(&self.status).style(kit_text::danger));
         }
-        let scroller = scrollable(
+        let scroller = scroll::scrollable(
             readable(msgs.padding(Padding::from([SPACE_LG, SPACE_XL])), 680.0)
                 .width(Length::Fill)
                 .padding(Padding::from([0.0, SPACE_XL])),

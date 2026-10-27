@@ -11,7 +11,7 @@
 //! folders of `~/Projects` as rows (open ones say where), then New.
 //! Escape steps back to the apps.
 
-use iced::widget::{Id as WidgetId, column, container, mouse_area, row, scrollable, stack, text};
+use iced::widget::{Id as WidgetId, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Element, Length, Padding};
 
 use sola_kit::components::{
@@ -24,6 +24,7 @@ use sola_kit::fonts;
 
 use crate::app::{Msg, Shell};
 use crate::launcher::projects::{Chooser, Row};
+use sola_kit::components::scroll;
 
 /// Stable widget ID for the launcher query input — used to focus it on open.
 pub const QUERY_INPUT_ID: &str = "launcher-query";
@@ -134,7 +135,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
             .collect()
     };
 
-    let list: Element<'_, Msg> = scrollable(column(rows).width(Length::Fill).spacing(LIST_SPACING))
+    let list: Element<'_, Msg> = scroll::scrollable(column(rows).width(Length::Fill).spacing(LIST_SPACING))
         .width(Length::Fill)
         .height(Length::Fixed(LIST_MAX_H))
         .into();

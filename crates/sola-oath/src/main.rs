@@ -12,7 +12,7 @@ use std::sync::Arc;
 use iced::event::{self, Event};
 use iced::mouse;
 use iced::widget::text::{LineHeight, Wrapping};
-use iced::widget::{button, column, container, mouse_area, row, scrollable, stack, toggler, Space};
+use iced::widget::{button, column, container, mouse_area, row, stack, toggler, Space};
 use iced::{Alignment, Background, Element, Length, Padding, Subscription, Task, Theme};
 
 use sola_bus::topics::SplitDir;
@@ -37,6 +37,7 @@ use sola_kit::theme::default_theme;
 
 use catalog::{CatalogError, Pkg};
 use graph::ChangeRole;
+use sola_kit::components::scroll;
 
 const APP_ID: &str = "sola-oath";
 const LIST_RATIO: f32 = 0.26;
@@ -502,7 +503,7 @@ impl App {
             for pkg in visible {
                 rows = rows.push(self.pkg_row(pkg));
             }
-            scrollable(container(rows).padding(Padding {
+            scroll::scrollable(container(rows).padding(Padding {
                 top: 0.0,
                 right: SCROLL_GUTTER,
                 bottom: 0.0,
@@ -722,7 +723,7 @@ impl App {
 
                 column![
                     pinned,
-                    scrollable(container(rest).padding(Padding {
+                    scroll::scrollable(container(rest).padding(Padding {
                         top: SPACE_MD,
                         right: SCROLL_GUTTER,
                         bottom: 0.0,
@@ -852,7 +853,7 @@ impl App {
                     "Depends on this: turns off with it. Unused: nothing else needs it, optional."
                 )
                 .style(kit_text::muted),
-                scrollable(container(tree).padding(Padding {
+                scroll::scrollable(container(tree).padding(Padding {
                     top: SPACE_SM,
                     right: SCROLL_GUTTER,
                     bottom: 0.0,

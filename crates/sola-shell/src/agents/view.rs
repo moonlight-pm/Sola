@@ -3,7 +3,7 @@
 //! grows under an island (board 03's waiting card): the ask, its choices or
 //! a reply field, and Show.
 
-use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::widget::{Space, button, column, container, row, text};
 use iced::{Alignment, Color, Element, Font, Length, Padding, Theme};
 use sola_bus::topics::{AgentIsland, IslandState};
 use sola_kit::components::button as kit_button;
@@ -14,6 +14,7 @@ use sola_kit::fonts;
 use crate::app::{Msg, Shell};
 use crate::menubar::view::{island, item};
 use crate::menubar::{CHROME_SIZE, EDGE, ISLAND_GAP, ISLAND_H, ISLAND_PAD_H};
+use sola_kit::components::scroll;
 
 /// The card's reply field (focused when the card opens with one).
 pub const REPLY_INPUT_ID: &str = "agent-island-reply";
@@ -246,7 +247,7 @@ pub fn card(shell: &Shell) -> Element<'_, Msg> {
     } else {
         fonts::ui()
     };
-    let body = scrollable(
+    let body = scroll::scrollable(
         text(isl.body.clone())
             .font(body_font)
             .size(BODY_SIZE)

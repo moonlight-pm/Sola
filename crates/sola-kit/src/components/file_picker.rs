@@ -27,7 +27,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use iced::widget::{Space, column, container, mouse_area, row, scrollable, text};
+use iced::widget::{Space, column, container, mouse_area, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 
 use crate::components::button as kit_btn;
@@ -41,6 +41,7 @@ use crate::components::text as kit_text;
 use crate::components::text_input::text_input;
 use crate::components::{SidebarItem, SidebarPanel, SidebarSection};
 use crate::fonts;
+use crate::components::scroll;
 
 /// Open an existing file, or name a destination.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -422,7 +423,7 @@ impl FilePicker {
                     )
                 })
                 .collect();
-            scrollable(column(rows).spacing(1).width(Length::Fill))
+            scroll::scrollable(column(rows).spacing(1).width(Length::Fill))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()

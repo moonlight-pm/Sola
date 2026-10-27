@@ -32,21 +32,23 @@ whose IMAP login changed reconnects.
 
 ## Use
 
-The mailboxes, the message list, and the letter (or compose). The
-mailboxes show beside the list when the window is at least 1040 px wide
-(a Full zone); in a half tile the list's title (**Inbox ⌄**) opens them
-as a menu, and **Mailbox** in the titlebar lists them too. The titlebar
-names the mailbox and its unread (`Inbox · 12 unread`), or the search.
+A bar across the window, the message list under it, and the letter (or
+compose) beside the list. The mailboxes show beside the list when the
+window is at least 1040 px wide (a Full zone); in a half tile the bar's
+title (**Inbox ⌄**) opens them as a menu, and **Mailbox** in the
+titlebar lists them too. The titlebar names the mailbox and its unread
+(`Inbox · 12 unread`), or the search.
 
-- **List**: the head has the mailbox, its unread count, a check ring
-  while mail is being fetched, **Search** and **New message** (and
-  **Erase** in Junk and Trash). Unread mail has an accent dot and a
-  bolder sender; a flag marks flagged mail; a paperclip marks files.
-  Sent and Drafts show who the message went to. The date is the time
-  today, `Yesterday`, the weekday this week, then `4 Sep` / `4 Sep 2024`.
-  With more than one account, each row names the inbox it came to
-  (`gmail`); mail forwarded in shows `↳` and the original recipient.
-  Long senders and subjects end in `…`.
+- **Bar**: the mailbox, its unread count (or what a search found), and a
+  check ring while mail is being fetched; at the right the search field,
+  **Erase** in Junk and Trash, and **New message**.
+- **List**: unread mail has an accent dot and a bolder sender; a flag
+  marks flagged mail; a paperclip marks files. Sent and Drafts show who
+  the message went to. The date is the time today, `Yesterday`, the
+  weekday this week, then `4 Sep` / `4 Sep 2024`. With more than one
+  account, each row names the inbox it came to (`gmail`); mail forwarded
+  in shows `↳` and the original recipient. Long senders and subjects end
+  in `…`.
 - **Letter**: the subject, then the sender, their address and the local
   date and time on one line, then who else it went to. Under that:
   **Reply**, **Reply All**, **Forward**; Archive / Junk / Trash (and
@@ -56,10 +58,18 @@ names the mailbox and its unread (`Inbox · 12 unread`), or the search.
   files (images open in Paint, `.ics` invites in Calendar as a new event
   you file in a calendar, everything else in Browser). Copy Message is
   in **Edit**; Undo is on the toast after a move (and **u**).
-- **Search**: the magnifier, **/** or ⌘F opens the field in the list's
-  head; type and press Enter. Searches Inbox, Sent, Archive and Drafts on
-  every account (plus Junk or Trash when that box is open), up to 200
-  hits. Esc (twice if the field has focus) or × closes it.
+- **HTML letters** are drawn by Mail itself, safely: paragraphs and line
+  breaks as the sender wrote them, bold and italic, links, headings,
+  quotes, lists, rules, and tables read as rows. Nothing in a letter
+  runs, and its styles are not applied, so a newsletter reads as one
+  column. Pictures carried in the message show; **pictures from the web
+  are hidden** until you press **Load Pictures** (fetching them tells the
+  sender you opened the letter). A dark logo made for white mail sits on
+  a light plate.
+- **Search**: type in the bar's field (**/** or ⌘F goes there) and press
+  Enter. Searches Inbox, Sent, Archive and Drafts on every account (plus
+  Junk or Trash when that box is open), up to 200 hits. Esc (twice if the
+  field has focus) or × clears it.
 - Accounts still connecting, or failing, show on a card at the bottom
   right with **Retry Now**.
 
@@ -114,7 +124,7 @@ search.
 
 ### Erasing
 
-Trash and Junk have an erase button in the list header (and Mailbox →
+Trash and Junk have an erase button in the bar (and Mailbox →
 Erase…). Both ask before permanently deleting everything in that box on
 every account.
 

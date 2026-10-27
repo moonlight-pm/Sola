@@ -5,7 +5,7 @@
 **Status:** implemented (partial) — 2026-10-19 rework: coordinator worker + per-account read / write / IDLE sessions (3 IMAP logins, was 4 + keepalive); config edits reconnect only accounts whose IMAP login changed; failed accounts retry with backoff (and **Retry Now**); list rows carry account + mailbox + UID (search hits open / move in their own mailbox); headers RFC 2047-decoded via mail-parser; dates are unix seconds formatted locally; cursor paging (no re-fetch from the top); shortcuts ignore keys a text field used; Esc / row click ask before discarding an edited draft; Forward (with files); Reply-To + References + `<…>` In-Reply-To; Message-ID on sent mail; Gmail Sent not appended twice; Drafts save / reopen; mark read/unread + flag; erase confirm; `UID EXPUNGE` when UIDPLUS; compose Tab order, address suggestions, per-address check on Send; a recipient the server refuses is named and worker failures are logged. Earlier: dest-UID undo, 5s toasts, move rules on connect + IDLE, attachments, send identities, multi-IMAP canonical boxes, Gmail Archive create, snapshot boot + connect card; focusing the window re-lists the open folder (ring beside the count while a first page is out)
 **Supersedes:** `docs/specs/2026-04-20-sola-mail-design.md` (WebView / `sola-app` era)  
 **Reference:** `apocrypha/apps/mail/` (logic + UX parity source)  
-**Gaps:** no HTML engine (converted letter; CID images are files, not inline); no drag-drop onto compose; no full offline store (last-session list snapshot only); IDLE watches each account INBOX only; undo dest-UID if COPYUID and Message-ID both missing; move rules on connect scan the newest 500 INBOX only; search is Enter-only over Inbox/Sent/Archive/Drafts (+ open Junk/Trash), 200 hits; Edit → Paste lands in the compose body only; quiet refresh covers the newest 150 rows (older remote deletes show on reopen)
+**Gaps:** no HTML engine — a safe subset drawn natively (2026-10-26; no stylesheets, so newsletters read as one column); no drag-drop onto compose; no full offline store (last-session list snapshot only); IDLE watches each account INBOX only; undo dest-UID if COPYUID and Message-ID both missing; move rules on connect scan the newest 500 INBOX only; search is Enter-only over Inbox/Sent/Archive/Drafts (+ open Junk/Trash), 200 hits; Edit → Paste lands in the compose body only; quiet refresh covers the newest 150 rows (older remote deletes show on reopen)
 
 **Compose:** From / To / Cc / Subject sit on one line with the label (table), caption-size type, full reader-pane width (not the letter 640px measure). Body is the remaining well at kit body 13px. Action toasts auto-dismiss after 5 seconds.
 
@@ -19,7 +19,7 @@ Ship `crates/sola-mail`: a **sola-kit** (iced) desktop mail client with **featur
 |---|---|
 | v1 scope | Feature parity with apocrypha mail |
 | UI stack | sola-kit / iced (no WebView) |
-| Message bodies | Prefer HTML when present (what mail apps render); convert with `html2text` rich + kit `prose`. Tracking hrefs show as a short label. No embedded HTML engine |
+| Message bodies | Prefer HTML when present (what mail apps render). **2026-10-26:** a safe subset drawn natively (`protocol/html/`: html5ever → kit `prose` with pictures); web pictures on request. Tracking hrefs show as a short label. No embedded HTML engine |
 | Compose | Plain text only (parity). Same window, mode swap (compose replaces message pane) |
 | Process model | In-process background worker (agent-style), not a bus daemon |
 | Architecture | Layered single crate **B** — `protocol/` + `worker/` + `ui/` |
@@ -192,8 +192,21 @@ Parity behavior:
 ### Message body rendering
 
 1. Prefer the HTML part whenever it is present (what mail apps render).
-   Convert with `html2text` rich + raw tables, no link footnotes.
-2. Render through kit `prose`: paragraphs, `>` quotes, inline links.
+   **2026-10-26 (Joshua):** a safe subset, drawn natively — html5ever into
+   a small DOM (`protocol/html/dom.rs`), walked into prose blocks
+   (`walk.rs`): CSS whitespace collapsing; `p` / headings / quotes / lists
+   / `pre` / rules / tables as blocks, `div`s and Outlook's MsoNormal as
+   lines; bold / italic / code; http, https and mailto links; rows of short
+   cells (or of pictures) on one line. Scripts, styles, forms, frames and
+   embeds are dropped; inline `style` is read only to drop hidden elements
+   and for weight / slant. Pictures: `cid:` parts and `data:` URIs decode on
+   the worker; web pictures wait for **Load Pictures** (a fetch tells the
+   sender), then come over `ureq` on four threads, bounded (8 MB, 15 s, 60
+   per letter, 1600 px wide). Dark-on-clear pictures get a light plate.
+   (Was: `html2text` rich + raw tables, which dropped whitespace between
+   inline tags.)
+2. Render through kit `prose` (`prose_letter` with the pictures):
+   paragraphs, `>` quotes, inline links, rules, lines of pictures.
    Tracking / click-wrapper hrefs show as a short label (“Link”), never
    the raw `upn=` URL. First-party destinations (magic links) keep
    host+path; a lone long URL is not dropped as tracking.
@@ -204,7 +217,8 @@ Parity behavior:
    In-body drag-select is kit `prose` (visible text; Edit Copy / Select All).
 5. Menus: Mail, Edit, Mailbox, Message, View — not one stuffed app menu.
 
-No HTML widget tree in v1.
+No HTML engine: no stylesheet, no layout of the sender's; a letter reads as
+one column.
 
 ### Keyboard shortcuts
 

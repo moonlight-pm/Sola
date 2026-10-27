@@ -312,16 +312,19 @@ ext_background_effect_surface_v1</div></div></div>`;
 }
 
 function mailBody() {
-  const msg = (from, time, subj, prev, unread, sel) => `<div class="msg${sel ? " is-sel" : ""}">
+  // As built (sola-mail ui/): a bar across the window, then the list and
+  // the letter. Rows have no preview line.
+  const msg = (from, time, subj, unread, sel) => `<div class="msg${sel ? " is-sel" : ""}">
     <div class="msg__top">${unread ? '<span class="msg__dot"></span>' : ""}${from}<time>${time}</time></div>
-    <div>${subj}</div><div class="msg__prev">${prev}</div></div>`;
-  return `<div class="mail"><div class="mail__list"><div class="mail__head">Inbox ⌄ <span>12 unread</span></div>
-      ${msg("Hetzner Online", "14:02", "Invoice 0412 for October", "Your invoice is attached as a PDF.", true)}
-      ${msg("Cal.com", "13:40", "Design review moved to Monday", "The Sola foundation review is now…", true, true)}
-      ${msg("GitHub", "12:15", "[sola] CI passed on next", "All 4 jobs succeeded for 423b9ea.")}
+    <div>${subj}</div></div>`;
+  return `<div class="mail"><div class="mail__bar"><div>Inbox ⌄ <span>12 unread</span></div><div class="mail__search">${icon("search", 13, "var(--ink-3)")}Search mail</div></div>
+    <div class="mail__panes"><div class="mail__list">
+      ${msg("Hetzner Online", "14:02", "Invoice 0412 for October", true)}
+      ${msg("Cal.com", "13:40", "Design review moved to Monday", true, true)}
+      ${msg("GitHub", "12:15", "[sola] CI passed on next")}
     </div><div class="mail__read"><h3>Design review moved to Monday</h3><div class="from"><b>Cal.com</b> · notifications@cal.com · 26 October 2026, 13:40</div>
       <div class="acts"><span class="btn btn--sm btn--secondary">Reply</span><span class="btn btn--sm btn--ghost">Reply All</span><span class="btn btn--sm btn--ghost">Forward</span></div>
-      <p>The Sola foundation review moved to Monday at 10:00.</p><p>On the agenda: the foundation as built, and what Instrument would add to the panels.</p></div></div>`;
+      <p>The Sola foundation review moved to Monday at 10:00.</p><p>On the agenda: the foundation as built, and what Instrument would add to the panels.</p></div></div></div>`;
 }
 
 function previewBody() {

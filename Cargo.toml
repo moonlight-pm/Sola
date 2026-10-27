@@ -34,7 +34,6 @@ imap = { version = "2", default-features = false }
 rustls-connector = { version = "0.21", features = ["native-certs"] }
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "rustls-tls", "hostname"] }
 mail-parser = "0.9"
-html2text = "0.14"
 
 # Substitute a zero-dep stub for tauri-apps/download-cef. The upstream
 # crate is a build-dependency of cef-dll-sys (transitive via `cef`)

@@ -693,6 +693,8 @@ mod tests {
             references: vec!["<root@a.com>".into()],
             attachments: Vec::new(),
             blocks: Vec::new(),
+            images: Vec::new(),
+            remote_images: Vec::new(),
         }
     }
 

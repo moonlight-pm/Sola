@@ -1,7 +1,7 @@
 //! Notification overlay (live cards) and the missed-pile menu panel.
 
 use iced::widget::text::Wrapping;
-use iced::widget::{button, column, container, mouse_area, row, scrollable, text};
+use iced::widget::{button, column, container, mouse_area, row, text};
 use iced::{Alignment, Element, Length, Padding};
 
 use sola_bus::topics::AppNotification;
@@ -13,6 +13,7 @@ use sola_kit::fonts;
 
 use crate::app::{Msg, Shell};
 use crate::notify::{COLLAPSE_AFTER, EXPAND_SHOW, PileGroup};
+use sola_kit::components::scroll;
 
 const TITLE_SIZE: f32 = 13.0;
 const SOURCE_SIZE: f32 = 11.0;
@@ -119,7 +120,7 @@ pub fn pile_panel(shell: &Shell) -> Element<'_, Msg> {
     } else {
         let groups = shell.notify.groups();
         let blocks: Vec<Element<'_, Msg>> = groups.iter().map(|g| group_block(shell, g)).collect();
-        scrollable(column(blocks).spacing(SPACE_LG).width(Length::Fill))
+        scroll::scrollable(column(blocks).spacing(SPACE_LG).width(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()

@@ -1,5 +1,6 @@
 //! Kit UI: three-pane mail client (mailboxes · list · letter / compose).
 
+mod bar;
 mod chrome;
 mod compose;
 mod contacts;
@@ -90,12 +91,12 @@ pub enum Msg {
         id: MailId,
         generation: u64,
     },
-    /// Show the search field in the list head and focus it.
-    SearchOpen,
+    /// Focus the bar's search field.
+    SearchFocus,
     SearchChanged(String),
     SearchSubmit,
     SearchClear,
-    /// The list head's mailbox menu (the mailboxes are not beside it).
+    /// The bar's mailbox menu (the mailboxes are not beside the list).
     MailboxMenu(bool),
     ListScrolled(Viewport),
     /// Quiet background re-fetch (IDLE + multi-client safety net).
@@ -108,6 +109,8 @@ pub enum Msg {
     BodySelect(Option<String>),
     CopyBody,
     RetryBody,
+    /// Fetch the open letter's pictures from the web.
+    LoadImages,
     OpenAttachment(usize),
     SaveAttachment(usize),
 
@@ -182,9 +185,7 @@ pub struct App {
     smart: Vec<Folder>,
     list: ListState,
     search_input: String,
-    /// The search field is in the list head.
-    search_open: bool,
-    /// The list head's mailbox menu is open.
+    /// The bar's mailbox menu is open.
     mailbox_menu: bool,
     selected: Option<MailId>,
     reader: Reader,
@@ -249,7 +250,6 @@ impl App {
             smart: Vec::new(),
             list,
             search_input: String::new(),
-            search_open: false,
             mailbox_menu: false,
             selected: None,
             reader: Reader::Empty,
@@ -377,10 +377,9 @@ impl App {
                     self.open_message(id);
                 }
             }
-            Msg::SearchOpen => {
-                self.search_open = true;
+            Msg::SearchFocus => {
                 self.mailbox_menu = false;
-                return iced::widget::operation::focus(list::search_id());
+                return iced::widget::operation::focus(bar::search_id());
             }
             Msg::SearchChanged(q) => self.search_input = q,
             Msg::SearchSubmit => self.submit_search(),
@@ -403,6 +402,17 @@ impl App {
                 if let Some(id) = self.selected.clone() {
                     self.reader = Reader::Loading;
                     mail_send(MailCmd::FetchBody(id));
+                }
+            }
+            Msg::LoadImages => {
+                if let Some(letter) = self.reader.letter_mut()
+                    && letter.web == reader::Web::Hidden
+                {
+                    letter.web = reader::Web::Loading;
+                    mail_send(MailCmd::FetchImages {
+                        id: letter.body.id.clone(),
+                        urls: letter.body.remote_images.clone(),
+                    });
                 }
             }
             Msg::OpenAttachment(i) => return self.open_attachment(i),
@@ -605,7 +615,7 @@ impl App {
             other if other.starts_with("box:") => {
                 Msg::SelectFolder(FolderRef::Mailbox(other["box:".len()..].to_string()))
             }
-            "find" => Msg::SearchOpen,
+            "find" => Msg::SearchFocus,
             "next" => return self.select_next(true),
             "prev" => return self.select_prev(true),
             _ => return Task::none(),
@@ -704,11 +714,21 @@ impl App {
                         attachments = body.attachments.len(),
                         "opened message body"
                     );
-                    self.reader = Reader::Open(Box::new(Letter {
-                        body: *body,
-                        selection: None,
-                        select_all: 0,
-                    }));
+                    self.reader = Reader::Open(Box::new(Letter::new(*body)));
+                }
+            }
+            MailEvent::Image { id, image } => {
+                if let Some(letter) = self.reader.letter_mut()
+                    && letter.body.id == id
+                {
+                    letter.add_image(*image);
+                }
+            }
+            MailEvent::ImagesDone(id) => {
+                if let Some(letter) = self.reader.letter_mut()
+                    && letter.body.id == id
+                {
+                    letter.web = reader::Web::None;
                 }
             }
             MailEvent::Moved { id, dest, dest_uid } => {
@@ -867,7 +887,6 @@ impl App {
         self.list.folder = folder;
         self.list.search = None;
         self.search_input.clear();
-        self.search_open = false;
         self.list.rows.clear();
         self.list.scroll_y = 0.0;
         if self.compose.is_none() {
@@ -974,7 +993,6 @@ impl App {
 
     fn clear_search(&mut self) {
         self.search_input.clear();
-        self.search_open = false;
         if self.list.search.is_some() {
             self.open_folder(self.list.folder.clone());
         }
@@ -1559,18 +1577,23 @@ impl App {
                 Some(c) => c.view(&self.identities(), &self.contacts),
                 None => self.view_reader(),
             };
+            // The bar runs over the list and the letter; the mailboxes,
+            // when there is room for them, take the full height beside.
             let beside = self.mailboxes_beside();
-            let mut panes = row![].height(Length::Fill);
+            let main = column![
+                self.view_bar(beside),
+                widgets::h_hairline(),
+                row![self.view_list(), widgets::v_hairline(), pane].height(Length::Fill),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill);
             if beside {
-                panes = panes
-                    .push(self.view_sidebar())
-                    .push(widgets::v_hairline());
+                row![self.view_sidebar(), widgets::v_hairline(), main]
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                main.into()
             }
-            panes
-                .push(self.view_list(beside))
-                .push(widgets::v_hairline())
-                .push(pane)
-                .into()
         };
 
         // Accounts still connecting (or failed) float over the panes'
@@ -1662,6 +1685,8 @@ fn worker_label(ev: &MailEvent) -> &'static str {
         MailEvent::Messages { .. } => "worker:messages",
         MailEvent::SearchResults { .. } => "worker:search",
         MailEvent::Body(_) => "worker:body",
+        MailEvent::Image { .. } => "worker:image",
+        MailEvent::ImagesDone(_) => "worker:images-done",
         MailEvent::Moved { .. } => "worker:moved",
         MailEvent::MoveFailed { .. } => "worker:move-failed",
         MailEvent::Emptied { .. } => "worker:emptied",
