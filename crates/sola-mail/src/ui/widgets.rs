@@ -21,7 +21,7 @@ const ICONS: &[&str] = &[
     "lucide/forward",
     "lucide/archive",
     "lucide/inbox",
-    "lucide/trash-2",
+    "lucide/trash",
     "lucide/ban",
     "lucide/mail",
     "lucide/mail-open",
@@ -29,6 +29,10 @@ const ICONS: &[&str] = &[
     "lucide/copy",
     "lucide/undo-2",
     "lucide/x",
+    "lucide/search",
+    "lucide/send",
+    "lucide/chevron-down",
+    "lucide/list-filter",
 ];
 
 pub fn icon(name: &'static str) -> svg::Handle {

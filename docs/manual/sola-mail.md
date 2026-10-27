@@ -32,25 +32,36 @@ whose IMAP login changed reconnects.
 
 ## Use
 
-Three columns: mailboxes, message list, and the letter (or compose).
+The mailboxes, the message list, and the letter (or compose). The
+mailboxes show beside the list when the window is at least 1040 px wide
+(a Full zone); in a half tile the list's title (**Inbox ⌄**) opens them
+as a menu, and **Mailbox** in the titlebar lists them too. The titlebar
+names the mailbox and its unread (`Inbox · 12 unread`), or the search.
 
-- **List**: unread rows are **bold**; a flag marks flagged mail; a
-  paperclip marks files. Sent and Drafts show who the message went to.
-  The date is the time today, `Yesterday`, the weekday this week, then
-  `4 Sep` / `4 Sep 2024`. With more than one account, each row names the
-  inbox it came to (`gmail`); mail forwarded in shows `↳` and the
-  original recipient.
-- **Letter**: the Date is the local calendar day with the local clock
-  (`16:00`) under it. Links open in Browser. **Open** / **Save** on
-  attached files (images open in Paint, `.ics` invites in Calendar as a
-  new event you file in a calendar, everything else in Browser).
-- **Toolbar**: New message, Attach, Reply, Reply all, Forward, then
-  Archive / Trash / Junk (and **Move to Inbox** in Junk, Trash and
-  Archive), then Mark as read/unread, Flag, Copy, Undo. In Drafts,
-  **Edit draft** replaces the reply buttons.
-- **Search**: type and press Enter. Searches Inbox, Sent, Archive and
-  Drafts on every account (plus Junk or Trash when that box is open),
-  up to 200 hits. Esc (twice if the field has focus) clears it.
+- **List**: the head has the mailbox, its unread count, a check ring
+  while mail is being fetched, **Search** and **New message** (and
+  **Erase** in Junk and Trash). Unread mail has an accent dot and a
+  bolder sender; a flag marks flagged mail; a paperclip marks files.
+  Sent and Drafts show who the message went to. The date is the time
+  today, `Yesterday`, the weekday this week, then `4 Sep` / `4 Sep 2024`.
+  With more than one account, each row names the inbox it came to
+  (`gmail`); mail forwarded in shows `↳` and the original recipient.
+  Long senders and subjects end in `…`.
+- **Letter**: the subject, then the sender, their address and the local
+  date and time on one line, then who else it went to. Under that:
+  **Reply**, **Reply All**, **Forward**; Archive / Junk / Trash (and
+  **Move to Inbox** in Junk, Trash and Archive) as icons; Mark as
+  read/unread and Flag at the right. In Drafts, **Edit Draft** replaces
+  the replies. Links open in Browser. **Open** / **Save** on attached
+  files (images open in Paint, `.ics` invites in Calendar as a new event
+  you file in a calendar, everything else in Browser). Copy Message is
+  in **Edit**; Undo is on the toast after a move (and **u**).
+- **Search**: the magnifier, **/** or ⌘F opens the field in the list's
+  head; type and press Enter. Searches Inbox, Sent, Archive and Drafts on
+  every account (plus Junk or Trash when that box is open), up to 200
+  hits. Esc (twice if the field has focus) or × closes it.
+- Accounts still connecting, or failing, show on a card at the bottom
+  right with **Retry Now**.
 
 ### Keys
 
@@ -59,11 +70,13 @@ Three columns: mailboxes, message list, and the letter (or compose).
 | **x / i / a / d** | Junk / Inbox / Archive / Trash, and advance |
 | **u** | Undo the last move |
 | **w / s** or **↑ / ↓** | Previous / next message |
+| **/** | Search |
 
 These keys do nothing while you are typing in a field.
 
 Menus: ⌘N new, ⌘S save draft, ⌘⇧A attach, ⌘R reply, ⌘⇧R reply all,
-⌘⇧F forward, ⌘⇧U mark read/unread, ⌘⇧L flag, ⌘⇧N get new mail.
+⌘⇧F forward, ⌘⇧U mark read/unread, ⌘⇧L flag, ⌘⇧N get new mail, ⌘F
+search.
 
 ### Compose
 
@@ -72,7 +85,7 @@ Menus: ⌘N new, ⌘S save draft, ⌘⇧A attach, ⌘R reply, ⌘⇧R reply all,
   the original Cc, minus your own addresses.
 - **Forward** brings the original’s files along (remove any you don’t
   want).
-- **Attach**: toolbar paperclip, **Attach** next to Send, or ⌘⇧A. Opens
+- **Attach**: **Attach** next to Send, or ⌘⇧A. Opens
   the kit file picker. Files go out as `multipart/mixed`.
 - **Send** shows *Sending…* until the server takes it; a failure keeps
   the draft open. If the server refuses a recipient, the message names
@@ -95,9 +108,9 @@ Menus: ⌘N new, ⌘S save draft, ⌘⇧A attach, ⌘R reply, ⌘⇧R reply all,
   shows a **Discard this draft?** card over the compose pane: Keep
   Editing, Save Draft, or Discard. Esc first closes suggestions or the
   From menu.
-- The toolbar stays live while composing: Archive / Trash / Junk act on
-  the selected message (the draft stays open); Reply / Forward replace an
-  untouched draft or ask about an edited one.
+- The **Message** menu stays live while composing: Archive / Delete /
+  Move to Junk act on the selected message (the draft stays open); Reply /
+  Forward replace an untouched draft or ask about an edited one.
 
 ### Erasing
 

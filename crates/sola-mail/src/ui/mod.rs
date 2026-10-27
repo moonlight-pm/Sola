@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use iced::widget::Id as ScrollId;
 use iced::widget::scrollable::Viewport;
-use iced::widget::{Space, column, container, row, text_editor};
+use iced::widget::{column, container, row, text_editor};
 use iced::{Element, Event, Length, Padding, Subscription, Task, Theme, event, keyboard};
 use sola_bus::Message;
 use sola_bus::topics::{MailConfig, Topic, mail_addr_key};
@@ -56,8 +56,9 @@ const TOAST_TTL: Duration = Duration::from_secs(5);
 const SETTLE_SELECT: Duration = Duration::from_millis(120);
 /// Safety net when IDLE stays quiet (another client's expunge, other boxes).
 const POLL: Duration = Duration::from_secs(45);
-/// Shared list-header / reader-toolbar height so icons sit on one line.
-const CHROME_H: f32 = 40.0;
+/// The mailboxes show beside the list from this window width (a half
+/// tile is narrower: the list head's title picks the mailbox there).
+const MAILBOXES_FROM: f32 = 1040.0;
 /// An update or view slower than this is logged (UI felt frozen).
 const SLOW: Duration = Duration::from_millis(150);
 
@@ -70,6 +71,7 @@ pub enum Msg {
     Bus(Arc<Message>),
     Worker(MailEvent),
     WindowReady(Option<iced::window::Id>),
+    WindowResized(f32),
     /// Keyboard focus entered or left this window.
     WindowFocus(bool),
     TitleDrag,
@@ -88,9 +90,13 @@ pub enum Msg {
         id: MailId,
         generation: u64,
     },
+    /// Show the search field in the list head and focus it.
+    SearchOpen,
     SearchChanged(String),
     SearchSubmit,
     SearchClear,
+    /// The list head's mailbox menu (the mailboxes are not beside it).
+    MailboxMenu(bool),
     ListScrolled(Viewport),
     /// Quiet background re-fetch (IDLE + multi-client safety net).
     PollRefresh,
@@ -165,6 +171,8 @@ pub struct App {
     theme: Theme,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
+    /// The window's width: the mailboxes show from [`MAILBOXES_FROM`].
+    window_w: f32,
     /// Last keyboard-focus state. Focus re-lists only on the rising edge.
     window_focused: bool,
     config: MailConfig,
@@ -174,6 +182,10 @@ pub struct App {
     smart: Vec<Folder>,
     list: ListState,
     search_input: String,
+    /// The search field is in the list head.
+    search_open: bool,
+    /// The list head's mailbox menu is open.
+    mailbox_menu: bool,
     selected: Option<MailId>,
     reader: Reader,
     compose: Option<Box<Compose>>,
@@ -228,6 +240,7 @@ impl App {
             theme: default_theme(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
+            window_w: 0.0,
             window_focused: false,
             config: MailConfig::default(),
             setup: Setup::Unknown,
@@ -236,6 +249,8 @@ impl App {
             smart: Vec::new(),
             list,
             search_input: String::new(),
+            search_open: false,
+            mailbox_menu: false,
             selected: None,
             reader: Reader::Empty,
             compose: None,
@@ -252,8 +267,18 @@ impl App {
         (app, sola_kit::window_ready_task(Msg::WindowReady))
     }
 
+    /// The window's name (the shell's bar lists it).
     pub fn title(&self) -> String {
         "Mail".into()
+    }
+
+    /// The titlebar's title, as Next's: the mailbox and its unread, or the
+    /// search.
+    fn frame_title(&self) -> String {
+        match &self.list.search {
+            Some(s) => format!("Search · “{}”", s.query),
+            None => mailbox_title(&self.list_title(), self.list_unread()),
+        }
     }
 
     pub fn theme(&self) -> Theme {
@@ -276,6 +301,9 @@ impl App {
                         mods: modifiers,
                         captured: status == event::Status::Captured,
                     })
+                }
+                Event::Window(iced::window::Event::Resized(size)) => {
+                    Some(Msg::WindowResized(size.width))
                 }
                 Event::Window(iced::window::Event::Focused) => Some(Msg::WindowFocus(true)),
                 Event::Window(iced::window::Event::Unfocused) => Some(Msg::WindowFocus(false)),
@@ -308,7 +336,18 @@ impl App {
         match msg {
             Msg::Bus(message) => return self.on_bus(&message),
             Msg::Worker(ev) => return self.on_worker(ev),
-            Msg::WindowReady(id) => self.window_id = id,
+            Msg::WindowReady(id) => {
+                self.window_id = id;
+                if let Some(id) = id {
+                    return iced::window::size(id).map(|s| Msg::WindowResized(s.width));
+                }
+            }
+            Msg::WindowResized(w) => {
+                self.window_w = w;
+                if self.mailboxes_beside() {
+                    self.mailbox_menu = false;
+                }
+            }
             Msg::WindowFocus(focused) => {
                 let rising = focused && !self.window_focused;
                 self.window_focused = focused;
@@ -327,12 +366,21 @@ impl App {
                 captured,
             } => return self.on_key(key, mods, captured),
 
-            Msg::SelectFolder(folder) => self.open_folder(folder),
+            Msg::SelectFolder(folder) => {
+                self.mailbox_menu = false;
+                self.open_folder(folder);
+            }
+            Msg::MailboxMenu(open) => self.mailbox_menu = open,
             Msg::SelectMessage(id) => self.request_select(id),
             Msg::SettleSelect { id, generation } => {
                 if generation == self.select_gen && self.selected.as_ref() == Some(&id) {
                     self.open_message(id);
                 }
+            }
+            Msg::SearchOpen => {
+                self.search_open = true;
+                self.mailbox_menu = false;
+                return iced::widget::operation::focus(list::search_id());
             }
             Msg::SearchChanged(q) => self.search_input = q,
             Msg::SearchSubmit => self.submit_search(),
@@ -554,6 +602,10 @@ impl App {
             "copy_message" => Msg::CopyBody,
             "empty_junk" => Msg::AskErase("Junk".into()),
             "empty_trash" => Msg::AskErase("Trash".into()),
+            other if other.starts_with("box:") => {
+                Msg::SelectFolder(FolderRef::Mailbox(other["box:".len()..].to_string()))
+            }
+            "find" => Msg::SearchOpen,
             "next" => return self.select_next(true),
             "prev" => return self.select_prev(true),
             _ => return Task::none(),
@@ -815,6 +867,7 @@ impl App {
         self.list.folder = folder;
         self.list.search = None;
         self.search_input.clear();
+        self.search_open = false;
         self.list.rows.clear();
         self.list.scroll_y = 0.0;
         if self.compose.is_none() {
@@ -921,6 +974,7 @@ impl App {
 
     fn clear_search(&mut self) {
         self.search_input.clear();
+        self.search_open = false;
         if self.list.search.is_some() {
             self.open_folder(self.list.folder.clone());
         }
@@ -1505,30 +1559,37 @@ impl App {
                 Some(c) => c.view(&self.identities(), &self.contacts),
                 None => self.view_reader(),
             };
-            row![
-                self.view_sidebar(),
-                widgets::v_hairline(),
-                self.view_list(),
-                widgets::v_hairline(),
-                column![self.view_toolbar(), pane]
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-            ]
-            .height(Length::Fill)
-            .into()
+            let beside = self.mailboxes_beside();
+            let mut panes = row![].height(Length::Fill);
+            if beside {
+                panes = panes
+                    .push(self.view_sidebar())
+                    .push(widgets::v_hairline());
+            }
+            panes
+                .push(self.view_list(beside))
+                .push(widgets::v_hairline())
+                .push(pane)
+                .into()
         };
 
+        // Accounts still connecting (or failed) float over the panes'
+        // bottom-right corner rather than taking a band under them.
+        let content: Element<'_, Msg> = if self.setup == Setup::Ready && self.show_link_card() {
+            iced::widget::stack![
+                content,
+                container(self.view_link_card())
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(iced::Alignment::End)
+                    .align_y(iced::Alignment::End)
+                    .padding(Padding::from([SPACE_MD, SPACE_LG])),
+            ]
+            .into()
+        } else {
+            content
+        };
         let mut col = column![content].width(Length::Fill).height(Length::Fill);
-        if self.setup == Setup::Ready && self.show_link_card() {
-            col = col.push(
-                row![Space::new().width(Length::Fill), self.view_link_card()].padding(Padding {
-                    top: 0.0,
-                    right: SPACE_LG,
-                    bottom: SPACE_MD,
-                    left: SPACE_LG,
-                }),
-            );
-        }
         if let Some(folder) = &self.confirm {
             col = col.push(self.view_erase_confirm(folder));
         } else if let Some(toast) = &self.toast {
@@ -1542,7 +1603,7 @@ impl App {
 
         let framed = sola_kit::window_frame(
             self.float.chrome_any(),
-            "Mail",
+            self.frame_title(),
             Msg::TitleDrag,
             Msg::TitleClose,
             Msg::TitleResize,
@@ -1554,6 +1615,22 @@ impl App {
             }
             None => framed,
         }
+    }
+}
+
+impl App {
+    /// The mailboxes beside the list (an unknown width counts as wide).
+    fn mailboxes_beside(&self) -> bool {
+        self.window_w <= 0.0 || self.window_w >= MAILBOXES_FROM
+    }
+}
+
+/// `Inbox · 12 unread`, or the mailbox alone when it is read.
+fn mailbox_title(mailbox: &str, unread: u32) -> String {
+    if unread == 0 {
+        mailbox.to_string()
+    } else {
+        format!("{mailbox} · {} unread", format::format_count(unread))
     }
 }
 
@@ -1592,5 +1669,17 @@ fn worker_label(ev: &MailEvent) -> &'static str {
         MailEvent::DraftSaved => "worker:draft-saved",
         MailEvent::NewMail => "worker:new-mail",
         MailEvent::Failed { .. } => "worker:failed",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mailbox_title;
+
+    #[test]
+    fn title_names_the_mailbox_and_its_unread() {
+        assert_eq!(mailbox_title("Inbox", 12), "Inbox · 12 unread");
+        assert_eq!(mailbox_title("Sent", 0), "Sent");
+        assert_eq!(mailbox_title("Inbox", 1234), "Inbox · 1,234 unread");
     }
 }

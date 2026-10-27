@@ -276,10 +276,10 @@ the bus. There is no HTML/JS/CSS, no bundler, no WebView in the active stack.
 
 The old GTK4 + WebKit6 host (`sola-app`) and its apps live under
 `apocrypha/` for reference only — not workspace members, not installed.
-Do **not** write new apps against that stack. The only remaining product
-gap from that era is a kit-native mail client (`crates/sola-mail`); use
-`apocrypha/apps/mail` as the logic/UI reference. CEF binding notes at the
-end of this file apply to `sola-browser` (CEF engine module), not to the Iced kit.
+Do **not** write new apps against that stack. Every app from that era is
+ported or retired (mail is `crates/sola-mail`); nothing there is left to
+port. CEF binding notes at the end of this file apply to `sola-browser`
+(CEF engine module), not to the Iced kit.
 
 ## sola-kit (the Iced app kit)
 

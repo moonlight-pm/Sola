@@ -81,7 +81,7 @@ impl Bar {
         self.title = if title.trim().is_empty() || repeats_name || room < TITLE_MIN {
             None
         } else {
-            let shown = fit(title.trim(), room);
+            let shown = fonts::fit_line(title.trim(), TITLE_SIZE, fonts::chrome(), room);
             let w = measure(&shown, TITLE_SIZE, fonts::chrome());
             Some((
                 shown,
@@ -238,31 +238,6 @@ pub(super) fn line(
 /// Width of one line of `content`.
 pub(super) fn measure(content: &str, size: f32, font: Font) -> f32 {
     fonts::line_width(content, size, font)
-}
-
-/// `title`, shortened with an ellipsis until it fits in `room`.
-fn fit(title: &str, room: f32) -> String {
-    let font = fonts::chrome();
-    if measure(title, TITLE_SIZE, font) <= room {
-        return title.to_string();
-    }
-    let ends: Vec<usize> = title.char_indices().map(|(i, _)| i).skip(1).collect();
-    // Longest prefix whose "prefix…" fits: binary search over char ends.
-    let (mut lo, mut hi) = (0, ends.len());
-    while lo < hi {
-        let mid = (lo + hi).div_ceil(2);
-        let candidate = format!("{}…", title[..ends[mid - 1]].trim_end());
-        if measure(&candidate, TITLE_SIZE, font) <= room {
-            lo = mid;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    if lo == 0 {
-        "…".to_string()
-    } else {
-        format!("{}…", title[..ends[lo - 1]].trim_end())
-    }
 }
 
 #[cfg(test)]

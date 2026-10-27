@@ -21,6 +21,10 @@ impl App {
             self.confirm = None;
             return Task::none();
         }
+        if escape && self.mailbox_menu {
+            self.mailbox_menu = false;
+            return Task::none();
+        }
         if let Some(c) = self.compose.as_mut() {
             // Tab / Shift+Tab walk To → Cc → Subject → body (a text field
             // ignores Tab; the body keeps it as a tab character).
@@ -48,7 +52,7 @@ impl App {
             return Task::none();
         }
         if escape {
-            if self.list.search.is_some() || !self.search_input.is_empty() {
+            if self.search_shown() {
                 return self.update(Msg::SearchClear);
             }
             return Task::none();
@@ -72,6 +76,7 @@ impl App {
             "u" => self.update(Msg::Undo),
             "w" => self.select_prev(false),
             "s" => self.select_next(false),
+            "/" => self.update(Msg::SearchOpen),
             _ => Task::none(),
         }
     }

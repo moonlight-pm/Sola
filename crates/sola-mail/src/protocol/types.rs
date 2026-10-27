@@ -82,11 +82,6 @@ pub fn folder_label(name: &str) -> String {
     }
 }
 
-/// Sidebar badge: unread only. Hidden when the folder is fully read.
-pub fn unread_badge(unread: u32) -> Option<String> {
-    (unread > 0).then(|| unread.to_string())
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageSummary {
     pub id: MailId,
@@ -149,12 +144,6 @@ mod tests {
         assert_eq!(folder_label("INBOX"), "Inbox");
         assert_eq!(folder_label("inbox"), "Inbox");
         assert_eq!(folder_label("Sent"), "Sent");
-    }
-
-    #[test]
-    fn unread_badge_hides_zero() {
-        assert_eq!(unread_badge(0), None);
-        assert_eq!(unread_badge(5), Some("5".into()));
     }
 
     #[test]

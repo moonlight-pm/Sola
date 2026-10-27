@@ -50,6 +50,7 @@ pub const PACKAGES: &[Package] = &[
             "sola-projects",
             "sola-paint",
             "sola-calendar",
+            "sola-mail",
             "sola-settings",
             "solactl",
             "sola-oath",

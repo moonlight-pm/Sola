@@ -2260,7 +2260,7 @@ fn hover_action_button<'a, Message: Clone + 'a>(
     action: SidebarHoverAction<Message>,
 ) -> Element<'a, Message> {
     let armed = action.armed;
-    let handle = icon_handle("lucide/trash-2");
+    let handle = icon_handle("lucide/trash");
     let color = if armed {
         Color {
             r: 0.92,

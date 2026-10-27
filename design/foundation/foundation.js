@@ -160,7 +160,7 @@ const APPS = {
   projects: { menus: ["Projects", "Project", "Edit", "Window"], title: "Sola", ic: "prompt", body: () => projectsBody() },
   terminal: { menus: ["Terminal", "Shell", "Pane", "Edit", "Window"], title: "home", ic: "terminal", body: () => `<div class="term">${termHome()}</div>` },
   browser: { menus: ["Browser", "Edit", "Profiles", "Window"], title: "ext-background-effect-v1", ic: "globe", body: () => browserBody() },
-  mail: { menus: ["Mail", "Edit", "Mailbox", "Message", "Window"], title: "Inbox", ic: "mail", body: () => mailBody() },
+  mail: { menus: ["Mail", "Edit", "Mailbox", "Message", "View", "Window"], title: "Inbox · 12 unread", ic: "mail", body: () => mailBody() },
   paint: { menus: ["Paint", "File", "Edit", "View", "Window"], title: "invoice-0412.png", ic: "image", body: () => previewBody() },
   settings: { menus: ["Settings", "Edit", "Window"], title: "Appearance", ic: "settings", body: () => "" },
   steam: { menus: [], title: "Steam", ic: "gamepad", body: () => `<div style="background:linear-gradient(180deg,#1b2838,#171a21)"></div>` },
@@ -315,11 +315,12 @@ function mailBody() {
   const msg = (from, time, subj, prev, unread, sel) => `<div class="msg${sel ? " is-sel" : ""}">
     <div class="msg__top">${unread ? '<span class="msg__dot"></span>' : ""}${from}<time>${time}</time></div>
     <div>${subj}</div><div class="msg__prev">${prev}</div></div>`;
-  return `<div class="mail"><div class="mail__list"><div class="mail__head">Inbox <span>12 unread</span></div>
+  return `<div class="mail"><div class="mail__list"><div class="mail__head">Inbox ⌄ <span>12 unread</span></div>
       ${msg("Hetzner Online", "14:02", "Invoice 0412 for October", "Your invoice is attached as a PDF.", true)}
       ${msg("Cal.com", "13:40", "Design review moved to Monday", "The Sola foundation review is now…", true, true)}
       ${msg("GitHub", "12:15", "[sola] CI passed on next", "All 4 jobs succeeded for 423b9ea.")}
-    </div><div class="mail__read"><h3>Design review moved to Monday</h3><div class="from">Cal.com · notifications@cal.com · 13:40</div>
+    </div><div class="mail__read"><h3>Design review moved to Monday</h3><div class="from"><b>Cal.com</b> · notifications@cal.com · 26 October 2026, 13:40</div>
+      <div class="acts"><span class="btn btn--sm btn--secondary">Reply</span><span class="btn btn--sm btn--ghost">Reply All</span><span class="btn btn--sm btn--ghost">Forward</span></div>
       <p>The Sola foundation review moved to Monday at 10:00.</p><p>On the agenda: the foundation as built, and what Instrument would add to the panels.</p></div></div>`;
 }
 

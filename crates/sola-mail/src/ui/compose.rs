@@ -297,14 +297,14 @@ impl Compose {
                     .style(style::compose_field),
             )
             .push(self.actions())
-            .padding(Padding::from([SPACE_LG, SPACE_LG]))
+            .padding(Padding::from([20.0, 26.0]))
             .width(Length::Fill)
             .height(Length::Fill);
 
         let pane: Element<'a, Msg> = container(form)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(style::read_pane)
+            .style(style::canvas)
             .into();
         if self.confirm_discard {
             stack![pane, self.discard_card()].into()

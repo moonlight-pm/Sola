@@ -53,11 +53,20 @@ fn main() -> iced::Result {
                 MenuItem::Divider,
                 item("select_all", "Select All", Some(KeyCode::A.meta())),
                 item("copy_message", "Copy Message", None),
+                MenuItem::Divider,
+                item("find", "Search Mail", Some(KeyCode::F.meta())),
             ],
         ))
         .app_menu_definition(menu(
             "Mailbox",
             vec![
+                item("box:INBOX", "Inbox", None),
+                item("box:Sent", "Sent", None),
+                item("box:Drafts", "Drafts", None),
+                item("box:Archive", "Archive", None),
+                item("box:Junk", "Junk", None),
+                item("box:Trash", "Trash", None),
+                MenuItem::Divider,
                 item("empty_junk", "Erase Junk Mail…", None),
                 item("empty_trash", "Erase Deleted Items…", None),
             ],
