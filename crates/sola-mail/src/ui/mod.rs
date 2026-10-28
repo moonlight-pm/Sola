@@ -4,6 +4,8 @@ mod bar;
 mod chrome;
 mod compose;
 mod contacts;
+mod edit;
+mod flags;
 mod format;
 mod keys;
 mod list;
@@ -21,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use iced::widget::Id as ScrollId;
 use iced::widget::scrollable::Viewport;
-use iced::widget::{column, container, row, text_editor};
+use iced::widget::{column, container, opaque, row};
 use iced::{Element, Event, Length, Padding, Subscription, Task, Theme, event, keyboard};
 use sola_bus::Message;
 use sola_bus::topics::{MailConfig, Topic, mail_addr_key};
@@ -29,6 +31,7 @@ use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcome};
 use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM};
 use sola_kit::components::text as kit_text;
+use sola_kit::components::text_input::{MenuEdit, MenuEdited};
 use sola_kit::theme::default_theme;
 
 use crate::bridge::{self, mail_send};
@@ -42,6 +45,7 @@ use crate::worker::{Flag, LinkState, MailCmd, MailEvent, Op, Page};
 use chrome::Toast;
 use compose::{Compose, Edit, Field};
 use contacts::Contacts;
+use flags::PendingFlags;
 use list::{ListState, Load, SearchState};
 use moves::{Confirmed, Moves};
 use reader::{Letter, Reader};
@@ -137,6 +141,8 @@ pub enum Msg {
     Attach,
     RemoveAttach(usize),
     ClipboardPasted(Option<String>),
+    /// An Edit menu command, and what the focused field did with it.
+    MenuEdited(MenuEdit, Option<MenuEdited>),
     Picker(PickerMsg),
     /// Enter in a compose field: take the top suggestion, else move on.
     ComposeSubmit(Field),
@@ -191,6 +197,8 @@ pub struct App {
     reader: Reader,
     compose: Option<Box<Compose>>,
     moves: Moves,
+    /// Flags we set that the server's lists don't show yet.
+    flags: PendingFlags,
     toast: Option<Toast>,
     /// Bumped on every toast so a late expiry cannot hide a newer one.
     toast_gen: u64,
@@ -255,6 +263,7 @@ impl App {
             reader: Reader::Empty,
             compose: None,
             moves: Moves::default(),
+            flags: PendingFlags::default(),
             toast: None,
             toast_gen: 0,
             confirm: None,
@@ -500,14 +509,9 @@ impl App {
                     c.touch();
                 }
             }
-            Msg::ClipboardPasted(Some(t)) => {
-                if let Some(c) = self.compose.as_mut() {
-                    c.apply(Edit::Body(text_editor::Action::Edit(
-                        text_editor::Edit::Paste(Arc::new(t)),
-                    )));
-                }
-            }
+            Msg::ClipboardPasted(Some(t)) => return self.menu_edit(MenuEdit::Paste(t)),
             Msg::ClipboardPasted(None) => {}
+            Msg::MenuEdited(edit, done) => return self.on_menu_edited(edit, done),
             Msg::Picker(m) => return self.on_picker(m),
 
             Msg::ComposeSubmit(field) => return self.compose_submit(field),
@@ -592,13 +596,10 @@ impl App {
 
     fn on_menu_action(&mut self, action: &str) -> Task<Msg> {
         let msg = match action {
-            "cut" => return self.edit_cut(),
-            "copy" => return self.edit_copy(),
+            "cut" => return self.menu_edit(MenuEdit::Cut),
+            "copy" => return self.menu_edit(MenuEdit::Copy),
             "paste" => return self.edit_paste(),
-            "select_all" => {
-                self.select_all();
-                return Task::none();
-            }
+            "select_all" => return self.menu_edit(MenuEdit::SelectAll),
             "quit" => return self.quit(),
             "refresh" => Msg::Refresh,
             "compose" => Msg::Compose,
@@ -699,6 +700,8 @@ impl App {
                 }
                 if let Some(search) = self.list.search.as_mut() {
                     search.capped = capped;
+                    let mut rows = rows;
+                    self.flags.settle(&mut rows);
                     let gone = self.moves.gone();
                     self.list.rows = rows.into_iter().filter(|m| !gone.contains(&m.id)).collect();
                     self.list.load = Load::Idle;
@@ -798,18 +801,19 @@ impl App {
         epoch: u64,
         folder: FolderRef,
         page: Page,
-        rows: Vec<MessageSummary>,
+        mut rows: Vec<MessageSummary>,
         total: u32,
         failed: Vec<String>,
     ) {
         if epoch != self.list.epoch || folder != self.list.folder || self.list.search.is_some() {
             return;
         }
+        self.flags.settle(&mut rows);
         self.list.load = Load::Idle;
         let mailbox = folder.mailbox().to_string();
         match page {
             Page::Replace | Page::Refresh => {
-                self.moves.prune(&mailbox, &rows);
+                self.moves.prune(&mailbox, &rows, &failed);
                 let gone = self.moves.gone();
                 self.list.rows = if page == Page::Replace {
                     rows.into_iter().filter(|m| !gone.contains(&m.id)).collect()
@@ -861,7 +865,8 @@ impl App {
                 }
                 Task::none()
             }
-            Op::Flag(_) => {
+            Op::Flag(id) => {
+                self.flags.failed(&id);
                 self.refresh(true);
                 self.show_toast(format!("Couldn’t update the message: {message}"), false)
             }
@@ -1031,6 +1036,7 @@ impl App {
             .filter(|m| !m.seen)
             .map(|m| m.seen = true);
         if unread.is_some() {
+            self.flags.set(&id, Flag::Seen, true);
             mail_send(MailCmd::SetFlag {
                 id: id.clone(),
                 flag: Flag::Seen,
@@ -1081,6 +1087,7 @@ impl App {
                 m.flagged
             }
         };
+        self.flags.set(&id, flag, on);
         mail_send(MailCmd::SetFlag {
             id: id.clone(),
             flag,
@@ -1422,66 +1429,6 @@ impl App {
         }
     }
 
-    // ── Edit menu ─────────────────────────────────────────────────────
-
-    fn copy_letter(&self) -> Task<Msg> {
-        match self.reader.body().map(|b| b.display_text()) {
-            Some(t) if !t.is_empty() => iced::clipboard::write(t),
-            _ => Task::none(),
-        }
-    }
-
-    fn edit_copy(&self) -> Task<Msg> {
-        if let Some(c) = &self.compose {
-            let t = c
-                .draft
-                .body
-                .selection()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| c.draft.body.text());
-            return if t.is_empty() {
-                Task::none()
-            } else {
-                iced::clipboard::write(t)
-            };
-        }
-        match self.reader.letter().and_then(|l| l.selection.clone()) {
-            Some(sel) if !sel.is_empty() => iced::clipboard::write(sel),
-            // No selection → copy the open letter (flatten includes URLs).
-            _ => self.copy_letter(),
-        }
-    }
-
-    fn edit_cut(&mut self) -> Task<Msg> {
-        let Some(c) = self.compose.as_mut() else {
-            return Task::none();
-        };
-        let Some(sel) = c.draft.body.selection().filter(|s| !s.is_empty()) else {
-            return Task::none();
-        };
-        c.apply(Edit::Body(text_editor::Action::Edit(
-            text_editor::Edit::Delete,
-        )));
-        iced::clipboard::write(sel)
-    }
-
-    fn edit_paste(&self) -> Task<Msg> {
-        if self.compose.is_none() {
-            return Task::none();
-        }
-        iced::clipboard::read().map(Msg::ClipboardPasted)
-    }
-
-    fn select_all(&mut self) {
-        if let Some(c) = self.compose.as_mut() {
-            c.apply(Edit::Body(text_editor::Action::SelectAll));
-        } else if let Some(l) = self.reader.letter_mut() {
-            l.select_all += 1;
-            let visible = sola_kit::components::prose::visible_text(&l.body.blocks);
-            l.selection = (!visible.is_empty()).then_some(visible);
-        }
-    }
-
     // ── Toast ─────────────────────────────────────────────────────────
 
     fn show_toast(&mut self, text: impl Into<String>, undo: bool) -> Task<Msg> {
@@ -1613,11 +1560,12 @@ impl App {
         };
 
         // Accounts still connecting (or failed) float over the panes'
-        // bottom-right corner rather than taking a band under them.
+        // bottom-right corner rather than taking a band under them (the
+        // toast floats over the foot of the list: `view_list`).
         let content: Element<'_, Msg> = if self.setup == Setup::Ready && self.show_link_card() {
             iced::widget::stack![
                 content,
-                container(self.view_link_card())
+                container(opaque(self.view_link_card()))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .align_x(iced::Alignment::End)
@@ -1628,13 +1576,7 @@ impl App {
         } else {
             content
         };
-        let mut col = column![content].width(Length::Fill).height(Length::Fill);
-        if let Some(folder) = &self.confirm {
-            col = col.push(self.view_erase_confirm(folder));
-        } else if let Some(toast) = &self.toast {
-            col = col.push(self.view_toast(toast));
-        }
-        let body: Element<'_, Msg> = container(col)
+        let body: Element<'_, Msg> = container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(style::canvas)

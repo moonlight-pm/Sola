@@ -173,10 +173,15 @@ does not empty the profile disk cache.
 
 ## Media
 
-Pages may autoplay media without a click. Typical MP4 (H.264 + AAC),
-including Steam store trailers, plays on a CEF built with those codecs
-(`scripts/cef-codecs/`). The public `install-cef` tarball does not
-include those codecs.
+Pages autoplay as they do in Chrome: a muted video plays while it is in
+view and pauses when you scroll away; sound waits for your first click
+on the page. A page whose window is not on screen (another workspace,
+behind another tab in its zone, or under the desk's idle fade once it is
+complete) rests, and its videos pause until it shows again.
+
+Typical MP4 (H.264 + AAC), including Steam store trailers, plays on a
+CEF built with those codecs (`scripts/cef-codecs/`). The public
+`install-cef` tarball does not include those codecs.
 
 ## JavaScript dialogs
 

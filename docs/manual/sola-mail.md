@@ -57,7 +57,12 @@ titlebar lists them too. The titlebar names the mailbox and its unread
   the replies. Links open in Browser. **Open** / **Save** on attached
   files (images open in Paint, `.ics` invites in Calendar as a new event
   you file in a calendar, everything else in Browser). Copy Message is
-  in **Edit**; Undo is on the toast after a move (and **u**).
+  in **Edit**; Undo is on the toast after a move (and **u**). The toast
+  floats over the foot of the list for 5 seconds; nothing moves for it.
+- **After a move** the message above is selected and, a moment later,
+  opened and marked read. A check of the server already under way
+  doesn't undo that: Mail keeps its own read, unread and flag marks until
+  the server's list shows them too.
 - **HTML letters** are drawn by Mail itself, safely: paragraphs and line
   breaks as the sender wrote them, bold, italic and struck text, links, headings,
   quotes, lists, rules, and tables read as rows. Nothing in a letter
@@ -87,6 +92,11 @@ These keys do nothing while you are typing in a field.
 Menus: ⌘N new, ⌘S save draft, ⌘⇧A attach, ⌘R reply, ⌘⇧R reply all,
 ⌘⇧F forward, ⌘⇧U mark read/unread, ⌘⇧L flag, ⌘⇧N get new mail, ⌘F
 search.
+
+**Edit** (⌘X / ⌘C / ⌘V / ⌘A) works in the field you are typing in —
+To, Cc, Subject, Search — at its caret or selection. With no field
+focused it works on the draft's body, or on the open letter (Copy
+with nothing selected copies the whole letter).
 
 ### Compose
 
@@ -149,4 +159,3 @@ count; hover it for **Checking mail**.
 - No drag-and-drop onto compose.
 - No full offline store.
 - IDLE watches Inbox only.
-- Edit → Paste goes into the compose body only.

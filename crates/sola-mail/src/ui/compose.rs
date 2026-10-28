@@ -65,7 +65,7 @@ impl Field {
         })
     }
 
-    fn from_id(id: &Id) -> Option<Self> {
+    pub fn from_id(id: &Id) -> Option<Self> {
         Self::ORDER.into_iter().find(|f| f.id() == *id)
     }
 

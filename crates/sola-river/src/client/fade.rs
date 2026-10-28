@@ -19,7 +19,9 @@
 //! may want to answer); that piece stays at the floor, so they keep their
 //! rest while everything else goes. Nothing is over a fullscreen window
 //! (Cinema scans out). While the fade runs, `Topic::IdleFade`
-//! says so (Projects shows a session's island even with its tab focused).
+//! says so (Projects shows a session's island even with its tab focused),
+//! and once it is full, that the windows are out of sight (the shell
+//! reports their tabs off screen, so a browser rests its pages).
 //!
 //! Idle comes from `ext_idle_notifier_v1.get_idle_notification`, which
 //! honors idle inhibitors (a video player keeping the screen awake); and
@@ -72,7 +74,7 @@ pub struct FadeState {
     /// Making the overlay failed this idle: stop asking for render passes.
     failed: bool,
     /// What `Topic::IdleFade` last said.
-    told: Option<bool>,
+    told: Option<IdleFade>,
 }
 
 impl Default for FadeState {
@@ -222,6 +224,7 @@ pub fn tick(state: &mut AppData) {
         if state.fade.overlay.is_some() {
             drop_overlay(state);
         }
+        tell(state, true, false);
         state.fade.since = Some(Instant::now());
         return;
     }
@@ -233,11 +236,14 @@ pub fn tick(state: &mut AppData) {
         }
         return;
     };
-    if overlay.level == target || overlay.set_at.elapsed() < STEP {
-        return;
+    if overlay.level != target && overlay.set_at.elapsed() >= STEP {
+        overlay.set(target, floor);
+        flush(state);
     }
-    overlay.set(target, floor);
-    flush(state);
+    // Full: the windows are out of sight until input.
+    if state.fade.overlay.as_ref().is_some_and(|o| o.level == u32::MAX) {
+        tell(state, true, true);
+    }
 }
 
 /// Run during every render sequence, last: make the overlay when the rest
@@ -370,7 +376,7 @@ fn ensure(state: &mut AppData) {
 
 /// Input: the windows come back to their rest over [`RETURN`].
 fn resume(state: &mut AppData) {
-    tell(state, false);
+    tell(state, false, false);
     state.fade.since = None;
     state.fade.failed = false;
     match state.fade.overlay.as_ref().map(|o| o.level) {
@@ -405,20 +411,24 @@ fn rest(state: &mut AppData) {
     }
 }
 
-/// Tell the bus whether the desk is fading (`Topic::IdleFade`), once per
-/// change.
-fn tell(state: &mut AppData, fading: bool) {
-    if state.fade.told == Some(fading) {
+/// Tell the bus whether the desk is fading, and whether the windows are
+/// out of sight (`Topic::IdleFade`), once per change.
+fn tell(state: &mut AppData, fading: bool, out: bool) {
+    let fade = IdleFade { fading, out };
+    if state.fade.told == Some(fade) {
         return;
     }
-    state.fade.told = Some(fading);
-    state.bus.emit(Topic::IdleFade(IdleFade { fading }));
+    if state.fade.told.map(|t| t.out) != Some(out) {
+        info!(out, "idle fade: windows {}", if out { "out of sight" } else { "in sight" });
+    }
+    state.fade.told = Some(fade);
+    state.bus.emit(Topic::IdleFade(fade));
 }
 
 /// The fade turned off or changed: the windows back to their rest at
 /// once.
 fn wake(state: &mut AppData) {
-    tell(state, false);
+    tell(state, false, false);
     state.fade.since = None;
     state.fade.failed = false;
     state.fade.returning = None;
@@ -526,7 +536,7 @@ impl Dispatch<ExtIdleNotificationV1, ()> for AppData {
         match event {
             ext_idle_notification_v1::Event::Idled => {
                 info!("idle: the fade starts");
-                tell(state, true);
+                tell(state, true, false);
                 state.fade.returning = None;
                 state.fade.since = Some(Instant::now());
                 state.pending.render_dirty = true;

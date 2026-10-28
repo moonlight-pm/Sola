@@ -512,12 +512,18 @@ pub struct IdleKeep {
     pub h: u32,
 }
 
-/// The desk is idle and fading (sola-river → Projects, `Topic::IdleFade`,
-/// sticky): no input for the fade's delay. While it is on, a session's tab
-/// that has the keyboard is not being looked at, so its island shows.
+/// The desk is idle and fading (sola-river → Projects, the shell,
+/// `Topic::IdleFade`, sticky): no input for the fade's delay. While it is
+/// on, a session's tab that has the keyboard is not being looked at, so its
+/// island shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IdleFade {
     pub fading: bool,
+    /// The fade is full: the windows are out of sight under the picture.
+    /// The shell tells apps their tab windows are off screen (a browser
+    /// rests its pages) until input brings them back.
+    #[serde(default)]
+    pub out: bool,
 }
 
 /// Emitted by compositor when pointer enters a different surface/window.
@@ -2071,7 +2077,7 @@ mod tests {
         }
         assert!(TopicKind::IdleKeep.behavior().is_sticky());
         assert!(topic_kind_is_after_mail_status(TopicKind::IdleKeep));
-        let fade = IdleFade { fading: true };
+        let fade = IdleFade { fading: true, out: true };
         match Topic::parse(&Topic::IdleFade(fade).to_message()) {
             Some(Topic::IdleFade(back)) => assert_eq!(back, fade),
             other => panic!("expected IdleFade, got {other:?}"),

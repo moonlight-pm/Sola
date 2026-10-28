@@ -6,7 +6,7 @@ use chrono::{DateTime, Local};
 
 use iced::font::Weight;
 use iced::widget::text::Wrapping;
-use iced::widget::{Space, button, column, container, keyed_column, row, text};
+use iced::widget::{Space, button, column, container, keyed_column, row, stack, text};
 use iced::{Alignment, Element, Font, Length, Padding};
 use sola_kit::components::style::{SPACE_MD, SPACE_XL};
 use sola_kit::components::text as kit_text;
@@ -154,14 +154,26 @@ impl App {
             keyed_column(rows).spacing(0).width(Length::Fill).into()
         };
 
-        container(
-            scroll::scrollable(default_cursor(body))
-                .id(super::list_scroll_id())
-                .height(Length::Fill)
-                .width(Length::Fill)
-                .on_scroll(Msg::ListScrolled),
-        )
-        .width(Length::Fixed(LIST_W))
+        let scroller: Element<'_, Msg> = scroll::scrollable(default_cursor(body))
+            .id(super::list_scroll_id())
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .on_scroll(Msg::ListScrolled)
+            .into();
+        // The toast floats over the foot of the list: it never resizes it.
+        let pane: Element<'_, Msg> = match self.view_notice() {
+            Some(card) => stack![
+                scroller,
+                container(card)
+                    .height(Length::Fill)
+                    .align_y(Alignment::End)
+                    .padding(SPACE_MD),
+            ]
+            .into(),
+            None => scroller,
+        };
+        container(pane)
+            .width(Length::Fixed(LIST_W))
         .height(Length::Fill)
         .style(style::raised)
         .into()

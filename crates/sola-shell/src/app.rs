@@ -364,6 +364,9 @@ pub struct Shell {
     pub adapt: crate::adapt::Adapt,
     /// Last on-screen state sent for each tab window (`TabWindow.shown`).
     tab_shown_sent: HashMap<u32, bool>,
+    /// The idle fade is full (`IdleFade.out`): every window is out of
+    /// sight, so no tab window counts as on screen.
+    pub desk_out: bool,
     pub tabbar: crate::tabbar::TabBarState,
     /// Each window's last published `Topic::WindowChrome`.
     pub window_chrome: crate::chrome::ChromeState,
@@ -541,6 +544,7 @@ impl Shell {
             agents: Default::default(),
             adapt: Default::default(),
             tab_shown_sent: HashMap::new(),
+            desk_out: false,
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
             workspace: workspaces::WorkspaceState::default(),
@@ -3138,6 +3142,7 @@ mod pending_launch_tests {
             agents: Default::default(),
             adapt: Default::default(),
             tab_shown_sent: HashMap::new(),
+            desk_out: false,
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
             workspace: workspaces::WorkspaceState::default(),
@@ -3268,6 +3273,7 @@ mod hide_tests {
             agents: Default::default(),
             adapt: Default::default(),
             tab_shown_sent: HashMap::new(),
+            desk_out: false,
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
             workspace: workspaces::WorkspaceState::default(),

@@ -81,7 +81,8 @@ pub fn dot(theme: &Theme) -> container::Style {
     }
 }
 
-/// Floating card (account status) with a soft drop shadow.
+/// Floating card (account status, the toast, the erase question) with a
+/// soft drop shadow.
 pub fn card(theme: &Theme) -> container::Style {
     let fill = theme.extended_palette().background.weaker.color;
     container::Style {
@@ -100,19 +101,6 @@ pub fn card(theme: &Theme) -> container::Style {
     }
 }
 
-/// Bottom toast / confirm strip.
-pub fn strip(theme: &Theme) -> container::Style {
-    let fill = theme.extended_palette().background.weaker.color;
-    container::Style {
-        background: Some(Background::Color(fill)),
-        border: Border {
-            color: mix_white(fill, HAIRLINE_A),
-            width: 1.0,
-            radius: 0.0.into(),
-        },
-        ..container::Style::default()
-    }
-}
 
 /// Attachment list well.
 pub fn well(theme: &Theme) -> container::Style {

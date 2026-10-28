@@ -135,6 +135,15 @@ impl Shell {
                 Task::none()
             }
             Topic::MenuAction(a) => self.on_titlebar_menu_action(a),
+            Topic::IdleFade(f) => {
+                // Retracted (sola-river gone): in sight.
+                let out = message.sticky && f.out;
+                if out != self.desk_out {
+                    self.desk_out = out;
+                    self.sync_tab_shown();
+                }
+                Task::none()
+            }
             // All other topics are not consumed by sola-shell; ignore quietly.
             _ => Task::none(),
         }
@@ -587,7 +596,7 @@ impl Shell {
             if self.tabs.set_key(window_id, &key, now).is_some() {
                 moved = true;
             }
-            let shown = self.last_composition.contains(&window_id);
+            let shown = self.tab_on_screen(window_id);
             self.tab_shown_sent.insert(window_id, shown);
             super::with_bus(|bus| {
                 let _ = bus.emit(Topic::TabWindow(sola_bus::topics::TabWindow {
@@ -600,14 +609,21 @@ impl Shell {
         moved
     }
 
+    /// A tab window is on screen: in the last Composition, and not under a
+    /// full idle fade.
+    fn tab_on_screen(&self, window_id: u32) -> bool {
+        !self.desk_out && self.last_composition.contains(&window_id)
+    }
+
     /// Tell apps which of their tab windows went on or off screen (after a
-    /// Composition): a browser rests the pages behind.
+    /// Composition, or the idle fade going full or ending): a browser rests
+    /// the pages behind.
     pub(crate) fn sync_tab_shown(&mut self) {
         let changes: Vec<(u32, String, bool)> = self
             .pairing
             .pairs()
             .filter_map(|(wid, key)| {
-                let shown = self.last_composition.contains(&wid);
+                let shown = self.tab_on_screen(wid);
                 (self.tab_shown_sent.get(&wid) != Some(&shown)).then(|| (wid, key.to_string(), shown))
             })
             .collect();

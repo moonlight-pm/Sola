@@ -912,13 +912,10 @@ cef::wrap_app! {
                 let origin_val = CefString::from("*");
                 cmd.append_switch_with_value(Some(&origin_key), Some(&origin_val));
 
-                // Chromium default autoplay needs a user gesture (or mute).
-                // Steam store trailers are clear DASH and call play() with
-                // audio on load; the WebKit host had
-                // media_playback_requires_user_gesture=false. Match that.
-                let autoplay_key = CefString::from("autoplay-policy");
-                let autoplay_val = CefString::from("no-user-gesture-required");
-                cmd.append_switch_with_value(Some(&autoplay_key), Some(&autoplay_val));
+                // Chromium's own autoplay policy: sound waits for the page's
+                // first click; muted videos play only while in view. With
+                // no-user-gesture-required, muted loops (Steam's description
+                // animations) all play at once, in view or not.
 
                 // Sliced/parallel downloads fail or stall on large files
                 // when the server mishandles range requests (FILE_TOO_SHORT
@@ -3395,7 +3392,8 @@ pub(super) fn reveal_agent_tab(browser_id: i32) {
     let Some(tab_id) = tab_id_by_browser_id(&state, browser_id) else {
         return;
     };
-    if tab_id == state.active.get() && state.is_front.get() {
+    let on_screen = tab_state_by_id(&state, tab_id).is_some_and(|t| t.shown.get());
+    if on_screen && state.is_front.get() {
         return;
     }
     if let Some(host) = host_for_browser_id(browser_id) {
@@ -3412,19 +3410,18 @@ pub(super) fn conceal_agent_tab() {
         return;
     }
     let state = cef_state();
-    let still_front =
-        tab_id_by_browser_id(&state, bid) == Some(state.active.get()) && state.is_front.get();
     let shown_page = tab_id_by_browser_id(&state, bid)
         .and_then(|id| tab_state_by_id(&state, id).map(|t| t.shown.get()))
         .unwrap_or(false);
-    if still_front || shown_page || is_board_browser(&state, bid) {
+    if (shown_page && state.is_front.get()) || is_board_browser(&state, bid) {
         return;
     }
     if let Some(host) = host_for_browser_id(bid) {
         set_host_hidden(&host, true);
     }
+    // The reveal took focus: give it back to the active tab, if on screen.
     if state.is_front.get() {
-        if let Some(tab) = active_tab(&state) {
+        if let Some(tab) = active_tab(&state).filter(|t| t.shown.get()) {
             if let Some(host) = tab.browser.host() {
                 set_host_hidden(&host, false);
             }
@@ -4024,7 +4021,8 @@ fn check_page_size(state: &CefThreadState, id: TabId, seq: u64, attempt: u32) {
 }
 
 /// A page window went on or off screen. A shown page paints whether or not
-/// it is active; a hidden one rests (unless it is the active tab).
+/// it is active; one off screen rests, the active tab too: hidden, CEF
+/// slows it to a frame a second and Chromium pauses its silent videos.
 fn show_page(state: &CefThreadState, id: TabId, shown: bool) {
     let Some(tab) = tab_state_by_id(state, id) else {
         return;
@@ -4035,7 +4033,7 @@ fn show_page(state: &CefThreadState, id: TabId, shown: bool) {
     if !state.is_front.get() {
         return;
     }
-    let visible = shown || state.active.get() == id;
+    let visible = shown;
     tracing::debug!(?id, shown, size = ?tab.own_size.get(), "page shown");
     let Some(host) = tab.browser.host() else {
         return;
@@ -5340,8 +5338,10 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
 
     // Instant content: replay last composite only when it matches the
     // live widget. A 1280×800 park buffer stretched into a wide view
-    // is the half-width "slender" flash on tab switch.
-    if let Some(tab) = tab_state_by_id(state, id) {
+    // is the half-width "slender" flash on tab switch. A page whose window
+    // is off screen stays at rest; `show_page` wakes it when it shows.
+    if let Some(tab) = tab_state_by_id(state, id).filter(|t| t.shown.get() || t.board.get().is_some())
+    {
         let want = page_size(state, &tab);
         let replayed = if let Some(mut frame) = tab.last_frame.borrow().clone() {
             let ok = frame.width.abs_diff(want.0) <= 1 && frame.height.abs_diff(want.1) <= 1;

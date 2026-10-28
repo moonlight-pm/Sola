@@ -8,6 +8,9 @@
 //!
 //! - **P7 scope:** style + padding only (`DEFAULT_PADDING`, selection atom,
 //!   status colors). No layout/IME/behavior rewrite.
+//! - **Edit menu:** [`edit_focused`] (`menu_edit.rs`) — the one behavior
+//!   stock iced can't give: the menu's Paste / Cut / Copy / Select All at
+//!   the caret, since the shell grabs their Super chords.
 //! - **Future:** try stock `iced::widget::text_input` + `Catalog` style; delete
 //!   this fork if behavior parity holds. Until then, consumers should import
 //!   kit’s path and treat the API as stable.
@@ -43,11 +46,13 @@
 //! }
 //! ```
 mod editor;
+mod menu_edit;
 mod value;
 
 pub mod cursor;
 
 pub use cursor::Cursor;
+pub use menu_edit::{MenuEdit, MenuEdited, edit_focused};
 pub use value::Value;
 
 use editor::Editor;
@@ -650,6 +655,18 @@ where
         // a same-pass `focus` + `select_all` still ends as a selection.
         operation.focusable(self.id.as_ref(), layout.bounds(), state);
         operation.text_input(self.id.as_ref(), layout.bounds(), state);
+
+        // The Edit menu (`edit_focused`): its Super chords never reach us.
+        if state.is_focused() {
+            let mut focused = menu_edit::Focused {
+                value: self.value.clone(),
+                cursor: state.cursor,
+                editable: self.on_input.is_some(),
+                secure: self.is_secure,
+            };
+            operation.custom(self.id.as_ref(), layout.bounds(), &mut focused);
+            state.cursor = focused.cursor;
+        }
     }
 
     fn update(
