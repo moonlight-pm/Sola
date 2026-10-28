@@ -1,4 +1,4 @@
-//! The kit's scrollbar: a pill that slides in a rounded channel.
+//! The kit's scrollbar: an accent pill inset in a dark channel.
 //!
 //! iced's default (a 10 px bar with 2 px corners that turns the accent on
 //! hover) is what a bare `iced::widget::scrollable` draws, and iced's
@@ -10,28 +10,35 @@
 use iced::widget::scrollable::{
     AutoScroll, Direction, Rail, Scrollable, Scrollbar, Scroller, Status, Style,
 };
-use iced::{Border, Color, Element, Shadow, Theme, Vector, border};
+use iced::{Border, Color, Element, Shadow, Theme, Vector};
 
 /// The channel's width.
 pub const RAIL_W: f32 = 8.0;
-/// The pill's width, centred in the channel.
-pub const THUMB_W: f32 = 6.0;
+/// The pill's gap to the channel's edge, on every side.
+pub const INSET: f32 = 2.0;
+/// The pill's drawn width.
+pub const THUMB_W: f32 = RAIL_W - 2.0 * INSET;
 /// Space between the channel and the content's edge, either side.
 pub const MARGIN: f32 = 2.0;
+/// How far in from the scrollable's edge the bar reaches: pad scrolled
+/// content by this much, plus the gap it wants from the channel.
+pub const CLEARANCE: f32 = RAIL_W + 2.0 * MARGIN;
 
-/// The channel: the text colour this faint.
-const CHANNEL_A: f32 = 0.06;
-/// The pill at rest, under the pointer, and held.
-const THUMB_A: f32 = 0.26;
-const THUMB_HOVER_A: f32 = 0.42;
-const THUMB_DRAG_A: f32 = 0.56;
+/// The channel: black this strong over whatever surface it sits on, in a
+/// rim of the text colour this faint — a groove even on a black face.
+const CHANNEL_A: f32 = 0.55;
+const RIM_A: f32 = 0.1;
+/// The pill — the theme's accent — at rest, under the pointer, and held.
+const THUMB_A: f32 = 0.5;
+const THUMB_HOVER_A: f32 = 0.7;
+const THUMB_DRAG_A: f32 = 0.85;
 
 /// The kit's scrollbar geometry, for `Direction::Vertical` /
 /// `Direction::Horizontal`.
 pub fn bar() -> Scrollbar {
     Scrollbar::new()
         .width(RAIL_W)
-        .scroller_width(THUMB_W)
+        .scroller_width(RAIL_W)
         .margin(MARGIN)
 }
 
@@ -45,17 +52,30 @@ pub fn scrollable<'a, Message: 'a>(
         .style(style)
 }
 
-/// The channel and the pill, in the theme's text colour at low alpha so
-/// they sit on any surface (the raised list, the face, a sheet).
+/// A dark channel (black over the surface, so it reads on the face, a
+/// raised list or a sheet) with a faint rim, and the accent pill in it. The pill's box is
+/// the channel's full width — the whole channel grabs — and its
+/// [`INSET`] is a transparent border: iced's wgpu quad draws the border
+/// in place of the fill, so the pill shows [`INSET`] in from the channel
+/// on every side, the ends too.
 pub fn style(theme: &Theme, status: Status) -> Style {
     let p = theme.extended_palette();
     let ink = p.background.base.text;
+    let accent = p.primary.base.color;
     let rail = |thumb_a: f32| Rail {
-        background: Some(Color { a: CHANNEL_A, ..ink }.into()),
-        border: border::rounded(RAIL_W / 2.0),
+        background: Some(Color { a: CHANNEL_A, ..Color::BLACK }.into()),
+        border: Border {
+            color: Color { a: RIM_A, ..ink },
+            width: 1.0,
+            radius: (RAIL_W / 2.0).into(),
+        },
         scroller: Scroller {
-            background: Color { a: thumb_a, ..ink }.into(),
-            border: border::rounded(THUMB_W / 2.0),
+            background: Color { a: thumb_a, ..accent }.into(),
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: INSET,
+                radius: (RAIL_W / 2.0).into(),
+            },
         },
     };
     let (vertical, horizontal) = match status {
@@ -104,8 +124,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_pill_sits_in_the_channel_and_brightens_when_held() {
-        assert!(THUMB_W < RAIL_W);
+    fn the_accent_pill_sits_inset_in_the_channel_and_brightens_when_held() {
+        assert!(THUMB_W > 0.0 && THUMB_W < RAIL_W);
         let theme = crate::theme::default_theme();
         let rest = style(
             &theme,
@@ -128,6 +148,14 @@ mod tests {
             _ => 0.0,
         };
         assert!(alpha(&held) > alpha(&rest));
+        let accent = theme.extended_palette().primary.base.color;
+        assert_eq!(
+            rest.vertical_rail.scroller.background,
+            Color { a: THUMB_A, ..accent }.into()
+        );
+        assert_eq!(rest.vertical_rail.scroller.border.width, INSET);
+        assert_eq!(rest.vertical_rail.scroller.border.color, Color::TRANSPARENT);
+        assert!(rest.vertical_rail.border.width < INSET, "the rim clears the pill");
         assert_eq!(
             held.horizontal_rail.scroller.background,
             rest.horizontal_rail.scroller.background

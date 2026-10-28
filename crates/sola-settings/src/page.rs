@@ -30,14 +30,14 @@ const ROW_PAD: Padding = Padding {
 };
 
 /// A page: its sections in a column, scrolling when they outgrow the
-/// window (room on the right for the scrollbar).
+/// window (room on the right for the scrollbar, and a gap to it).
 pub fn page<'a, M: 'a>(sections: Vec<Element<'a, M>>) -> Element<'a, M> {
     let col = Column::from_vec(sections)
         .spacing(SPACE_XL + SPACE_LG)
         .width(Length::Fill)
         .max_width(PAGE_WIDTH);
     scroll::scrollable(container(col).padding(Padding {
-        right: SPACE_LG,
+        right: scroll::CLEARANCE + SPACE_XL,
         bottom: SPACE_XL,
         ..Padding::ZERO
     }))
