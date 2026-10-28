@@ -1,7 +1,7 @@
 //! Zero-dep stub for `tauri-apps/download-cef`.
 //!
 //! `cef-dll-sys` (a transitive dep of `cef`) declares an unconditional
-//! `[build-dependencies] download-cef = "2.3"`, and the upstream
+//! `[build-dependencies] download-cef = "3.0"`, and the upstream
 //! `download-cef` pulls in `ureq` + `rustls` + `ring` + `rustls-webpki`
 //! + `bzip2` + `tar` (all unconditionally — no feature flags exist to
 //! opt out). Those crates rebuilt every time we alternated between
@@ -193,8 +193,16 @@ impl CefVersion {
 ///
 /// On Linux, cef-dll-sys does NOT invoke its `cmake::Config::build()`
 /// step (libcef_dll_wrapper is only built on Windows/macOS), so we
-/// don't need to expose CMakeLists.txt, cmake/, include/, libcef_dll/
-/// inside the cef_dir.
+/// don't need to expose CMakeLists.txt, cmake/, libcef_dll/ inside the
+/// cef_dir. It does read `include/cef_api_versions.h` for
+/// `CEF_API_VERSION_LAST`, which on Linux only feeds that wrapper build
+/// and a `cargo::metadata` nothing reads, so we write that one line (see
+/// [`write_api_versions_header`]) rather than need CEF's headers: Oath's
+/// `pkg:cef` carries `Release/` and `Resources/` only.
+///
+/// It also copies every file of cef_dir, and `locales/`, next to the
+/// built binaries in `target/<profile>/`. Harmless (installed binaries
+/// find libcef through the cache RUNPATH), but it costs the disk.
 ///
 /// Beyond linking, Chromium itself loads `icudtl.dat`, `v8_context_snapshot.bin`,
 /// and the `*.pak` files from the directory containing libcef.so at runtime —
@@ -233,6 +241,42 @@ pub fn extract_target_archive<P: AsRef<Path>, Q: AsRef<Path>>(
         }
         std::os::unix::fs::symlink(entry.path(), &dest)?;
     }
+    write_api_versions_header(&cef_dir)?;
 
     Ok(cef_dir)
+}
+
+/// `include/cef_api_versions.h` with only `CEF_API_VERSION_LAST`, as
+/// CEF's own header spells it for a release (`CEF_API_VERSION_15600`
+/// for 156.0.x).
+fn write_api_versions_header(cef_dir: &Path) -> Result<()> {
+    let major = cef_version_trimmed()
+        .split('.')
+        .next()
+        .and_then(|m| m.parse::<u32>().ok())
+        .ok_or_else(|| Error::new(format!("no major version in cef-version {CEF_VERSION:?}")))?;
+    let include = cef_dir.join("include");
+    // An earlier stub linked the cache's own `include/` here; never write
+    // through that into CEF's headers.
+    if include.is_symlink() {
+        std::fs::remove_file(&include)?;
+    }
+    std::fs::create_dir_all(&include)?;
+    std::fs::write(
+        include.join("cef_api_versions.h"),
+        format!("#define CEF_API_VERSION_LAST CEF_API_VERSION_{}\n", major * 100),
+    )?;
+    Ok(())
+}
+
+/// Only invoked when `NIX_CEF_BINARY` is set, which we never do; the
+/// symbol must exist for cef-dll-sys's build.rs to compile.
+pub fn install_nix_cef<P: AsRef<Path>>(
+    _cef_version: &str,
+    _location: P,
+    _show_progress: bool,
+) -> Result<()> {
+    Err(Error::new(
+        "NIX_CEF_BINARY is not supported by Sola's download-cef stub; run cargo make install-cef",
+    ))
 }
