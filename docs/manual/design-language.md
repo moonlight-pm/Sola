@@ -239,7 +239,7 @@ Visual work should flow through existing machinery:
 
 1. **Compile-time kit atoms** — `sola_kit::theme::hex` defaults  
 2. **Bus theme** — `Topic::Theme`, palette tokens, presets  
-3. **Shell tokens** — `shell-*` group (backdrop, switcher, launcher)  
+3. **Shell tokens** — `shell-*` group (the flower, backdrop, switcher, launcher)  
 4. **Font roles** — installed from theme; components call role accessors only  
 5. **Components** — `sola-kit` widgets + storybook pages as the regression surface  
 6. **Storybook** — dogfood every kit visual change  
