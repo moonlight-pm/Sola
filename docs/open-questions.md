@@ -90,29 +90,21 @@ Alternative for the scale half only: tile the plane's textures past 8192 px.
 
 ---
 
-### D7 — Bots HTTP API exposure (P0)
+### D7 — Bots HTTP API exposure (P0) — **decided (2026-10-28)**
 
-**Context (found 2026-10-19, writing the manual):** `sola-botsd` is a managed
-component, so it runs in every session, and it binds `0.0.0.0:27419`
-(`crates/sola-bots/src/auth.rs`). The bearer token is a constant in that
-file, and the repo is public, so the token is public (in history since
-2026-09-15). The NixOS firewall is off on the desk, so anyone on the LAN
-who reads the source can drive bot sessions, which run `grok agent stdio`
-in yolo mode in `~/Bots/<slug>/`. `bot.sola.computer` does not answer from
-outside today. The iOS SolaBot app compiles in the same token.
+**Context (found 2026-10-19, writing the manual):** `sola-botsd` bound
+`0.0.0.0:27419` with a bearer token that was a constant in public source,
+so anyone on the LAN who read the source could drive bot sessions, which
+run their AI with every tool approved in `~/Bots/<slug>/`.
 
-**Ask:**
-
-1. Rotate the token and move it out of source (a file under
-   `~/.config/sola/`, or a secret the module provides), rebuilding SolaBot to
-   match?
-2. Bind to loopback or the LAN address only, or keep `0.0.0.0` behind a
-   firewall rule (turn the firewall on and open 27419 only to the proxy)?
-3. Should `sola-botsd` stay a managed component in every session, or start
-   only when enabled?
-
-**Until decided:** do not publish `bot.sola.computer` again; the manual
-states the port is open in every session and does not print the token.
+**Decided (Joshua, 2026-10-28):** "If its local why not a socket file —
+we'll use a cloudflare tunnel later for remote access." The API is HTTP on
+the Unix socket `$XDG_RUNTIME_DIR/sola-bots` (mode 0600), with no TCP port
+and no token; the token constant is gone from source. Remote access (the
+iPhone app) comes later through a Cloudflare tunnel to the socket, which
+must bring its own sign-in (Cloudflare Access) — decide that when the
+tunnel is built. Question 3 (always running or opt-in) is open again only
+if the tunnel needs it; on Oath the daemon needs a `svc:sola-botsd`.
 
 **Related:** `bots` capability; [process manager](manual/process-manager.md);
 [solactl § Bots](manual/solactl.md#bots-solactl-bots).

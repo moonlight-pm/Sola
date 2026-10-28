@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -12,6 +13,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tracing::{info, warn};
 
+use crate::foundation;
 use crate::paths;
 
 pub struct AcpSession {
@@ -21,7 +23,14 @@ pub struct AcpSession {
     inbox: Mutex<mpsc::Receiver<Incoming>>,
     next_id: Arc<Mutex<u64>>,
     pending: Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>,
+    /// Grok asked for a sign-in (it is not signed in on this computer).
+    signed_out: Arc<AtomicBool>,
 }
+
+/// What a signed-out Grok says on stderr when asked to authenticate: it
+/// starts a device sign-in and waits on it.
+const SIGN_IN_PROMPT: &str = "To sign in, open this URL";
+const SIGNED_OUT: &str = "Grok is not signed in on this computer: run `grok` in a terminal once to sign in";
 
 enum Outgoing {
     Rpc(Value),
@@ -55,9 +64,8 @@ impl AcpSession {
     pub fn spawn(cwd: &Path, model: &str) -> anyhow::Result<Self> {
         let grok = paths::grok_bin();
         let mut cmd = Command::new(&grok);
-        // Default Grok 4.6 + low effort ("fast"). No `auto` model/effort
-        // on this CLI; omit `-m` so the agent's default model is used.
-        let _ = model;
+        // Low effort ("fast"); the agent's default model unless the bot
+        // names one.
         let debug_file = cwd.join("grok.acp.log");
         cmd.args([
             "--no-auto-update",
@@ -69,21 +77,16 @@ impl AcpSession {
             "--debug-file",
             &debug_file.display().to_string(),
             "--rules",
-            "Never use solactl compositor screenshot or input, ydotool, xdotool, wtype, or any OS mouse/keyboard. Never tab.focus or tab.open --select. Always pass --tab <id> to solactl browser. Snapshot is the page description and works on background tabs. Do not poll solactl bots list.",
-            "--deny",
-            "Bash(solactl compositor screenshot*)",
-            "--deny",
-            "Bash(solactl compositor input*)",
-            "--deny",
-            "Bash(ydotool *)",
-            "--deny",
-            "Bash(xdotool *)",
-            "--deny",
-            "Bash(wtype *)",
-            "agent",
-            "--no-leader",
-            "stdio",
-        ])
+            foundation::SEAT_RULES,
+        ]);
+        for prefix in foundation::SEAT_DENY {
+            cmd.args(["--deny", &format!("Bash({prefix}*)")]);
+        }
+        cmd.arg("agent");
+        if !model.is_empty() {
+            cmd.args(["-m", model]);
+        }
+        cmd.args(["--no-leader", "stdio"])
         .env("SOLA_BOT", "1")
         .current_dir(cwd)
         .stdin(Stdio::piped())
@@ -101,12 +104,17 @@ impl AcpSession {
             .take()
             .ok_or_else(|| anyhow::anyhow!("no stdout"))?;
         let stderr = child.stderr.take();
+        let signed_out = Arc::new(AtomicBool::new(false));
         if let Some(stderr) = stderr {
+            let signed_out = Arc::clone(&signed_out);
             thread::Builder::new()
                 .name("bots-grok-err".into())
                 .spawn(move || {
                     let r = BufReader::new(stderr);
                     for line in r.lines().map_while(Result::ok) {
+                        if line.contains(SIGN_IN_PROMPT) {
+                            signed_out.store(true, Ordering::SeqCst);
+                        }
                         if !line.is_empty() {
                             warn!("grok stderr: {line}");
                         }
@@ -152,6 +160,7 @@ impl AcpSession {
             inbox: Mutex::new(in_rx),
             next_id,
             pending,
+            signed_out,
         };
         sess.handshake(cwd)?;
         Ok(sess)
@@ -305,6 +314,9 @@ impl AcpSession {
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {
+                    if self.signed_out.load(Ordering::SeqCst) {
+                        return Err(anyhow::anyhow!(SIGNED_OUT));
+                    }
                     if self.child_exited() {
                         return Err(anyhow::anyhow!("acp disconnected"));
                     }
@@ -380,6 +392,9 @@ impl AcpSession {
                 }
                 Ok(Incoming::Notify { .. }) => {}
                 Err(RecvTimeoutError::Timeout) => {
+                    if self.signed_out.load(Ordering::SeqCst) {
+                        return Err(anyhow::anyhow!(SIGNED_OUT));
+                    }
                     if self.child_exited() {
                         return Err(anyhow::anyhow!("acp disconnected"));
                     }

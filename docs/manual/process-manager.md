@@ -59,7 +59,7 @@ on a second console while a session runs ends the first session.
 |---|---|---|---|
 | 1 | `sola-bus` | none | The bus ([The bus](bus.md)) |
 | 2 | `sola-call` | none | The call host ([The call plane](call.md)) |
-| 3 | `sola-botsd` | none | Bots daemon: call owner `bots`, HTTP on `0.0.0.0:27419` ([solactl](solactl.md)) |
+| 3 | `sola-botsd` | none | Bots daemon: call owner `bots`, HTTP on the socket `$XDG_RUNTIME_DIR/sola-bots` ([solactl](solactl.md)) |
 | 4 | `sola-river` | none | River's window manager; call owner `compositor` ([Compositor](compositor.md)) |
 | 5 | `sola-shell` | none | Menubar, tab bar, launcher, zones ([Shell](sola-shell.md)) |
 | 6 | `sola-session` | none | Applications; call owner `session` ([Session manager](session.md)) |
@@ -67,8 +67,7 @@ on a second console while a session runs ends the first session.
 
 The list is compiled into `sola`. A component cannot be added, removed, or
 disabled without rebuilding it, so `sola-botsd` and `sola-kvm` run in every
-session. With the NixOS firewall on, its default, port 27419 is reachable
-from other machines only if you open it.
+session.
 
 Each component is started with:
 

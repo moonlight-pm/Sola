@@ -6,7 +6,8 @@
 pub struct Package {
     /// Package name; the catalog id is `pkg:<name>`.
     pub name: &'static str,
-    /// Binaries in `bin/`. Each is also the crate that builds it.
+    /// Binaries in `bin/`. Each is also the crate that builds it, but
+    /// for the few a crate ships beside its own ([`crate_of`]).
     pub bins: &'static [&'static str],
     /// Packs its programs build with, beyond the base set (their run-time
     /// needs come along); `plan:sola-build` takes every package's.
@@ -26,6 +27,27 @@ impl Package {
     pub fn id(&self) -> String {
         format!("pkg:{}", self.name)
     }
+}
+
+/// The crate that builds `bin`: its own name, but for a second binary
+/// in another crate (`sola-botsd` is `sola-bots`'s daemon).
+pub fn crate_of(bin: &str) -> &str {
+    match bin {
+        "sola-botsd" => "sola-bots",
+        other => other,
+    }
+}
+
+/// `cargo build -p` arguments for `bins`: each crate once.
+pub fn build_crates<'a>(bins: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
+    let mut crates: Vec<&str> = Vec::new();
+    for bin in bins {
+        let krate = crate_of(bin);
+        if !crates.contains(&krate) {
+            crates.push(krate);
+        }
+    }
+    crates
 }
 
 /// The toolchain and GNU tools every Sola plan builds with: oath-make's
@@ -52,6 +74,8 @@ pub const PACKAGES: &[Package] = &[
             "sola-calendar",
             "sola-mail",
             "sola-settings",
+            "sola-bots",
+            "sola-botsd",
             "solactl",
             "sola-oath",
             "sola-kvm",
@@ -98,6 +122,14 @@ pub const PACKAGES: &[Package] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_second_binary_builds_from_its_crate_once() {
+        assert_eq!(
+            build_crates(["sola-bots", "sola-botsd", "sola-mail"]),
+            ["sola-bots", "sola-mail"]
+        );
+    }
 
     #[test]
     fn a_package_comes_after_the_packages_it_needs() {

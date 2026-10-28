@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
 
-use super::packages::{PACKAGES, Package};
+use super::packages::{PACKAGES, Package, build_crates};
 
 const STAGE_ROOT: &str = "target/oath";
 /// `pkg:cef`'s CEF (`Release/`, `Resources/`), through its live slot.
@@ -67,8 +67,8 @@ fn build(release: bool) {
     if release {
         cmd.arg("--release");
     }
-    for bin in PACKAGES.iter().flat_map(|p| p.bins) {
-        cmd.args(["-p", bin]);
+    for krate in build_crates(PACKAGES.iter().flat_map(|p| p.bins.iter().copied())) {
+        cmd.args(["-p", krate]);
     }
     let status = cmd.status().unwrap_or_else(|e| fail(format!("cargo: {e}")));
     if !status.success() {

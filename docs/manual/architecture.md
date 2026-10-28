@@ -32,7 +32,7 @@ login shell on a console
 | `sola-river` | River's window manager (`river-window-management-v1`). It places, stacks, and focuses windows as the shell asks, binds key chords, and reports windows and outputs on the bus. Call owner `compositor`. See [Compositor](compositor.md). |
 | `sola-shell` | The menubar, tab bar, launcher, notifications, and zones. It decides which windows are shown and where, and tells `sola-river`. See [Shell](sola-shell.md). |
 | `sola-session` | Launching, tracking, and closing applications, and relaunching the previous session's applications at start. Call owner `session`. See [Session manager](session.md). |
-| `sola-botsd` | Named agent sessions. Call owner `bots`, and an HTTP API on port 27419. See [solactl](solactl.md). |
+| `sola-botsd` | Named agent sessions, each a directory in `~/Bots` on Grok, Claude, or Gab AI. Call owner `bots`, and an HTTP API on the socket `$XDG_RUNTIME_DIR/sola-bots`. See [solactl](solactl.md). |
 | `sola-kvm` | Sharing this machine's keyboard and mouse with another machine. See [KVM](sola-kvm-operator.md). |
 | Applications | Their own windows. Sola's applications are built on sola-kit and are Wayland clients and bus clients; `sola-projects`, `sola-browser`, and `sola-design` are also call owners. Other programs started through the session manager are plain Wayland or X11 clients. See [Applications](applications.md). |
 

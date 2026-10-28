@@ -1,4 +1,6 @@
-//! Iced Bots window: list + long dialog. Talks HTTP/SSE to sola-botsd.
+//! Iced Bots window: list + long dialog. Talks HTTP/SSE to sola-botsd over
+//! its socket. A new bot is named and given its AI here; a bot directory
+//! made by hand gets its AI in its header.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -33,6 +35,8 @@ use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 use sola_kit::components::scroll;
 
+use crate::ai::Ai;
+
 pub const APP_ID: &str = "sola-bots";
 
 const SIDEBAR_W_MIN: f32 = 180.0;
@@ -55,6 +59,8 @@ pub struct App {
     status: String,
     compose: text_editor::Content,
     new_name: String,
+    /// The new bot's AI: none until picked.
+    new_ai: Option<Ai>,
     sending: bool,
     sidebar_w: f32,
     /// Fraction of the dialog column (below the header) owned by the thread.
@@ -70,6 +76,8 @@ pub struct App {
 struct BotRow {
     id: String,
     name: String,
+    /// `None` for a directory whose AI is not chosen yet.
+    ai: Option<Ai>,
     status: String,
 }
 
@@ -92,7 +100,10 @@ pub enum Msg {
     ComposeAction(text_editor::Action),
     Send,
     NewName(String),
+    NewAi(Ai),
     Create,
+    /// Give the selected bot (a directory without one) its AI.
+    Setup(Ai),
     SidebarPress,
     ComposePress,
     Pointer(f32, f32),
@@ -133,6 +144,7 @@ impl Default for App {
             status: String::new(),
             compose: text_editor::Content::new(),
             new_name: String::new(),
+            new_ai: None,
             sending: false,
             sidebar_w: 220.0,
             thread_ratio: 0.78,
@@ -313,14 +325,38 @@ impl App {
                 self.new_name = s;
                 Task::none()
             }
+            Msg::NewAi(ai) => {
+                self.new_ai = Some(ai);
+                Task::none()
+            }
             Msg::Create => {
                 let name = self.new_name.trim().to_string();
-                if name.is_empty() {
+                let Some(ai) = self.new_ai.filter(|_| !name.is_empty()) else {
                     return Task::none();
-                }
+                };
                 self.new_name.clear();
+                self.new_ai = None;
                 rest(
-                    move || crate::client::post("/bots", &serde_json::json!({ "name": name })),
+                    move || {
+                        crate::client::post(
+                            "/bots",
+                            &serde_json::json!({ "name": name, "ai": ai.id() }),
+                        )
+                    },
+                    Msg::Created,
+                )
+            }
+            Msg::Setup(ai) => {
+                let Some(id) = self.live_selected() else {
+                    return Task::none();
+                };
+                rest(
+                    move || {
+                        crate::client::post(
+                            &format!("/bots/{id}/setup"),
+                            &serde_json::json!({ "ai": ai.id() }),
+                        )
+                    },
                     Msg::Created,
                 )
             }
@@ -480,6 +516,7 @@ impl App {
                 Some(BotRow {
                     id: b.get("id")?.as_str()?.to_string(),
                     name: b.get("name")?.as_str()?.to_string(),
+                    ai: b.get("ai").and_then(|a| a.as_str()).and_then(Ai::parse),
                     status: b
                         .get("status")
                         .and_then(|s| s.as_str())
@@ -661,12 +698,13 @@ impl App {
         )
     }
 
-    fn selected_name(&self) -> Option<&str> {
+    fn selected_bot(&self) -> Option<&BotRow> {
         let id = self.selected.as_deref()?;
-        self.bots
-            .iter()
-            .find(|b| b.id == id)
-            .map(|b| b.name.as_str())
+        self.bots.iter().find(|b| b.id == id)
+    }
+
+    fn selected_name(&self) -> Option<&str> {
+        self.selected_bot().map(|b| b.name.as_str())
     }
 
     fn view_rail(&self) -> Element<'_, Msg> {
@@ -689,16 +727,19 @@ impl App {
         let list = sola_kit::components::sidebar(vec![SidebarSection::unlabeled(items)])
             .width(Length::Fill)
             .height(Length::Fill);
-        let new_row = row![
+        let ready = !self.new_name.trim().is_empty() && self.new_ai.is_some();
+        let name_row = row![
             text_input("Name", &self.new_name)
                 .on_input(Msg::NewName)
                 .on_submit(Msg::Create)
                 .width(Length::Fill),
-            kit_btn::labeled_sm("Add", kit_btn::primary).on_press(Msg::Create),
+            kit_btn::labeled_sm("Add", kit_btn::primary).on_press_maybe(ready.then_some(Msg::Create)),
         ]
-        .spacing(SPACE_SM)
-        .padding(Padding::from([SPACE_LG, SPACE_LG]));
-        column![list, new_row]
+        .spacing(SPACE_SM);
+        let new_bot = column![name_row, ai_choice(self.new_ai, Msg::NewAi)]
+            .spacing(SPACE_SM)
+            .padding(Padding::from([SPACE_LG, SPACE_LG]));
+        column![list, new_bot]
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -710,9 +751,20 @@ impl App {
         let chrome = pal.background.weak.color;
         let line = pal.background.strong.color.scale_alpha(HAIRLINE_A);
         let title = self.selected_name().unwrap_or("Bots");
-        let header = container(kit_text::subheading(title))
-            .width(Length::Fill)
-            .padding(Padding::from([SPACE_LG, SPACE_XL]));
+        let ai: Element<'_, Msg> = match self.selected_bot() {
+            Some(BotRow { ai: Some(ai), .. }) => kit_text::caption(ai.label())
+                .style(kit_text::muted)
+                .into(),
+            Some(BotRow { ai: None, .. }) => ai_choice(None, Msg::Setup),
+            None => Space::new().into(),
+        };
+        let header = container(
+            row![kit_text::subheading(title), Space::new().width(Length::Fill), ai]
+                .spacing(SPACE_LG)
+                .align_y(iced::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .padding(Padding::from([SPACE_LG, SPACE_XL]));
 
         let body = split_with(
             SplitDir::Horizontal,
@@ -737,7 +789,16 @@ impl App {
         let mut msgs = column![].spacing(SPACE_XL);
         if self.bots.is_empty() {
             msgs = msgs.push(
-                kit_text::body("Name a bot in the rail to start a dialog.").style(kit_text::muted),
+                kit_text::body("Name a bot and pick its AI in the rail to start a dialog.")
+                    .style(kit_text::muted),
+            );
+        }
+        if let Some(BotRow { ai: None, .. }) = self.selected_bot() {
+            msgs = msgs.push(
+                kit_text::body(
+                    "This bot's directory has no AI yet. Pick one above — it stays with the bot.",
+                )
+                .style(kit_text::muted),
             );
         }
         for (role, body) in &self.turns {
@@ -807,6 +868,17 @@ impl App {
             .height(Length::Fill)
             .into()
     }
+}
+
+/// One small button per AI; `chosen`'s is lit.
+fn ai_choice<'a>(chosen: Option<Ai>, on_pick: fn(Ai) -> Msg) -> Element<'a, Msg> {
+    let mut choice = row![].spacing(SPACE_SM);
+    for ai in Ai::ALL {
+        let style: fn(&Theme, iced::widget::button::Status) -> iced::widget::button::Style =
+            if chosen == Some(ai) { kit_btn::primary } else { kit_btn::secondary };
+        choice = choice.push(kit_btn::labeled_sm(ai.label(), style).on_press(on_pick(ai)));
+    }
+    choice.into()
 }
 
 fn compose_key(press: text_editor::KeyPress) -> Option<text_editor::Binding<Msg>> {

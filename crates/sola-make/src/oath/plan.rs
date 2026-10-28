@@ -10,7 +10,7 @@
 //! out `/out` from that build (and, for `pkg:sola`, the share tree), as
 //! `cargo make oath stage` does.
 
-use super::packages::Package;
+use super::packages::{Package, build_crates};
 
 /// The package the compile plan produces: a build pack, never linked.
 pub const BUILD: &str = "sola-build";
@@ -67,7 +67,10 @@ pub fn build_script(bins: &[&str], src_hash: &str, crates_hash: &str, version: &
     // The CEF programs link pkg:cef and name its Release/ in RUNPATH.
     s += &format!("export SOLA_CEF_DIR={OATH_CEF}\n");
     s += "ln -s \"$SOLA_CEF_DIR\" \"$HOME/.cache/sola/cef-$(cat cef-version)\"\n";
-    let crates: Vec<String> = bins.iter().map(|b| format!("-p {b}")).collect();
+    let crates: Vec<String> = build_crates(bins.iter().copied())
+        .iter()
+        .map(|c| format!("-p {c}"))
+        .collect();
     s += &format!("cargo build --release --frozen {}\n", crates.join(" "));
     s += "mkdir -p /out/bin\n";
     s += &format!(
@@ -120,6 +123,8 @@ mod tests {
         assert!(s.starts_with("#!/bin/sh\nset -eu\n"));
         assert!(s.contains("SRC=/oath/store/pkg/sola-src/sha256-s/src"));
         assert!(s.contains("-p sola-shell") && s.contains("-p sola-browser"));
+        assert!(s.contains("-p sola-bots") && !s.contains("-p sola-botsd"));
+        assert!(s.contains(" sola-botsd"), "the daemon is still copied out");
         assert_eq!(s.matches("cargo build").count(), 1);
     }
 

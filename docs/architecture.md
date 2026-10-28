@@ -58,7 +58,7 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | `crates/sola` | Process manager (binary entry) |
 | `crates/sola-bus` | Bus host + client library + topics (an app brings its own window forward with ephemeral `Topic::ShowWindow(window_id)` → the shell; `Topic::Focus` stays the shell's word to sola-river) |
 | `crates/sola-call` | Call host + client library (request/reply) |
-| `crates/sola-bots` | Named informational LLM sessions. Daemon `sola-botsd` (supervisor `MANAGED`, owner `bots`, HTTP `0.0.0.0:27419`, SSE `GET /events`) + iced **Bots** (HTTP/SSE client, same as the phone). Homes `~/Bots/<slug>/`. ACP `grok agent stdio` (yolo). Phone: SolaBot on Ember. `solactl bots` stays on sola-call. Not Projects. |
+| `crates/sola-bots` | Named informational LLM sessions. A bot is a directory `~/Bots/<slug>/` (`bot.json`: name, AI, model, session; `dialog.json`), listed by scanning `~/Bots` like Projects. Daemon `sola-botsd` (supervisor `MANAGED` on NixOS; `pkg:sola` carries it on Oath, no `svc` yet; owner `bots`; HTTP + SSE `GET /events` on the Unix socket `$XDG_RUNTIME_DIR/sola-bots`, no token) + iced **Bots** (its client). Each bot's AI is fixed at creation: Grok (`acp.rs`, `grok agent stdio` per bot, yolo), Claude (`claude.rs`, `claude -p` per turn on the bot's session, subscription login), Gab AI (`gab.rs`, the chat API, a key). `solactl bots` stays on sola-call. Not Projects. |
 | `crates/sola-core` | Shared primitives (env, process, config, log, `open_url`, `omnibox` — typed words as an address or a Kagi search, and the browser's visit history read and ranked — …) |
 | `crates/sola-river` | River ↔ bus bridge |
 | `crates/sola-session` | User-app session manager (spawn / close / reap) |

@@ -1,4 +1,5 @@
-//! In-process bot manager: catalog + dialog + ACP children.
+//! In-process bot manager: the bots in `~/Bots`, their dialogs, and the
+//! AI each runs on (Grok's ACP child, a `claude -p` per turn, Gab's API).
 
 use std::collections::HashMap;
 use std::fs;
@@ -13,10 +14,11 @@ use serde_json::json;
 use tracing::{error, info, warn};
 
 use crate::acp::AcpSession;
+use crate::ai::Ai;
 use crate::catalog::{self, BotRecord, Catalog};
-use crate::foundation;
 use crate::paths;
 use crate::sse;
+use crate::{claude, foundation, gab};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -75,12 +77,7 @@ impl Host {
         let catalog = Catalog::load();
         let mut live = HashMap::new();
         for rec in &catalog.bots {
-            let home = paths::bot_home(&rec.slug);
-            let _ = foundation::seed_home(&home, &rec.name);
-            let dialog = load_dialog(&rec.slug);
-            let mut live_row = empty_live();
-            live_row.dialog = dialog;
-            live.insert(rec.id.clone(), live_row);
+            live.insert(rec.id.clone(), live_for(rec));
         }
         Arc::new(Self {
             inner: Mutex::new(Inner { catalog, live }),
@@ -104,7 +101,22 @@ impl Host {
         v
     }
 
+    /// Pick up bot directories made or removed by hand.
+    fn rescan(&self) {
+        let mut g = self.inner.lock().unwrap();
+        let found = g.catalog.rescan();
+        for id in &found.removed {
+            g.live.remove(id);
+            info!(%id, "bot directory gone");
+        }
+        for rec in found.added {
+            info!(slug = %rec.slug, "bot directory found");
+            g.live.insert(rec.id.clone(), live_for(&rec));
+        }
+    }
+
     fn list_json_fresh(&self) -> serde_json::Value {
+        self.rescan();
         let g = self.inner.lock().unwrap();
         let bots: Vec<serde_json::Value> = g
             .catalog
@@ -116,6 +128,8 @@ impl Host {
                     "id": r.id,
                     "name": r.name,
                     "slug": r.slug,
+                    "ai": r.ai.map(Ai::id),
+                    "ai_label": r.ai.map(Ai::label),
                     "model": r.model,
                     "status": match st.map(|s| &s.status) {
                         Some(BotStatus::Working) => "working",
@@ -186,6 +200,7 @@ impl Host {
         Ok(json!({
             "id": rec.id,
             "name": rec.name,
+            "ai": rec.ai.map(Ai::id),
             "status": match live.status {
                 BotStatus::Working => "working",
                 BotStatus::Error => "error",
@@ -196,7 +211,9 @@ impl Host {
         }))
     }
 
-    pub fn create(self: &Arc<Self>, name: &str) -> Result<serde_json::Value, String> {
+    /// Make a bot on `ai`: `~/Bots/<slug>/`, its `bot.json`, its seed
+    /// files, and a first turn that introduces it.
+    pub fn create(self: &Arc<Self>, name: &str, ai: Ai) -> Result<serde_json::Value, String> {
         let name = name.trim();
         if name.is_empty() {
             return Err("name required".into());
@@ -209,31 +226,74 @@ impl Host {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: name.to_string(),
                 slug: slug.clone(),
-                vendor: "grok".into(),
-                model: "grok-4.6".into(),
-                grok_session_id: None,
+                ai: Some(ai),
+                model: String::new(),
+                session: None,
                 created: now.clone(),
                 last_used: now,
             };
-            let home = paths::bot_home(&slug);
-            foundation::seed_home(&home, name).map_err(|e| e.to_string())?;
-            g.catalog.bots.push(rec.clone());
-            g.catalog.save().map_err(|e| e.to_string())?;
+            foundation::seed_home(&paths::bot_home(&slug), name, ai).map_err(|e| e.to_string())?;
+            catalog::save(&rec).map_err(|e| e.to_string())?;
+            g.catalog.insert(rec.clone());
             g.live.insert(rec.id.clone(), empty_live());
-            info!(%slug, "bot created");
+            info!(%slug, ai = ai.id(), "bot created");
             rec
         };
+        Ok(self.introduce(&rec))
+    }
+
+    /// Choose the AI of a bot that has none (a directory made by hand).
+    /// It is fixed after: a bot does not change AI.
+    pub fn setup(self: &Arc<Self>, key: &str, ai: Ai) -> Result<serde_json::Value, String> {
+        let (old_id, rec) = {
+            let mut g = self.inner.lock().unwrap();
+            let old = g
+                .catalog
+                .find(key)
+                .cloned()
+                .ok_or_else(|| format!("unknown bot {key}"))?;
+            if let Some(had) = old.ai {
+                return Err(format!("{} already runs on {}", old.name, had.label()));
+            }
+            let now = now_rfc();
+            let rec = BotRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                ai: Some(ai),
+                created: now.clone(),
+                last_used: now,
+                ..old.clone()
+            };
+            let home = paths::bot_home(&rec.slug);
+            foundation::seed_home(&home, &rec.name, ai).map_err(|e| e.to_string())?;
+            catalog::save(&rec).map_err(|e| e.to_string())?;
+            if let Some(slot) = g.catalog.find_mut(&old.id) {
+                *slot = rec.clone();
+            }
+            let live = g.live.remove(&old.id).unwrap_or_else(empty_live);
+            g.live.insert(rec.id.clone(), live);
+            info!(slug = %rec.slug, ai = ai.id(), "bot set up");
+            (old.id, rec)
+        };
+        self.emit_removed(&old_id);
+        Ok(self.introduce(&rec))
+    }
+
+    /// Announce a new bot and run its first, hidden turn.
+    fn introduce(self: &Arc<Self>, rec: &BotRecord) -> serde_json::Value {
         self.invalidate_list_cache();
         self.emit_list();
         let home = paths::bot_home(&rec.slug);
-        let intro = foundation::intro_prompt(&rec.name, &rec.slug, &home);
-        let _ = self.prompt(&rec.id, &intro, false);
-        Ok(json!({
+        if let Some(ai) = rec.ai {
+            let intro = foundation::intro_prompt(&rec.name, &rec.slug, &home, ai);
+            let _ = self.prompt(&rec.id, &intro, false);
+        }
+        json!({
             "id": rec.id,
             "name": rec.name,
             "slug": rec.slug,
+            "ai": rec.ai.map(Ai::id),
             "home": home.display().to_string(),
-        }))
+        })
     }
 
     pub fn rm(&self, key: &str) -> Result<serde_json::Value, String> {
@@ -244,26 +304,24 @@ impl Host {
                 .find(key)
                 .cloned()
                 .ok_or_else(|| format!("unknown bot {key}"))?;
+            // The directory is the bot: it goes under the lock, so a
+            // rescan cannot find it again between the two.
+            let home = paths::bot_home(&rec.slug);
+            if home.exists() {
+                fs::remove_dir_all(&home).map_err(|e| e.to_string())?;
+            }
             let live = g.live.remove(&rec.id);
             g.catalog.bots.retain(|b| b.id != rec.id);
-            g.catalog.save().map_err(|e| e.to_string())?;
-            (
-                rec.id,
-                rec.slug.clone(),
-                rec.grok_session_id.clone(),
-                live.map(|l| l.acp),
-            )
+            // Grok keeps its sessions apart from the home; Claude Code's
+            // stay in its own history.
+            let grok_session = rec.session.clone().filter(|_| rec.ai == Some(Ai::Grok));
+            (rec.id, rec.slug.clone(), grok_session, live.map(|l| l.acp))
         };
-        // Drop ACP and the home directory before returning so a create that
-        // reuses the slug cannot race `remove_dir_all` on the new bot.
+        // Stop the ACP child before returning.
         if let Some(slot) = acp {
             if let Ok(mut g) = slot.lock() {
                 *g = None;
             }
-        }
-        let home = paths::bot_home(&slug);
-        if home.exists() {
-            fs::remove_dir_all(&home).map_err(|e| e.to_string())?;
         }
         self.invalidate_list_cache();
         self.emit_removed(&id);
@@ -298,13 +356,16 @@ impl Host {
         if text.is_empty() {
             return Err("text required".into());
         }
-        let (id, slug, model, acp_slot, home, cancel) = {
+        let (rec, ai, history, acp_slot, cancel) = {
             let mut g = self.inner.lock().unwrap();
             let rec = g
                 .catalog
                 .find(key)
                 .cloned()
                 .ok_or_else(|| format!("unknown bot {key}"))?;
+            let ai = rec
+                .ai
+                .ok_or_else(|| format!("choose an AI for {} first", rec.name))?;
             let live = g
                 .live
                 .get_mut(&rec.id)
@@ -312,6 +373,7 @@ impl Host {
             if live.status == BotStatus::Working {
                 return Err("bot is already working".into());
             }
+            let history = live.dialog.clone();
             live.status = BotStatus::Working;
             live.error = None;
             live.cancel.store(false, Ordering::SeqCst);
@@ -327,21 +389,23 @@ impl Host {
             });
             save_dialog(&rec.slug, &live.dialog);
             (
-                rec.id.clone(),
-                rec.slug.clone(),
-                rec.model.clone(),
+                rec.clone(),
+                ai,
+                history,
                 Arc::clone(&live.acp),
-                paths::bot_home(&rec.slug),
                 Arc::clone(&live.cancel),
             )
         };
+        let id = rec.id.clone();
+        let slug = rec.slug.clone();
+        let home = paths::bot_home(&slug);
         self.invalidate_list_cache();
         self.emit_list();
         self.emit_transcript(&id);
 
         let host = Arc::clone(self);
         let mut prompt = text.to_string();
-        if foundation::refresh_agents(&home) {
+        if ai.has_tools() && foundation::refresh_agents(&home) {
             prompt = format!("{}\n\n{prompt}", foundation::ADOPT);
             foundation::stamp(&home);
         }
@@ -351,16 +415,18 @@ impl Host {
         let spawn = thread::Builder::new()
             .name(format!("bot-{slug}"))
             .spawn(move || {
-                let result = run_turn(
-                    &host,
-                    &thread_id,
-                    &thread_slug,
-                    &model,
-                    &home,
-                    &acp_slot,
-                    &cancel,
-                    &prompt,
-                );
+                let turn = TurnCtx {
+                    host: &host,
+                    id: &thread_id,
+                    slug: &thread_slug,
+                    home: &home,
+                    cancel: &cancel,
+                };
+                let result = match ai {
+                    Ai::Grok => run_grok(&turn, &rec.model, &acp_slot, &prompt),
+                    Ai::Claude => run_claude(&turn, &rec.model, &prompt),
+                    Ai::Gab => run_gab(&turn, &rec, &history, &prompt),
+                };
                 if result.as_ref().is_err_and(|e| acp_retryable(e)) {
                     if let Ok(mut slot) = acp_slot.lock() {
                         *slot = None;
@@ -386,7 +452,7 @@ impl Host {
                 }
                 if let Some(rec) = g.catalog.find_mut(&thread_id) {
                     rec.last_used = now_rfc();
-                    let _ = g.catalog.save();
+                    let _ = catalog::save(rec);
                 }
                 drop(g);
                 host.invalidate_list_cache();
@@ -436,7 +502,8 @@ impl Host {
             .get(&rec.id)
             .ok_or_else(|| format!("unknown bot {key}"))?;
         live.cancel.store(true, Ordering::SeqCst);
-        let sid = rec.grok_session_id.clone();
+        // Grok hears a cancel; the other AIs' turns watch the flag.
+        let sid = rec.session.clone().filter(|_| rec.ai == Some(Ai::Grok));
         if let (Some(sid), Ok(slot)) = (sid, live.acp.lock()) {
             if let Some(sess) = slot.as_ref() {
                 sess.cancel(&sid);
@@ -453,27 +520,68 @@ fn acp_retryable(e: &str) -> bool {
         || e.contains("spawn grok")
 }
 
-fn run_turn(
-    host: &Host,
-    id: &str,
-    slug: &str,
+/// What every AI's turn needs to land its reply in the dialog.
+struct TurnCtx<'a> {
+    host: &'a Host,
+    id: &'a str,
+    slug: &'a str,
+    home: &'a std::path::Path,
+    cancel: &'a Arc<AtomicBool>,
+}
+
+impl TurnCtx<'_> {
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::SeqCst)
+    }
+
+    /// Add `delta` to the reply being written, and pass it to listeners.
+    fn append(&self, delta: &str) {
+        {
+            let mut g = self.host.inner.lock().unwrap();
+            if let Some(live) = g.live.get_mut(self.id) {
+                if let Some(last) = live.dialog.last_mut() {
+                    if last.role == "assistant" {
+                        last.text.push_str(delta);
+                    }
+                }
+                if live.last_flush.elapsed() >= Duration::from_millis(250) {
+                    save_dialog(self.slug, &live.dialog);
+                    live.last_flush = Instant::now();
+                }
+            }
+        }
+        self.host.emit_delta(self.id, delta);
+    }
+
+    fn session(&self) -> Option<String> {
+        let g = self.host.inner.lock().unwrap();
+        g.catalog.find(self.id).and_then(|r| r.session.clone())
+    }
+
+    fn keep_session(&self, sid: &str) {
+        persist_session(self.host, self.id, sid);
+    }
+}
+
+/// A Grok turn: the bot's ACP child (spawned, or reused) and session.
+fn run_grok(
+    turn: &TurnCtx<'_>,
     model: &str,
-    home: &std::path::Path,
     acp_slot: &Arc<Mutex<Option<Arc<AcpSession>>>>,
-    cancel: &Arc<AtomicBool>,
     prompt: &str,
 ) -> Result<(), String> {
-    if cancel.load(Ordering::SeqCst) {
+    let slug = turn.slug;
+    if turn.cancelled() {
         return Err("cancelled".into());
     }
     // Retry spawn/handshake only. Never re-send session/prompt — that
     // would duplicate tool calls if Grok died after accepting the turn.
     let mut tries = 0u32;
     let (sess, session_id) = loop {
-        if cancel.load(Ordering::SeqCst) {
+        if turn.cancelled() {
             return Err("cancelled".into());
         }
-        match ensure_session(host, id, slug, model, home, acp_slot) {
+        match ensure_session(turn, model, acp_slot) {
             Ok(pair) => break pair,
             Err(e) if acp_retryable(&e) && tries < 2 => {
                 tries += 1;
@@ -487,7 +595,7 @@ fn run_turn(
         }
     };
 
-    let cancel = Arc::clone(cancel);
+    let cancel = Arc::clone(turn.cancel);
     let result = sess
         .prompt(
             &session_id,
@@ -495,21 +603,7 @@ fn run_turn(
             move || cancel.load(Ordering::SeqCst),
             |ev| {
                 if let Some(delta) = ev.text_delta {
-                    {
-                        let mut g = host.inner.lock().unwrap();
-                        if let Some(live) = g.live.get_mut(id) {
-                            if let Some(last) = live.dialog.last_mut() {
-                                if last.role == "assistant" {
-                                    last.text.push_str(&delta);
-                                }
-                            }
-                            if live.last_flush.elapsed() >= Duration::from_millis(250) {
-                                save_dialog(slug, &live.dialog);
-                                live.last_flush = Instant::now();
-                            }
-                        }
-                    }
-                    host.emit_delta(id, &delta);
+                    turn.append(&delta);
                 }
                 if let Some(err) = ev.error {
                     error!(%slug, "turn error: {err}");
@@ -521,13 +615,7 @@ fn run_turn(
         Ok(_) => Ok(()),
         Err(e) if e.contains("cancelled") => Err(e),
         Err(e) => {
-            let partial = {
-                let g = host.inner.lock().unwrap();
-                g.live
-                    .get(id)
-                    .and_then(|l| l.dialog.last())
-                    .is_some_and(|t| t.role == "assistant" && !t.text.trim().is_empty())
-            };
+            let partial = said_something(turn);
             warn!(%slug, %partial, "acp prompt ended ({e})");
             if let Ok(mut g) = acp_slot.lock() {
                 *g = None;
@@ -537,14 +625,78 @@ fn run_turn(
     }
 }
 
+/// A Claude turn: `claude -p` on the bot's session, started on its first
+/// turn and again if Claude Code no longer has it.
+fn run_claude(turn: &TurnCtx<'_>, model: &str, prompt: &str) -> Result<(), String> {
+    let run = |session: &str, resume: bool| {
+        let t = claude::Turn {
+            home: turn.home,
+            model,
+            session,
+            resume,
+            prompt,
+        };
+        claude::run(&t, || turn.cancelled(), |text| turn.append(text))
+    };
+    let fresh = || {
+        let sid = uuid::Uuid::new_v4().to_string();
+        turn.keep_session(&sid);
+        sid
+    };
+    match turn.session() {
+        Some(sid) => match run(&sid, true) {
+            Err(e) if claude::session_missing(&e) => {
+                warn!(slug = %turn.slug, "claude session {sid} gone; a new one");
+                run(&fresh(), false)
+            }
+            other => other,
+        },
+        None => run(&fresh(), false),
+    }
+}
+
+/// A Gab AI turn: the dialog so far and the new message, over the API.
+fn run_gab(
+    turn: &TurnCtx<'_>,
+    rec: &BotRecord,
+    history: &[DialogTurn],
+    prompt: &str,
+) -> Result<(), String> {
+    let system = foundation::chat_system(&rec.name, turn.home);
+    let mut messages = vec![gab::Message {
+        role: "system",
+        content: &system,
+    }];
+    for t in history {
+        if !t.text.trim().is_empty() && (t.role == "user" || t.role == "assistant") {
+            messages.push(gab::Message {
+                role: &t.role,
+                content: &t.text,
+            });
+        }
+    }
+    messages.push(gab::Message {
+        role: "user",
+        content: prompt,
+    });
+    gab::run(&rec.model, &messages, || turn.cancelled(), |text| turn.append(text))
+}
+
+/// Whether the reply being written has any text yet.
+fn said_something(turn: &TurnCtx<'_>) -> bool {
+    let g = turn.host.inner.lock().unwrap();
+    g.live
+        .get(turn.id)
+        .and_then(|l| l.dialog.last())
+        .is_some_and(|t| t.role == "assistant" && !t.text.trim().is_empty())
+}
+
 fn ensure_session(
-    host: &Host,
-    id: &str,
-    slug: &str,
+    turn: &TurnCtx<'_>,
     model: &str,
-    home: &std::path::Path,
     acp_slot: &Arc<Mutex<Option<Arc<AcpSession>>>>,
 ) -> Result<(Arc<AcpSession>, String), String> {
+    let (slug, home) = (turn.slug, turn.home);
     let sess = {
         let mut guard = acp_slot.lock().map_err(|e| e.to_string())?;
         if let Some(s) = guard.as_ref() {
@@ -562,10 +714,7 @@ fn ensure_session(
         (sess, fresh)
     };
     let (sess, fresh) = sess;
-    let existing = {
-        let g = host.inner.lock().unwrap();
-        g.catalog.find(id).and_then(|r| r.grok_session_id.clone())
-    };
+    let existing = turn.session();
     let session_id = if !fresh {
         existing.ok_or_else(|| "missing session id".to_string())?
     } else if let Some(sid) = existing {
@@ -574,13 +723,13 @@ fn ensure_session(
             Err(e) => {
                 warn!(%slug, "session/load failed ({e}); new session");
                 let sid = sess.new_session(home).map_err(|e| e.to_string())?;
-                persist_session(host, id, &sid);
+                turn.keep_session(&sid);
                 sid
             }
         }
     } else {
         let sid = sess.new_session(home).map_err(|e| e.to_string())?;
-        persist_session(host, id, &sid);
+        turn.keep_session(&sid);
         sid
     };
     Ok((sess, session_id))
@@ -589,9 +738,22 @@ fn ensure_session(
 fn persist_session(host: &Host, id: &str, sid: &str) {
     let mut g = host.inner.lock().unwrap();
     if let Some(rec) = g.catalog.find_mut(id) {
-        rec.grok_session_id = Some(sid.to_string());
-        let _ = g.catalog.save();
+        rec.session = Some(sid.to_string());
+        if let Err(e) = catalog::save(rec) {
+            warn!(slug = %rec.slug, "session not saved: {e}");
+        }
     }
+}
+
+/// A bot's live row: its dialog from disk, its home seeded when its AI
+/// is known.
+fn live_for(rec: &BotRecord) -> Live {
+    if let Some(ai) = rec.ai {
+        let _ = foundation::seed_home(&paths::bot_home(&rec.slug), &rec.name, ai);
+    }
+    let mut live = empty_live();
+    live.dialog = load_dialog(&rec.slug);
+    live
 }
 
 fn load_dialog(slug: &str) -> Vec<DialogTurn> {

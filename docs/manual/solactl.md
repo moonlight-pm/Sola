@@ -278,16 +278,19 @@ live children for <APP_ID>`.
 
 ## Bots (`solactl bots`)
 
-A bot is a named informational agent session with its own home directory.
-`solactl bots` needs the bots daemon, `sola-botsd` (owner `bots`), which
-the process manager keeps running. It fails if the daemon or `sola-call`
-is down; it does not launch a window.
+A bot is a named informational agent session. Each bot is a directory in
+`~/Bots`, as each project is a directory in `~/Projects`, and runs on the
+AI it was made with: **Grok**, **Claude**, or **Gab AI**. The AI is chosen
+when the bot is made and does not change after. `solactl bots` needs the
+bots daemon, `sola-botsd` (owner `bots`). It fails if the daemon or
+`sola-call` is down; it does not launch a window.
 
 ```text
 solactl bots                         # list methods
 solactl bots list
 solactl bots poll [-b BOT]
-solactl bots new -n NAME             # or: solactl bots new NAME
+solactl bots new -n NAME -a AI       # AI: grok, claude, or gab
+solactl bots setup -b BOT -a AI      # a directory made by hand
 solactl bots send -b BOT -t TEXT
 solactl bots transcript -b BOT
 solactl bots rm -b BOT
@@ -295,24 +298,31 @@ solactl bots cancel -b BOT
 ```
 
 `-b`, `--bot` is a bot's id, slug, or name; `-n`, `--name` is a display
-name; `-t`, `--text` is the message. Every method has the default 8 s
-deadline.
+name; `-a`, `--ai` is `grok`, `claude`, or `gab`; `-t`, `--text` is the
+message. Every method has the default 8 s deadline.
 
 | Method | Does |
 |---|---|
-| `list` | Bots and their status |
+| `list` | Bots, their AI, and their status |
 | `poll` | `{"bots", "transcript"}` in one call; `transcript` is `null` without `--bot` |
-| `new` | Creates a bot and its home |
+| `new` | Creates a bot on an AI, and its home |
+| `setup` | Gives a bot directory without an AI its AI; fails if it has one |
 | `send` | Sends a message and returns while the turn runs; read the answer with `transcript` or `poll` |
 | `transcript` | The dialog turns |
-| `rm` | Deletes the catalog row, the home directory, and the Grok session |
+| `rm` | Deletes the bot's directory (and a Grok bot's session) |
 | `cancel` | Cancels the current turn |
 
 ### Homes and the write fence
 
-Each bot's home is `~/Bots/<slug>/`. `new` seeds the home and starts a
-first turn, an introduction (the orientation prompt is not shown as a user
-message).
+Each bot's home is `~/Bots/<slug>/`. Its `bot.json` holds its name, its
+AI, an optional `model` (empty for the AI's default), and its session; its
+dialog is `dialog.json`. A directory made in `~/Bots` by hand shows up as
+a bot with no AI; it talks once `setup` (or its header in the **Bots**
+window) gives it one. `new` and `setup` seed the home and start a first
+turn, an introduction (the orientation prompt is not shown as a user
+message). Bots made before 2026-10-28 moved from
+`~/.config/sola/bots/catalog.json` into their `bot.json` (all on Grok);
+the old file is kept as `catalog.json.moved`.
 
 The write fence is enforced by the prompt only. By default a bot writes
 only inside its home. To open the fence for one task, say “drop the write
@@ -320,34 +330,51 @@ fence” or “work on the whole computer”, or name a path outside the home.
 Seat steal is refused even then. A bot is not a coding agent, and it does
 not use Projects unless you ask for that rail.
 
-### Phone API
+### The AIs
 
-The daemon also serves HTTP on `0.0.0.0:27419`, in every session (see
-[Process manager](process-manager.md#managed-components)). For a phone,
-put a TLS proxy in front of it and open **27419/tcp** on the Sola machine
-to that proxy only.
+| AI | Runs as | Signs in with |
+|---|---|---|
+| Grok | `grok agent stdio` (ACP), one child per bot, all tools approved | the Grok CLI's own login; run `grok` in a terminal once to sign in |
+| Claude | `claude -p` per message on the bot's session (`--resume`), all tools approved, no MCP servers | Claude Code's own login, the subscription; an `ANTHROPIC_API_KEY` is never passed on |
+| Gab AI | Gab's chat API (`https://gab.ai/v1`, model `arya`), the dialog sent each turn | an API key in `GAB_API_KEY` or `~/.config/sola/bots/gab.key` (Gab AI → Settings → API; Plus plan) |
+
+Grok and Claude bots are agents in their home: shell, files, and the
+browser through `solactl browser`, under `AGENTS.md` (Claude reads it
+through the home's `CLAUDE.md`). An `AGENTS.md` that was already in a
+directory made by hand is kept as `AGENTS.md.orig`. A Gab AI bot only
+chats: no tools, its `CURRENT.md` in its system prompt. The bot's binaries
+are `grok` and `claude` on `PATH` (or `~/.local/bin`, or `SOLA_GROK` /
+`SOLA_CLAUDE`).
+
+### The socket API
+
+The daemon serves HTTP on a Unix socket, `$XDG_RUNTIME_DIR/sola-bots`
+(mode 0600; `SOLA_BOTS_PATH` overrides it), with no token: the socket is
+the user's alone. There is no TCP port. Remote access is meant to come
+later through a tunnel to the socket, which brings its own sign-in.
 
 ```text
 GET  /health
 GET  /bots
 GET  /events                 # SSE: snapshot, bots, transcript, delta, removed
-GET  /poll?bot={id}          # one-shot snapshot (debug); the phone uses /events
+GET  /poll?bot={id}          # one-shot snapshot (debug)
 GET  /bots/{id}/transcript
-POST /bots                 { "name": "Suno" }
+POST /bots                 { "name": "Suno", "ai": "claude" }
+POST /bots/{id}/setup      { "ai": "gab" }
 DELETE /bots/{id}
 POST /bots/{id}/send     { "text": "…" }
 POST /bots/{id}/cancel
-Authorization: Bearer <shared secret compiled into sola-botsd + SolaBot>
+```
+
+```sh
+curl --unix-socket "$XDG_RUNTIME_DIR/sola-bots" http://localhost/bots
 ```
 
 `GET /events` is `text/event-stream` (chunked), with keepalive comments
-every 15 s. The **Bots** window uses the same HTTP and SSE surface on
-`127.0.0.1:27419` (list, send, create, delete, and live events).
-`solactl bots` uses `sola-call`, not HTTP.
-
-The TLS proxy must not buffer the response body (`proxy_buffering off`,
-and honor `X-Accel-Buffering: no`). It should speak HTTP/1.1 or later to
-the daemon, with a long `proxy_read_timeout`.
+every 15 s. The **Bots** window uses this surface (list, send, create,
+delete, and live events). `solactl bots` uses `sola-call`, not HTTP. The
+iPhone app (SolaBot) spoke the old TCP API and has no way in until the
+tunnel.
 
 ## Projects (`solactl projects`)
 

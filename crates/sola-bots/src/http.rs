@@ -1,6 +1,9 @@
-//! Phone API: JSON over HTTP, bearer token, bind `HTTP_BIND`.
+//! The bots' API: JSON and SSE over HTTP on a Unix socket
+//! ([`paths::socket_path`], the user's alone). Remote access is meant to
+//! come through a tunnel to the socket, which brings its own sign-in.
 
 use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use std::sync::mpsc::RecvTimeoutError;
 use std::thread;
@@ -9,9 +12,9 @@ use std::time::Instant;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use tracing::{info, warn};
 
-use crate::auth::{HTTP_BIND, HTTP_TOKEN};
+use crate::calls::ai_arg;
 use crate::host::Host;
-use crate::sse;
+use crate::{paths, sse};
 
 const MAX_BODY: u64 = 256 * 1024;
 
@@ -23,14 +26,20 @@ pub fn spawn(host: Arc<Host>) {
 }
 
 fn serve(host: Arc<Host>) {
-    let server = match Server::http(HTTP_BIND) {
+    let path = paths::socket_path();
+    // A socket left by a daemon that died; one daemon serves at a time.
+    let _ = std::fs::remove_file(&path);
+    let server = match Server::http_unix(&path) {
         Ok(s) => s,
         Err(e) => {
-            warn!("http listen {HTTP_BIND}: {e}");
+            warn!(path = %path.display(), "bots socket: {e}");
             return;
         }
     };
-    info!(addr = HTTP_BIND, "bots http listening");
+    if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
+        warn!(path = %path.display(), "bots socket mode: {e}");
+    }
+    info!(path = %path.display(), "bots http listening");
     for req in server.incoming_requests() {
         let host = Arc::clone(&host);
         thread::spawn(move || {
@@ -46,15 +55,11 @@ fn handle(host: &Arc<Host>, req: Request) -> Result<(), String> {
     let method = req.method().clone();
     let url = req.url().to_string();
     let path = url.split('?').next().unwrap_or("/").to_string();
-    let remote = req
-        .remote_addr()
-        .map(|a| a.to_string())
-        .unwrap_or_else(|| "-".into());
     let result = handle_inner(host, req, &method, &path, &url);
     let ms = t0.elapsed().as_millis();
     match &result {
-        Ok(code) => info!(%method, %path, %remote, %code, %ms, "http"),
-        Err(e) => warn!(%method, %path, %remote, %ms, "http error: {e}"),
+        Ok(code) => info!(%method, %path, %code, %ms, "http"),
+        Err(e) => warn!(%method, %path, %ms, "http error: {e}"),
     }
     result.map(|_| ())
 }
@@ -75,10 +80,6 @@ fn handle_inner(
 
     if path == "/health" && method == &Method::Get {
         return respond(req, 200, serde_json::json!({ "ok": true }));
-    }
-
-    if !authorized(&req) {
-        return respond(req, 401, serde_json::json!({ "error": "unauthorized" }));
     }
 
     if method == &Method::Get && path == "/bots" {
@@ -112,7 +113,8 @@ fn handle_inner(
             .and_then(|t| t.as_str())
             .unwrap_or("")
             .to_string();
-        return match host.create(&name) {
+        let made = ai_arg(body_str(&body, "ai")).and_then(|ai| host.create(&name, ai));
+        return match made {
             Ok(v) => respond(req, 200, v),
             Err(e) => respond(req, 400, serde_json::json!({ "error": e })),
         };
@@ -148,6 +150,19 @@ fn handle_inner(
         }
         if let Some(id) = path
             .strip_prefix("/bots/")
+            .and_then(|r| r.strip_suffix("/setup"))
+        {
+            let body = match read_json(&mut req) {
+                Ok(v) => v,
+                Err(e) => return respond(req, 400, serde_json::json!({ "error": e })),
+            };
+            return match ai_arg(body_str(&body, "ai")).and_then(|ai| host.setup(id, ai)) {
+                Ok(v) => respond(req, 200, v),
+                Err(e) => respond(req, 400, serde_json::json!({ "error": e })),
+            };
+        }
+        if let Some(id) = path
+            .strip_prefix("/bots/")
             .and_then(|r| r.strip_suffix("/cancel"))
         {
             return match host.cancel(id) {
@@ -170,29 +185,8 @@ fn query_param(url: &str, key: &str) -> Option<String> {
     None
 }
 
-fn authorized(req: &Request) -> bool {
-    req.headers()
-        .iter()
-        .any(|h| h.field.equiv("Authorization") && bearer_ok(h.value.as_str()))
-}
-
-fn bearer_ok(value: &str) -> bool {
-    let got = value
-        .strip_prefix("Bearer ")
-        .or_else(|| value.strip_prefix("bearer "))
-        .unwrap_or(value)
-        .as_bytes();
-    constant_eq(got, HTTP_TOKEN.as_bytes())
-}
-
-fn constant_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
+fn body_str(body: &serde_json::Value, key: &str) -> Option<String> {
+    body.get(key).and_then(|v| v.as_str()).map(str::to_string)
 }
 
 fn read_json(req: &mut Request) -> Result<serde_json::Value, String> {
@@ -298,14 +292,6 @@ fn cors<R: std::io::Read>(res: Response<R>) -> Response<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bearer_accepts_prefix_and_raw() {
-        assert!(bearer_ok(&format!("Bearer {HTTP_TOKEN}")));
-        assert!(bearer_ok(HTTP_TOKEN));
-        assert!(!bearer_ok("Bearer deadbeef"));
-        assert!(!bearer_ok(""));
-    }
 
     #[test]
     fn query_param_reads_bot() {
