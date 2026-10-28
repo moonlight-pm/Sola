@@ -355,6 +355,7 @@ impl AtomField {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShellColorField {
     MenubarBg,
+    Flower,
     BackdropDim,
     SwitcherBg,
     SwitcherBorder,
@@ -367,6 +368,7 @@ impl ShellColorField {
     pub fn get(self, s: &theme::ShellStyle) -> iced::Color {
         match self {
             Self::MenubarBg => s.menubar_bg,
+            Self::Flower => s.flower,
             Self::BackdropDim => s.backdrop_dim,
             Self::SwitcherBg => s.switcher_bg,
             Self::SwitcherBorder => s.switcher_border,
@@ -378,6 +380,7 @@ impl ShellColorField {
     pub fn set(self, s: &mut theme::ShellStyle, c: iced::Color) {
         match self {
             Self::MenubarBg => s.menubar_bg = c,
+            Self::Flower => s.flower = c,
             Self::BackdropDim => s.backdrop_dim = c,
             Self::SwitcherBg => s.switcher_bg = c,
             Self::SwitcherBorder => s.switcher_border = c,

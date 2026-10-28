@@ -111,7 +111,8 @@ default window title and sidebar colors and such." Settings or the kit.
     their orange), else the tint's hue; as vivid as the picture is in that
     hue family (its peak chroma, 0.06–0.14), at the seed cyan's lightness
     (0.82), stepped down to 0.68 for a hue that cannot be vivid that light
-    (blue) (`accent`, `text-accent`, `accent-dim` at 10%).
+    (blue) (`accent`, `text-accent`, `accent-dim` at 10%, `shell-flower`
+    — except a grey picture's, which keeps the seed amber).
   - Status colors (danger, success, warning) stay.
   - A grey picture changes nothing.
 - **The sidebar's surface follows the theme:** the kit's chrome surface
@@ -234,7 +235,7 @@ and the window's focus rim is white by the Next decision.
   over the greys or the picture's scheme (`Theme::customize`): Window →
   `bg-primary`; Panels → `bg-secondary` and the switcher's fill; Highlight
   → `highlight`, and `selection` takes its hue at its own lightness;
-  Accent → `accent`, `text-accent`, `accent-dim` (10%).
+  Accent → `accent`, `text-accent`, `accent-dim` (10%), `shell-flower`.
 - **The shell makes the managed colors from scratch each time:** the
   seed's greys, the picture's scheme over them when adapting, your colors
   over that; with neither, the greys once and then hands off.

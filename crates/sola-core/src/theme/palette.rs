@@ -184,6 +184,12 @@ impl Palette {
             "shell-menubar-bg".into(),
             Token::new(TokenKind::Color, "#050505", &["shell"]),
         );
+        // The flower in the top row: Sola's amber until a look recolors
+        // it (a picture's scheme or your accent, as the accent).
+        palette.tokens.insert(
+            "shell-flower".into(),
+            Token::new(TokenKind::Color, "#ffb800", &["shell"]),
+        );
         palette.tokens.insert(
             "shell-backdrop-dim".into(),
             Token::new(TokenKind::Color, "#00000099", &["shell"]),

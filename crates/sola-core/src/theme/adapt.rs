@@ -104,6 +104,7 @@ const RECIPE: &[(&str, Role)] = &[
     ("accent-dim", Role::AccentDim),
     ("shell-menubar-bg", Role::Surface),
     ("shell-switcher-bg", Role::Surface),
+    ("shell-flower", Role::Flower),
 ];
 
 #[derive(Clone, Copy)]
@@ -113,6 +114,9 @@ enum Role {
     Accent,
     /// The accent at 10%.
     AccentDim,
+    /// The accent, but a grey picture (no color of its own) keeps the
+    /// seed's.
+    Flower,
 }
 
 impl Scheme {
@@ -213,6 +217,8 @@ impl Scheme {
             Role::Text => Lch::new(l, tint * TEXT_SHARE, self.tint_hue).to_rgba(seed.a),
             Role::Accent => self.accent().to_rgba(1.0),
             Role::AccentDim => self.accent().to_rgba(0.10),
+            Role::Flower if self.tint_chroma == 0.0 => seed,
+            Role::Flower => self.accent().to_rgba(1.0),
         }
     }
 
@@ -253,8 +259,8 @@ impl Theme {
     /// `window` the base; `panels` the raised fill and the switcher's
     /// (keeping its alpha); `highlight` a column's active row, and the
     /// selection takes its hue at the selection's own lightness; `accent`
-    /// the accent, its text and its 10% wash. Returns true when a token
-    /// changed.
+    /// the accent, its text, its 10% wash and the shell's flower. Returns
+    /// true when a token changed.
     pub fn customize(&mut self, colors: &std::collections::BTreeMap<String, String>) -> bool {
         let seed = Palette::seed();
         let mut values: Vec<(&str, String)> = Vec::new();
@@ -279,6 +285,7 @@ impl Theme {
                     values.push(("accent", c.hex()));
                     values.push(("text-accent", c.hex()));
                     values.push(("accent-dim", Rgba { a: 0.10, ..c }.hex()));
+                    values.push(("shell-flower", c.hex()));
                 }
                 _ => {}
             }
@@ -701,6 +708,7 @@ mod tests {
         theme.adapt(&scheme, 0.6);
         assert_eq!(token(&theme, "bg-primary"), "#0b0b0b");
         assert_eq!(token(&theme, "text-primary"), "#ececec");
+        assert_eq!(token(&theme, "shell-flower"), "#ffb800");
     }
 
     #[test]
@@ -719,8 +727,9 @@ mod tests {
         assert!((seed - now).abs() < 0.01, "lightness kept: {seed} vs {now}");
         // Translucent shell tokens keep their alpha.
         assert!(token(&theme, "shell-switcher-bg").ends_with("e6"));
-        // The dim accent is the accent at 10%.
+        // The dim accent is the accent at 10%; the flower is the accent.
         assert!(token(&theme, "accent-dim").ends_with("1a"));
+        assert_eq!(token(&theme, "shell-flower"), token(&theme, "accent"));
         // Fonts and sizes are untouched.
         assert_eq!(token(&theme, "space-md"), "12px");
     }
@@ -810,6 +819,7 @@ mod tests {
         assert_eq!(token(&theme, "accent"), "#ff8800");
         assert_eq!(token(&theme, "text-accent"), "#ff8800");
         assert_eq!(token(&theme, "accent-dim"), "#ff88001a");
+        assert_eq!(token(&theme, "shell-flower"), "#ff8800");
         assert_eq!(token(&theme, "bg-secondary"), "#203040");
         assert_eq!(token(&theme, "shell-switcher-bg"), "#203040e6");
         assert_eq!(token(&theme, "highlight"), "#6040a0");

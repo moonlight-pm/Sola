@@ -143,6 +143,7 @@ The shell's chrome has its own tokens in the same palette, all in the group
 | Token | Default | Controls |
 |---|---|---|
 | `shell-menubar-bg` | `#050505` | Saved and editable; the top row is transparent and does not use it |
+| `shell-flower` | `#ffb800` | The flower at the left of the top row. A picture's scheme (not a grey picture's) and your Accent set it to the accent |
 | `shell-backdrop-dim` | `#00000099` | Dimming behind the launcher |
 | `shell-switcher-bg` | `#151515e6` | Switcher panel fill |
 | `shell-switcher-border` | `#ffffff1a` | Switcher panel border |
@@ -198,6 +199,7 @@ changes at once:
 - The accent takes another of the picture's colors, apart from the tint in
   hue (on the Cosmic Cliffs: the cliffs' orange-brown tint and the sky's
   blue accent).
+- The flower in the top row takes the accent too.
 - Status colors, fonts, sizes and spacing do not change. A grey picture
   changes nothing.
 
@@ -228,7 +230,7 @@ forgets the look.
 | Window | `bg-primary` |
 | Panels | `bg-secondary` and the switcher's fill (its alpha kept): bars, titlebars, sidebars |
 | Highlight | `highlight` (the tab bar's focused row); `selection` takes its hue at its own lightness |
-| Accent | `accent`, `text-accent`, and `accent-dim` at 10% |
+| Accent | `accent`, `text-accent`, `accent-dim` at 10%, and the flower (`shell-flower`) |
 
 Hover and shown rows in a sidebar are lifts of the column that keep its
 hue, so they follow a tinted or custom panel color instead of turning grey.

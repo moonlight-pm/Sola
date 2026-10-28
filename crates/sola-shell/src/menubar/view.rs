@@ -11,7 +11,8 @@
 //! menus are not here: each app carries its own in its window's titlebar
 //! (kit `window_frame`, Next slice 6).
 //!
-//! Colours come from the live theme palette; the flower is Sola's amber.
+//! Colours come from the live theme palette; the flower is its own
+//! `shell-flower` token (Sola's amber unless a look recolors it).
 
 use iced::widget::{Space, container, mouse_area, row, stack, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
@@ -27,8 +28,6 @@ use crate::menubar::{
     SPECTRUM_PAD_H, STAT_INNER_SPACING, WINDOW_HEIGHT,
 };
 
-/// Sola's amber: the flower is the brand mark, not a theme atom.
-const SOL: Color = Color::from_rgb(1.0, 0.722, 0.0);
 /// 14px lucide/SVG and LED matrices: iced centers the layout box, which
 /// hangs below 13pt cap height, so marks sit low. Same lift for icons
 /// and pixel graphs.
@@ -132,9 +131,13 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let flower = mouse_area(
         container(island(
             item(
-                container(chrome_nudge(icon_colored("sola/flower", ICON_SIZE, SOL)))
-                    .width(Length::Fill)
-                    .align_x(Alignment::Center),
+                container(chrome_nudge(icon_colored(
+                    "sola/flower",
+                    ICON_SIZE,
+                    shell.style.flower,
+                )))
+                .width(Length::Fill)
+                .align_x(Alignment::Center),
                 Msg::OpenMenu {
                     index: 0,
                     is_system: true,

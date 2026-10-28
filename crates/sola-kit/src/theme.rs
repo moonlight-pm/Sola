@@ -626,6 +626,8 @@ pub fn color_to_hex(c: Color) -> String {
 /// is a Cmd+Tab-style HUD: neutral frosted pill, soft light plate under
 /// the selected icon (not an accent pill).
 const SHELL_MENUBAR_BG: &str = "#050505";
+/// The flower: Sola's amber until a look recolors it.
+const SHELL_FLOWER: &str = "#ffb800";
 const SHELL_BACKDROP_DIM: &str = "#00000099";
 const SHELL_SWITCHER_BG: &str = "#151515e6"; // raised grey HUD glass
 const SHELL_SWITCHER_BORDER: &str = "#ffffff1a";
@@ -649,6 +651,7 @@ const SHELL_LAUNCHER_PAD: f32 = 8.0;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShellStyle {
     pub menubar_bg: Color,
+    pub flower: Color,
     pub backdrop_dim: Color,
     pub switcher_bg: Color,
     pub switcher_border: Color,
@@ -665,6 +668,7 @@ impl Default for ShellStyle {
     fn default() -> Self {
         Self {
             menubar_bg: parse(SHELL_MENUBAR_BG),
+            flower: parse(SHELL_FLOWER),
             backdrop_dim: parse(SHELL_BACKDROP_DIM),
             switcher_bg: parse(SHELL_SWITCHER_BG),
             switcher_border: parse(SHELL_SWITCHER_BORDER),
@@ -712,6 +716,7 @@ pub fn shell_style_from_bus_theme(bus: &BusTheme) -> ShellStyle {
     let d = ShellStyle::default();
     ShellStyle {
         menubar_bg: shell_color(bus, "shell-menubar-bg", d.menubar_bg),
+        flower: shell_color(bus, "shell-flower", d.flower),
         backdrop_dim: shell_color(bus, "shell-backdrop-dim", d.backdrop_dim),
         switcher_bg: shell_color(bus, "shell-switcher-bg", d.switcher_bg),
         switcher_border: shell_color(bus, "shell-switcher-border", d.switcher_border),
@@ -736,12 +741,13 @@ pub fn shell_style_from_bus_theme(bus: &BusTheme) -> ShellStyle {
 /// write-list ⊇ read-list invariant.
 pub fn bus_theme_with_shell(mut t: BusTheme, shell: &ShellStyle) -> BusTheme {
     use sola_core::theme::{Token, TokenKind};
-    let entries: [(&str, TokenKind, String); 11] = [
+    let entries: [(&str, TokenKind, String); 12] = [
         (
             "shell-menubar-bg",
             TokenKind::Color,
             color_to_hex(shell.menubar_bg),
         ),
+        ("shell-flower", TokenKind::Color, color_to_hex(shell.flower)),
         (
             "shell-backdrop-dim",
             TokenKind::Color,

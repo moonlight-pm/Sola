@@ -112,7 +112,8 @@ group reboot and power off without a password (this takes effect after
 The menubar is the top row of the desk: a row of islands on the
 ground (the background picture, or black), a gap in from the edges,
 nothing behind them. On the left, the
-flower (amber, in its own circle); while a message shows, it sits in the
+flower (in its own circle; amber unless the look recolors it — see
+[Theme](theme.md#shell-tokens)); while a message shows, it sits in the
 middle; on the right, an island per group:
 mail, alerts, mouse and Bluetooth; the spectrum; CPU, GPU and MEM; RX and
 TX; the clock. Click an item for its panel; its island lifts while the

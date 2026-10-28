@@ -344,7 +344,7 @@ iced `Theme`.
 
 Spec: `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`.
 
-**Shell chrome** rides the same palette as `shell-*` tokens (7 alpha-capable
+**Shell chrome** rides the same palette as `shell-*` tokens (8 alpha-capable
 colors + 4 spacing values, group `"shell"`). `ShellStyle` is the typed view:
 `shell_style_from_bus_theme` extracts (per-token fallback to compile-time
 defaults), `bus_theme_with_shell` writes back. The shell refreshes it on every

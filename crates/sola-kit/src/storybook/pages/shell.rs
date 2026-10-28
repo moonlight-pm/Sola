@@ -68,6 +68,23 @@ pub fn view<'a>(
         ));
     }
 
+    // The flower gets its own group: it is the top row's mark, not
+    // chrome around a surface.
+    let flower_picker = if editing == Some(ShellColorField::Flower) {
+        picker_view.take()
+    } else {
+        None
+    };
+    let flower_tile = swatch_tile(
+        shell,
+        "FLOWER",
+        ShellColorField::Flower,
+        "shell-flower",
+        editable,
+        editing,
+        flower_picker,
+    );
+
     // Switcher icon colors live under the Switcher group (they're chrome for
     // the switcher tiles, not the global palette). Separate row keeps the
     // top color row at four swatches so it doesn't overflow narrow windows.
@@ -111,6 +128,14 @@ pub fn view<'a>(
         )
         .style(muted),
         color_row,
+        subheading("Top row"),
+        body(
+            "FLOWER tints the system-menu flower. The seed is Sola's amber; \
+             a scheme from the background picture or a custom accent sets \
+             it to the accent.",
+        )
+        .style(muted),
+        flower_tile,
         subheading("Switcher"),
         body(
             "Cmd+Tab HUD: ICON_BG is a soft light plate under the selected \
