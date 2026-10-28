@@ -122,7 +122,7 @@ for icons, names, and the ghost row of an app that is starting. `sola-session` a
 `orca`, Super+Q still closes the window, but `sola-session` does not stop
 the scope it started, and a restart of `sola-session` starts the
 application again. Use the window's own app id as the catalog id: the
-**Running, not configured** list in Settings shows it.
+**Running, not in the launcher** list in Settings shows it.
 
 ## The application catalog
 
@@ -164,10 +164,10 @@ entry's app id retracts the old entry and publishes the new one;
 An entry needs an app id, a name, and a command. On save, a first word of
 the command that is found on `PATH` is replaced by its absolute path.
 
-**Running, not configured** lists open windows whose app id has no entry
-(Sola's own applications excepted), with a command guessed from the app id
-or from the window's process.
-**Configure** starts a new entry with both filled in.
+**Running, not in the launcher** lists open windows whose app id has no
+entry (Sola's own applications, every `sola-…` app id, excepted), with a
+command guessed from the app id or from the window's process.
+**Add** starts a new entry with both filled in.
 
 Other applications publish entries too. Arcade adds an entry with no
 command so the tab bar can name a running game. Entries with no command

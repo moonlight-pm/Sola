@@ -641,6 +641,22 @@ mod tests {
     use super::*;
     use sola_bus::topics::Application;
 
+    #[test]
+    fn sola_apps_are_never_offered_for_the_launcher() {
+        let window = |app_id: &str| BusWindow {
+            window_id: 1,
+            app_id: app_id.into(),
+            title: String::new(),
+            pid: None,
+        };
+        let running = [window("sola-design"), window("sola-oath"), window("gimp")];
+        let ids: Vec<String> = collect_candidates(&ApplicationsConfig::default(), &running)
+            .into_iter()
+            .map(|c| c.app_id)
+            .collect();
+        assert_eq!(ids, ["gimp"]);
+    }
+
     fn app(id: &str, label: &str) -> Application {
         Application {
             app_id: id.into(),

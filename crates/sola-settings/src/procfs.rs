@@ -10,31 +10,12 @@ use std::path::Path;
 
 use sola_core::applications::resolve_in_path;
 
-/// App IDs that are part of Sola itself and should never appear as
-/// "running, not configured" candidates. Kept local to sola-settings
-/// (rather than imported from sola-core) so editing the launcher
-/// builtin list — which lives in sola-shell — doesn't have to also
-/// rebuild this crate. New first-party apps go in both places.
-const SYSTEM_APP_IDS: &[&str] = &[
-    "sola-shell",
-    "sola-settings",
-    "sola-monitor",
-    "sola-terminal",
-    "sola-browser",
-    "sola-kit",
-    "sola-mail",
-    "sola-calendar",
-    "sola-preview",
-    "sola-paint",
-    "sola-projects",
-    "sola-arcade",
-    "sola-scope",
-    "sola-spotify",
-    "sola-bots",
-];
-
+/// Sola's own apps never appear as "running, not configured"
+/// candidates. Every one is named `sola-*` (its binary name); a copied
+/// list of the launcher's built-ins drifted and offered Design to be
+/// added.
 pub fn is_system_app(app_id: &str) -> bool {
-    SYSTEM_APP_IDS.contains(&app_id)
+    app_id.starts_with("sola-")
 }
 
 /// Best-effort suggestion of a launch command for a window we just
