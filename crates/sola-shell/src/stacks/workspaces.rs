@@ -42,7 +42,7 @@ impl Stacks {
     pub fn windows_on(&self, index: usize) -> Vec<u32> {
         self.desks
             .get(index)
-            .map_or_else(Vec::new, |d| d.all_tabs().map(|t| t.window_id).collect())
+            .map_or_else(Vec::new, |d| d.tabs.iter().map(|t| t.window_id).collect())
     }
 
     /// Show workspace `index`. Returns false when it is already showing or
@@ -66,7 +66,7 @@ impl Stacks {
     }
 
     /// Send `window_id` to workspace `index`: the same zone there, at the
-    /// end, shown (a float stays a float; Full or the halves come up with
+    /// end of its bar, shown (a float stays a float; Full or the halves come up with
     /// it). Returns false when nothing moved.
     pub fn send(&mut self, window_id: u32, index: usize) -> bool {
         let window_id = self.parent_of(window_id).unwrap_or(window_id);
@@ -76,7 +76,7 @@ impl Stacks {
         let Some((zone, _, tab, _)) = self.take(window_id) else {
             return false;
         };
-        self.desks[index].push(tab, zone, true);
+        self.desks[index].push(tab, true);
         self.desks[index].pick(zone);
         true
     }
@@ -126,8 +126,8 @@ impl Stacks {
     }
 
     /// Delete workspace `index`; its windows join the workspace before it
-    /// (the next, for the first), at the ends of the same zones. The last
-    /// workspace stays.
+    /// (the next, for the first) in the same zones, at the end of its bar.
+    /// The last workspace stays.
     pub fn delete_workspace(&mut self, index: usize) -> bool {
         if self.desks.len() < 2 || index >= self.desks.len() {
             return false;
@@ -135,11 +135,13 @@ impl Stacks {
         let showing_id = self.showing_id().to_string();
         let gone = self.desks.remove(index);
         let heir = index.saturating_sub(1);
-        for col in gone.columns {
-            for tab in col.tabs {
-                let shown = col.shown == Some(tab.window_id);
-                self.desks[heir].push(tab, col.zone, shown);
-            }
+        let shown: Vec<bool> = gone
+            .tabs
+            .iter()
+            .map(|t| gone.column(t.zone).shown == Some(t.window_id))
+            .collect();
+        for (tab, shown) in gone.tabs.into_iter().zip(shown) {
+            self.desks[heir].push(tab, shown);
         }
         self.showing = self
             .desks

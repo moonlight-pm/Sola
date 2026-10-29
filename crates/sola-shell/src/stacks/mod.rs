@@ -1,8 +1,8 @@
 //! The tab bar's model (Next, `docs/specs/2026-10-21-next-tab-bar-design.md`):
-//! the workspaces, which one shows, and on each the zone every window is
-//! in, each zone's tabs in bar order, and which tab each tiled zone shows.
-//! Pure — the shell turns it into `Composition` and `Frame`s and draws the
-//! bar from it.
+//! the workspaces, which one shows, and on each every window in bar order
+//! with the zone it is in, and which tab each tiled zone shows. The bar
+//! lists a workspace's windows in one run, not by zone. Pure — the shell
+//! turns it into `Composition` and `Frame`s and draws the bar from it.
 //!
 //! A tiled zone shows one tab; the rest stay out of the composition, so
 //! River hides them. Full and the two halves take turns on screen: picking
@@ -10,7 +10,7 @@
 //! workspace is composed. A window with a parent (a dialog) is no tab: it
 //! rides above its parent, on its parent's workspace.
 //!
-//! The readers without a window (`tabs`, `shown`, `visible_shown`,
+//! The readers without a window (`bar`, `shown`, `visible_shown`,
 //! `on_screen`, `front`, `cinema`, `float_order`) answer for the showing
 //! workspace; everything given a window finds it on whichever workspace it
 //! is.
@@ -41,7 +41,7 @@ pub const HALVES: [(Zone, f32); 2] = [(Zone::Left, 0.5), (Zone::Right, 0.5)];
 /// The zones that show one tab at a time.
 pub const TILED: [Zone; 3] = [FULL, Zone::Left, Zone::Right];
 
-/// Every zone the bar lists, in bar order.
+/// The zones a window can be in.
 pub const ZONES: [Zone; 4] = [FULL, Zone::Left, Zone::Right, Zone::Float];
 
 /// The workspace a fresh desk starts with.
@@ -61,6 +61,7 @@ pub struct Tab {
     /// What its place is remembered by: the tab key an app announced
     /// (`Topic::Tab`), else the app id.
     pub key: String,
+    pub zone: Zone,
 }
 
 /// Where [`Stacks::place`] put a window.
@@ -134,10 +135,10 @@ impl Stacks {
     /// Place a new window. In order: the place its key just left, its
     /// key's saved place (for a tab with neither, its app's), Floating for
     /// `floats`, else the showing workspace's landing zone (shown): Full
-    /// while it is up or nothing is tiled, else the last focused half. It
-    /// goes right after the focused tab when that tab is in the zone (after
-    /// the last window opened from it, while it kept focus), else at the
-    /// end. `returning` windows (the ones present when the shell starts,
+    /// while it is up or nothing is tiled, else the last focused half. In
+    /// the bar it goes right after the focused tab, whatever that tab's
+    /// zone (after the last window opened from it, while it kept focus),
+    /// else at the end. `returning` windows (the ones present when the shell starts,
     /// and tabs opened behind) take a remembered place if there is one
     /// and otherwise join without being shown over the zone's tab.
     pub fn place(
@@ -150,25 +151,26 @@ impl Stacks {
         now: Instant,
     ) -> Placed {
         self.take(window_id);
-        let tab = Tab {
+        let tab = |zone| Tab {
             window_id,
             app_id: app_id.to_string(),
             key: key.to_string(),
+            zone,
         };
         let keys: &[&str] = if key == app_id { &[key] } else { &[key, app_id] };
         for k in keys {
             if let Some(slot) = self.claim_ghost(k, now) {
-                return self.insert_slot(tab, &slot, None);
+                return self.insert_slot(tab(slot.zone), &slot, None);
             }
             if let Some(slot) = self.claim_restore(k, now) {
                 let at = slot.at;
-                return self.insert_slot(tab, &slot, Some(at));
+                return self.insert_slot(tab(slot.zone), &slot, Some(at));
             }
         }
         let (zone, at, opener) = self.landing_slot(floats);
         let desk = &mut self.desks[self.showing];
         let show = !(returning && desk.column(zone).shown.is_some());
-        let shown = desk.insert(tab, zone, at, show);
+        let shown = desk.insert(tab(zone), at, show);
         if shown {
             desk.pick(zone);
         }
@@ -182,13 +184,13 @@ impl Stacks {
 
     /// Where [`Self::place`] puts a new window that has no remembered slot:
     /// the zone (Float, or the showing workspace's landing zone), the index
-    /// there — right after the focused tab, after the last window opened
-    /// from it while it kept focus — and that focused tab (the opener).
-    /// The launcher's ghost row stands there while an app starts.
+    /// in the bar — right after the focused tab, after the last window
+    /// opened from it while it kept focus — and that focused tab (the
+    /// opener). The launcher's ghost row stands there while an app starts.
     pub fn landing_slot(&self, floats: bool) -> (Zone, usize, Option<u32>) {
         let desk = &self.desks[self.showing];
         let zone = if floats { Zone::Float } else { desk.landing() };
-        let tabs = &desk.column(zone).tabs;
+        let tabs = &desk.tabs;
         let index_of = |w: u32| tabs.iter().position(|t| t.window_id == w);
         let opener = self.focused.filter(|&f| index_of(f).is_some());
         let after = match (opener, self.opened) {
@@ -204,25 +206,16 @@ impl Stacks {
         let d = self.desk_index(&slot.workspace).unwrap_or(self.showing);
         let ranks = &self.ranks;
         let desk = &mut self.desks[d];
-        let col = desk.column_mut(slot.zone);
         let index = match rank {
             // Before the first tab saved after it (or added since).
-            Some(r) => col
+            Some(r) => desk
                 .tabs
                 .iter()
                 .position(|t| ranks.get(&t.window_id).is_none_or(|&other| other > r))
-                .unwrap_or(col.tabs.len()),
-            None => slot.at.min(col.tabs.len()),
+                .unwrap_or(desk.tabs.len()),
+            None => slot.at,
         };
-        col.tabs.insert(index, tab);
-        let mut shown = true;
-        if slot.zone == Zone::Float {
-            desk.float_z.push(window_id);
-        } else if slot.shown || col.shown.is_none() {
-            col.show(window_id);
-        } else {
-            shown = false;
-        }
+        let shown = desk.insert(tab, index, slot.shown);
         if let Some(r) = rank {
             self.ranks.insert(window_id, r);
         }
@@ -239,9 +232,8 @@ impl Stacks {
     pub fn set_key(&mut self, window_id: u32, key: &str, now: Instant) -> Option<Placed> {
         let d = self.desk_of(window_id)?;
         let tab = self.desks[d]
-            .columns
+            .tabs
             .iter_mut()
-            .flat_map(|c| c.tabs.iter_mut())
             .find(|t| t.window_id == window_id)?;
         if tab.key == key {
             return None;
@@ -361,78 +353,45 @@ impl Stacks {
         }
     }
 
-    /// Move `window_id` to `zone` on its workspace, in front of `before`
-    /// (else at the end), and show it there (Full, or the halves, comes on
-    /// screen with it). Returns false when nothing moved.
-    pub fn move_to(&mut self, window_id: u32, zone: Zone, before: Option<u32>) -> bool {
-        if !ZONES.contains(&zone) || before == Some(window_id) {
+    /// Move `window_id` to `zone` on its workspace and show it there (Full,
+    /// or the halves, comes on screen with it). Its row keeps its place in
+    /// the bar. Returns false when nothing moved.
+    pub fn move_to(&mut self, window_id: u32, zone: Zone) -> bool {
+        if !ZONES.contains(&zone) {
             return false;
         }
         let Some(d) = self.desk_of(window_id) else {
             return false;
         };
-        let Some((_, _, tab, _)) = self.take(window_id) else {
+        let Some((_, at, mut tab, _)) = self.take(window_id) else {
             return false;
         };
+        tab.zone = zone;
         let desk = &mut self.desks[d];
-        let col = desk.column_mut(zone);
-        let index = before
-            .and_then(|b| col.tabs.iter().position(|t| t.window_id == b))
-            .unwrap_or(col.tabs.len());
-        col.tabs.insert(index, tab);
-        if zone == Zone::Float {
-            desk.float_z.push(window_id);
-        } else {
-            col.show(window_id);
-            desk.pick(zone);
-        }
+        desk.insert(tab, at, true);
+        desk.pick(zone);
         true
     }
 
-    /// The tab after (or before) `window_id` in its zone, wrapping.
-    pub fn step(&self, window_id: u32, back: bool) -> Option<u32> {
-        let window_id = self.parent_of(window_id).unwrap_or(window_id);
-        let desk = &self.desks[self.desk_of(window_id)?];
-        let tabs = &desk.column(desk.zone_of(window_id)?).tabs;
-        if tabs.len() < 2 {
-            return None;
-        }
-        let i = tabs.iter().position(|t| t.window_id == window_id)?;
-        let n = tabs.len();
-        let next = if back { (i + n - 1) % n } else { (i + 1) % n };
-        Some(tabs[next].window_id)
+    /// Move `window_id`'s row in the bar to just before `before`'s (else
+    /// to the end). It keeps its zone, and nothing shows or hides. Returns
+    /// false when nothing moved.
+    pub fn reorder(&mut self, window_id: u32, before: Option<u32>) -> bool {
+        let Some(d) = self.desk_of(window_id) else {
+            return false;
+        };
+        self.desks[d].reorder(window_id, before)
     }
 
-    /// The window group (zone) after (or before) `from`'s on the showing
-    /// workspace, wrapping, skipping groups with nothing to show — and what
-    /// it shows: a tiled zone's shown tab, the top float. Without `from` (or
-    /// from a window in no group), the first (the last, `back`). `None` when
-    /// no other group has anything to show.
-    pub fn step_group(
-        &self,
-        from: Option<u32>,
-        back: bool,
-        hidden: &dyn Fn(&str) -> bool,
-    ) -> Option<u32> {
-        let desk = &self.desks[self.showing];
-        let groups: Vec<(Zone, u32)> = ZONES
-            .iter()
-            .filter_map(|&zone| {
-                let front = if zone == Zone::Float {
-                    desk.float_z.iter().rev().copied().find(|&w| {
-                        desk.tab(w).is_some_and(|t| !hidden(&t.app_id))
-                    })
-                } else {
-                    desk.visible_shown(zone, hidden)
-                };
-                front.map(|w| (zone, w))
-            })
-            .collect();
+    /// The tab after (or before) `from` in the showing workspace's bar,
+    /// wrapping, whatever their zones (a dialog steps from its parent).
+    /// Without `from`, or from a window not in this bar, the first (the
+    /// last, `back`). `None` when there is nothing else to step to.
+    pub fn step(&self, from: Option<u32>, back: bool) -> Option<u32> {
+        let tabs = &self.desks[self.showing].tabs;
         let from = from.map(|w| self.parent_of(w).unwrap_or(w));
-        let here = from
-            .and_then(|w| desk.zone_of(w))
-            .and_then(|z| groups.iter().position(|(g, _)| *g == z));
-        let n = groups.len();
+        let here = from.and_then(|w| tabs.iter().position(|t| t.window_id == w));
+        let n = tabs.len();
         let next = match here {
             Some(_) if n < 2 => return None,
             Some(i) if back => (i + n - 1) % n,
@@ -440,7 +399,7 @@ impl Stacks {
             None if back => n.checked_sub(1)?,
             None => 0,
         };
-        groups.get(next).map(|(_, w)| *w)
+        tabs.get(next).map(|t| t.window_id)
     }
 
     /// Toggle Cinema (the whole output, menubar and bar included) for
@@ -458,8 +417,9 @@ impl Stacks {
     // Reading: the showing workspace
     // ---------------------------------------------------------------------
 
-    pub fn tabs(&self, zone: Zone) -> &[Tab] {
-        self.tabs_on(self.showing, zone)
+    /// The showing workspace's tabs in bar order.
+    pub fn bar(&self) -> &[Tab] {
+        self.bar_on(self.showing)
     }
 
     pub fn shown(&self, zone: Zone) -> Option<u32> {
@@ -500,10 +460,9 @@ impl Stacks {
     // Reading: any workspace, any window
     // ---------------------------------------------------------------------
 
-    pub fn tabs_on(&self, workspace: usize, zone: Zone) -> &[Tab] {
-        self.desks
-            .get(workspace)
-            .map_or(&[], |d| d.column(zone).tabs.as_slice())
+    /// Workspace `workspace`'s tabs in bar order.
+    pub fn bar_on(&self, workspace: usize) -> &[Tab] {
+        self.desks.get(workspace).map_or(&[], |d| d.tabs.as_slice())
     }
 
     pub fn cinema_on(&self, workspace: usize) -> Option<u32> {

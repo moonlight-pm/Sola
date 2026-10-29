@@ -238,10 +238,13 @@ pub enum Activity {
     Waiting,
 }
 
-/// One zone of the shell's tab bar as last saved: its tabs' keys in bar
-/// order, and which of them the zone shows (an index into `apps`). A key
-/// is a [`Tab::key`], or the app id for a window that is not an announced
-/// tab (and can then repeat: two windows of one app).
+/// A run of the shell's tab bar as last saved: tabs next to each other in
+/// one zone, their keys in bar order, and which of them the zone shows (an
+/// index into `apps`; at most one run per zone has it). A workspace's runs
+/// in order are its bar, which mixes zones; a zone may have several runs
+/// (a layout saved before the bar mixed zones has one per zone). A key is
+/// a [`Tab::key`], or the app id for a window that is not an announced tab
+/// (and can then repeat: two windows of one app).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TabLayoutZone {
     pub zone: Zone,

@@ -830,8 +830,8 @@ impl Shell {
         self.raise_window_from_click(window_id);
     }
 
-    /// Show `window_id` in its zone and focus it: a tab bar row, Super+`,
-    /// Super+Tab. Unhides a Super+H'd app first.
+    /// Show `window_id` in its zone and focus it: a tab bar row, Super+`.
+    /// Unhides a Super+H'd app first.
     pub(crate) fn activate_window(&mut self, window_id: u32) {
         let Some(app_id) = self.app_id_for_window(window_id) else {
             return;
@@ -1201,13 +1201,13 @@ impl Shell {
             return crate::screenshot::window(app_id, title);
         }
 
-        // Meta+` / Meta+Shift+`: next / previous tab in the focused zone.
+        // Meta+` / Meta+Shift+`: next / previous tab in the bar.
         if chord.meta && chord.keycode == sola_core::KeyCode::GRAVE {
             return Task::done(Msg::CycleTabs { back: chord.shift });
         }
 
         // Workspaces: Meta+1…9 shows one, Meta+Ctrl+1…9 sends the focused
-        // window there, Meta+Ctrl+(Shift+)Tab steps.
+        // window there, Meta+(Shift+)Tab steps.
         if chord.meta && !chord.alt {
             if let Some(index) = crate::keys::workspace_index(chord.keycode) {
                 if chord.ctrl && !chord.shift {
@@ -1219,15 +1219,10 @@ impl Shell {
                     return Task::none();
                 }
             }
-            if chord.ctrl && chord.keycode == sola_core::KeyCode::TAB {
+            if !chord.ctrl && chord.keycode == sola_core::KeyCode::TAB {
                 self.step_workspace(chord.shift);
                 return Task::none();
             }
-        }
-
-        // Meta+Tab / Meta+Shift+Tab: the next / previous window group.
-        if chord.meta && !chord.ctrl && !chord.alt && chord.keycode == sola_core::KeyCode::TAB {
-            return Task::done(Msg::CycleGroups { back: chord.shift });
         }
 
         // Zone snapping (Meta+Numpad).

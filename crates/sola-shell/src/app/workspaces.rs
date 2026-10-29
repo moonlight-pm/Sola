@@ -45,7 +45,7 @@ impl Shell {
         self.focus_showing_workspace();
     }
 
-    /// Super+Ctrl+Tab / Super+Ctrl+Shift+Tab.
+    /// Super+Tab / Super+Shift+Tab.
     pub(crate) fn step_workspace(&mut self, back: bool) {
         let next = self.tabs.step_workspace(back);
         self.show_workspace(next);

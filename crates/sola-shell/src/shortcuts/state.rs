@@ -7,8 +7,6 @@ use sola_kit::menu::{WINDOW_MENU_ENTRIES, WindowAction, WindowMenuEntry, parse_w
 #[derive(Clone, Debug)]
 pub enum ShortcutAction {
     OpenLauncher,
-    /// The next window group (Super+Tab).
-    NextGroup,
     OpenShortcuts,
     Hide,
     CloseApp,
@@ -192,13 +190,7 @@ fn shell_rows() -> Vec<ShortcutRow> {
         ),
         row(
             "Shell",
-            "Next Window Group",
-            Some(KeyCode::TAB.meta()),
-            ShortcutAction::NextGroup,
-        ),
-        row(
-            "Shell",
-            "Next Tab in Group",
+            "Next Tab",
             Some(KeyCode::GRAVE.meta()),
             ShortcutAction::Cycle,
         ),
@@ -217,13 +209,13 @@ fn shell_rows() -> Vec<ShortcutRow> {
         row(
             "Workspaces",
             "Next Workspace",
-            Some(KeyCode::TAB.meta().ctrl()),
+            Some(KeyCode::TAB.meta()),
             ShortcutAction::StepWorkspace { back: false },
         ),
         row(
             "Workspaces",
             "Previous Workspace",
-            Some(KeyCode::TAB.meta().ctrl().shift()),
+            Some(KeyCode::TAB.meta().shift()),
             ShortcutAction::StepWorkspace { back: true },
         ),
         row(

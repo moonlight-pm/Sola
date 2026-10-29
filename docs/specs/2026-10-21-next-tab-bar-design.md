@@ -107,13 +107,22 @@ No gaps and no titlebars on tiles yet (N8).
 - **Head:** the showing workspace's name, the workspace menu
   (§ The switcher). No tab count (Joshua, 2026-10-23).
 - **Zone header:** zone glyph, name. No count (Joshua, 2026-10-23).
+  **Amended 2026-10-28** (Joshua: "I find grouping the tabs by their zone
+  isn't useful… Windows retain their zone, but the sidebar doesn't need to
+  reflect where they are"): no zone headers. The bar is one list of the
+  workspace's windows in an order of its own; a window keeps its zone, and
+  its row says nothing about it.
 - **Row:** app icon and window title, truncated. Three states, as on
   board 05: shown (lifted a step), focused (the pill), behind (tertiary
   ink). Agent marks join in slice 3.
 - **Click a row:** show that tab in its zone and focus it. A float row
   raises and focuses its float.
 - **Drag a row:** within a zone to reorder; onto another zone's header or
-  rows to move it there (it becomes that zone's shown tab).
+  rows to move it there (it becomes that zone's shown tab). **Amended
+  2026-10-28:** a drag only reorders the bar; the window keeps its zone and
+  nothing shows or hides. A zone's own order is its windows' order in
+  the bar. Moving a window to another zone (the keys, the Window
+  menu) leaves its row where it is.
 - **Close from a row** (Joshua, 2026-10-23): hovering a row shows the
   titlebar's red stoplight, which closes the window as its own close dot
   would. A tab's window goes to its app (`Topic::CloseTab { key }`; kit
@@ -133,7 +142,8 @@ No gaps and no titlebars on tiles yet (N8).
   tab it was opened from… for all apps"): it goes right after the focused
   tab when that tab is in the zone — after the last window opened from it
   while it kept focus, so tabs opened behind keep their order — else at
-  the end.
+  the end. **Amended 2026-10-28:** that is a place in the bar, right after
+  the focused tab whatever its zone (a float too).
 - **Amended 2026-10-25:** when a zone's shown tab closes, the zone shows
   the tab it showed before (else the next, else the previous), so closing
   a tab you just opened returns to the one it came from.
@@ -146,12 +156,12 @@ No gaps and no titlebars on tiles yet (N8).
 
 | Chord | Next | Today |
 |--|--|--|
-| Super+\` / Super+Shift+\` | Next / previous tab in the focused zone | Next window of the focused app |
+| Super+\` / Super+Shift+\` | Next / previous tab in the focused zone. **Amended 2026-10-28** (Joshua: "Super+\` should just step through the tabs on this workspace in their tab order"): the next / previous tab in the workspace's bar, wrapping, whatever its zone (showing it shows Full or the halves as needed); with nothing focused, the first / last | Next window of the focused app |
 | Super+KP_4 / KP_6 | Move the focused tab to Left / Right (end of stack, shown) | Snap to the left / right column |
 | Super+KP_* | Move to Floating | Float |
 | Super+KP_0 / KP_Enter | Fullscreen / Cinema the shown tab (toggle). **Amended 2026-10-23:** KP_0 moves the tab to Full; KP_Enter stays Cinema | Same zones |
 | Super+KP_8, 2, 5, =, ., + | Unbound on the two-zone layout | Other snaps |
-| Super+Tab | Same app list; confirming shows that app's most recent tab in its zone. **Amended 2026-10-25:** the switcher is gone; Super+Tab / Super+Shift+Tab focus the next / previous zone with something to show (bar order, wrapping), showing its tab | Raises the app |
+| Super+Tab | Same app list; confirming shows that app's most recent tab in its zone. **Amended 2026-10-25:** the switcher is gone; Super+Tab / Super+Shift+Tab focus the next / previous zone with something to show (bar order, wrapping), showing its tab. **Amended 2026-10-28** (Joshua: "Super+Tab doesn't really make sense now. Let's have that step through workspaces"): Super+Tab / Super+Shift+Tab show the next / previous workspace (was Super+Ctrl+(Shift+)Tab, now unbound); window groups are gone | Raises the app |
 | Super+H | Hides the app as today; its rows stay, dimmed; clicking one unhides it | Hides the app |
 | Launcher on a running app | Shows its most recent tab. **Amended 2026-10-26 (Projects):** Projects opens a project, not a second Projects — the launcher's second stage lists `~/Projects` (Joshua: "All projects always go in ~/Projects"; open ones show and selecting brings up their workspace and window; others open in the current workspace; or a new one by name), through Projects' `project.open`; see the shell manual's Launcher. **Amended 2026-10-25:** opens a new window (the browser a page window, Terminal a tab window); one-window apps (Design, Paint, Arcade) still raise | Raises it |
 
@@ -177,6 +187,9 @@ No gaps and no titlebars on tiles yet (N8).
   comes back takes its app's place. Keyed by app, because today's apps are
   one window each. On `next`, it replaces `Topic::Zones` as the zone store;
   `FloatGeometry` stays.
+- **Amended 2026-10-28:** `TabLayout.zones` are runs of a workspace's bar
+  in order, each a stretch of tabs in one zone (a zone may have several);
+  a layout saved per zone loads as Full, Left, Right, Floating.
 - **From slice 2:** apps announce their tabs (a `Tabs` topic: per window, a
   tab key, kind, title, restore token, and mark), and `TabLayout` keys by
   tab key instead of app id.
@@ -294,12 +307,14 @@ workspaces (ordered, named, kept; one showing)
 
 - **Super+1…9** shows workspace N; **Super+Ctrl+Tab** / **Super+Ctrl+
   Shift+Tab** the next / previous. Showing restores that workspace's last
-  focused window.
+  focused window. **Amended 2026-10-28:** **Super+Tab** / **Super+Shift+Tab**
+  step the workspaces; Super+Ctrl+Tab is unbound.
 - **Super+Tab** lists apps on every workspace; confirming one whose window
   is elsewhere shows that workspace. So do the launcher on a running app,
   a notification, a tab-bar row, and `ShowTab`: anything that shows a
   window shows its workspace first. **Amended 2026-10-25:** Super+Tab steps
-  the showing workspace's zones; it no longer lists apps.
+  the showing workspace's zones; it no longer lists apps. **Amended
+  2026-10-28:** it steps the workspaces.
 - Focus fallbacks (a window closes, Super+H) stay on the showing
   workspace.
 

@@ -8,20 +8,18 @@ bar, the launcher, zoning, and the keyboard shortcuts overlay.
 | Chord | Action |
 |-------|--------|
 | Super+Space | Launcher |
-| Super+Tab | Next window group (Super+Shift+Tab: previous) |
-| Super+Backtick | Next tab in the focused group (Super+Shift+Backtick: previous) |
+| Super+Tab | Next workspace (Super+Shift+Tab: previous) |
+| Super+Backtick | Next tab in the tab bar (Super+Shift+Backtick: previous) |
 | Super+H | Hide the focused app |
 | Super+Q | Close the focused app |
 | Super+K | Keyboard shortcuts overlay (same chord as Omarchy) |
 | Super+Shift+3 / 4 / 5 | Screenshot: full output / selection (freeze then marquee) / focused window buffer |
 | Super+Numpad | Zone snap (NumLock on or off) |
 
-A window group is a zone of the [tab bar](#tab-bar): Full, Left, Right,
-Floating. Super+Tab focuses the next group that has a window to show, in
-bar order and wrapping, showing its tab (the top float, for Floating); a
-group in Full brings Full on screen, one in a half brings the halves.
-Super+Backtick steps through that group's tabs. Between the two you can
-reach every tab.
+Super+Backtick shows and focuses the next window in the tab bar's order,
+whatever its zone, wrapping at the end; a window in Full brings Full on
+screen, one in a half brings the halves. Super+Tab shows the next
+workspace (Super+1…9 a given one).
 
 Focus follows the mouse only when the mouse moves. When a keyboard
 switch, a new window or a close leaves the pointer resting on another
@@ -191,13 +189,16 @@ tab yourself.
 
 ## Tab bar
 
-The tab bar is the column on the left: every window, by the zone it is
-in (Full, Left, Right, Floating). Click a row to show that window in its
-zone and focus it; drag a row to reorder it or move it to another zone.
+The tab bar is the column on the left: every window on the workspace in
+one list, not grouped by zone. Each window keeps its zone (Full, Left,
+Right, Floating) — moving it to another zone leaves its row where it is.
+Click a row to show that window in its zone and focus it; drag a row to
+reorder the list (the window stays in its zone, and nothing on screen
+changes). Super+Backtick steps through the list in this order.
 Hovering a row shows a red close dot, the same as a window's own: it
 closes that window as the window's own close dot would.
 
-A new window opens right after the window that had focus, in its zone
+A new window's row goes right after the row of the window that had focus
 (a browser page opened with ⌘T or a link, a Terminal tab, a window from
 the launcher). Several opened behind it from the same window (⌘-click)
 stay in the order you opened them. Closing the window a zone shows brings

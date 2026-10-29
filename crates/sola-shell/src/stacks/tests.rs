@@ -9,8 +9,18 @@ fn none(_: &str) -> bool {
     false
 }
 
+/// `zone`'s tabs on the showing workspace, in bar order.
 fn ids(s: &Stacks, zone: Zone) -> Vec<u32> {
-    s.tabs(zone).iter().map(|t| t.window_id).collect()
+    s.bar()
+        .iter()
+        .filter(|t| t.zone == zone)
+        .map(|t| t.window_id)
+        .collect()
+}
+
+/// The showing workspace's bar.
+fn bar(s: &Stacks) -> Vec<u32> {
+    s.bar().iter().map(|t| t.window_id).collect()
 }
 
 #[test]
@@ -23,8 +33,8 @@ fn new_windows_join_the_focused_zone_and_show() {
     assert_eq!(ids(&s, FULL), vec![1, 2]);
     assert_eq!(s.shown(FULL), Some(2));
 
-    s.move_to(2, Zone::Right, None);
-    s.move_to(1, Zone::Left, None);
+    s.move_to(2, Zone::Right);
+    s.move_to(1, Zone::Left);
     s.focus(2);
     s.place(3, "sola-mail", "sola-mail", false, false, t);
     assert_eq!(ids(&s, Zone::Right), vec![2, 3]);
@@ -39,7 +49,7 @@ fn the_first_tiled_window_takes_full() {
     s.place(1, "sola-scope", "sola-scope", true, false, t);
     assert_eq!(s.place(2, "term", "term", false, false, t).zone, FULL);
     // A desk whose tiled tabs all left starts over in Full.
-    s.move_to(2, Zone::Left, None);
+    s.move_to(2, Zone::Left);
     s.remove(2, t);
     assert_eq!(s.place(3, "mail", "mail", false, false, t).zone, FULL);
 }
@@ -51,11 +61,11 @@ fn full_and_the_halves_take_turns() {
     for w in 1..=3 {
         s.place(w, "app", "app", false, false, t);
     }
-    s.move_to(2, Zone::Left, None);
+    s.move_to(2, Zone::Left);
     // A lone half keeps its half; Full is off screen but keeps its tab.
     assert_eq!(s.on_screen(&none), vec![Zone::Left]);
     assert_eq!(s.shown(FULL), Some(3));
-    s.move_to(1, Zone::Right, None);
+    s.move_to(1, Zone::Right);
     assert_eq!(s.on_screen(&none), vec![Zone::Left, Zone::Right]);
     // Focus never switches; showing a tab does.
     s.focus(3);
@@ -78,7 +88,7 @@ fn an_empty_side_gives_the_screen_to_the_other() {
     let mut s = Stacks::new();
     s.place(1, "app", "app", false, false, t);
     s.place(2, "app", "app", false, false, t);
-    s.move_to(2, Zone::Left, None);
+    s.move_to(2, Zone::Left);
     s.show(1);
     assert_eq!(s.on_screen(&none), vec![FULL]);
     s.remove(1, t);
@@ -86,7 +96,7 @@ fn an_empty_side_gives_the_screen_to_the_other() {
     assert_eq!(s.front(&none), Some(2));
 
     s.place(3, "app", "app", false, false, t);
-    s.move_to(3, FULL, None);
+    s.move_to(3, FULL);
     s.show(2);
     s.remove(2, t);
     assert_eq!(s.on_screen(&none), vec![FULL]);
@@ -186,16 +196,18 @@ fn tabs_opened_behind_keep_their_order() {
 }
 
 #[test]
-fn a_new_window_in_another_zone_than_the_focused_tab_goes_last() {
+fn a_new_window_opens_after_the_focused_tab_whatever_its_zone() {
     let t = Instant::now();
     let mut s = Stacks::new();
-    for w in 1..=3 {
-        s.place(w, "app", "app", false, false, t);
-    }
+    s.place(1, "app", "app", false, false, t);
     s.place(9, "scope", "scope", true, false, t);
+    s.place(2, "app", "app", false, false, t);
+    assert_eq!(bar(&s), vec![1, 9, 2]);
+    // Focus on the float: the new tiled window's row goes after it.
     s.focus(9);
-    s.place(4, "app", "app", false, false, t);
-    assert_eq!(ids(&s, FULL), vec![1, 2, 3, 4]);
+    assert_eq!(s.place(4, "app", "app", false, false, t).zone, FULL);
+    assert_eq!(bar(&s), vec![1, 9, 4, 2]);
+    assert_eq!(ids(&s, FULL), vec![1, 4, 2]);
 }
 
 #[test]
@@ -310,7 +322,7 @@ fn a_window_paired_late_takes_its_tabs_saved_place() {
     assert_eq!(p.zone, FULL);
     let p = s.set_key(4, "sola-terminal/b", t).expect("moved");
     assert_eq!(p.zone, Zone::Right);
-    assert_eq!(s.tabs(Zone::Right)[0].key, "sola-terminal/b");
+    assert_eq!(s.bar()[0].key, "sola-terminal/b");
     // No place waiting: only the key changes.
     assert!(s.set_key(4, "sola-terminal/c", t).is_none());
     assert_eq!(s.zone_of(4), Some(Zone::Right));
@@ -334,7 +346,7 @@ fn a_tab_without_a_place_takes_its_apps() {
     );
     let p = s.place(4, "sola-terminal", "sola-terminal/a", false, false, t);
     assert_eq!(p.zone, Zone::Right);
-    assert_eq!(s.tabs(Zone::Right)[0].key, "sola-terminal/a");
+    assert_eq!(s.bar()[0].key, "sola-terminal/a");
 }
 
 #[test]
@@ -348,56 +360,115 @@ fn returning_windows_do_not_cover_the_zone() {
 }
 
 #[test]
-fn move_and_step() {
+fn a_move_keeps_the_row() {
     let t = Instant::now();
     let mut s = Stacks::new();
     for w in 1..=3 {
         s.place(w, "app", "app", false, false, t);
     }
-    assert!(s.move_to(1, Zone::Right, None));
+    assert!(s.move_to(1, Zone::Right));
     assert_eq!(s.shown(Zone::Right), Some(1));
     assert_eq!(ids(&s, FULL), vec![2, 3]);
-    assert!(s.move_to(2, Zone::Left, None));
-    assert!(s.move_to(3, Zone::Left, Some(2)));
-    assert_eq!(ids(&s, Zone::Left), vec![3, 2]);
-    assert_eq!(s.step(3, false), Some(2));
-    assert_eq!(s.step(3, true), Some(2));
-    assert_eq!(s.step(1, false), None);
+    assert!(s.move_to(2, Zone::Left));
+    assert!(s.move_to(3, Zone::Left));
+    // A move keeps the row where it was.
+    assert_eq!(bar(&s), vec![1, 2, 3]);
+    assert_eq!(ids(&s, Zone::Left), vec![2, 3]);
 }
 
 #[test]
-fn super_tab_steps_through_the_groups_with_something_to_show() {
+fn reordering_a_row_keeps_its_zone_and_what_shows() {
     let t = Instant::now();
     let mut s = Stacks::new();
     for w in 1..=4 {
         s.place(w, "app", "app", false, false, t);
     }
-    s.move_to(1, Zone::Left, None);
-    s.move_to(2, Zone::Right, None);
-    s.place(9, "scope", "scope", true, false, t);
-    s.show(4);
-    // Full shows 4, Left 1, Right 2; the float 9. Bar order, wrapping.
-    assert_eq!(s.step_group(Some(4), false, &none), Some(1));
-    assert_eq!(s.step_group(Some(1), false, &none), Some(2));
-    assert_eq!(s.step_group(Some(2), false, &none), Some(9));
-    assert_eq!(s.step_group(Some(9), false, &none), Some(4));
-    assert_eq!(s.step_group(Some(4), true, &none), Some(9));
-    assert_eq!(s.step_group(None, false, &none), Some(4));
-    // An empty group is skipped; a hidden app's group shows what is left.
-    s.move_to(2, Zone::Left, None);
-    assert_eq!(s.step_group(Some(2), false, &none), Some(9));
-    let hide_scope = |a: &str| a == "scope";
-    assert_eq!(s.step_group(Some(2), false, &hide_scope), Some(4));
+    s.move_to(1, Zone::Left);
+    s.move_to(2, Zone::Right);
+    s.move_to(3, Zone::Left);
+    s.show(1);
+    // 4 (Full) to the top, past rows of the other zones.
+    assert!(s.reorder(4, Some(1)));
+    assert_eq!(bar(&s), vec![4, 1, 2, 3]);
+    assert_eq!(s.zone_of(4), Some(FULL));
+    // 3 before 1: Left's order follows the bar; it still shows 1.
+    assert!(s.reorder(3, Some(1)));
+    assert_eq!(bar(&s), vec![4, 3, 1, 2]);
+    assert_eq!(ids(&s, Zone::Left), vec![3, 1]);
+    assert_eq!(s.shown(Zone::Left), Some(1));
+    assert_eq!(s.on_screen(&none), vec![Zone::Left, Zone::Right]);
+    // To the end; onto itself or where it is, nothing moves.
+    assert!(s.reorder(4, None));
+    assert_eq!(bar(&s), vec![3, 1, 2, 4]);
+    assert!(!s.reorder(4, None));
+    assert!(!s.reorder(1, Some(1)));
+    assert!(!s.reorder(3, Some(1)));
 }
 
 #[test]
-fn super_tab_with_one_group_stays() {
+fn the_saved_layout_keeps_the_bar_order_across_zones() {
     let t = Instant::now();
     let mut s = Stacks::new();
-    s.place(1, "app", "app", false, false, t);
-    s.place(2, "app", "app", false, false, t);
-    assert_eq!(s.step_group(Some(2), false, &none), None);
-    assert_eq!(s.step_group(None, false, &none), Some(2));
+    for (w, app) in [(1, "term"), (2, "browser"), (3, "mail")] {
+        s.place(w, app, app, false, false, t);
+    }
+    s.move_to(1, Zone::Left);
+    s.move_to(2, Zone::Right);
+    s.move_to(3, Zone::Left);
+    // The bar is Left, Right, Left: three runs.
+    let layout = s.layout(t);
+    let runs: Vec<(Zone, Vec<String>, Option<u32>)> = layout
+        .zones
+        .iter()
+        .map(|z| (z.zone, z.apps.clone(), z.shown))
+        .collect();
+    assert_eq!(
+        runs,
+        vec![
+            (Zone::Left, vec!["term".into()], None),
+            (Zone::Right, vec!["browser".into()], Some(0)),
+            (Zone::Left, vec!["mail".into()], Some(0)),
+        ]
+    );
+    // Back in any order, the rows take their places.
+    let mut s = Stacks::new();
+    s.load(&layout, t);
+    for (w, app) in [(7, "mail"), (5, "term"), (6, "browser")] {
+        s.place(w, app, app, false, true, t);
+    }
+    assert_eq!(bar(&s), vec![5, 6, 7]);
+    assert_eq!(s.shown(Zone::Left), Some(7));
+    assert_eq!(s.layout(t), layout);
+}
+
+#[test]
+fn super_backtick_steps_through_the_bar_whatever_the_zones() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    for w in 1..=3 {
+        s.place(w, "app", "app", false, false, t);
+    }
+    s.place(9, "scope", "scope", true, false, t);
+    s.move_to(1, Zone::Left);
+    s.move_to(2, Zone::Right);
+    // The bar: 1 (Left), 2 (Right), 3 (Full), 9 (Float). Wrapping.
+    assert_eq!(bar(&s), vec![1, 2, 3, 9]);
+    assert_eq!(s.step(Some(1), false), Some(2));
+    assert_eq!(s.step(Some(3), false), Some(9));
+    assert_eq!(s.step(Some(9), false), Some(1));
+    assert_eq!(s.step(Some(1), true), Some(9));
+    // Nothing focused: the first (the last, back).
+    assert_eq!(s.step(None, false), Some(1));
+    assert_eq!(s.step(None, true), Some(9));
+    // A dialog steps from its parent.
+    s.place(5, "app", "app", false, false, t);
+    s.set_parent(5, 2);
+    assert_eq!(s.step(Some(5), false), Some(3));
+    // Only this workspace's bar.
+    s.add_workspace("Mail");
+    s.place(7, "mail", "mail", false, false, t);
+    assert_eq!(s.step(Some(7), false), None);
+    assert_eq!(s.step(Some(1), false), Some(7));
 }
 
 #[test]
@@ -409,7 +480,7 @@ fn hidden_apps_give_way() {
     let hide_mail = |a: &str| a == "mail";
     assert_eq!(s.visible_shown(FULL, &hide_mail), Some(1));
     assert_eq!(s.on_screen(&none), vec![FULL]);
-    s.move_to(1, Zone::Right, None);
+    s.move_to(1, Zone::Right);
     assert_eq!(s.on_screen(&hide_mail), vec![Zone::Right]);
 }
 
@@ -423,7 +494,7 @@ fn cinema_toggles_and_ends_when_the_window_moves() {
     assert!(!s.toggle_cinema(1));
     assert_eq!(s.cinema(), None);
     s.toggle_cinema(1);
-    s.move_to(1, Zone::Right, None);
+    s.move_to(1, Zone::Right);
     assert_eq!(s.cinema(), None);
 }
 
@@ -466,7 +537,7 @@ fn readers_answer_for_the_showing_workspace() {
     assert!(s.on_showing(2));
     assert!(s.show_workspace(0));
     assert_eq!(ids(&s, FULL), vec![1]);
-    assert_eq!(s.tabs_on(second, FULL)[0].window_id, 2);
+    assert_eq!(s.bar_on(second)[0].window_id, 2);
 }
 
 #[test]
@@ -492,16 +563,16 @@ fn sending_a_window_keeps_its_zone_and_shows_it_there() {
     let mut s = Stacks::new();
     s.place(1, "term", "term", false, false, t);
     s.place(2, "browser", "browser", false, false, t);
-    s.move_to(2, Zone::Right, None);
+    s.move_to(2, Zone::Right);
     s.place(3, "scope", "scope", true, false, t);
     let mail = s.add_workspace("Mail");
     s.show_workspace(0);
     assert!(s.send(2, mail));
     assert!(s.send(3, mail));
     assert!(!s.send(3, mail), "already there");
-    assert_eq!(s.tabs(Zone::Right), &[]);
+    assert_eq!(ids(&s, Zone::Right), Vec::<u32>::new());
     assert_eq!(s.float_order(), &[] as &[u32]);
-    assert_eq!(s.tabs_on(mail, Zone::Right)[0].window_id, 2);
+    assert_eq!(s.bar_on(mail)[0].window_id, 2);
     assert!(s.show_workspace(mail));
     assert_eq!(s.shown(Zone::Right), Some(2));
     assert_eq!(s.float_order(), &[3]);
@@ -636,6 +707,7 @@ fn the_landing_slot_is_where_the_window_lands() {
     assert_eq!((zone, at, opener), (FULL, 1, Some(1)));
     s.place(4, "sola-calendar", "sola-calendar", false, false, t);
     assert_eq!(ids(&s, FULL), vec![1, 4, 2, 3]);
-    // A floating app lands at the end of Float.
-    assert_eq!(s.landing_slot(true).0, Zone::Float);
+    // A floating app lands in Float, its row after the focused tab too.
+    s.focus(4);
+    assert_eq!(s.landing_slot(true), (Zone::Float, 2, Some(4)));
 }

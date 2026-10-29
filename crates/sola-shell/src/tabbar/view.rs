@@ -1,14 +1,15 @@
 //! The tab bar's view: a head with the showing workspace's name (its menu
-//! switches workspaces, [`super::head`]), then a section per zone with a
-//! row per window (app icon, title). Board 05's rows: the focused window
-//! is the pill; a tiled zone's shown tab is lifted a step while its zone
-//! is on screen and bright while it is not (Full while the halves are up,
-//! or the halves while Full is); the tabs behind are muted. A tab that is
-//! working or waiting on a decision (`Topic::TabActivity`) shows that mark
-//! in the icon's place, so the title does not move. Hovering a row shows
-//! the titlebar's red stoplight: it closes the window (`Topic::CloseWindow`).
-//! While an app starts from the launcher, a ghost row (its name, faint, a
-//! turning ring) stands where its window will land.
+//! switches workspaces, [`super::head`]), then a row per window (app icon,
+//! title) in the workspace's bar order — one list, not grouped by zone.
+//! Board 05's rows: the focused window is the pill; a tiled zone's shown
+//! tab is lifted a step while its zone is on screen and bright while it is
+//! not (Full while the halves are up, or the halves while Full is); the
+//! tabs behind are muted. A tab that is working or waiting on a decision
+//! (`Topic::TabActivity`) shows that mark in the icon's place, so the
+//! title does not move. Hovering a row shows the titlebar's red stoplight:
+//! it closes the window (`Topic::CloseWindow`). While an app starts from
+//! the launcher, a ghost row (its name, faint, a turning ring) stands
+//! where its window will land.
 
 use iced::widget::{row, text};
 use iced::{Alignment, Color, Element, Theme};
@@ -18,9 +19,8 @@ use sola_kit::components::{
     status_mark,
 };
 
-use super::{row_id, section_id, zone_label};
+use super::row_id;
 use crate::app::{Msg, Shell};
-use crate::stacks::ZONES;
 
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     let hidden = |app: &str| shell.is_app_hidden(app);
@@ -29,61 +29,56 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     let focused = shell
         .focused_window_id
         .map(|w| shell.tabs.parent_of(w).unwrap_or(w));
-    let ghost = shell.launch_ghost();
-    let mut sections = Vec::new();
-    for zone in ZONES {
-        let tabs = shell.tabs.tabs(zone);
-        let (shown, showing) = if zone == Zone::Float {
-            (shell.focused_window_id, true)
-        } else {
-            (shell.tabs.visible_shown(zone, &hidden), on_screen.contains(&zone))
-        };
-        let mut items: Vec<SidebarItem<'_, Msg>> = tabs
-            .iter()
-            .map(|t| {
-                let title = shell
-                    .known_windows
-                    .iter()
-                    .find(|w| w.window_id == t.window_id)
-                    .map(|w| w.title.trim())
-                    .filter(|s| !s.is_empty());
-                let label = title
-                    .map(str::to_string)
-                    .unwrap_or_else(|| app_label(shell, &t.app_id));
-                let activity = shell
-                    .pairing
-                    .key_of(t.window_id)
-                    .and_then(|key| shell.tab_activity.get(key))
-                    .copied();
-                let leading: Element<'_, Msg> = match mark(activity) {
-                    Some(indicator) => status_mark(indicator),
-                    None => icon(app_icon(shell, &t.app_id), LEADING_SLOT as u16).into(),
-                };
-                let current = shown == Some(t.window_id);
-                let has_focus = focused == Some(t.window_id);
-                let mut item = SidebarItem::new(label, Msg::ShowTab(t.window_id))
-                    .id(row_id(t.window_id))
-                    .active(current && showing && has_focus)
-                    .shown(current && showing && !has_focus)
-                    .bright(current && !showing)
-                    .on_close(Msg::CloseWindow(t.window_id))
-                    .stoplight(true)
-                    .leading(leading);
-                if hidden(&t.app_id) {
-                    item = item.secondary("hidden");
-                }
-                item
-            })
-            .collect();
-        if let Some((ghost_zone, at, label)) = ghost
-            && ghost_zone == zone
-        {
-            items.insert(at.min(items.len()), ghost_row(label));
-        }
-        sections.push(SidebarSection::new(zone_label(zone), items).id(section_id(zone)));
+    let mut items: Vec<SidebarItem<'_, Msg>> = shell
+        .tabs
+        .bar()
+        .iter()
+        .map(|t| {
+            let title = shell
+                .known_windows
+                .iter()
+                .find(|w| w.window_id == t.window_id)
+                .map(|w| w.title.trim())
+                .filter(|s| !s.is_empty());
+            let label = title
+                .map(str::to_string)
+                .unwrap_or_else(|| app_label(shell, &t.app_id));
+            let activity = shell
+                .pairing
+                .key_of(t.window_id)
+                .and_then(|key| shell.tab_activity.get(key))
+                .copied();
+            let leading: Element<'_, Msg> = match mark(activity) {
+                Some(indicator) => status_mark(indicator),
+                None => icon(app_icon(shell, &t.app_id), LEADING_SLOT as u16).into(),
+            };
+            // Every float is on screen; it is current while it has focus.
+            let (current, showing) = if t.zone == Zone::Float {
+                (shell.focused_window_id == Some(t.window_id), true)
+            } else {
+                let zone_shows = shell.tabs.visible_shown(t.zone, &hidden);
+                (zone_shows == Some(t.window_id), on_screen.contains(&t.zone))
+            };
+            let has_focus = focused == Some(t.window_id);
+            let mut item = SidebarItem::new(label, Msg::ShowTab(t.window_id))
+                .id(row_id(t.window_id))
+                .active(current && showing && has_focus)
+                .shown(current && showing && !has_focus)
+                .bright(current && !showing)
+                .on_close(Msg::CloseWindow(t.window_id))
+                .stoplight(true)
+                .leading(leading);
+            if hidden(&t.app_id) {
+                item = item.secondary("hidden");
+            }
+            item
+        })
+        .collect();
+    if let Some((at, label)) = shell.launch_ghost() {
+        items.insert(at.min(items.len()), ghost_row(label));
     }
 
-    let panel = SidebarPanel::new(sections)
+    let panel = SidebarPanel::new(vec![SidebarSection::unlabeled(items)])
         .controller(&shell.tabbar.gestures, Msg::TabBar)
         .reorderable()
         .fill_width()

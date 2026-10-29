@@ -2,6 +2,7 @@
 //! the session to restore its windows, and the places of windows that
 //! just left, waiting for their app to come back.
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use sola_bus::topics::{TabLayout, TabLayoutZone, Workspace, Zone};
@@ -9,8 +10,8 @@ use sola_bus::topics::{TabLayout, TabLayoutZone, Workspace, Zone};
 use super::desk::Desk;
 use super::{GHOST_GRACE, RESTORE_GRACE, Stacks, ZONES};
 
-/// A remembered place: a workspace, a zone, a key, its index in that zone,
-/// and whether the zone showed it.
+/// A remembered place: a workspace, a zone, a key, its index in that
+/// workspace's bar, and whether the zone showed it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Slot {
     pub workspace: String,
@@ -23,8 +24,10 @@ pub(super) struct Slot {
 impl Stacks {
     /// Take the saved layout: its workspaces (when it has any), which
     /// shows, which have Full up, and the places windows that come within
-    /// [`RESTORE_GRACE`] take. A zone saved before workspaces belongs to
-    /// the first one.
+    /// [`RESTORE_GRACE`] take. Its zones are runs of a workspace's bar, in
+    /// order (a layout saved before the bar mixed zones has one run per
+    /// zone: Full, Left, Right, Floating). A zone saved before workspaces
+    /// belongs to the first one.
     pub fn load(&mut self, layout: &TabLayout, now: Instant) {
         if !layout.workspaces.is_empty() {
             self.desks = layout
@@ -43,6 +46,8 @@ impl Stacks {
         }
         let first = self.desks[0].id.clone();
         self.restore.clear();
+        // Each workspace's next index in its bar.
+        let mut next: HashMap<String, usize> = HashMap::new();
         for z in &layout.zones {
             if !ZONES.contains(&z.zone) {
                 continue;
@@ -52,60 +57,67 @@ impl Stacks {
             } else {
                 z.workspace.clone()
             };
-            for (at, key) in z.apps.iter().enumerate() {
+            let start = next.entry(workspace.clone()).or_default();
+            for (i, key) in z.apps.iter().enumerate() {
                 self.restore.push(Slot {
                     workspace: workspace.clone(),
                     zone: z.zone,
                     key: key.clone(),
-                    at,
-                    shown: z.shown == Some(at as u32),
+                    at: *start + i,
+                    shown: z.shown == Some(i as u32),
                 });
             }
+            *start += z.apps.len();
         }
         self.restore_until = Some(now + RESTORE_GRACE);
     }
 
-    /// The layout to save: the workspaces, then each workspace's zones with
-    /// their tabs and the places still waiting for a window (a restarting
-    /// app, apps the session has not restored yet).
+    /// The layout to save: the workspaces, then each workspace's bar as
+    /// runs of tabs in one zone, with the places still waiting for a window
+    /// (a restarting app, apps the session has not restored yet).
     pub fn layout(&self, now: Instant) -> TabLayout {
-        let mut zones = Vec::new();
+        let mut zones: Vec<TabLayoutZone> = Vec::new();
         for desk in &self.desks {
-            for c in &desk.columns {
-                let mut apps: Vec<String> = c.tabs.iter().map(|t| t.key.clone()).collect();
-                let mut shown = c
-                    .shown
-                    .and_then(|w| c.tabs.iter().position(|t| t.window_id == w))
-                    .map(|i| i as u32);
-                let here = |s: &Slot| s.workspace == desk.id && s.zone == c.zone;
-                for (g, _) in self.live_ghosts(now).filter(|(g, _)| here(g)) {
-                    let at = g.at.min(apps.len());
-                    apps.insert(at, g.key.clone());
-                    match shown {
-                        Some(s) if s as usize >= at => shown = Some(s + 1),
-                        _ => {}
-                    }
-                    if g.shown {
-                        shown = Some(at as u32);
+            // The bar: (zone, key, the zone shows it).
+            let mut bar: Vec<(Zone, String, bool)> = desk
+                .tabs
+                .iter()
+                .map(|t| {
+                    let shown = desk.column(t.zone).shown == Some(t.window_id);
+                    (t.zone, t.key.clone(), shown)
+                })
+                .collect();
+            let here = |s: &Slot| s.workspace == desk.id;
+            for (g, _) in self.live_ghosts(now).filter(|(g, _)| here(g)) {
+                if g.shown {
+                    for row in bar.iter_mut().filter(|row| row.0 == g.zone) {
+                        row.2 = false;
                     }
                 }
-                for s in self.live_restore(now).filter(|s| here(s)) {
-                    apps.push(s.key.clone());
-                    if s.shown && shown.is_none() {
-                        shown = Some(apps.len() as u32 - 1);
+                let at = g.at.min(bar.len());
+                bar.insert(at, (g.zone, g.key.clone(), g.shown));
+            }
+            for s in self.live_restore(now).filter(|s| here(s)) {
+                let taken = bar.iter().any(|row| row.0 == s.zone && row.2);
+                bar.push((s.zone, s.key.clone(), s.shown && !taken));
+            }
+            for (zone, key, shown) in bar {
+                let run = match zones.last_mut() {
+                    Some(z) if z.zone == zone && z.workspace == desk.id => z,
+                    _ => {
+                        zones.push(TabLayoutZone {
+                            zone,
+                            apps: Vec::new(),
+                            shown: None,
+                            workspace: desk.id.clone(),
+                        });
+                        zones.last_mut().expect("just pushed")
                     }
+                };
+                if shown && zone != Zone::Float {
+                    run.shown = Some(run.apps.len() as u32);
                 }
-                if c.zone == Zone::Float {
-                    shown = None;
-                }
-                if !apps.is_empty() {
-                    zones.push(TabLayoutZone {
-                        zone: c.zone,
-                        apps,
-                        shown,
-                        workspace: desk.id.clone(),
-                    });
-                }
+                run.apps.push(key);
             }
         }
         TabLayout {

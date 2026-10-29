@@ -227,12 +227,9 @@ pub enum Msg {
         window_id: u32,
         generation: u64,
     },
-    /// Show the next (or, `back`, previous) tab in the focused tab's zone
-    /// (Super+` / Super+Shift+`).
+    /// Show the next (or, `back`, previous) tab in the workspace's bar
+    /// order, whatever its zone (Super+` / Super+Shift+`).
     CycleTabs { back: bool },
-    /// Focus the next (or, `back`, previous) window group — the bar's
-    /// zones — showing its tab (Super+Tab / Super+Shift+Tab).
-    CycleGroups { back: bool },
     /// A tab bar row was clicked: show that window in its zone.
     ShowTab(u32),
     /// A tab bar row's stoplight: close that window, as its own close would.
@@ -701,7 +698,7 @@ impl Shell {
         let wid = self.tabs.parent_of(wid).unwrap_or(wid);
         match zone {
             Zone::Fullscreen | Zone::Left | Zone::Right | Zone::Float => {
-                self.move_tab(wid, zone, None)
+                self.move_tab(wid, zone)
             }
             Zone::Cinema => {
                 let cinema = self.tabs.toggle_cinema(wid);
@@ -733,9 +730,9 @@ impl Shell {
         iced::Task::none()
     }
 
-    /// Move a tab to `zone` (in front of `before`, else at the end), show it
+    /// Move a tab to `zone` (its row keeps its place in the bar), show it
     /// there and focus it. Floating it shrinks it in place from its tile.
-    pub(crate) fn move_tab(&mut self, wid: u32, zone: Zone, before: Option<u32>) {
+    pub(crate) fn move_tab(&mut self, wid: u32, zone: Zone) {
         let Some(app_id) = self
             .known_windows
             .iter()
@@ -752,7 +749,7 @@ impl Shell {
             }
             _ => None,
         };
-        if !self.tabs.move_to(wid, zone, before) {
+        if !self.tabs.move_to(wid, zone) {
             return;
         }
         tracing::info!(window_id = wid, %app_id, ?from, to = ?zone, "move tab");
@@ -813,9 +810,10 @@ impl Shell {
         task.map(|opened| Msg::WindowOpened(WindowKind::TabBar, opened))
     }
 
-    /// A tab bar gesture finished: show a row, or move a dragged row.
+    /// A tab bar gesture finished: show a row, or move a dragged row in
+    /// the bar (its window keeps its zone).
     fn on_tabbar_event(&mut self, ev: sola_kit::components::SidebarEvent) -> iced::Task<Msg> {
-        use crate::tabbar::{window_of_row, zone_of_section};
+        use crate::tabbar::window_of_row;
         use sola_kit::components::{Dest, SidebarEvent};
         match ev {
             SidebarEvent::Activate { id } => {
@@ -827,35 +825,13 @@ impl Shell {
                 let Some(wid) = window_of_row(&drop.id) else {
                     return iced::Task::none();
                 };
-                let (zone, before) = match drop.dest {
-                    Dest::Join { section, before } => (
-                        zone_of_section(&section),
-                        before.as_deref().and_then(window_of_row),
-                    ),
-                    Dest::Loose { before: Some(b) } => {
-                        let b = window_of_row(&b);
-                        (b.and_then(|b| self.tabs.zone_of(b)), b)
+                // The bar has no groups: every drop is among loose rows.
+                if let Dest::Loose { before } = drop.dest {
+                    let before = before.as_deref().and_then(window_of_row);
+                    if self.tabs.reorder(wid, before) {
+                        tracing::info!(window_id = wid, ?before, "reorder tab");
+                        self.persist_tabs();
                     }
-                    Dest::Loose { before: None } => (Some(Zone::Float), None),
-                    // Above a zone's header: the end of the zone before it
-                    // (the start of the first).
-                    Dest::BeforeGroup { id } => {
-                        let at = zone_of_section(&id)
-                            .and_then(|z| crate::stacks::ZONES.iter().position(|x| *x == z));
-                        match at {
-                            Some(0) => {
-                                let z = crate::stacks::ZONES[0];
-                                (Some(z), self.tabs.tabs(z).first().map(|t| t.window_id))
-                            }
-                            Some(i) => (Some(crate::stacks::ZONES[i - 1]), None),
-                            None => (None, None),
-                        }
-                    }
-                    // Zone headers do not move.
-                    _ => (None, None),
-                };
-                if let Some(zone) = zone {
-                    self.move_tab(wid, zone, before);
                 }
             }
             _ => {}
@@ -885,7 +861,6 @@ impl Shell {
         match row.action {
             ShortcutAction::OpenShortcuts => iced::Task::none(),
             ShortcutAction::OpenLauncher => iced::Task::done(Msg::OpenLauncher),
-            ShortcutAction::NextGroup => iced::Task::done(Msg::CycleGroups { back: false }),
             ShortcutAction::Hide => {
                 self.hide_focused_app();
                 iced::Task::none()
@@ -1416,13 +1391,13 @@ impl Shell {
         )
     }
 
-    /// The ghost row for a launch in flight: its zone, index and name.
-    pub fn launch_ghost(&self) -> Option<(Zone, usize, &str)> {
+    /// The ghost row for a launch in flight: its index in the bar and name.
+    pub fn launch_ghost(&self) -> Option<(usize, &str)> {
         let p = self.pending_launch.as_ref()?;
         let floats =
             crate::zoning::floats_by_default(&p.app_id) || self.zoning.remembers(&p.app_id);
-        let (zone, at, _) = self.tabs.landing_slot(floats);
-        Some((zone, at, p.label.as_str()))
+        let (_, at, _) = self.tabs.landing_slot(floats);
+        Some((at, p.label.as_str()))
     }
 
     /// Drop pending launch (and its toast, if still current) when a matching
@@ -1720,22 +1695,20 @@ impl Shell {
         }
 
         // Fixed shell chords.
-        bindings.push(KeyCode::TAB.meta()); // Meta+Tab → next window group
-        bindings.push(KeyCode::TAB.meta().shift()); // Meta+Shift+Tab → previous group
-        bindings.push(KeyCode::GRAVE.meta()); // Meta+` → next tab in the focused zone
+        bindings.push(KeyCode::TAB.meta()); // Meta+Tab → next workspace
+        bindings.push(KeyCode::TAB.meta().shift()); // Meta+Shift+Tab → previous workspace
+        bindings.push(KeyCode::GRAVE.meta()); // Meta+` → next tab in the bar
         bindings.push(KeyCode::GRAVE.meta_shift()); // Meta+Shift+` → previous tab
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
         bindings.push(KeyCode::K.meta()); // Meta+K → keyboard shortcuts (Omarchy)
         bindings.push(KeyCode::Q.meta()); // Meta+Q → close focused app
         bindings.push(KeyCode::H.meta()); // Meta+H → hide focused app
-        // Workspaces: Meta+1…9 show, Meta+Ctrl+1…9 send the focused window,
-        // Meta+Ctrl+(Shift+)Tab step.
+        // Workspaces: Meta+1…9 show, Meta+Ctrl+1…9 send the focused window
+        // (Meta+(Shift+)Tab steps, above).
         for key in crate::keys::WORKSPACE_KEYS {
             bindings.push(key.meta());
             bindings.push(key.meta().ctrl());
         }
-        bindings.push(KeyCode::TAB.meta().ctrl());
-        bindings.push(KeyCode::TAB.meta().ctrl().shift());
         // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
         bindings.push(KeyCode::KEY_3.meta_shift());
         bindings.push(KeyCode::KEY_4.meta_shift());
@@ -1793,14 +1766,15 @@ impl Shell {
         // Every workspace, so showing one needs no resize either.
         for ws in 0..self.tabs.workspace_count() {
             let cinema = self.tabs.cinema_on(ws);
-            for zone in crate::stacks::TILED {
-                for t in self.tabs.tabs_on(ws, zone) {
-                    frames.push(if cinema == Some(t.window_id) {
-                        crate::zoning::cinema_frame(t.window_id, w, h)
-                    } else {
-                        crate::zoning::tile_frame(t.window_id, zone, w, h)
-                    });
+            for t in self.tabs.bar_on(ws) {
+                if !crate::stacks::TILED.contains(&t.zone) {
+                    continue;
                 }
+                frames.push(if cinema == Some(t.window_id) {
+                    crate::zoning::cinema_frame(t.window_id, w, h)
+                } else {
+                    crate::zoning::tile_frame(t.window_id, t.zone, w, h)
+                });
             }
             if let Some(wid) = cinema.filter(|wid| {
                 self.tabs.zone_of(*wid) == Some(sola_bus::topics::Zone::Float)
@@ -3011,22 +2985,10 @@ impl Shell {
                 crate::screenshot::crop_freeze(handle, rx, ry, rw, rh)
             }
             Msg::ScreenshotDone(result) => self.on_screenshot_done(result),
-            Msg::CycleGroups { back } => {
-                let from = self.focused_window_id;
-                let hidden = |app: &str| self.is_app_hidden(app);
-                let next = self.tabs.step_group(from, back, &hidden);
-                if let Some(next) = next {
-                    tracing::info!(?from, to = next, back, "Super+Tab — next window group");
-                    self.activate_window(next);
-                }
-                iced::Task::none()
-            }
             Msg::CycleTabs { back } => {
-                let Some(from) = self.focused_window_id else {
-                    return iced::Task::none();
-                };
+                let from = self.focused_window_id;
                 if let Some(next) = self.tabs.step(from, back) {
-                    tracing::info!(from, to = next, back, "Super+` — next tab in zone");
+                    tracing::info!(?from, to = next, back, "Super+` — next tab in the bar");
                     self.activate_window(next);
                 }
                 iced::Task::none()
@@ -3247,7 +3209,7 @@ mod pending_launch_tests {
         // Existing window only — still pending, the ghost in the tab bar.
         shell.resolve_pending_launch_if_window();
         assert!(shell.pending_launch.is_some());
-        assert_eq!(shell.launch_ghost().map(|(_, _, label)| label), Some("Terminal"));
+        assert_eq!(shell.launch_ghost().map(|(_, label)| label), Some("Terminal"));
         assert!(shell.menubar.toast.is_none());
 
         // New matching window resolves.
@@ -3379,7 +3341,7 @@ mod hide_tests {
         for (i, (wid, app)) in placed.iter().enumerate() {
             shell.tabs.place(*wid, app, app, false, false, now);
             let zone = if i == 1 { Zone::Right } else { Zone::Left };
-            shell.tabs.move_to(*wid, zone, None);
+            shell.tabs.move_to(*wid, zone);
         }
         if let Some(wid) = shell.focused_window_id {
             shell.tabs.show(wid);

@@ -215,7 +215,7 @@ swapchains in the background (see
 | Shortcuts | Super+K cheatsheet (parked 2×2 while dismissed; live Frame is the card + shadow pad, not the usable output) |
 | Selection | Super+Shift+4 freeze-then-marquee (RGBA still of the live output, then crop; parked 2×2 while dismissed; live Frame is full output) |
 | Notify | Live notification cards (tight Frame under the menubar, trailing edge with the clock; parked 2×2 while empty) |
-| Tab bar (`next` only) | Next's one tab list ([spec](specs/2026-10-21-next-tab-bar-design.md)): docked left under the menubar (240 px, one gap in: 10, 38 on canto), always mapped, composed right above the menubar. Kit `SidebarPanel` on a kit `island` (rounded, rimmed, ground-black corners): a section per zone (Left, Right, Floating), a row per window (app icon, title); click shows, drag moves between zones. Model in `stacks.rs` |
+| Tab bar (`next` only) | Next's one tab list ([spec](specs/2026-10-21-next-tab-bar-design.md)): docked left under the menubar (240 px, one gap in: 10, 38 on canto), always mapped, composed right above the menubar. Kit `SidebarPanel` on a kit `island` (rounded, rimmed, ground-black corners): one list of the workspace's windows in its own order, not grouped by zone (2026-10-28), a row per window (app icon, title); click shows, drag reorders (the window keeps its zone). Model in `stacks/` (a desk per workspace: its tabs in bar order, each with its zone) |
 
 **On `next` (Next tab bar):** every app window is a tab in a zone. The two
 tiled zones (Left / Right, 50 / 50 of the content area right of the bar;
@@ -250,7 +250,7 @@ which one shows persist inside `TabLayout` and go out as sticky
 `Topic::WindowWorkspace`. The switcher is the tab bar's head and its
 menu (`tabbar/head.rs`, `menu/workspace.rs`; the menu overlay hangs under
 the head, `MenuOverlaySpec.y`); Super+1…9 / Super+Ctrl+1…9 /
-Super+Ctrl+Tab. The
+Super+(Shift+)Tab. The
 browser runs one CEF helper per profile, all live: its router keeps a page
 → profile map and routes commands by page (the rest to the active page's
 helper), merges every helper's pages, and makes a helper front only while
@@ -315,8 +315,8 @@ bus: unassigned windows **default-float** (client size +
 assign zones.
 
 **Hide (Super+H):** sticky `Topic::AppHidden` omits that app’s surfaces from
-`Topic::Composition` (River `hide` — not send-to-back). Restore: Super+Tab
-(switcher still lists hidden apps), launcher on an already-running hidden app
+`Topic::Composition` (River `hide` — not send-to-back). Restore: a tab bar
+row or Super+Backtick (showing a tab unhides its app), launcher on an already-running hidden app
 (unhide + raise, no second spawn), or any `raise_app` path (OpenUrl, mail
 unread, notification click). Last window of a hidden app retracts the sticky
 so a later map is not stuck hidden. No menubar chip.

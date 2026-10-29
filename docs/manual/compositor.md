@@ -165,7 +165,7 @@ re-enter focus and flash.
 
 The focus policy is the shell's: focus follows the pointer after a 200 ms
 pause, without raising, but only a pointer that moves; a click raises;
-Super+Tab and Super+Backtick show and focus a tab. `sola-river` supplies
+Super+Backtick shows and focuses a tab; Super+Tab shows a workspace. `sola-river` supplies
 the input for it: `MouseEntered` and `MouseLeft` as the pointer crosses
 windows, and `MouseClicked` when a window is clicked or touched.
 
