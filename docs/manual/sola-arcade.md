@@ -4,7 +4,13 @@ Arcade is a vertical list of your Steam titles, built from Steam's data on
 disk (library manifests, `localconfig` activity, `appinfo` names), with
 Steam's hero banner art when it is cached. **Play** starts an installed
 title under windowed gamescope, so the game is one normal host window: it
-floats, zones, and shows in Super+Tab like any other.
+floats by default, can be tiled into a zone, and has a row in the bar like
+any other.
+
+Arcade does not ship on Oath: `pkg:sola` does not carry `sola-arcade`. The
+launcher still lists **Arcade**, and picking it there fails (the top row
+says it could not launch). The rest of this note is how Arcade works where
+it is installed.
 
 ## Requirements
 
@@ -20,8 +26,8 @@ floats, zones, and shows in Super+Tab like any other.
 1. Open **Arcade** from the launcher (Super+Space).
 2. **Search** filters by name or AppID. The icon tools on the same row sort
    and filter the list (hover for tooltips); the sort mode is kept in
-   `~/.config/sola/arcade-prefs.json`. Super+R in the app menu re-scans
-   Steam in the background.
+   `~/.config/sola/arcade-prefs.json`. **Arcade → Refresh Library** (⌘R),
+   in the titlebar, re-scans Steam in the background.
    - **A–Z** (`arrow-down-a-z`): alphabetical sort.
    - **Recent** (`history`): most recent player activity first
      (`LastPlayed`, or the install's `LastUpdated`).
@@ -36,7 +42,7 @@ floats, zones, and shows in Super+Tab like any other.
    cache and stay quiet while the background refresh runs. Arcade also
    watches each library's `steamapps/` folder (install manifests and
    `libraryfolders.vdf`), so installing or uninstalling in Steam updates
-   the list after a short delay, without Super+R.
+   the list after a short delay, without a refresh.
 4. Each row shows Steam's `library_hero` art, when it is cached on disk, as
    a faded full-width background. Banners are decoded only for rows in the
    scroll viewport (plus a few beyond it), so the first paint does not wait
@@ -60,7 +66,7 @@ floats, zones, and shows in Super+Tab like any other.
    - Play on every other row is disabled;
    - the list keeps its scroll position (Play turning into Stop does not
      jump to the top).
-6. **Stop** (on the active row, or Super+Shift+S in the menu) ends the
+6. **Stop** (on the active row, or **Arcade → Stop Game**, ⌘⇧S) ends the
    session through `CloseApp` on `steam-game-<id>`, then stops only the
    nest processes Arcade owns (`--run`, `--nested-steam`, and that
    gamescope). It does not `pkill` a Steam `AppId=` you started outside
@@ -74,9 +80,11 @@ floats, zones, and shows in Super+Tab like any other.
 Play emits `LaunchApp` with:
 
 ```text
-/opt/sola/bin/sola-arcade --run <appid> <width> <height> [fit]
+sola-arcade --run <appid> <width> <height> [fit]
 ```
 
+The program is the `sola-arcade` on `PATH`, else
+`/opt/sola/bin/sola-arcade`; gamescope is found the same way.
 `<width> <height>` is the nested virtual monitor: with Fit, the output's
 pixels at Play; otherwise the locked resolution (default 1920×1080). A
 trailing `fit` tells Arcade to retarget the nest when the host window size
@@ -131,16 +139,18 @@ the same path, through `CloseApp` and a local `pkill`.
 
 | Layer | Behavior |
 |-------|----------|
-| **Host window** | A normal Sola window: it zones and floats like any app. Its initial size matches the nest setting; shell Frames set the size after map. |
+| **Host window** | A normal Sola window: it floats by default and zones like any app. Its initial size matches the nest setting; shell Frames set the size after map. |
 | **Nest size** | Per title, next to Play: **Fit to window** or a resolution (720p, 1080p, 1440p, 4K, or native; sizes above the display are left out). Default **1080p**. Kept in `~/.config/sola/arcade-nest.json`. Fit uses the display size at Play, then follows the host window as you zone or float it: Arcade writes `GAMESCOPE_XWAYLAND_MODE_CONTROL` on the nested X root and moves the focused game to `0,0`. Locked resolutions stay put. Arcade must stay running for Fit to follow. |
 | **In-game resolution** | Titles with a resolution picker can still choose a lower internal resolution than the nest. Titles without one (Factorio) use the nest as their display; keep fullscreen on for Fit. Windowed mode in the game ignores the nest resize and can leave clicks dead. |
 | **Scaler** | gamescope `-S fit` letterbox-scales the nested content into the host window when the two sizes differ (aspect kept, black bars). Fit aims for 1:1, so the letterbox goes away once the host window settles. |
 | **Pointer** | The host cursor is gamescope's nested X cursor, scaled to about 36 px through `--cursor-scale-height` (the same as the initial `-H`). Without that, Factorio-class titles show a giant pointer over the nest. |
 
-While a nest is up, Arcade publishes a catalog and menu label, so the
-menubar and the app switcher show the game's title. River rewrites an empty
-gamescope `app_id` to `gamescope` from the process command line when
-needed.
+River rewrites an empty gamescope `app_id` to `gamescope` from the process
+command line when needed, and then names an untitled window *Gamescope*.
+While a nest is up, Arcade publishes the game's name as the `gamescope`
+app's label; the bar names a row by its window's title first, so it shows
+that label only for a gamescope window with no title. The nest has no Sola
+titlebar, so it has no menus.
 
 Nest launches usually keep Steam's own UI out of the way. Arcade has no
 "Hide Steam" toggle.

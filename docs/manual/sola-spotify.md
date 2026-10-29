@@ -8,19 +8,37 @@ Its launcher row is **Spotify** (`lucide/disc`). Playback logic is
 adapted from [Fastpotify](https://github.com/crmne/fastpotify) (MIT). The
 app is independent of Spotify AB.
 
+Spotify does not ship on Oath: `pkg:sola` does not carry `sola-spotify`.
+The launcher still lists **Spotify**, and picking it there fails (the top
+row says it could not launch). The rest of this note is how the app works
+where it is installed.
+
 ## Requirements
 
-- A Spotify account. **Playing on this computer needs Premium.** Free accounts can sign in, browse, search, and control another device.
-- `alsa-lib` and `libpulseaudio` at compile time (`pkg-config` `alsa` + `libpulse`). The NixOS module ships both. PipeWire’s Pulse compatibility is enough at runtime.
-- When building from source, run `cargo make install spotify` after the NixOS rebuild that provides those libraries.
+- A Spotify account. **Playing on this computer needs Premium.** Free
+  accounts can sign in, browse, search, and control another device.
+- Building it needs `alsa-lib` and `libpulse` (`pkg-config` `alsa` and
+  `libpulse`). At run time, PipeWire's Pulse compatibility is enough.
+- Media keys and MPRIS need a session D-Bus.
 
 ## Sign in
 
-1. Open **Spotify** from the launcher (Meta+Space).
-2. **Sign in with Spotify** opens Browser on Spotify’s consent page (Authorization Code + PKCE). Sola never sees the password.
-3. Tokens land in `~/.local/state/sola/spotify/` (`0600`). Sign in once per machine; later launches open straight into the app, even while Spotify is rate limiting the shared app.
+1. Open **Spotify** from the launcher (Super+Space).
+2. **Sign in with Spotify** (or **Spotify → Sign In…**) opens Browser on
+   Spotify's consent page (Authorization Code + PKCE). Sola never sees the
+   password.
+3. Tokens land in `~/.local/state/sola/spotify/` (`0600`). Sign in once
+   per machine; later launches open straight into the app, even while
+   Spotify is rate limiting the shared app.
 
-Playing **here** is a second, one-time approval (**Playback → Set up playback here**, or Settings). Spotify treats streaming separately from the Web API. librespot then caches a reusable credential.
+Playing **here** is a second, one-time approval (**Spotify → Play Here**,
+or **Set up playback here** in Settings). Spotify treats streaming
+separately from the Web API. librespot then caches a reusable credential.
+
+The titlebar carries the app's menus: **Spotify** (Sign In…, Play Here,
+Quit Spotify), **Playback** (Play/Pause, Next, Previous, Shuffle,
+Repeat), and **View** (Back, Forward, Home, Search, Liked Songs, Queue,
+Settings), then the Window menu.
 
 ## Use
 
@@ -76,17 +94,23 @@ Playing **here** is a second, one-time approval (**Playback → Set up playback 
   it, and its controls drive that device: play/pause, skip, seek,
   volume, shuffle, and repeat do not pull playback back to this
   computer. Clicking a song still plays it here.
-- **Space** play/pause; **⌘← / ⌘→** previous/next; **⌘F** search; **⌘H** home; **⌘L** liked.
-- **Back / Forward** chevrons sit at the top of the main view (the library stays put). **⌥← / ⌘[** back; **⌥→ / ⌘]** forward. Mouse back/forward buttons do the same. They are disabled until there is somewhere to go. The stack survives quit (max 20 back steps).
+- **Space** play/pause; **⌘← / ⌘→** previous/next; **⌘F** search;
+  **⌘H** home; **⌘L** liked; **⌘U** queue (**View → Queue**).
+- **Back / Forward** chevrons sit at the top of the main view (the
+  library stays put). **⌥← / ⌘[** back; **⌥→ / ⌘]** forward. Mouse
+  back/forward buttons do the same. They are disabled until there is
+  somewhere to go. The stack survives quit (max 20 back steps).
 
-Media keys (`solactl media`) go to whichever MPRIS player is Playing. This app registers as `org.mpris.MediaPlayer2.sola-spotify`. Play, pause, next, and previous apply as soon as the key is pressed.
+Media keys (`solactl media`) go to whichever MPRIS player is Playing. This
+app registers as `org.mpris.MediaPlayer2.sola-spotify`. Play, pause, next,
+and previous apply as soon as the key is pressed.
 
 ## Files
 
 | Path | What |
 |------|------|
 | `~/.config/sola/spotify/settings.json` | Connect device name, bitrate, gapless, autoplay, last page, last track, last playlist, Back/Forward stack |
-| `~/.local/state/sola/spotify/` | Web API refresh token, librespot credentials, `skipped.json`, `liked.json` |
+| `~/.local/state/sola/spotify/` | Web API refresh token, librespot credentials, the last profile (`profile.json`), `skipped.json`, `liked.json` |
 | `~/.cache/sola/spotify/` | Audio, album art, page JSON (safe to delete) |
 
 ## Limits

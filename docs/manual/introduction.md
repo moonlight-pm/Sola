@@ -1,122 +1,169 @@
 # Introduction
 
 Sola is a desktop environment for Linux on Wayland, written in Rust. A
-session is a set of separate processes under a process manager: an event
-bus, a request/reply host, a bridge to the River compositor, the shell
-(menubar, launcher, window switcher), and applications that share one
-toolkit, sola-kit, and one theme.
+session is a set of separate processes: an event bus, a request/reply
+host, a window manager for the compositor, the shell (the top row, the bar
+of windows on the left, the launcher), a session manager, and applications
+that share one toolkit, sola-kit, and one theme.
 
-This manual describes Sola as it works today. Sola is pre-release: there
-are no releases or install images, and you build it from source. What each
-part can do, and what it lacks, is listed in
-[docs/capabilities.md](../capabilities.md).
+Sola runs on Oath, a Linux distribution administered through its catalog
+with the `oath` command. Oath supplies the compositor, rivulet (River 0.4.5
+ported to C, serving the same protocols), and its PID 1 runs Sola's
+processes as services. This manual describes Sola on Oath as it works
+today. Sola is pre-release and each part is incomplete; what each can do,
+and what it lacks, is listed in [docs/capabilities.md](../capabilities.md).
 
 ## Requirements
 
-- NixOS on x86-64 (`nixos-unstable`, or 25.05 and later). Nix on another
-  distribution is not supported: the binaries expect NixOS library paths.
-- An NVIDIA or Mesa (Intel, AMD) graphics stack. Sola points Vulkan at the
-  NVIDIA driver when `VK_ICD_FILENAMES` is unset; on Mesa, set it to your
-  driver's file in `/run/opengl-driver/share/vulkan/icd.d/` before starting
-  `sola`.
-- Rust 1.85 or later, and `sudo`.
-- The font families in [Fonts](#fonts), installed system-wide.
+- An x86-64 machine running Oath with its `desk` profile. The profile adds
+  the compositor, sound, fonts, the tools that build Sola, and Sola's own
+  packages to Oath's base system.
+- An AMD GPU. Oath's Mesa drives AMD GPUs only (radeonsi and RADV); on an
+  Intel GPU, or in QEMU, Sola's shell gets no GL context and the desktop
+  does not come up.
+- To build Sola on the machine: a checkout of Sola's repository. The desk
+  profile carries the compilers and libraries the build needs and the
+  browser engine (`pkg:cef`), and the desk user, `home`, has `sudo`
+  without a password, which `cargo make oath apply` uses.
 
-## Setting up the host
+## Installing
 
-Sola's NixOS module prepares the machine: a patched River 0.4.5, nix-ld for
-the browser engine's libraries, the graphics environment, fonts, and the
-udev rules KVM needs. Add the flake and enable the module, leaving
-`/opt/sola` to your own builds:
+Sola is three Oath packages:
 
-```nix
-inputs.sola.url = "git+https://github.com/moonlight-pm/Sola";
+| Package | Contents |
+|---------|----------|
+| `pkg:sola` | The bus, the call host, the window manager, the shell, the session manager, Terminal, Projects, Paint, Mail, Calendar, Settings, Bots and its daemon, Oath (the catalog app), the KVM bridge, `solactl`, and the icons and cursors |
+| `pkg:sola-browser` | Browser, which also runs [web apps](web-apps.md) |
+| `pkg:sola-design` | Design |
 
-# in the host's modules:
-sola.nixosModules.default
-{
-  services.sola.enable = true;
-  services.sola.installRelease = false;   # cargo make install owns /opt/sola
-}
-```
+Oath's `desk` profile pins each package by hash, together with the hashes
+of the packages it needs, so a machine installed from a desk image has
+Sola with nothing more to do. Oath's own manual covers building a desk
+image (`cargo make build --profile desk` in Oath's repository) and
+installing it. Each package's programs are linked into `/bin`;
+`oath get pkg:sola` shows the pin and what is live.
 
-Do not set `inputs.sola.inputs.nixpkgs.follows`. Sola pins its own nixpkgs,
-where River 0.4.5 and its patches build. [CONTRIBUTING.md](../../CONTRIBUTING.md)
-lists the compile tools to add to `configuration.nix` and the checks to run
-after `nixos-rebuild switch`.
-
-## Building and installing
+`oath update` does not move these three packages: a package the profile
+pins from elsewhere keeps the machine's own pin, and only its needs move.
+To take a published release, set each pin to the entry the release's
+publish printed, which is the JSON `oath set --from-json` takes, and apply
+the three together:
 
 ```bash
-git clone https://github.com/moonlight-pm/Sola
+sudo oath set pkg:sola --from-json '{"present": true, "hash": "sha256-…", "needs": […]}'
+sudo oath set pkg:sola-browser --from-json '{"present": true, "hash": "sha256-…", "needs": […]}'
+sudo oath set pkg:sola-design --from-json '{"present": true, "hash": "sha256-…", "needs": […]}'
+sudo oath apply pkg:sola pkg:sola-browser pkg:sola-design
+```
+
+Apply fetches a pinned package the store lacks from the machine's origins.
+A release is built against particular packages (Mesa, Wayland, CEF, and
+others), and its `needs` name their hashes; apply refuses it on a machine
+that has any of those at another hash. Build Sola on that machine instead.
+
+## Building from source
+
+On the Oath machine, as `home`:
+
+```bash
+git clone --branch next https://github.com/moonlight-pm/Sola
 cd Sola
-cargo make install-cef    # the browser engine, once (about 1.5 GB)
-cargo make install        # build everything, copy it to /opt/sola/bin
+cargo make oath stage
+cargo make oath apply     # only with the machine owner's go-ahead
 ```
 
-`cargo make install-cef` is required: Browser and website wrappers do not
-build without it. It downloads Chromium Embedded Framework into
-`~/.cache/sola/`. That build of the engine has no H.264 or AAC;
-`scripts/cef-codecs/` builds one that has them, which takes hours.
+| Command | What it does | What it changes |
+|---------|--------------|-----------------|
+| `cargo make oath stage` | Builds every program in the three packages, optimized (`--debug` for an unoptimized build), against this machine's packages and `pkg:cef`. Lays out each package under `target/oath/<name>/`: `bin/`, `share/` for `pkg:sola`, a `cef` link to `pkg:cef` for Browser and Design, and `components.json` with the version | The checkout. If `~/.cache/sola/cef-<version>` holds no engine, it becomes a link to `pkg:cef`'s. |
+| `cargo make oath apply` | Stages, then puts each tree in the store (`sudo oath store`), pins it (`sudo oath set pkg:<name> hash=… needs=…`, each need at the hash this machine has live, or the one just stored), and applies the three in one `sudo oath apply` | The machine: one apply and one generation. The `/bin` links move, and PID 1 restarts every service whose program moved ([Updating and rolling back](#updating-and-rolling-back)). |
+| `cargo make oath publish` | From a committed tree only. Stores the source (`pkg:sola-src`) and every crate the lock file names (`pkg:sola-crates`); files `plan:sola-build`, which compiles every program once in `oath build`'s sandbox against this machine's live packages, and a plan per package that copies its programs out; builds them; uploads the packages, plans, and sources to Oath's default origin; and prints the desk profile entries that pin the products. `--local` builds the plans and uploads nothing | This machine's store and its `plan:*` objects, and the origin, which anyone can read. This machine's own `pkg:sola*` pins do not change. |
 
-Builds are optimized by default. `cargo make install shell` builds and
-installs one component; `--debug` builds without optimization. The first
-install also fetches the icon and cursor packs into `/opt/sola/share`.
+`apply` and `publish` need the machine owner's go-ahead: `apply` changes
+what the machine runs, and `publish` puts out a release that other
+machines install. `publish` reads the origin's write key from
+`OATH_ORIGIN_S3`, `OATH_ORIGIN_KEY_ID`, and `OATH_ORIGIN_SECRET`, in the
+environment or in `~/.config/oath/origin.env`. A package's version is the
+workspace version and the short commit (`0.1.0+g<commit>`), with `.dirty`
+added when the checkout has uncommitted changes.
 
-## Fonts
-
-Sola does not ship fonts. Applications find font families by name through
-fontconfig, so a family must be installed system-wide before Sola runs. The
-NixOS module installs **Inter** and **JetBrains Mono**, which Sola uses for
-interface and mono text. When **SF Pro Text** and **Iosevka Term Slab** are
-installed, Sola prefers them. SF Pro is licensed and not in nixpkgs: put its
-`.ttf` or `.otf` files in `~/.local/share/fonts/` and run `fc-cache -f`.
-
-```bash
-fc-list : family | grep -E 'Inter|JetBrains Mono|SF Pro Text|Iosevka Term Slab'
-```
-
-[Theme and toolkit](theme.md) covers font roles and how a family is chosen
-and changed.
+On Oath, `cargo make install` and `cargo make install-cef` are not used:
+`install` copies binaries into `/opt/sola/bin`, which nothing on Oath runs,
+and the engine comes from `pkg:cef`.
 
 ## Starting a session
 
-Sola owns the display and input, so it starts from a text console, not
-inside another desktop.
+There is nothing to start by hand. At boot, PID 1 starts seatd, rivulet,
+and Sola's services as `home`, and the screen shows Sola once rivulet and
+the shell are up. The desk profile turns off Oath's login on the screen,
+so the desktop comes up with no login, and Sola has no lock screen. Reach
+the machine otherwise over SSH as `home`. [Process manager](process-manager.md)
+lists the services and how PID 1 runs them.
 
-1. Log out of any graphical session and switch to a console
-   (`Ctrl+Alt+F2`).
-2. Log in and run `/opt/sola/bin/sola`.
-3. To leave, choose **Quit Sola** from the menubar, or run
-   `pkill -x sola` from another console.
+Applications open from the launcher (Super+Space) or with
+`solactl session launch <app_id>`. The session manager reopens the applications
+that were open when the session last ended.
 
-## Updating
+To end the session, choose **Restart Computer** or **Shut Down** from the
+flower menu. **Quit Sola** stops the shell and the session manager but
+leaves the machine running without a desktop until PID 1 starts them
+again ([Ending the session](process-manager.md#ending-the-session)).
 
-Run `cargo make install` again. The process manager restarts a component
-when its binary in `/opt/sola/bin` changes, and applications restart
-themselves, so most updates need no new session. Replacing `sola` itself
-ends the session.
+## Updating and rolling back
+
+A change to Sola is an apply of its packages: `cargo make oath apply`
+from a checkout, or `oath set` and `oath apply` of a published release
+([Installing](#installing)). PID 1 restarts each service whose program
+comes from a package that moved, and no other: the Sola services restart,
+while rivulet and the tmux servers that hold Terminal's and Projects'
+shells keep running. The restarted session manager reopens the
+applications that were open, and Terminal and Projects reattach to their
+tmux sessions. No session needs ending. An application does not restart
+itself when its package moves.
+
+Every apply takes a generation. `sudo oath undo` puts back the pins the
+last apply changed and relinks `/bin`, and PID 1 restarts the same
+services on the previous programs; run it again to go back one more
+apply. `oath log` lists the applies. Undo puts back only the pins: your
+files and settings stay as they are.
+
+## Fonts
+
+Sola ships no fonts. `pkg:sola` needs Oath's font packages, Noto (with
+CJK and colour emoji) and Iosevka Term Slab, so they are present wherever
+Sola is. Interface text is Noto Sans and mono text Iosevka Term Slab;
+when **SF Pro Text** is installed, interface text uses it.
+[Fonts](distribution.md) covers how a family is chosen and how to add one,
+and [Theme and toolkit](theme.md) covers font roles.
 
 ## Where things are
 
+On Oath, `~` is `/home`, the desk user's home directory.
+
 | Path | What |
 |------|------|
-| `/opt/sola/bin` | Every Sola binary |
-| `/opt/sola/share` | Icons, cursors, and other assets |
-| `/opt/sola/log` | Logs: `sola.log` for the session, `river.log`, and `app-<app id>.log` for each application |
-| `~/.cache/sola/cef-<version>/` | The browser engine |
+| `/bin/sola-*`, `/bin/solactl` | Links to Sola's programs in the store (`/oath/store/pkg/sola/<hash>/bin/`, and the Browser and Design packages) |
+| `/oath/store/pkg/sola/share` | Icons and the McMojave cursors |
+| `~/.config/sola/` | Applications' settings, and the bus's saved state, `state.yaml` |
+| `~/.local/state/sola/` | Sola's logs: `sola.log` for every Sola process, and `app-<app id>.log` for each application |
+| `/oath/log/svc/<service>.log` | Each service's output, as PID 1 records it (`oath logs svc:<service>`) |
+| `/run/user/1/` | The bus and call sockets (`sola-bus`, `sola-call`) and rivulet's `wayland-N` |
 
-`solactl logs <name>` prints `/opt/sola/log/<name>.log`; add `-f` to keep
-following it (`solactl logs app-sola-mail -f`). For more detail, start the
-session with `RUST_LOG=debug /opt/sola/bin/sola`.
+`solactl logs <name>` prints `~/.local/state/sola/<name>.log`; add `-f` to
+keep following it (`solactl logs app-sola-mail -f`).
+`oath logs svc:rivulet` shows the compositor's output. [Logs](process-manager.md#logs)
+covers the log filter.
 
 ## First-run problems
 
 | Symptom | Cause |
 |---------|-------|
-| `CEF binary distribution not found` while building | `cargo make install-cef` has not been run. |
-| `river not found in PATH` | The module is not enabled, or the rebuild was not switched to. |
-| `'river' has been renamed to/replaced by 'river-classic'` | `inputs.sola.inputs.nixpkgs.follows` is set. Remove it. |
-| pkg-config cannot find `xkbcommon` while building | `environment.extraOutputsToInstall` or `PKG_CONFIG_PATH` is missing; see CONTRIBUTING.md. |
-| `sola` exits at once with a Wayland error | It was started inside another desktop session. Use a console. |
-| A blank window and `Unable to initialize SkSurface` | The graphics stack or nix-ld is not set up for the browser engine. |
+| No top row or bar after boot, on an Intel GPU or in QEMU | Oath's Mesa drives AMD GPUs only, so the shell gets no GL context. |
+| `sola: not on Oath; PID 1 runs Sola's services (oath ls --kind svc)` | `sola` was run on Oath, where PID 1 runs the session. Nothing needs starting. |
+| `cargo make oath: not an Oath machine (no /oath/INDEX.md)` | `cargo make oath` runs only on an Oath machine. |
+| `commit first: a published source is the committed tree` | `cargo make oath publish` was run with uncommitted changes. |
+| `oath apply` refuses a published release, naming a need | The release was built against a package the machine has at another hash. Build Sola on the machine. |
+| A new build does not run | `cargo make install` copied it into `/opt/sola/bin`, which nothing on Oath runs. Use `cargo make oath apply`. |
+| Monitor, Kit, Preview, Arcade, Scope, or Spotify starts nothing | The launcher lists them, but their programs are not in Sola's Oath packages. |
+| Bots and `solactl bots` cannot reach the bots daemon | The desk profile runs no service for `sola-botsd`. |
+| No desktop after **Quit Sola** | The shell and the session manager stay stopped after a clean exit. Restart the machine. |
+| `~/.local/state/sola/sola.log` keeps growing | Only `sola` rotates it, and `sola` does not run on Oath. |

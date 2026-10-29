@@ -2,14 +2,14 @@
 
 **Status:** living reference  
 **Audience:** humans redesigning sola-kit / sola-shell, and agents (Grok Build) implementing visual work  
-**Visual authority:** the sola-design canvas [`design/foundation/`](../../design/foundation/) and [`DESIGN.md`](../../DESIGN.md) (tokens, roles, proposals)  
+**Visual authority:** the sola-design canvas [`design/foundation/`](../../design/foundation/) — Sola's design as built — and [`DESIGN.md`](../../DESIGN.md), its written form (tokens, roles, what is still open)  
 **Related:** `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`, `docs/specs/2026-06-06-shell-customization-design.md`, Apple [Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/)
 
 ---
 
 ## 1. North star
 
-**Sola is a cool graphite tool UI** — dense chrome, sparse cyan signal, quiet
+**Sola is a graphite tool UI on neutral greys** — dense chrome, sparse cyan signal, quiet
 selection — with **macOS Dark Mode density and hierarchy** as craft reference,
 not a pixel-perfect HIG clone.
 
@@ -24,12 +24,12 @@ or the graphite brand requires it.
 
 | Area | macOS default | Sola |
 |------|---------------|------|
-| Palette | System greys | **Cool graphite** (`#0c0e12` / `#151922` / …) |
-| Window layout | Freeform windows with title bars | **New windows float** at app size; **zoning** is opt-in snap |
-| Zoned (tiled) windows | Title bar + traffic lights | **No title bars** on zoned windows |
-| Floating windows | System/CSD title bars | **Client decorations** when floating (`Topic::WindowFloating`) |
+| Palette | System greys | **Graphite on neutral greys** (`#0b0b0b` / `#151515` / …; no blue since 2026-10-23) |
+| Window layout | Freeform windows | **Zones**: Full, or Left and Right halves, on a 10 px gap grid; any window can float |
+| Menus | One global menu bar | **Each window's titlebar** carries its app's menus; the top row holds only the shell's islands |
+| Title bars | Title bar + three traffic lights | A 38 px titlebar on every kit window: **one** close dot, the menus, the title |
 | Primary controls | Flat system blue | Soft accent fill, **dark label**, optional glow |
-| Hairlines | Solid system separator | Soft **white@α** edges |
+| Hairlines | Solid system separator | Soft white edges, baked **opaque** on their surface (7% / 12%) |
 | Everything else | HIG dark mode density | Follow density; prefer graphite tokens |
 
 Further departures may be added later as real usage demands them. Do not invent
@@ -43,7 +43,7 @@ Craft rules distilled from HIG density + the sola-kit design system pass.
 
 ### 2.1 Appearance and depth
 
-- **Dark graphite for all chrome** — menu bar, menus, launcher, switcher, popovers, kit apps. Content areas may stay dark or follow the app; shell chrome is always dark-first.
+- **Dark graphite for all chrome** — the top row's islands, titlebars, menus, launcher, switcher, popovers, kit apps. Content areas may stay dark or follow the app; shell chrome is always dark-first.
 - **Elevation through background steps *and soft materials***, not heavy borders. Base → raised → hover/selected. Soft hairlines (opaque sRGB white-mix ~7% on the surface) separate layers when needed.
 - **Cards and primary fills are not flat slabs.** Kit chrome uses iced **linear gradients** (`style::card_fill`, `primary_fill`, `hero_fill`, `stage_fill`, `canvas_ambient`) so panels read as lit graphite.
 - **Foreground content must stay readable.** Prefer cool off-white primary text over dim-on-dim.
@@ -63,19 +63,20 @@ CSS comps use tools iced only partially has. Map intentionally:
 | Inset box-shadow (rim light) | Shadow is outer only | slightly lighter gradient start stop |
 | `color-mix(... transparent)` edges | Alpha inflates on borders | **opaque** `mix_white(surface, t)` / `mix(a, b, t)` |
 
-Materials (menu bar, menus, sidebars, HUD-style overlays) still *aim* for blur + translucent fills when the compositor supports them. Until then:
+Materials (islands, menus, sidebars, HUD-style overlays) still *aim* for blur + translucent fills when the compositor supports them. Until then:
 
-- Prefer **gradient lift + graphite steps** over flat `#151922` everywhere.
+- Prefer **gradient lift + graphite steps** over flat `#151515` everywhere.
 - Prefer **behind-window** blend for floating shell chrome when possible; opaque fallbacks stay graphite, not pure black.
 - Avoid decorative multi-hue marketing gradients. Soft accent/selection washes only.
 
-Shell-specific alpha already lives in bus tokens (`shell-menubar-bg`, `shell-backdrop-dim`, `shell-switcher-bg`, …). Prefer those over hard-coded RGBA in views.
+Shell-specific alpha already lives in bus tokens (`shell-backdrop-dim`, `shell-switcher-bg`, …). Prefer those over hard-coded RGBA in views. (`shell-menubar-bg` is still seeded, but the top row is transparent and does not read it.)
 
 ### 2.3 Layout density
 
 macOS desktop chrome is **dense and quiet**:
 
-- Menu bar: compact height, small type, generous horizontal scanning, low visual noise.
+- The top row: 28 px islands, small type, generous horizontal scanning, low visual noise.
+- Titlebars: 38 px, 13 px menus, the title in tertiary ink.
 - Menus: tight row height, clear separators, standard checkmarks / key equivalents alignment.
 - Overlays (Spotlight-like launcher, Mission Control–like switcher): one clear focus, large hit targets for primary rows, restrained decoration.
 
@@ -87,10 +88,10 @@ Follow a **role system**, not ad-hoc sizes:
 
 | Role | Use | Sola mapping |
 |------|-----|----------------|
-| Chrome | Menu bar labels, menu items, menubar status/clock | `fonts::chrome()` / kit UI roles |
+| Chrome | Titlebar menus and titles, menu items, the top row's labels and clock | `fonts::chrome()` / kit UI roles |
 | Body UI | Settings rows, dialogs, lists | `fonts::ui()` / `ui_medium()` — kit `text::body` **13** |
 | Prose | Mail bodies, long-form reading | kit `text::prose` **14** + `prose` letter renderer |
-| Display | Rare emphasis (app title in menubar can be medium weight) | `fonts::display()` sparingly — `heading` 22 / `subheading` 15 |
+| Display | Headings | `fonts::display()` sparingly — `heading` 22 / `subheading` 15 |
 | Caption | Help, secondary labels | `text::caption` **11** |
 | Mono / data | Code, terminal, detail-panel numbers | `fonts::mono()` — `text::code` 12 |
 
@@ -98,10 +99,10 @@ Control pads: `PAD_CONTROL` `[7, 14]`, `PAD_CONTROL_SM` `[5, 11]`; field
 inputs default to padding `[7, 12]`. Radii: SM **5** / MD **7** / LG **10**.
 Prefer `button::labeled` / `labeled_sm` over inventing pads.
 
-macOS uses SF Pro for UI and SF Mono for data. **Menubar is all chrome** —
-status values and the clock match menu titles (regular weight); only the
-focused-app name uses medium. Reserve mono for code and dense detail
-panels, not menu-bar extras. **Do not introduce extra display faces** for
+macOS uses SF Pro for UI and SF Mono for data. **The top row is all
+chrome** at regular weight; an agent island's name is medium. In a
+titlebar the app's name (its first menu) is semibold. Reserve mono for
+code and dense detail panels, not the top row. **Do not introduce extra display faces** for
 shell chrome. Max two UI faces + mono.
 
 ### 2.5 Color roles (semantic, not raw hex in views)
@@ -110,13 +111,13 @@ All UI color should resolve through the kit / bus theme:
 
 | Intent | Behavior | Kit / bus direction (seed) |
 |--------|----------|----------------------------|
-| Window / canvas | Darkest graphite | `bg` / `bg-primary` `#0c0e12` |
-| Raised (sidebar, card, menu) | One step up | `bg_raised` / `bg-secondary` `#151922` |
-| Hover / selected row | Further lift; selection is graphite, not darkened neon | `bg_hover` `#1e2533`, selection `#2c333e` |
-| Soft hairlines | White@α separators | kit `hairline` / `hairline_strong` |
-| Hard edges | Stronger chrome | `border` `#2a3344` |
-| Primary label | Cool off-white | `fg` / `text-primary` `#e9ecf2` |
-| Secondary label | Muted blue-grey | `fg_muted` `#8b94a8` |
+| Window / canvas | Darkest graphite | `bg` / `bg-primary` `#0b0b0b` |
+| Raised (sidebar, card, menu) | One step up | `bg_raised` / `bg-secondary` `#151515` |
+| Hover / selected row | Further lift; selection is graphite, not darkened neon | `bg_hover` `#1f1f1f`, selection `#292929` |
+| Soft hairlines | White mixed in, opaque | kit `hairline` / `hairline_strong` (7% / 12%) |
+| Hard edges | Stronger chrome | `border` `#2a2a2a` |
+| Primary label | Off-white | `fg` / `text-primary` `#ececec` |
+| Secondary label | Muted grey | `fg_muted` `#949494` |
 | Accent | Sparse: focus, primary, key status | `accent` `#3dd6f5` |
 | Success / warning / danger | Soft semantic | `#3ecf8e` / `#e8b84a` / `#f07178` |
 
@@ -137,7 +138,7 @@ For Sola:
 - Secondary: soft fill + strong hairline — not a bare outline.
 - Field / letter text selection uses the quiet `selection` atom
   (graphite lift, not darkened neon), not `primary.weak`.
-- Terminal / Workspaces **grid** selection overlays the neon `accent`
+- Terminal / Projects **grid** selection overlays the neon `accent`
   (`#3dd6f5`) at alpha — same chroma as focus, not the graphite atom
   and not a darkened-cyan mix.
 - Cards: soft hairline + light shadow; use `card::plain` when elevation is
@@ -166,18 +167,48 @@ For Sola:
 
 This is the main intentional break from macOS chrome.
 
-### Default float + opt-in zoning
+### Zones on a gap grid
 
-- **New windows without a zone assignment float** at the **client-requested size** (centered by the compositor). The shell emits `Topic::WindowFloating` so kit apps know to draw CSD (titlebar / drag / close).
-- **Zoning is opt-in** (Meta+numpad snaps). A saved zone assignment still restores on relaunch; explicit float (`Meta`+numpad `*`) persists `Zone::Float` + float geometry.
-- **Zoned windows have no title bars.** App content meets the zone edge. Window identity and controls live in the **menu bar**, switcher, and floating chrome — not in per-window title bars for tiled clients. The menubar **Window** menu (zones, float, hide, cycle) is the mouse path for those compositor actions.
-- **Floating windows draw client decorations** (kit `titlebar` / `floating_frame` when floating). The chrome is a **rounded rectangle on all four corners**; content is clipped to that curve. Mental model: **float = CSD + app size; zoned = no title bar + zone frame**.
+- **Every kit window has a titlebar**: 38 px, the close dot, the app's
+  menus (its name first, in semibold; the kit appends **Window**), then the
+  window's title at the right in tertiary ink. Menus that do not fit are
+  left off; the title is cut, or dropped under 32 px of room. A menu's
+  dropdown hangs under its title inside the window.
+- **Zones:** Full, Left, Right, Floating. Full covers the content area;
+  Left and Right are halves. Full and the halves take turns on screen:
+  showing a Full tab brings Full up, showing a half's tab brings the halves
+  back. A lone half keeps its half.
+- **One gap, everywhere:** 10 px at the output's edges, between tiles, and
+  above and below the top row's islands. Tiles and the tab bar start at
+  y 48; the tab bar is 240 wide at the left, and the content area starts at
+  x 260.
+- **Windows have 12 px corners** and a 1 px opaque rim. The focused one's
+  rim is the theme's highlight a step lighter, its titlebar a step
+  brighter, its close dot red; the others dim their menus to 55% and keep
+  their place. Corners are cleared, so the ground (black or the background
+  picture) shows there.
+- **Floats** sit over the tiles at their own size and are the only windows
+  with a shadow (28%, y 3, blur 11). Any window can float (`Meta`+numpad
+  `*`).
+- **Other applications' windows:** tiles get the same 12 px corners and rim,
+  painted by sola-river around them; floats stay square with River's 1 px
+  border. sola-river draws no titlebar for them.
+- **Cinema:** one window over the whole output, square, no titlebar, so it
+  can scan out.
+- **Where a new window goes:** the place its key last had (or its app's
+  saved place), else Floating if it floats, else the landing zone of the
+  showing workspace: Full while Full is up or nothing is tiled, otherwise
+  the last focused half. Windows already open when the shell starts take a
+  remembered place if there is one, otherwise join without covering the
+  zone's shown tab.
 
 ### Implications for visual design
 
-- Do not design “traffic light” clusters into zoned client chrome.
-- Floating kit apps **must** honor `Topic::WindowFloating` and show title chrome when floating.
-- Shell must make **focused app and window** obvious for zoned clients without title bars (menu bar app name, switcher).
+- Design one close dot, not a traffic-light cluster.
+- Kit apps get the titlebar from the kit's window frame; they publish their
+  menus and do not draw their own title row.
+- The tab bar (its focused row is the highlight pill) and the focused
+  window's rim say what has focus; nothing in the top row does.
 - Launcher / switcher carry more weight as navigation affordances than on stock macOS.
 
 ---
@@ -188,16 +219,17 @@ Use this when restyling or reviewing shell UI. Default comparison target: **macO
 
 | Surface | macOS analogue | Sola notes |
 |---------|----------------|------------|
-| Menubar | Menu bar | Left: system + app menus. Right: status (stats, clock). Compact, quiet, high scanability. |
-| App menus | Menu bar menus | Standard hierarchy, separators, key equivalents. |
+| Top row | Menu bar | 28 px islands on the ground, a gap from every edge, no band. Left: the flower (system menu), then an island per agent session that asks or has finished. Right: an island per group (extras, spectrum, meters, network, clock). |
+| App menus | Menu bar menus | On each window's titlebar. Standard hierarchy, separators, key equivalents; the dropdown hangs under its title inside the window. |
+| Tab bar | Dock + window menu | 240 px island at the left: its head switches workspaces; sections Full / Left / Right / Floating list the showing workspace's windows. |
 | Launcher | Spotlight | Single focused field + results list; dimmed backdrop; not a dashboard. |
 | Switcher | App / window switcher | MRU, keyboard-first; translucent backplate via shell tokens. A pointer already on an icon does not select until it moves. Count mark on the icon is pending attention (live + pile; Mail unread). |
-| Stat indicators | Menu bar extras | Right cluster is four phrases (icon extras, percents, rates, clock). CPU / GPU / MEM / RX / TX show a muted label plus a fixed btop-style dithered pixel graph (numbers live in the dropdown). |
-| Stat / calendar popovers | Menu bar dropdowns | Anchored under indicator; compact detail, not marketing cards. |
-| Bluetooth | Menu bar extras (Control Center-ish) | Quiet lucide glyph **left of volume**; popover is the same Menu overlay (`Panel::Bluetooth`). Off vs on on the icon. Not a Waybar module. [freeze](../specs/2026-08-29-shell-bluetooth-menubar-design.md). |
-| Volume | Menu bar extras (Control Center-ish) | 12-band LED spectrum **right of Bluetooth**, with the same phrase gap as CPU on its other side; click the bars for `Panel::Audio` (slider, mute, output/input pick). No speaker glyph. Media keys stay `solactl media`. [freeze](../specs/2026-08-29-shell-audio-menubar-design.md). |
-| Toasts (whispers) | Menu-bar status | Transient 13pt chrome in the 28px bar. `Opening…`, screenshot path. Not for attention. |
-| Notifications | Banners + Notification Center | Desk cards that drop from the bar; missed pile is a bell + count in the right cluster, grouped by app (no Clear; no cap). Super+Tab carries a count mark on the icon. See [notifications freeze](../specs/2026-08-25-sola-notifications-design.md). |
+| Stat indicators | Menu bar extras | Two islands: CPU / GPU / MEM, and RX / TX. Each shows a muted label plus a fixed btop-style 12 × 5 LED graph in whole dots (numbers live in the panel). |
+| Stat / calendar popovers | Menu bar dropdowns | Hang from their island; compact detail, not marketing cards. |
+| Bluetooth | Menu bar extras (Control Center-ish) | Quiet lucide glyph, last in the extras island; popover is the same Menu overlay (`Panel::Bluetooth`). Off vs on on the icon. Not a Waybar module. [freeze](../specs/2026-08-29-shell-bluetooth-menubar-design.md). |
+| Volume | Menu bar extras (Control Center-ish) | 12-band LED spectrum alone in its own island, right of the extras; click it for `Panel::Audio` (slider, mute, output/input pick). No speaker glyph. Media keys stay `solactl media`. [freeze](../specs/2026-08-29-shell-audio-menubar-design.md). |
+| Toasts (whispers) | Menu-bar status | An island of 13 px chrome in the true center of the top row. `Opening…`, screenshot path. Not for attention. |
+| Notifications | Banners + Notification Center | 340 px desk cards at the top right, under the top row, that drop 14 px into place; missed pile is a bell + count in the extras island, grouped by app (no Clear; no cap). Super+Tab carries a count mark on the icon. See [notifications freeze](../specs/2026-08-25-sola-notifications-design.md). |
 
 ---
 
@@ -207,7 +239,7 @@ Visual work should flow through existing machinery:
 
 1. **Compile-time kit atoms** — `sola_kit::theme::hex` defaults  
 2. **Bus theme** — `Topic::Theme`, palette tokens, presets  
-3. **Shell tokens** — `shell-*` group (menubar, backdrop, switcher, launcher)  
+3. **Shell tokens** — `shell-*` group (the flower, backdrop, switcher, launcher)  
 4. **Font roles** — installed from theme; components call role accessors only  
 5. **Components** — `sola-kit` widgets + storybook pages as the regression surface  
 6. **Storybook** — dogfood every kit visual change  
@@ -239,11 +271,11 @@ Every design pass needs:
 
 Bad:
 
-> Make the menubar nicer.
+> Make the top row nicer.
 
 Good:
 
-> Menubar right cluster: keep CPU/GPU/MEM/RX/TX/clock as separate kit-style indicators. Match macOS menu bar density (compact type, quiet labels). Prefer shell/kit tokens; no new hex. Do not change Metric or bus protocol. Plan first, then implement.
+> Top row, right end: keep CPU/GPU/MEM, RX/TX and the clock as separate islands. Match macOS menu bar density (compact type, quiet labels). Prefer shell/kit tokens; no new hex. Do not change Metric or bus protocol. Plan first, then implement.
 
 Always pin for Sola work:
 
@@ -257,7 +289,7 @@ Always pin for Sola work:
 
 Verification for Sola is not a web browser loop:
 
-1. Capture current surface(s) (idle menubar, open menu, launcher, switcher, storybook).  
+1. Capture current surface(s) (idle top row, an open titlebar menu, launcher, switcher, storybook).  
 2. Agree a short visual plan (keep / change / forbidden).  
 3. Implement where your tab is (a root tab works on master; a worktree only when asked).  
 4. `cargo make build` (user installs and runs from TTY).  
@@ -272,7 +304,7 @@ One signature move per pass:
 
 | Pass examples | Out of scope for that pass |
 |---------------|----------------------------|
-| Menubar density + type | Launcher redesign |
+| Top row density + type | Launcher redesign |
 | Launcher card + list hierarchy | Theme atom overhaul |
 | Switcher tiles | New font families |
 | Kit button/field density | Shell layout rewrites |
@@ -299,15 +331,15 @@ For visual work, prefer plan mode or an explicit “brief only, no code” turn 
 - Invent a “unique Sola brand look” beyond the listed departures  
 - Purple gradients, Inter-only stacks, oversized radii, glass marketing cards  
 - Hard-coded colors/spacing in shell when tokens exist  
-- Stacked dual-line menubar widgets where separate status items will do  
-- Title bars on zoned windows  
+- Stacked dual-line widgets in the top row where separate islands will do  
+- Global menus or a second title row: an app's menus belong on its window's titlebar  
 - Landing-page hierarchy (hero, numbered marketing steps) in shell chrome  
 - Decorative motion  
 
 ### Review checklist (use on every visual PR)
 
 - [ ] Would this read as reasonable macOS dark mode chrome to a Mac user?  
-- [ ] Departures only for zoning / no title bars (or newly documented)?  
+- [ ] Departures only as listed in §1 (or newly documented)?  
 - [ ] Colors from kit/bus/shell tokens?  
 - [ ] Type uses role accessors, not raw families?  
 - [ ] Spacing on a small consistent scale?  
@@ -322,7 +354,7 @@ For visual work, prefer plan mode or an explicit “brief only, no code” turn 
 The north star is macOS dark mode, but **presets and tokens** are how it stays personal:
 
 - Theme presets (`Topic::Theme`) for palette  
-- Shell tokens for menubar/switcher/launcher chrome  
+- Shell tokens for switcher/launcher chrome  
 - Font role selections for family swaps (license permitting)  
 
 When a hard-coded look blocks tuning, **promote it to a token** rather than leaving a magic number in a view.
@@ -352,6 +384,8 @@ roadmap are done):
 
 - **macOS L&F roadmap (phased, screenshot-first):** `docs/specs/2026-07-20-macos-look-and-feel-roadmap.md`  
 - **Screenshot capture plan (P0 tooling):** `docs/specs/2026-07-20-screenshot-capture-plan.md`  
+- Titlebars, gaps, the top row, the tab bar, workspaces (Next): `docs/specs/2026-10-21-next-tab-bar-design.md`  
+- The background picture, adapting, the idle fade: `docs/specs/2026-10-24-background-design.md`  
 - Theme protocol: `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`  
 - Shell customization tokens: `docs/specs/2026-06-06-shell-customization-design.md`  
 - Shell iced port: `docs/specs/2026-05-22-sola-shell-iced-port-design.md`  

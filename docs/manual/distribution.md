@@ -1,65 +1,69 @@
 # Fonts
 
-Sola does not bundle, register, or ship font files. Every Sola app resolves
-fonts by family name through the system fontconfig database, which
-`sola_kit::fonts::ensure_system_fonts` loads into iced's font database at
-startup. If a family an app asks for is not installed system-wide, the text
-shaper silently falls back to a default face, so the required families must
-be installed before Sola runs.
+Sola ships no font files. Every Sola application finds fonts by family
+name: when it starts, it loads the fonts in the directories fontconfig's
+configuration lists into iced's font database
+(`sola_kit::fonts::ensure_system_fonts`), once per process. A family that
+is not installed falls back to another face, so a font added later is seen
+only by applications started after it.
 
-## Required families
+## The fonts on Oath
 
-| Family | Role | License |
-|--------|------|---------|
-| **Inter** | UI text | SIL OFL 1.1 |
-| **JetBrains Mono** | Mono and code | SIL OFL 1.1 |
+`pkg:sola` needs Oath's font packages, so they are present wherever Sola
+is:
 
-Sola uses these when the preferred families below are not installed. If
-either is missing too, UI or mono text falls back to whatever fontconfig
-picks, which usually looks wrong.
+| Package | Families |
+|---------|----------|
+| `pkg:font-noto` | Noto Sans, Noto Serif, Noto Sans Mono, Noto Sans Symbols, Noto Sans Math, and the other scripts web pages need |
+| `pkg:font-noto-cjk` | Noto Sans CJK and Noto Serif CJK |
+| `pkg:font-noto-emoji` | Noto Color Emoji |
+| `pkg:font-iosevka-term-slab` | Iosevka Term Slab |
 
-## Preferred families
+Sola's services set `FONTCONFIG_FILE` to `pkg:fontconfig`'s configuration,
+`/oath/store/pkg/fontconfig/live/etc/fonts/fonts.conf`, and the
+applications the session manager starts inherit it. That file lists the
+font packages' directories and `~/.local/share/fonts` (on Oath,
+`/home/.local/share/fonts`). It also maps the generic families: sans-serif
+and system-ui to Noto Sans, serif to Noto Serif, monospace to Iosevka Term
+Slab and then Noto Sans Mono, emoji to Noto Color Emoji, and math to Noto
+Sans Math. Browser's engine resolves a page's generic families through
+it; Sola's own applications ask for families by name.
 
-When they are installed, Sola uses **SF Pro Text** for UI text and
-**Iosevka Term Slab** for mono; the default theme names them. Sola does not
-ship either. SF Pro Text is a licensed face and is not in the Sola NixOS
-module: install it system-wide yourself from a copy you are entitled to
-use.
+## Which family each role uses
 
-## Other families
+Applications never name a family directly; they ask for a role
+([Theme and toolkit](theme.md)). The default theme names SF Pro Text for
+the interface roles and Iosevka Term Slab for mono. When the family a role
+names is not installed, the role takes the first installed family in its
+line:
 
-The font picker in Kit (the `sola-kit` storybook) offers any family
-fontconfig finds installed, in addition to the families above.
+| Roles | Preferred | Then | Then |
+|-------|-----------|------|------|
+| UI, UI medium, display, chrome | SF Pro Text | Inter | Noto Sans |
+| Mono | Iosevka Term Slab | JetBrains Mono | Noto Sans Mono |
 
-A family you select in the picker must be installed system-wide. Picking
-one that is not installed falls back to the default face for that role.
-Install the family first, then select it. The family name you install must
-match the name the picker shows (fontconfig's family name).
+Oath ships neither SF Pro Text nor Inter, so interface text is Noto Sans,
+and mono text is Iosevka Term Slab.
 
-## Installing the fonts
+## Adding a family
 
-### NixOS
-
-`services.sola.enable = true` installs **Inter** and **JetBrains Mono**
-through the Sola NixOS module. Add other families yourself if you want them
-in the picker:
-
-```nix
-fonts.packages = with pkgs; [
-  # optional extras the picker can offer:
-  nerd-fonts.iosevka-term-slab
-];
-```
-
-Rebuild (`nixos-rebuild switch`) so fontconfig picks them up. Confirm with
-`fc-list : family | grep -E 'Inter|JetBrains Mono'`.
-
-### Font files
-
-Licensed families such as SF Pro are not in nixpkgs. Put their `.ttf` or
-`.otf` files in `~/.local/share/fonts/` and run `fc-cache -f`. Confirm a
-family is visible with:
+Put the family's `.ttf` or `.otf` files in `~/.local/share/fonts/`, run
+`fc-cache -f`, and start the applications that should use it again. The
+shell restarts with **Restart Shell** in the flower menu. Confirm that
+fontconfig sees a family with:
 
 ```bash
-fc-list : family | grep -E 'SF Pro Text|Iosevka Term Slab'
+fc-list : family | grep -E 'Noto Sans|Iosevka Term Slab|SF Pro Text'
 ```
+
+The family name fontconfig reports must be the name the theme uses.
+
+SF Pro Text is licensed by Apple for its own platforms, and Oath does not
+ship it. Install it only from a copy you are entitled to use; once it is
+installed, interface text uses it, since the default theme names it.
+
+## The font picker
+
+The font picker is in Kit (the `sola-kit` storybook), which offers every
+family fontconfig lists. Kit is not in Sola's Oath packages, so on Oath
+there is no font picker.
