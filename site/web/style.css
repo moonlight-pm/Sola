@@ -1,21 +1,23 @@
-/* sola.moonlight.pm — graphite, one cyan signal (DESIGN.md).
+/* sola.moonlight.pm — the desk's look in the home page screenshot: the
+   graphite ladder tinted violet, one rose signal (Settings' Violet with
+   the picture's accent). Contrast as DESIGN.md's graphite.
    One frame with thoxa.moonlight.pm and oath.moonlight.pm: a 46rem text
    column, a 78rem page, a 3.5rem bar. */
 
 :root {
     color-scheme: dark;
-    --well: #050608;
-    --canvas: #0c0e12;
-    --code-ground: #12151b;
-    --chip: #1a1e26;
-    --hairline: #1d1f23;           /* white 7% into canvas */
-    --hairline-strong: #292b2e;    /* white 12% into canvas */
-    --selection: #2c333e;
-    --ink: #e9ecf2;
-    --prose: #d3d8e1;
-    --muted: #8b94a8;
-    --quiet: #7d8597;              /* text-tertiary at DESIGN.md P5: 5:1 on canvas */
-    --accent: #3dd6f5;
+    --well: #08060c;
+    --canvas: #0f0b15;
+    --code-ground: #17121e;
+    --chip: #221a2c;
+    --hairline: #201c25;           /* white 7% into canvas */
+    --hairline-strong: #2c2831;    /* white 12% into canvas */
+    --selection: #3a3048;
+    --ink: #ede9f3;
+    --prose: #d9d4e2;
+    --muted: #9a90ab;
+    --quiet: #8a809a;              /* text-tertiary at DESIGN.md P5: 5:1 on canvas */
+    --accent: #e398a9;
     --sans: "SF Pro Text", Inter, system-ui, sans-serif;
     --display: "SF Pro Display", Inter, system-ui, sans-serif;
     --mono: "Iosevka Term Slab", "JetBrains Mono", ui-monospace, monospace;

@@ -16,9 +16,10 @@ desktop.
 | `app/markdown.thx` | Markdown to nodes (from thoxa.moonlight.pm): chapter links become anchors, other relative links go to GitHub |
 | `app/highlight.thx` | Code blocks: comments in shell, Nix, and TOML |
 | `app/config.thx` | Listen port, asset root, and manual root from the environment |
-| `web/` | `style.css`, the flower mark, and `desk.png` |
+| `web/` | `style.css`, the flower mark, and `desk.webp` |
 
-The look follows [`DESIGN.md`](../DESIGN.md): graphite, one cyan signal.
+The look is the desk in the home page screenshot: [`DESIGN.md`](../DESIGN.md)'s
+graphite ladder tinted violet, one rose signal, contrast as DESIGN.md's.
 
 ## Keeping it true
 
@@ -29,10 +30,11 @@ process, or the release state changes, update the page with
 `appList()` and the process table `partList()` in `app/pages/home.thx`; an
 application's `chapter` links its name to the manual.
 
-`web/desk.png` is the `Desk` element (`data-name="Desk"`, 1296 × 760 CSS
-px) of [`design/foundation/07-desk.html`](../design/foundation/07-desk.html),
-captured at 2× in headless Chrome after `document.fonts.ready`. Render it
-again when that board changes; the caption says it is a drawing.
+`web/desk.webp` is a screenshot of Joshua's desk (1920 × 1080, taken
+2026-10-29), WebP at quality 95 (`magick shot.png -alpha off -strip
+-quality 95 -define webp:method=6 desk.webp`, about 240 KB). The caption
+gives its date; a new screenshot gets a new date, and the colors in
+`style.css` follow it.
 
 The manual is read from disk at each request (locally) and copied into the
 image, so a change to `docs/manual` reaches the site at the next deploy. A

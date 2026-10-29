@@ -38,11 +38,11 @@ fn intro() -> Node {
         <p class="lede">
             A desktop environment for Linux on Wayland, written in Rust. Sola runs the
             session, the shell, and its own applications, all drawn with one toolkit and
-            one theme. River is the compositor.
+            one theme. The compositor is rivulet, Oath's port of River.
         </p>
         <p class="facts">
             <span>Pre-release</span>
-            <span>NixOS, x86-64</span>
+            <span>Oath, x86-64</span>
             <span>No releases yet</span>
             <a href="/manual">Manual</a>
             <a href={repository}>Source</a>
@@ -53,15 +53,15 @@ fn intro() -> Node {
 fn desk() -> Node {
     <figure class="desk">
         <img
-            src="/desk.png"
-            width="1296"
-            height="760"
-            alt="The Sola desk: a menubar across the top; Workspaces with a Claude Code session waiting on a build; Mail with a letter open; a notification card; a floating Preview window."
+            src="/desk.webp"
+            width="1920"
+            height="1080"
+            alt="The Sola desk on Oath over a violet picture of raindrops on glass: the top row of status across the top; the bar on the left, the workspace Main at its head and its windows below; a Projects window with a Claude Code session at work; Settings open on Appearance."
         />
         <figcaption>
-            The desk, drawn at 1:1 in Sola's
-            <a href={"{repository}/blob/master/design/foundation/07-desk.html"}>design foundation</a>:
-            Workspaces and Mail in zones, Preview floating.
+            The desk on Oath, 2026-10-29. The bar on the left lists the windows
+            of the workspace Main; Projects runs Claude Code beside Settings on
+            Appearance.
         </figcaption>
     </figure>
 }
@@ -73,7 +73,7 @@ fn controlLines() -> Array<Line> {
     [
         Line(command: "solactl compositor windows          ", note: "# every window, by application"),
         Line(command: "solactl compositor screenshot       ", note: "# the screen, as PNG"),
-        Line(command: "solactl browser tabs                ", note: "# id, URL, title, and group of each tab"),
+        Line(command: "solactl browser tabs                ", note: "# id, URL, and title of each page"),
         Line(command: "solactl open https://example.com    ", note: "# in Sola's browser"),
         Line(command: "claude mcp add sola -- solactl mcp  ", note: "# every live method as an MCP tool"),
     ]
@@ -123,10 +123,10 @@ type Entry(name: String, detail: String)
 
 fn appList() -> Array<Entry> {
     [
-        Entry(name: "Shell", detail: "Menubar with application menus and system status, launcher (Super+Space), window switcher (Super+Tab), notifications, and window zones."),
+        Entry(name: "Shell", detail: "The top row (system status, missed notifications, and an island for each agent that asks or finishes), the bar of windows on the left with the desktop workspaces at its head (Super+1…9), the launcher (Super+Space), and window zones."),
         Entry(name: "Terminal", detail: "A terminal on Alacritty's grid, with tabs."),
-        Entry(name: "Workspaces", detail: "Projects and their git worktrees in a rail, each with terminal panes. A pane shows whether the coding agent in it (Claude Code, Codex, Grok) is working, waiting, or done."),
-        Entry(name: "Browser", detail: "Chromium's engine under Sola's own chrome: vertical tabs and tab groups, profiles, a Bitwarden vault, downloads, and developer tools."),
+        Entry(name: "Projects", detail: "A window per project, its tabs (the checkout and its git worktrees) along the top, each with terminal panes. A tab shows whether the coding agent in it (Claude Code, Codex, Grok) is working, waiting, or done."),
+        Entry(name: "Browser", detail: "Chromium's engine under Sola's own chrome: a window per page, a profile per workspace, a Bitwarden vault, downloads, and developer tools."),
         Entry(name: "Mail", detail: "IMAP and SMTP for several accounts, with drafts and attachments."),
         Entry(name: "Calendar", detail: "Month, week, and day views of local, Google, and iCloud calendars, with reminders."),
         Entry(name: "Settings", detail: "Applications in the launcher, website wrappers, and mail and calendar accounts."),
@@ -148,7 +148,7 @@ fn applications() -> Node {
         <p>
             Each is its own process and its own window. The shell is stable in daily use;
             the applications are early, and each is incomplete.
-            <a href={"{repository}/blob/master/docs/capabilities.md"}>docs/capabilities.md</a>
+            <a href={"{repository}/blob/next/docs/capabilities.md"}>docs/capabilities.md</a>
             lists what each can do and what it lacks.
         </p>
         <dl class="entries">
@@ -170,9 +170,9 @@ fn partList() -> Array<Part> {
         Part(name: "sola", role: "Process manager. Starts each component below and restarts any that exits.", chapter: "process-manager"),
         Part(name: "sola-bus", role: "Event bus on a Unix socket. Fans facts out to every client: focus, windows, the theme, application menus.", chapter: "bus"),
         Part(name: "sola-call", role: "Request/reply host. Applications register methods; solactl and agents call them.", chapter: "call"),
-        Part(name: "sola-river", role: "Window manager for River, the Wayland compositor, and its bridge to the bus.", chapter: "compositor"),
+        Part(name: "sola-river", role: "Window manager for River's protocol (rivulet on Oath), and its bridge to the bus.", chapter: "compositor"),
         Part(name: "sola-session", role: "Launches applications and tracks them.", chapter: "session"),
-        Part(name: "sola-shell", role: "Menubar, launcher, switcher, and notifications, in one Iced program.", chapter: "sola-shell"),
+        Part(name: "sola-shell", role: "The top row, the bar of windows, the launcher, and notifications, in one Iced program.", chapter: "sola-shell"),
         Part(name: "sola-kit", role: "The shared Iced toolkit and the theme every application follows.", chapter: "theme"),
     ]
 }
@@ -200,31 +200,32 @@ fn status() -> Node {
     <section id="status">
         <h2>Status</h2>
         <p>
-            Sola is pre-release. It is developed on, and used every day on, one NixOS
-            workstation. There are no releases or install images. Not there yet:
+            Sola is pre-release. It runs every day on
+            <a href="https://oath.moonlight.pm">Oath</a>, which carries it as three
+            packages built from this repository's <code>next</code> branch:
+            <code>pkg:sola</code>, <code>pkg:sola-browser</code>, and
+            <code>pkg:sola-design</code>. Not there yet:
         </p>
         <ul>
-            <li>Releases. Build from source; x86-64 is the only platform.</li>
-            <li>An install image. The ISO and its installer are tested in a virtual machine and not published.</li>
-            <li>Other distributions. The binaries expect NixOS paths, and Nix on another distribution is not supported.</li>
+            <li>Releases of its own. x86-64 is the only platform.</li>
+            <li>Other systems. Sola is built and packaged for Oath.</li>
             <li>Complete applications. Each has gaps, and the capability list names them.</li>
         </ul>
         <p>
             The work under way is in
-            <a href={"{repository}/blob/master/CURRENT.md"}>CURRENT.md</a>, and what each
+            <a href={"{repository}/blob/next/CURRENT.md"}>CURRENT.md</a>, and what each
             part can do in
-            <a href={"{repository}/blob/master/docs/capabilities.md"}>docs/capabilities.md</a>.
+            <a href={"{repository}/blob/next/docs/capabilities.md"}>docs/capabilities.md</a>.
         </p>
     </section>
 }
 
 fn buildLines() -> Array<Line> {
     [
-        Line(command: "git clone https://github.com/moonlight-pm/Sola", note: ""),
+        Line(command: "git clone -b next https://github.com/moonlight-pm/Sola", note: ""),
         Line(command: "cd Sola", note: ""),
-        Line(command: "cargo make install-cef   ", note: "# the browser engine, once"),
-        Line(command: "cargo make install       ", note: "# every component, to /opt/sola/bin"),
-        Line(command: "/opt/sola/bin/sola       ", note: "# from a TTY"),
+        Line(command: "cargo make oath stage  ", note: "# build the three packages under target/oath"),
+        Line(command: "cargo make oath apply  ", note: "# stage, store, pin, and apply them"),
     ]
 }
 
@@ -232,14 +233,16 @@ fn building() -> Node {
     <section id="building">
         <h2>Building</h2>
         <p>
-            You need NixOS on x86-64, an NVIDIA or Mesa graphics stack (Mesa needs one
-            setting; see the manual), and Rust 1.85 or later. Sola's NixOS module prepares the host: the patched River, the
-            libraries the browser engine loads, and the fonts. Then, from a clone:
+            Sola builds on an Oath machine. Oath supplies the compositor, the browser
+            engine (<code>pkg:cef</code>), and the graphics stack as packages; Sola's
+            packages run as Oath services, and <code>oath apply</code> restarts them
+            when a package moves. From a clone:
         </p>
         <pre><code>{for line in buildLines() { codeLine(line) }}</code></pre>
         <p>
-            The <a href="/manual#introduction">manual's introduction</a> covers the module,
-            starting a session, and updating.
+            <code>oath undo</code> goes back a generation. The
+            <a href="/manual#architecture">manual</a> covers the processes of a session,
+            the bus, the call plane, and the command line.
         </p>
     </section>
 }
