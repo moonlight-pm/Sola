@@ -24,6 +24,9 @@ xkbcommon = "0.8"
 arboard = "3"
 # In-process data-control (text + image/png). Oath has no wl-copy on PATH.
 wl-clipboard-rs = "0.9"
+# Paired traffic (`seal`): every packet sealed with the pair key.
+chacha20poly1305 = "0.10"
+getrandom = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

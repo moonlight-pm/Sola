@@ -355,13 +355,19 @@ fn write_memfd(name: &str, bytes: &[u8]) -> Result<File, String> {
 }
 
 /// Bind UDP and inject until the process is killed.
+///
+/// `key`: the pair key (`sola-kvm pair`); with one, only input sealed with
+/// it is injected. Without one, anything that reaches the port is.
 pub fn run_listen(
     bind: &str,
     fallback_w: i32,
     fallback_h: i32,
     clip_cfg: Option<ClipConfig>,
+    key: Option<[u8; 32]>,
 ) -> Result<(), String> {
-    let listener = Listener::bind(bind).map_err(|e| format!("bind {bind}: {e}"))?;
+    let listener = Listener::bind(bind)
+        .map_err(|e| format!("bind {bind}: {e}"))?
+        .sealed(key.as_ref());
     listener
         .set_read_timeout(Some(Duration::from_millis(16)))
         .map_err(|e| format!("udp timeout: {e}"))?;
@@ -382,6 +388,8 @@ pub fn run_listen(
         },
         None => None,
     };
+    // Dropped (unpaired or forged) input: logged at most this often.
+    let mut dropped_logged: Option<Instant> = None;
     loop {
         match listener.recv() {
             Ok((src, seq, packet)) => {
@@ -399,6 +407,12 @@ pub fn run_listen(
             {
                 inj.dispatch();
             }
+            Err(e @ UdpError::Sealed { .. }) => {
+                if dropped_logged.is_none_or(|at| at.elapsed() >= Duration::from_secs(10)) {
+                    warn!("input {e}");
+                    dropped_logged = Some(Instant::now());
+                }
+            }
             Err(e) => {
                 warn!("recv: {e}");
                 std::thread::sleep(Duration::from_millis(50));
@@ -408,8 +422,10 @@ pub fn run_listen(
 }
 
 /// Dump packets to the log (no inject). Debug stand-in.
-pub fn run_dump(bind: &str) -> Result<(), String> {
-    let listener = Listener::bind(bind).map_err(|e| format!("bind {bind}: {e}"))?;
+pub fn run_dump(bind: &str, key: Option<[u8; 32]>) -> Result<(), String> {
+    let listener = Listener::bind(bind)
+        .map_err(|e| format!("bind {bind}: {e}"))?
+        .sealed(key.as_ref());
     let local = listener.local_addr().ok();
     info!(?local, "listening for sola-kvm UDP packets (dump)");
     loop {
