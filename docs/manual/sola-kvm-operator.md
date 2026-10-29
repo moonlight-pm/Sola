@@ -192,7 +192,39 @@ or leaves it (peer to server).
 The default cap is 8 MiB (`max_bytes`). Turn sync off with
 `[clipboard] enable = false`.
 
-## Pair with a Linux peer
+## Pairing
+
+**Unpaired, the peer takes input and clipboard from anyone on the network.**
+`sola-kvm listen` (and the Mac agent) inject any packet that reaches port
+4242, and the clipboard connection has no check either: on a network you do
+not trust, anyone there can type into the peer and read its clipboard. Both
+sides log `not paired` at start.
+
+Pairing closes that. On the server, once, with ssh to the peer working:
+
+```bash
+sola-kvm pair <peer-host>                            # a Linux peer
+sola-kvm pair <mac-host> --remote-bin sola-kvm-mac   # a Mac peer
+```
+
+It makes a key, installs it on the peer over ssh (`pair --accept` there),
+then keeps it here, at `~/.config/sola-kvm/pair.key` (readable by you only)
+on both. If the peer cannot take it, neither side changes. Then restart
+sola-kvm on both machines; each logs `paired` at start.
+
+Paired, every input packet and clipboard message is sealed with the key
+(XChaCha20-Poly1305): the peer drops anything that does not open with it,
+that it has already seen, or whose clock is more than 30 s from its own (so
+keep both machines' clocks synced). Dropped input is logged at most every
+10 s, with the sender's address. The key is the only secret: a key file that
+cannot be read stops sola-kvm from starting rather than running open.
+
+`sola-kvm pair --forget` (`sola-kvm-mac pair --forget`) removes the key:
+that side is unpaired again, and a paired other side no longer reaches it.
+Pair both sides from the same version; a side without pairing support
+cannot read a paired one.
+
+## Set up a Linux peer
 
 On the peer, in a running River or Sola session (`WAYLAND_DISPLAY` set):
 
@@ -217,7 +249,7 @@ sola-kvm send-test --to <peer-ip>:4242
 # then the full path: sola-kvm server --input evdev (started by sola)
 ```
 
-## Pair with a Mac peer
+## Set up a Mac peer
 
 1. Start the Mac agent listening on `0.0.0.0:4242`, with the Accessibility
    permission granted.

@@ -154,7 +154,13 @@ Bots off Oath?
 
 ---
 
-### D11 — What Quit Sola means on Oath (P1)
+### D11 — What Quit Sola means on Oath (P1) — **answered (2026-10-29)**
+
+**Answer (Joshua, 2026-10-29):** "the idea here is that it would just drop
+you to a tty if that is possible". Not built: Oath runs no login on a VT
+(only `serial-login`, idle without a UART), and Oath has no PAM and no
+passwords (`/etc/shadow` fields empty), so a TTY there needs an Oath console
+login with a credential — the same question as a lock screen (D12).
 
 **Context:** After **Quit Sola** on Oath, `sola-shell`, `sola-river` and
 `sola-session` exit cleanly and stay down: a clean exit is not restarted
