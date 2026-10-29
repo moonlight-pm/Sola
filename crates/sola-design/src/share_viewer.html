@@ -101,7 +101,10 @@
   /* Touch: pages take no input (the canvas gets every finger) and the
      gestures need no hint. */
   body.touch .board iframe { pointer-events: none; }
-  body.touch #help { display: none; }
+  body.touch #help, body.touch #pad-btn { display: none; }
+  /* A sideways swipe with Trackpad mode off: point at the button. */
+  #bar button.nudge:not(.on) { animation: nudge 1.1s ease-in-out 3; }
+  @keyframes nudge { 50% { background: rgba(61,214,245,.18); color: var(--accent); } }
 </style>
 </head>
 <body>
@@ -110,6 +113,7 @@
 <div id="bar">
   <button id="out" title="Zoom out (-)">−</button><span id="pct">100%</span><button id="in" title="Zoom in (+)">+</button>
   <button id="fit" title="Fit (0)">Fit</button>
+  <button id="pad-btn" title="Trackpad mode: two fingers pan, pinch zooms (T)">Trackpad</button>
   <button id="notes-btn" title="Show every note (N)" hidden>Notes</button>
   <button id="flows-btn" title="Walk a flow" hidden>Flows</button>
 </div>
@@ -225,9 +229,10 @@
 
   // As in Design: pages are live (left button, hover, keys), the right
   // button drags the canvas anywhere — the pages never see it — and the
-  // wheel always zooms. Pointer events drive the pan: a page cancels the
-  // right pointerdown, and that also stops the browser's mousedown /
-  // mousemove / mouseup for the press.
+  // wheel always zooms (Trackpad mode, below, is the one exception).
+  // Pointer events drive the pan: a page cancels the right pointerdown,
+  // and that also stops the browser's mousedown / mousemove / mouseup for
+  // the press.
   let pan = null;
   const startPan = (e) => { pan = { x: e.screenX, y: e.screenY }; document.body.classList.add('panning'); };
   const movePan = (e) => {
@@ -237,6 +242,47 @@
     moved = true; apply();
   };
   const endPan = () => { pan = null; document.body.classList.remove('panning'); };
+  // Trackpad mode (the bar's Trackpad button, or T; this browser remembers
+  // it): two-finger scrolling pans, a pinch (ctrl+wheel) zooms. Off, the
+  // wheel zooms as in Design. A sideways swipe with it off points at the
+  // button once. A Safari pinch (gesture events) zooms either way.
+  let trackpad = false, nudged = false;
+  try { trackpad = localStorage.getItem('design.trackpad') === '1'; } catch (e) {}
+  const padUi = () => {
+    document.getElementById('pad-btn').classList.toggle('on', trackpad);
+    document.getElementById('help').textContent = trackpad
+      ? 'Two fingers to pan · Pinch to zoom' : 'Right-drag to pan · Scroll to zoom';
+  };
+  const setTrackpad = (on) => {
+    trackpad = on;
+    try { localStorage.setItem('design.trackpad', on ? '1' : '0'); } catch (e) {}
+    padUi();
+  };
+  const wheel = (x, y, e) => {
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? innerHeight : 1;
+    const dx = e.deltaX * unit, dy = e.deltaY * unit;
+    if (!trackpad) {
+      if (dx && !nudged) { nudged = true; document.getElementById('pad-btn').classList.add('nudge'); }
+      zoomAt(x, y, Math.exp(-dy * 0.0015));
+    } else if (e.ctrlKey) {
+      zoomAt(x, y, Math.exp(-Math.max(-50, Math.min(50, dy)) * 0.01));
+    } else {
+      glide = null;
+      cam.x -= dx; cam.y -= dy; moved = true; apply();
+    }
+  };
+  // Safari pinch, over the viewer or a page (`at` maps the event's point).
+  const gestures = (target, at) => {
+    let last = 1;
+    target.addEventListener('gesturestart', (e) => { e.preventDefault(); last = 1; });
+    target.addEventListener('gesturechange', (e) => {
+      e.preventDefault();
+      if (document.body.classList.contains('touch')) return; // a phone pinches with fingers (below)
+      const p = at(e.clientX, e.clientY);
+      zoomAt(p.x, p.y, e.scale / last);
+      last = e.scale;
+    });
+  };
   // Touch, on the background only (pages are inert): one finger pans; two
   // only zoom — about the point where the pinch began, by how far apart the
   // fingers are now — so nothing drifts and no pan is mixed in.
@@ -317,8 +363,9 @@
     win.addEventListener('wheel', (e) => {
       e.preventDefault();
       const p = toHere(e.clientX, e.clientY);
-      zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.0015));
+      wheel(p.x, p.y, e);
     }, { passive: false });
+    gestures(win, toHere);
   };
 
   const build = (data) => {
@@ -946,7 +993,7 @@
   addEventListener('pointerup', (e) => { if (e.button === 2) endPan(); });
   addEventListener('contextmenu', (e) => e.preventDefault());
   addEventListener('blur', () => { endPan(); fingers.clear(); pinch = null; });
-  plane.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+  plane.addEventListener('wheel', (e) => { e.preventDefault(); wheel(e.clientX, e.clientY, e); }, { passive: false });
   plane.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse') { touchMode(false); return; }
     touchMode(true);
@@ -969,7 +1016,9 @@
   document.addEventListener('touchmove', (e) => {
     if (!(e.target.closest && e.target.closest('#side'))) e.preventDefault();
   }, { passive: false });
-  addEventListener('gesturestart', (e) => e.preventDefault());
+  gestures(window, (x, y) => ({ x, y }));
+  document.getElementById('pad-btn').onclick = () => setTrackpad(!trackpad);
+  padUi();
   touchMode(matchMedia('(pointer: coarse)').matches
     || (navigator.maxTouchPoints > 0 && !matchMedia('(any-pointer: fine)').matches));
   document.getElementById('fit').onclick = () => { moved = false; fit(); };
@@ -982,6 +1031,7 @@
     else if (e.key === 'ArrowLeft') nav('back');
     else if (e.key === 'Escape') nav('end');
     else if (e.key === 'n' || e.key === 'N') nav('notes');
+    else if (e.key === 't' || e.key === 'T') setTrackpad(!trackpad);
     else if (/^[1-9]$/.test(e.key) && tour) nav(+e.key);
     else if (e.key === '0') { moved = false; fit(); }
     else if (e.key === '+' || e.key === '=') zoomAt(innerWidth / 2, innerHeight / 2, 1.25);

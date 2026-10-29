@@ -234,7 +234,12 @@ its button and arrow) and its notes (click one to open or close its card;
 hover one to show it). **Hide** folds the list, which starts folded on a
 narrow screen. A click in a page that leads nowhere, or on empty canvas,
 flashes every button and link that leads on from that board. There are no
-scrollbars. The pages are live,
+scrollbars.
+
+**Trackpad** on the link's bar (or **T**) is for a laptop trackpad: two
+fingers pan and a pinch zooms, while right-drag still pans. With it off,
+the wheel zooms as in Design, and a sideways swipe makes the button pulse
+once. The browser remembers the choice. A Safari pinch zooms either way. The pages are live,
 right-drag pans, the wheel zooms, and **Fit** (0) frames everything; there
 is no element picking. On a phone the pages are for looking only: one
 finger pans anywhere, a pinch zooms, and there is no on-screen hint.
