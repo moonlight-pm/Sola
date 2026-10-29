@@ -24,10 +24,19 @@ use crate::udp::Sender;
 const MOTION_MIN_INTERVAL: Duration = Duration::from_millis(8);
 
 /// Run the Phase C server until input EOF (feed) or forever (evdev/demo tail).
-pub fn run_server(cfg: &Config, backend: InputBackendKind) -> Result<(), String> {
+///
+/// `key`: the pair key (`sola-kvm pair`); with one, input and clipboard are
+/// sealed and only a peer with the same key takes them.
+pub fn run_server(
+    cfg: &Config,
+    backend: InputBackendKind,
+    key: Option<[u8; 32]>,
+) -> Result<(), String> {
     let layout = cfg.layout();
     let peer = cfg.peer_addr();
-    let mut sender = Sender::connect(&peer).map_err(|e| format!("udp connect {peer}: {e}"))?;
+    let mut sender = Sender::connect(&peer)
+        .map_err(|e| format!("udp connect {peer}: {e}"))?
+        .sealed(key.as_ref());
 
     info!(
         peer = %peer,
@@ -58,6 +67,7 @@ pub fn run_server(cfg: &Config, backend: InputBackendKind) -> Result<(), String>
             max_bytes: cfg.clipboard.max_bytes,
             sync_on_enter: cfg.clipboard.sync_on_enter,
             sync_on_leave: cfg.clipboard.sync_on_leave,
+            seal: key.map(|k| crate::seal::Seal::new(&k, crate::seal::Channel::Clipboard)),
         })
     } else {
         info!("clipboard sync disabled in config");

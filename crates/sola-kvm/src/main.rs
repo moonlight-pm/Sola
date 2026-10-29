@@ -14,6 +14,7 @@ use sola_kvm::config::Config;
 use sola_kvm::input::InputBackendKind;
 use sola_kvm::protocol::{Edge, Packet};
 use sola_kvm::run;
+use sola_kvm::seal::{self, Channel, Seal};
 use sola_kvm::udp::Sender;
 
 #[derive(Parser, Debug)]
@@ -70,6 +71,23 @@ enum Command {
         dump: bool,
     },
 
+    /// Pair this machine (the server) with its peer: make a key, install it
+    /// on the peer over ssh, then keep it here. From then on each side takes
+    /// only the other's input and clipboard. Restart sola-kvm on both after.
+    Pair {
+        /// The peer's ssh host (default: the config's peer host).
+        peer: Option<String>,
+        /// The KVM binary to run on the peer (`sola-kvm-mac` on a Mac).
+        #[arg(long, default_value = "sola-kvm")]
+        remote_bin: String,
+        /// Take a key on stdin (what `pair` runs on the peer).
+        #[arg(long, conflicts_with_all = ["peer", "forget"])]
+        accept: bool,
+        /// Remove this machine's key: unpaired, open to the network again.
+        #[arg(long, conflicts_with = "peer")]
+        forget: bool,
+    },
+
     /// Send a short test sequence to the configured peer (or --to).
     SendTest {
         /// Override peer `host:port`.
@@ -97,7 +115,96 @@ fn main() {
         Some(Command::Server { input }) => cmd_server(&config_path, &input),
         Some(Command::Listen { bind, dump }) => cmd_listen(&config_path, bind, dump),
         Some(Command::SendTest { to, x, y }) => cmd_send_test(&config_path, to, x, y),
+        Some(Command::Pair {
+            peer,
+            remote_bin,
+            accept,
+            forget,
+        }) => cmd_pair(&config_path, peer, &remote_bin, accept, forget),
     }
+}
+
+/// The pair key, if this machine is paired. A key file that cannot be read
+/// stops the process: running unpaired would open the port to anyone.
+fn pair_key() -> Option<[u8; 32]> {
+    let path = seal::key_path();
+    match seal::load_key(&path) {
+        Ok(Some(key)) => {
+            info!(path = %path.display(), "paired: input and clipboard sealed with the pair key");
+            Some(key)
+        }
+        Ok(None) => {
+            warn!("not paired: input and clipboard are open to the network (`sola-kvm pair`)");
+            None
+        }
+        Err(e) => {
+            error!(path = %path.display(), "pair key unreadable, not starting: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_pair(path: &PathBuf, peer: Option<String>, remote_bin: &str, accept: bool, forget: bool) {
+    let key_path = seal::key_path();
+    let fail = |msg: String| -> ! {
+        eprintln!("sola-kvm pair: {msg}");
+        std::process::exit(1);
+    };
+    if forget {
+        match std::fs::remove_file(&key_path) {
+            Ok(()) => println!("Unpaired: removed {}. Restart sola-kvm.", key_path.display()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => println!("Not paired."),
+            Err(e) => fail(format!("remove {}: {e}", key_path.display())),
+        }
+        return;
+    }
+    if accept {
+        let mut line = String::new();
+        if let Err(e) = std::io::stdin().read_line(&mut line) {
+            fail(format!("read the key: {e}"));
+        }
+        let Some(key) = seal::parse_key(&line) else {
+            fail("stdin is not a pair key (64 hex digits)".into());
+        };
+        if let Err(e) = seal::save_key(&key_path, &key) {
+            fail(format!("save {}: {e}", key_path.display()));
+        }
+        println!("Paired: key saved at {}.", key_path.display());
+        return;
+    }
+    let host = peer.unwrap_or_else(|| load(path).peer.host);
+    let key = seal::new_key();
+    // The peer first: if it cannot take the key, this side stays unpaired too.
+    let mut child = std::process::Command::new("ssh")
+        .args(["-o", "BatchMode=yes", &host, remote_bin, "pair", "--accept"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|e| fail(format!("ssh {host}: {e}")));
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().expect("piped stdin");
+        if let Err(e) = writeln!(stdin, "{}", seal::key_hex(&key)) {
+            fail(format!("send the key to {host}: {e}"));
+        }
+    }
+    match child.wait() {
+        Ok(status) if status.success() => {}
+        Ok(status) => fail(format!(
+            "`{remote_bin} pair --accept` on {host} failed ({status}); nothing changed here"
+        )),
+        Err(e) => fail(format!("ssh {host}: {e}")),
+    }
+    if let Err(e) = seal::save_key(&key_path, &key) {
+        fail(format!(
+            "{host} has the key but saving it here failed ({}: {e}); run pair again",
+            key_path.display()
+        ));
+    }
+    println!(
+        "Paired with {host}: key saved at {} here and there.\n\
+         Restart sola-kvm on both machines (it reads the key when it starts).",
+        key_path.display()
+    );
 }
 
 fn load(path: &PathBuf) -> Config {
@@ -185,7 +292,7 @@ fn cmd_server(path: &PathBuf, input: &str) {
             std::process::exit(2);
         }
     };
-    if let Err(e) = run::run_server(&cfg, backend) {
+    if let Err(e) = run::run_server(&cfg, backend, pair_key()) {
         error!("{e}");
         std::process::exit(1);
     }
@@ -193,9 +300,10 @@ fn cmd_server(path: &PathBuf, input: &str) {
 
 fn cmd_listen(path: &PathBuf, bind: Option<String>, dump: bool) {
     let cfg = load(path);
+    let key = pair_key();
     let addr = bind.unwrap_or_else(|| format!("0.0.0.0:{}", cfg.peer.port));
     let result = if dump {
-        sola_kvm::inject::run_dump(&addr)
+        sola_kvm::inject::run_dump(&addr, key)
     } else {
         let clip = if cfg.clipboard.enable {
             Some(sola_kvm::clip::ClipConfig {
@@ -204,11 +312,18 @@ fn cmd_listen(path: &PathBuf, bind: Option<String>, dump: bool) {
                 max_bytes: cfg.clipboard.max_bytes,
                 sync_on_enter: cfg.clipboard.sync_on_enter,
                 sync_on_leave: cfg.clipboard.sync_on_leave,
+                seal: key.map(|k| Seal::new(&k, Channel::Clipboard)),
             })
         } else {
             None
         };
-        sola_kvm::inject::run_listen(&addr, cfg.layout.mac_width, cfg.layout.mac_height, clip)
+        sola_kvm::inject::run_listen(
+            &addr,
+            cfg.layout.mac_width,
+            cfg.layout.mac_height,
+            clip,
+            key,
+        )
     };
     if let Err(e) = result {
         error!("{e}");
@@ -220,7 +335,7 @@ fn cmd_send_test(path: &PathBuf, to: Option<String>, x: i32, y: i32) {
     let cfg = load(path);
     let peer = to.unwrap_or_else(|| cfg.peer_addr());
     let mut sender = match Sender::connect(&peer) {
-        Ok(s) => s,
+        Ok(s) => s.sealed(pair_key().as_ref()),
         Err(e) => {
             error!("connect {peer}: {e}");
             std::process::exit(1);

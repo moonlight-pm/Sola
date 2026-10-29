@@ -12,6 +12,7 @@ pub mod layout;
 pub mod metrics;
 pub mod priority;
 pub mod protocol;
+pub mod seal;
 pub mod run;
 pub mod server;
 pub mod udp;
