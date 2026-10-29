@@ -72,6 +72,16 @@ pub struct Note {
     pub place: Place,
 }
 
+impl Note {
+    /// The board it is on, if it is on one.
+    pub fn board(&self) -> Option<&str> {
+        match &self.place {
+            Place::Board { board, .. } => Some(board),
+            Place::Point { .. } => None,
+        }
+    }
+}
+
 /// An arrow between two whole boards.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Link {

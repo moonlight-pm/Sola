@@ -143,9 +143,10 @@ screen, and none of it is in the pages or in an agent's screenshots.
 - **Sections** are titled regions behind a group of artboards, with an
   optional line under the title. A fit leaves room above for their titles.
 - **Notes** are numbered amber markers on an artboard, an element in it, or
-  a spot on the canvas. Hover a marker to read it; click it to keep it open.
-  The notes button on the bottom bar (or **N** while no page has the
-  keyboard) opens every note.
+  a spot on the canvas. Hover a marker to read it; click it to open or
+  close its card. The notes button on the bottom bar (or **N** while no page
+  has the keyboard) opens every note, or, while any card is open, closes
+  them all — a tour step's too, and they stay closed on the next steps.
 - **Arrows** show flow, through the gaps between artboards (never across
   one): from the edge of an artboard, level with the button or link that
   leads on, to the artboard it leads to — or between two whole artboards.
@@ -165,8 +166,8 @@ leads several places, the tour bar lists them; pick one (or press its
 number). Clicking a button in the page follows it too, and outside a tour
 that starts one, so Back takes you back. **→** next, **←** back, **1–9** pick,
 **Esc** ends — while no page has the keyboard (click empty canvas first).
-The step's notes are open and its outgoing arrows are bright; the others
-dim. Panning and zooming never end a tour.
+The step's notes open by themselves (unless the notes button closed them)
+and its outgoing arrows are bright; the others dim. Panning and zooming never end a tour.
 
 Exits and note positions are read when a page finishes loading and again
 when its height changes, so an element that moves for another reason (a
@@ -227,7 +228,13 @@ working. Agents get it with `solactl design share`.
 The link shows the canvas as it is right now, laid out and handled as in
 Design: the same artboard heights Design measured, each board's title above
 it, and its sections, notes, arrows, and flows (Notes and Flows buttons on
-its bar, with the same keys). There are no scrollbars. The pages are live,
+its bar, with the same keys). On a tour the link also lists the step at
+the right edge: its ways on (click one to follow it; hover one to light
+its button and arrow) and its notes (click one to open or close its card;
+hover one to show it). **Hide** folds the list, which starts folded on a
+narrow screen. A click in a page that leads nowhere, or on empty canvas,
+flashes every button and link that leads on from that board. There are no
+scrollbars. The pages are live,
 right-drag pans, the wheel zooms, and **Fit** (0) frames everything; there
 is no element picking. On a phone the pages are for looking only: one
 finger pans anywhere, a pinch zooms, and there is no on-screen hint.
