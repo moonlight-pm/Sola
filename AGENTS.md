@@ -409,17 +409,17 @@ Spec: `docs/specs/2026-05-22-sola-shell-iced-port-design.md`.
 
 ## CEF binding choice
 
-**Chosen crate:** `cef` `147.1.0+147.0.10` (tauri-apps/cef-rs, Apache-2.0 OR MIT)
+**Chosen crate:** `cef` `156.2.0+156.0.14` (tauri-apps/cef-rs, Apache-2.0 OR MIT)
 - crates.io: <https://crates.io/crates/cef>
-- docs.rs: <https://docs.rs/cef/147.1.0+147.0.10/cef/>
+- docs.rs: <https://docs.rs/cef/156.2.0+156.0.14/cef/>
 - GitHub: <https://github.com/tauri-apps/cef-rs>
 
-This is the **only** active Rust CEF binding that tracks current CEF releases. `cef-rs` as a separate crate does not exist on crates.io. The crate is maintained by the Tauri team, ships pre-generated bindgen bindings (no headers needed — the tarball is enough), and has a working Linux `osr` example that exercises `on_accelerated_paint` with dma-buf import via Vulkan. Version `147.1.0+147.0.10` exactly matches our pinned CEF `147.0.10`.
+This is the **only** active Rust CEF binding that tracks current CEF releases. `cef-rs` as a separate crate does not exist on crates.io. The crate is maintained by the Tauri team, ships pre-generated bindgen bindings (no headers needed — the tarball is enough), and has a working Linux `osr` example that exercises `on_accelerated_paint` with dma-buf import via Vulkan. Version `156.2.0+156.0.14` exactly matches our pinned CEF `156.0.14` (`cef-version`; on Oath, `pkg:cef`). It asks libcef for the versioned API (`CEF_API_VERSION_LAST`, 15600), not the experimental one 147 asked for, which only the exact build it came from accepts. Its build script needs `download-cef` 3.x, which our stub (`crates/download-cef-stub`) stands in for.
 
 **Do NOT enable the `accelerated_osr` feature.** That feature only gates the crate's wgpu/Vulkan-based dma-buf importer helper module — it pulls in `ash`, `wgpu`, `metal`, `objc`, etc. We don't need any of that. We import dma-bufs through `zwp_linux_dmabuf_v1::create_params` (sctk-managed `wl_buffer`) and let sola-river composite. The `AcceleratedPaintInfo` and `AcceleratedPaintNativePixmapPlaneInfo` structs live in the base bindgen output (`cef::sys::*`) and are available without features.
 
 ```toml
-cef = "147.1.0+147.0.10"
+cef = "156.2.0+156.0.14"
 ```
 
 ### Binding name deltas vs. the design spec

@@ -180,8 +180,9 @@ behind another tab in its zone, or under the desk's idle fade once it is
 complete) rests, and its videos pause until it shows again.
 
 Typical MP4 (H.264 + AAC), including Steam store trailers, plays on a
-CEF built with those codecs (`scripts/cef-codecs/`). The public
-`install-cef` tarball does not include those codecs.
+CEF built with those codecs. On Oath, `pkg:cef` is one. Elsewhere,
+`scripts/cef-codecs/` builds one; the public `install-cef` tarball does
+not include those codecs.
 
 ## JavaScript dialogs
 

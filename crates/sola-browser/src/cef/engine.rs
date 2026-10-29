@@ -233,9 +233,14 @@ impl Engine for CefEngine {
     /// utility / zygote worker, `cef::execute_process` handles the
     /// worker loop and returns its exit code; we propagate it. The
     /// browser process gets `None` and continues normally.
+    ///
+    /// The API version is the bindings' newest versioned one, as
+    /// cef-rs's own init asks for, not `CEF_API_VERSION` (999999, the
+    /// experimental API, which CEF's headers call "not back/forward
+    /// compatible with different CEF versions").
     fn dispatch_subprocess(app_id: &'static str) -> Option<ExitCode> {
         unsafe {
-            cef::sys::cef_api_hash(cef::sys::CEF_API_VERSION, 0);
+            cef::sys::cef_api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
         }
         let args = cef::args::Args::new();
         let main_args = args.as_main_args();

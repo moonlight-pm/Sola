@@ -6,6 +6,9 @@ so the carousel spinner never gets a source.
 
 Spotify only **hosts** those builds. They are not in the media stack.
 
+On Oath, `pkg:cef` is already built this way (Oath's R40); this
+directory is for a NixOS machine's `~/.cache/sola/cef-<ver>/`.
+
 This directory builds the same CEF commit as `cef-version` with:
 
 ```

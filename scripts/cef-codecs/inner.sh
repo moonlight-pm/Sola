@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs inside Ubuntu 22.04 (podman). Builds CEF 147 with H.264/AAC.
+# Runs inside Ubuntu 22.04 (podman). Builds CEF 156 with H.264/AAC.
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
@@ -41,7 +41,7 @@ git config --global --add safe.directory '*' || true
 if [[ ! -f /build/automate-git.py ]]; then
   echo "[cef-codecs] fetching automate-git.py"
   curl -fsSL -o /build/automate-git.py \
-    https://raw.githubusercontent.com/chromiumembedded/cef/7727/tools/automate/automate-git.py
+    https://raw.githubusercontent.com/chromiumembedded/cef/8078/tools/automate/automate-git.py
 fi
 
 if [[ ! -d /build/depot_tools/.git ]]; then
@@ -59,9 +59,9 @@ echo "[cef-codecs] depot_tools ensure_bootstrap"
 # alone is not enough on a fresh clone.
 (cd /build/depot_tools && ./ensure_bootstrap)
 
-# Pin matches workspace cef-version (147.0.10+gd58e84d+chromium-147.0.7727.118).
-CEF_CHECKOUT="${CEF_CHECKOUT:-d58e84d17dd3f646c906ac633156cd0ec46638e9}"
-CEF_BRANCH="${CEF_BRANCH:-7727}"
+# Pin matches workspace cef-version (156.0.14+g4fa4ab5+chromium-156.0.8078.48).
+CEF_CHECKOUT="${CEF_CHECKOUT:-4fa4ab516dacf6c49fc7e6e70d2b7ebce29fa35f}"
+CEF_BRANCH="${CEF_BRANCH:-8078}"
 
 export PATH="/build/depot_tools:${PATH}"
 OUT=/build/src/chromium/src/out/Release_GN_x64

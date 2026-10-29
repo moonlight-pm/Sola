@@ -5,7 +5,7 @@
 # clarity, but the crate name on the wire is what cef-dll-sys's
 # build-dependency resolves.
 name = "download-cef"
-version = "2.3.1"
+version = "3.0.0"
 edition = "2021"
 description = "Stub for tauri-apps/download-cef. Replaces the upstream crate via [patch.crates-io] to drop ureq/ring/rustls/bzip2/tar from the build graph (they were transitively pulled in via cef-dll-sys's build-dependency on the real download-cef)."
 

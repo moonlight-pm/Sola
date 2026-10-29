@@ -101,7 +101,7 @@ impl TryFrom<&str> for OsAndArch {
 }
 
 /// Strips build metadata from the cargo-package version
-/// (`"147.1.0+147.0.10"` → `"147.0.10"`). cef-dll-sys's `build.rs`
+/// (`"156.2.0+156.0.14"` → `"156.0.14"`). cef-dll-sys's `build.rs`
 /// passes the result to [`CefPlatform::version`] which we ignore, so
 /// the precise return value doesn't matter — but we keep the upstream
 /// shape to avoid surprises.
@@ -122,6 +122,16 @@ pub fn default_download_url() -> String {
 /// compile against our crate.
 pub fn check_archive_json(_version: &str, _location: &str) -> Result<()> {
     Ok(())
+}
+
+/// Only invoked when `NIX_CEF_BINARY` is set, which we never do; the
+/// symbol must exist for cef-dll-sys's `build.rs` to compile.
+pub fn install_nix_cef<P: AsRef<Path>>(
+    _cef_version: &str,
+    _location: P,
+    _show_progress: bool,
+) -> Result<()> {
+    Err(Error::new("NIX_CEF_BINARY is not supported; CEF comes from cargo make install-cef"))
 }
 
 #[derive(Default)]
@@ -193,8 +203,9 @@ impl CefVersion {
 ///
 /// On Linux, cef-dll-sys does NOT invoke its `cmake::Config::build()`
 /// step (libcef_dll_wrapper is only built on Windows/macOS), so we
-/// don't need to expose CMakeLists.txt, cmake/, include/, libcef_dll/
-/// inside the cef_dir.
+/// don't need to expose CMakeLists.txt, cmake/, libcef_dll/ inside the
+/// cef_dir. It does read `CEF_API_VERSION_LAST` from
+/// `include/cef_api_versions.h` (see [`write_api_versions_header`]).
 ///
 /// Beyond linking, Chromium itself loads `icudtl.dat`, `v8_context_snapshot.bin`,
 /// and the `*.pak` files from the directory containing libcef.so at runtime —
@@ -233,6 +244,28 @@ pub fn extract_target_archive<P: AsRef<Path>, Q: AsRef<Path>>(
         }
         std::os::unix::fs::symlink(entry.path(), &dest)?;
     }
+    write_api_versions_header(&cef_dir)?;
 
     Ok(cef_dir)
+}
+
+/// `include/cef_api_versions.h` with only the line cef-dll-sys's
+/// `build.rs` parses. A packaged CEF (Oath's `pkg:cef`) has no headers.
+/// On Linux the number is only emitted as `cargo::metadata` for the
+/// wrapper build, which Linux skips; what the program asks libcef for
+/// at run time is the bindings' `CEF_API_VERSION_LAST`. A release
+/// branch's is `<major>00` (156.0.14: 15600).
+fn write_api_versions_header(cef_dir: &Path) -> Result<()> {
+    let major = cef_version_trimmed()
+        .split('.')
+        .next()
+        .filter(|m| m.parse::<u32>().is_ok())
+        .ok_or_else(|| Error::new(format!("cef-version: no major in {CEF_VERSION:?}")))?;
+    let include = cef_dir.join("include");
+    std::fs::create_dir_all(&include)?;
+    std::fs::write(
+        include.join("cef_api_versions.h"),
+        format!("#define CEF_API_VERSION_LAST CEF_API_VERSION_{major}00\n"),
+    )?;
+    Ok(())
 }
