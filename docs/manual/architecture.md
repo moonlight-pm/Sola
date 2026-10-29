@@ -137,7 +137,7 @@ Formats, rotation, and `RUST_LOG` are in [Logs](process-manager.md#logs).
 | `sola-bus` | Sticky values held only in memory are lost; persistent ones are reloaded from disk. Every client reconnects, subscribes again, and publishes its own sticky values again, so menus, chords, and window lists return. |
 | `sola-call` | Calls in flight fail. Owners reconnect every 400 ms and advertise their methods again. |
 | `sola-river` | River and all windows keep running. The new `sola-river` binds the window-management protocol again. |
-| `sola-shell` | The menubar and overlays disappear until the new shell maps them; windows stay. **Restart Shell** in the flower menu does this on purpose. |
+| `sola-shell` | The menubar and overlays disappear until the new shell maps them; windows stay. |
 | `sola-session` | Running applications keep running. The new session manager launches saved applications that have no window, but does not track the ones still running, so their exits are not reported. |
 | An application | `sola-session` publishes its exit (`UserAppExited`). Nothing restarts it. |
 | River | The session ends. `sola` kills the managed components and exits with status 1. |

@@ -30,8 +30,8 @@ pub mod chooser;
 pub mod web;
 pub mod workspaces;
 
-/// Set by flower **Quit Sola** so `main` can exit 0. Compositor death
-/// and **Restart Shell** leave this false so the supervisor restarts us
+/// Set by flower **Exit Sola** so `main` can exit 0. Compositor death
+/// leaves this false so the supervisor restarts us
 /// (`restart=on-failure` on Oath; NixOS process manager always respawns).
 static CLEAN_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
@@ -1110,7 +1110,7 @@ impl Shell {
 
     /// Flower-menu Restart Computer / Shut Down. Dismisses the menu, then
     /// asks logind. Toast on failure; success means the machine is going
-    /// down (systemd SIGTERM is the same graceful path as Quit Sola).
+    /// down (systemd SIGTERM is the same graceful path as Exit Sola).
     fn request_machine_power(&mut self, kind: crate::power::Kind) -> iced::Task<Msg> {
         let _ = self.dismiss_open_menu();
         self.emit_overlay_frames();
@@ -1673,7 +1673,7 @@ impl Shell {
 
     /// Build the list of chords the shell wants River to grab.
     pub fn shell_key_chords(&self) -> Vec<KeyChord> {
-        // Shell-own menu bindings (meta-bound items only; Quit Sola has none).
+        // Shell-own menu bindings (meta-bound items only; Exit Sola has none).
         let mut bindings: Vec<KeyChord> = self
             .menus
             .key_bindings_for(Self::APP_ID)
@@ -2471,13 +2471,6 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::MenuAction { app_id, action_id } => {
-                // Restart this process only. `sola` (process manager)
-                // respawns managed `sola-shell` on exit — used after
-                // font/theme changes that don't require a reinstall.
-                if app_id == Self::APP_ID && action_id == "restart" {
-                    tracing::info!("restart shell requested via menu");
-                    return iced::exit();
-                }
                 if app_id == Self::APP_ID && action_id == crate::power::ACTION_RESTART_COMPUTER {
                     return self.request_machine_power(crate::power::Kind::Reboot);
                 }

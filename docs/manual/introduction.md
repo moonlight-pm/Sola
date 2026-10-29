@@ -87,7 +87,7 @@ inside another desktop.
 1. Log out of any graphical session and switch to a console
    (`Ctrl+Alt+F2`).
 2. Log in and run `/opt/sola/bin/sola`.
-3. To leave, choose **Quit Sola** from the menubar, or run
+3. To leave, choose **Exit Sola** from the menubar, or run
    `pkill -x sola` from another console.
 
 ## Updating

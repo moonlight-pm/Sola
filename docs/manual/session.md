@@ -231,7 +231,7 @@ the first.
 
 ## Ending the session
 
-On `Shutdown` (**Quit Sola**, or the process manager ending the session),
+On `Shutdown` (**Exit Sola**, or the process manager ending the session),
 `sola-session` asks systemd to stop every scope, waits up to 6 s for the
 processes to exit, sends SIGKILL to any that remain and stops their scopes
 again, then exits. The stop requests reach systemd before the wait begins,
@@ -244,7 +244,7 @@ a persistent, sorted list of `{app_id, command}` with one entry per app id,
 stored in `~/.config/sola/state.yaml`. It publishes the list again after
 every launch, close, and exit. An application you close, or one that quits
 or crashes, leaves the list. Ending the session does not change it, so the
-applications open at **Quit Sola** are the ones restored.
+applications open at **Exit Sola** are the ones restored.
 
 When it starts, `sola-session` spends 750 ms collecting the stored
 `SessionApps` and the current `Windows`. Then it launches every listed

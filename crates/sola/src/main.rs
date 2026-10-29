@@ -48,7 +48,7 @@ fn main() {
     info!("sola process manager starting");
 
     // SIGINT (Ctrl-C on the TTY), SIGTERM, and SIGHUP all map to the same
-    // graceful shutdown path the menu's "Quit Sola" already uses. Without
+    // graceful shutdown path the menu's "Exit Sola" already uses. Without
     // this, Ctrl-C kills sola abruptly and orphans every user app —
     // sola-session never gets a chance to stop their scope units.
     let shutdown_requested = Arc::new(AtomicBool::new(false));

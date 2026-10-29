@@ -218,7 +218,7 @@ nothing; quit the session and start it again.
 
 | Action | How the request reaches `sola` |
 |---|---|
-| **Quit Sola** in the flower menu | `sola-shell` publishes `Shutdown` on the bus |
+| **Exit Sola** in the flower menu | `sola-shell` publishes `Shutdown` on the bus |
 | Ctrl-C on `sola`'s console | SIGINT |
 | `pkill -x sola` from another console | SIGTERM |
 | A hangup of `sola`'s terminal | SIGHUP |

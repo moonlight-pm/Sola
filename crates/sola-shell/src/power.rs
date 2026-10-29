@@ -10,7 +10,7 @@ use std::process::{Command, ExitStatus};
 
 use sola_core::env::on_oath;
 
-/// Flower-menu action id: reboot the machine (not Restart Shell).
+/// Flower-menu action id: reboot the machine (not Exit Sola).
 pub const ACTION_RESTART_COMPUTER: &str = "restart-computer";
 /// Flower-menu action id: power off the machine.
 pub const ACTION_SHUT_DOWN: &str = "shut-down";
@@ -47,7 +47,7 @@ impl Kind {
 
 /// Request reboot or poweroff. Returns `Err` with a toast string if every
 /// attempt failed. Does not emit `Topic::Shutdown` — the supervisor SIGTERMs
-/// sola as the machine goes down, same graceful path as Quit Sola.
+/// sola as the machine goes down, same graceful path as Exit Sola.
 pub fn request(kind: Kind) -> Result<(), &'static str> {
     let verb = kind.verb();
     tracing::info!(verb, "machine power requested via menu");

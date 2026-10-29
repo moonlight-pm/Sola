@@ -230,7 +230,7 @@ What `sola-river` does with these is in [Compositor](compositor.md).
 | `IdleFade` | `fading` (the desk is idle and fading into the picture), `out` (the fade is full: the windows are out of sight) | sola-river | Projects (a focused session's tab is not being looked at: its island shows); the shell (`out`: every tab window is reported off screen in `TabWindow`) | Sticky |
 | `SessionApps` | Open apps: `app_id`, `command` | `sola-session` | `sola-session`, at its next start | Persistent |
 | `Application` | A launcher entry: `app_id`, `label`, `command`, `icon`, `kind`, `url`, `profile` | Settings; Browser (web apps); Arcade (a running game's label, retracted when it stops) | Shell, Settings, Arcade, Browser | Persistent by `app_id` |
-| `Shutdown` | None | Shell (Quit Sola); `sola` on SIGINT, SIGTERM, or SIGHUP | `sola`, `sola-session`, `sola-river` | Ephemeral |
+| `Shutdown` | None | Shell (Exit Sola); `sola` on SIGINT, SIGTERM, or SIGHUP | `sola`, `sola-session`, `sola-river` | Ephemeral |
 | `SetAppMenu` | `app_id` and its menus: labels and items (action id, label, shortcut, disabled, checked) or dividers | Each app with a menu, at start | Shell (menubar) | Sticky by `app_id` |
 | `MenuAction` | `app_id`, `action_id` of a chosen item or shortcut | Shell | The app named by `app_id` | Ephemeral |
 | `Zones` | A zone per `app_id` (`Left`, `Right`, `Top`, `Bottom`, `TopMiddle`, `BottomMiddle`, `FullMiddle`, `MiddleRight`, `Fullscreen`, `Cinema`, `Float`) | Shell | Shell | Persistent |

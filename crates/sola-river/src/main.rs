@@ -74,7 +74,7 @@ fn main() {
             // here. A clean loop end is the compositor going away
             // (River restart). Exit 1 so PID 1 / the process manager
             // restarts us (`restart=on-failure`); exit 0 looks like
-            // Quit Sola and the session stays down, which leaves xdg
+            // Exit Sola and the session stays down, which leaves xdg
             // clients unconfigured.
             error!("wayland event loop ended");
             exit(1);

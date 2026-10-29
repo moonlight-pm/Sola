@@ -108,8 +108,7 @@ focused) is the session menu:
 |------|----------------|
 | Launch Application… | Super+Space launcher |
 | Keyboard Shortcuts | Super+K overlay |
-| Restart Shell | Exits `sola-shell` only; the process manager respawns it |
-| Quit Sola | Ends the desktop session (`Topic::Shutdown`) |
+| Exit Sola | Ends the desktop session (`Topic::Shutdown`) |
 | Restart Computer | Reboots the machine (logind) |
 | Shut Down | Powers off the machine (logind) |
 

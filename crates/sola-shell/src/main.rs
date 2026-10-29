@@ -38,9 +38,7 @@ fn main() -> iced::Result {
     startup(APP_ID);
 
     // Flower / system menu (and the shell's own app menu when focused).
-    // "Restart Shell" exits this process only — the process manager
-    // respawns `/opt/sola/bin/sola-shell`. "Quit Sola" shuts the whole
-    // session down via `Topic::Shutdown`. "Restart Computer" / "Shut Down"
+    // "Exit Sola" shuts the whole session down via `Topic::Shutdown`. "Restart Computer" / "Shut Down"
     // ask logind to reboot or power off. "Launch Application…" opens
     // the launcher overlay.
     BusSetup::new(APP_ID)
@@ -59,8 +57,8 @@ fn main() -> iced::Result {
     match iced_daemon.run() {
         Ok(()) if app::clean_shutdown() => Ok(()),
         Ok(()) => {
-            // Restart Shell, or the compositor went away. Exit 1 so
-            // `restart=on-failure` brings the menubar back. Quit Sola
+            // The compositor went away. Exit 1 so
+            // `restart=on-failure` brings the menubar back. Exit Sola
             // sets clean_shutdown and stays down.
             tracing::error!("sola-shell event loop ended");
             std::process::exit(1);
