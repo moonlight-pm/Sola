@@ -8,8 +8,9 @@
 //! ([`last_assistant_text`]).
 
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+
+use crate::machine::Machine;
 
 use serde_json::Value;
 use sola_bus::topics::{AgentIsland, IslandState, Topic};
@@ -212,13 +213,13 @@ pub fn screen_tail(screen: &str, lines: usize) -> String {
 /// `{"type":"assistant","message":{"content":[{"type":"text","text":…}]}}`),
 /// read from its end. `None` while the turn's answer is not written yet
 /// (Claude flushes it a moment after its Stop hook): a prompt comes first.
-pub fn last_assistant_text(path: &Path) -> Option<String> {
-    let mut file = std::fs::File::open(path).ok()?;
-    let len = file.metadata().ok()?.len();
-    file.seek(SeekFrom::Start(len.saturating_sub(TRANSCRIPT_TAIL)))
-        .ok()?;
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf).ok()?;
+/// [`last_assistant_text`] as an island shows it.
+pub fn message_at(m: &Machine, path: &Path) -> Option<String> {
+    last_assistant_text(m, path).map(|b| clip(&b))
+}
+
+pub fn last_assistant_text(m: &Machine, path: &Path) -> Option<String> {
+    let buf = m.read_tail(path, TRANSCRIPT_TAIL)?;
     let text = String::from_utf8_lossy(&buf);
     for line in text.lines().rev() {
         match turn_line(line) {
@@ -400,9 +401,15 @@ impl Islands {
     }
 
     /// The last message of pane `pane`'s transcript, if it has one.
+    /// The last message of pane `pane`'s transcript here.
     pub fn last_message(&self, pane: &str) -> Option<String> {
         let path = self.transcripts.get(pane)?;
-        last_assistant_text(Path::new(path)).map(|b| clip(&b))
+        message_at(&Machine::Local, Path::new(path))
+    }
+
+    /// The transcript pane `pane`'s hooks named (on its computer).
+    pub fn transcript_of(&self, pane: &str) -> Option<&str> {
+        self.transcripts.get(pane).map(String::as_str)
     }
 
     pub fn need_mut(&mut self, pane: &str) -> Option<&mut Need> {
@@ -618,14 +625,14 @@ mod tests {
             ),
         )
         .unwrap();
-        assert_eq!(last_assistant_text(&path).as_deref(), Some("Done: built it."));
+        assert_eq!(last_assistant_text(&Machine::Local, &path).as_deref(), Some("Done: built it."));
         // A new prompt with its answer not written yet: nothing (not the
         // turn before's).
         let mut more = std::fs::read_to_string(&path).unwrap();
         more.push_str(r#"{"type":"user","message":{"content":"next please"}}"#);
         more.push('\n');
         std::fs::write(&path, more).unwrap();
-        assert_eq!(last_assistant_text(&path), None);
+        assert_eq!(last_assistant_text(&Machine::Local, &path), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

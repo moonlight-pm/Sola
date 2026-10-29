@@ -143,6 +143,12 @@ impl ReplyTx {
     }
 }
 
+impl std::fmt::Debug for ReplyTx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReplyTx").field("id", &self.id).finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct Incoming {
     pub method: String,

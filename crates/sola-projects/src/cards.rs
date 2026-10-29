@@ -15,7 +15,7 @@ use crate::spawn;
 use crate::catalog::{self, Project};
 
 pub const SPAWN_INPUT_ID: &str = "ws-spawn-name";
-pub const ADD_INPUT_ID: &str = "ws-add-path";
+pub const ADD_INPUT_ID: &str = "ws-new-project";
 
 #[derive(Clone, Debug, Default)]
 pub struct SpawnDraft {
@@ -27,13 +27,22 @@ pub struct SpawnDraft {
     /// Root checkout's branch when the card opened (`None` = detached /
     /// not git). Copy only.
     pub root_branch: Option<String>,
+    /// The project is on another computer (an ssh host).
+    pub host: Option<String>,
+    /// Its worktree is being made there (the card waits).
+    pub pending: bool,
 }
 
 impl SpawnDraft {
-    pub fn open(project_id: impl Into<String>, root_branch: Option<String>) -> Self {
+    pub fn open(
+        project_id: impl Into<String>,
+        root_branch: Option<String>,
+        host: Option<String>,
+    ) -> Self {
         Self {
             project_id: Some(project_id.into()),
             root_branch,
+            host,
             ..Self::default()
         }
     }
@@ -44,9 +53,10 @@ impl SpawnDraft {
 }
 
 #[derive(Clone, Debug, Default)]
+/// The New Project card: a name for its folder in `~/Projects`.
 pub struct AddDraft {
     pub open: bool,
-    pub path: String,
+    pub name: String,
     pub error: Option<String>,
 }
 
@@ -97,23 +107,25 @@ pub fn exited_pane(pane_id: impl Into<String>) -> Element<'static, Msg> {
     .into()
 }
 
-/// A tab with no pane to show (none attached yet).
-pub fn empty_pane<'a>() -> Element<'a, Msg> {
-    container(iced::widget::Space::new())
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-}
-
-/// The window shown while there is no project yet.
-pub fn no_project<'a>() -> Element<'a, Msg> {
+/// A pane on `host` whose ssh ended with its session out of reach: why,
+/// and Reconnect (which attaches the session if it is there, else makes
+/// a new one).
+pub fn unreachable_pane(
+    pane_id: impl Into<String>,
+    host: &str,
+    why: &str,
+) -> Element<'static, Msg> {
+    let pane_id = pane_id.into();
     container(
         column![
-            sola_kit::components::text::caption("Add a project to open its tabs.")
+            sola_kit::components::text::body(format!("Can't reach {host}")),
+            sola_kit::components::text::caption(why.to_string())
                 .style(sola_kit::components::text::muted),
-            kit_btn::labeled_sm("Add project", kit_btn::primary).on_press(Msg::OpenAdd),
+            kit_btn::labeled("Reconnect", kit_btn::primary)
+                .on_press(Msg::RestartShell(pane_id)),
         ]
         .spacing(12)
+        .max_width(420)
         .align_x(Alignment::Center),
     )
     .width(Length::Fill)
@@ -121,6 +133,27 @@ pub fn no_project<'a>() -> Element<'a, Msg> {
     .center_x(Length::Fill)
     .center_y(Length::Fill)
     .into()
+}
+
+/// A pane on `host` waiting for its link to come up.
+pub fn connecting_pane<'a>(host: &str) -> Element<'a, Msg> {
+    container(
+        sola_kit::components::text::caption(format!("Connecting to {host}…"))
+            .style(sola_kit::components::text::muted),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .center_x(Length::Fill)
+    .center_y(Length::Fill)
+    .into()
+}
+
+/// A tab with no pane to show (none attached yet).
+pub fn empty_pane<'a>() -> Element<'a, Msg> {
+    container(iced::widget::Space::new())
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
 
 /// Dim overlay + name-only spawn card. Click the veil to dismiss.
@@ -201,7 +234,8 @@ fn spawn_card<'a>(draft: &'a SpawnDraft, project_name: &str) -> Element<'a, Msg>
                 row![
                     iced::widget::Space::new().width(Length::Fill),
                     kit_btn::labeled_sm("Cancel", kit_btn::ghost).on_press(Msg::DismissDialog),
-                    kit_btn::labeled_sm("Create", kit_btn::primary).on_press(Msg::Spawn),
+                    kit_btn::labeled_sm("Create", kit_btn::primary)
+                        .on_press_maybe((!draft.pending).then_some(Msg::Spawn)),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
@@ -221,15 +255,22 @@ fn spawn_copy(draft: &SpawnDraft, slug: &str) -> (String, String) {
         Some(branch) => format!("No worktree — work on {branch} in the root"),
         None => "No worktree — work in the project root".to_string(),
     };
-    let hint = if draft.in_root {
+    let on = draft
+        .host
+        .as_deref()
+        .map(|h| format!(" · on {h}"))
+        .unwrap_or_default();
+    let hint = if draft.pending {
+        format!("Making the worktree{on}…")
+    } else if draft.in_root {
         match draft.root_branch.as_deref() {
-            Some(branch) => format!("Root checkout · {branch}"),
-            None => "Root checkout".to_string(),
+            Some(branch) => format!("Root checkout · {branch}{on}"),
+            None => format!("Root checkout{on}"),
         }
     } else if slug.is_empty() {
-        format!("{}/<name>", spawn::WORKTREE_DIR)
+        format!("{}/<name>{on}", spawn::WORKTREE_DIR)
     } else {
-        format!("{}/{}", spawn::WORKTREE_DIR, slug)
+        format!("{}/{}{on}", spawn::WORKTREE_DIR, slug)
     };
     (label, hint)
 }
@@ -238,10 +279,10 @@ fn add_card<'a>(draft: &'a AddDraft) -> Element<'a, Msg> {
     card::modal(
         container(
             column![
-                sola_kit::components::text::body("Add project"),
+                sola_kit::components::text::body("New project"),
                 field(
-                    "Folder",
-                    text_input("~/path/to/checkout", &draft.path)
+                    "Name",
+                    text_input("lantern", &draft.name)
                         .id(iced::widget::Id::new(ADD_INPUT_ID))
                         .on_input(Msg::AddPath)
                         .on_submit(Msg::AddProject),
@@ -250,13 +291,13 @@ fn add_card<'a>(draft: &'a AddDraft) -> Element<'a, Msg> {
                 )
                 .padding(0),
                 sola_kit::components::text::caption(
-                    "A git checkout. Tabs land in .worktrees/"
+                    "Its folder in ~/Projects: made, or opened if it is there."
                 )
                 .style(sola_kit::components::text::muted),
                 row![
                     iced::widget::Space::new().width(Length::Fill),
                     kit_btn::labeled_sm("Cancel", kit_btn::ghost).on_press(Msg::DismissDialog),
-                    kit_btn::labeled_sm("Add", kit_btn::primary).on_press(Msg::AddProject),
+                    kit_btn::labeled_sm("Create", kit_btn::primary).on_press(Msg::AddProject),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),

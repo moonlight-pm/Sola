@@ -6,8 +6,10 @@
 //! marks the ones Projects has a window for (`project.list`). Picking an
 //! open one brings up its window and workspace; a closed one opens in the
 //! showing workspace (`project.open`, which adds a folder that is not a
-//! project yet). The last row makes a new one: a name, a folder under
-//! `~/Projects`, then opened the same way.
+//! project yet). Then a row makes a new one: a name, a folder under
+//! `~/Projects`, then opened the same way. The last row opens a project on
+//! another computer ([`super::remote`]): the chooser then lists that
+//! computer's `~/Projects` (its `host`), and New makes one there.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -31,6 +33,8 @@ pub enum Row {
     Folder(usize),
     /// Make a new project.
     New,
+    /// Open a project on another computer.
+    Remote,
 }
 
 /// What Projects says of a project it knows (`project.list`).
@@ -42,9 +46,13 @@ pub struct Known {
 
 #[derive(Debug, Default)]
 pub struct Chooser {
+    /// The computer these folders are on (an ssh host); `None`: this one.
+    pub host: Option<String>,
+    /// Its `~/Projects` there (for a host).
+    pub root: Option<PathBuf>,
     pub folders: Vec<Folder>,
-    /// Projects' projects by canonical root (empty while Projects is not
-    /// running, or until it answers).
+    /// Projects' projects on [`Self::host`] by canonical root (empty while
+    /// Projects is not running, or until it answers).
     pub known: HashMap<PathBuf, Known>,
     /// `folders` passing the query, in order.
     pub filtered: Vec<usize>,
@@ -92,6 +100,27 @@ impl Chooser {
         c
     }
 
+    /// `host`'s `~/Projects` (at `root` there), folder `names`.
+    pub fn remote(host: &str, root: &Path, names: Vec<String>) -> Self {
+        let folders = names
+            .into_iter()
+            .map(|name| Folder {
+                path: root.join(&name),
+                name,
+            })
+            .collect();
+        Chooser {
+            host: Some(host.to_string()),
+            root: Some(root.to_path_buf()),
+            ..Chooser::new(folders)
+        }
+    }
+
+    /// The host's `~/Projects` there, for a host's chooser.
+    pub fn folders_root(&self) -> Option<PathBuf> {
+        self.root.clone()
+    }
+
     /// Keep the folders whose name holds `query` (case aside).
     pub fn apply_query(&mut self, query: &str) {
         self.query = query.trim().to_string();
@@ -101,13 +130,17 @@ impl Chooser {
             .collect();
     }
 
-    /// The rows: the matching folders, then New. Naming: New alone.
+    /// The rows: the matching folders, then New, then Remote (here only).
+    /// Naming: New alone.
     pub fn rows(&self) -> Vec<Row> {
         if self.naming {
             return vec![Row::New];
         }
         let mut rows: Vec<Row> = self.filtered.iter().map(|&i| Row::Folder(i)).collect();
         rows.push(Row::New);
+        if self.host.is_none() {
+            rows.push(Row::Remote);
+        }
         rows
     }
 
@@ -159,13 +192,22 @@ mod tests {
     }
 
     #[test]
-    fn rows_are_the_matching_folders_then_new() {
+    fn rows_are_the_matching_folders_then_new_and_remote() {
+        let all = [Row::Folder(0), Row::Folder(1), Row::Folder(2), Row::New, Row::Remote];
         let mut c = Chooser::new(vec![folder("Oath"), folder("Sola"), folder("solar")]);
-        assert_eq!(c.rows(), [Row::Folder(0), Row::Folder(1), Row::Folder(2), Row::New]);
+        assert_eq!(c.rows(), all);
         c.apply_query("SOL");
-        assert_eq!(c.rows(), [Row::Folder(1), Row::Folder(2), Row::New]);
+        assert_eq!(c.rows(), [Row::Folder(1), Row::Folder(2), Row::New, Row::Remote]);
         c.naming = true;
         assert_eq!(c.rows(), [Row::New]);
+    }
+
+    #[test]
+    fn a_remote_chooser_is_its_folders_then_new() {
+        let c = Chooser::remote("novus", Path::new("/home/j/Projects"), vec!["Sola".into()]);
+        assert_eq!(c.host.as_deref(), Some("novus"));
+        assert_eq!(c.folders[0].path, PathBuf::from("/home/j/Projects/Sola"));
+        assert_eq!(c.rows(), [Row::Folder(0), Row::New]);
     }
 
     #[test]

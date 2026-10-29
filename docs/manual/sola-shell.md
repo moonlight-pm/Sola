@@ -62,13 +62,26 @@ folders, the field scoped to "Projects". Type to filter.
 - A project with a window says **Open on** its workspace; picking it shows
   that workspace and the window.
 - Any other folder opens in the workspace you are on, right after the
-  focused tab (a folder Projects did not know is added as a project).
+  focused tab, on its root tab. (Closing a project's window closes it: its
+  sessions end and Projects forgets it.)
 - **New project…** asks for a name (or takes the one you typed): Enter
   makes `~/Projects/<name>` and opens it the same way.
-- Escape goes back to the apps; again closes the launcher.
+- **On another computer…** asks for a computer: type its name (or
+  `user@name`, or a `~/.ssh/config` alias); the ones you opened before are
+  listed, latest first. Enter connects over ssh and lists that computer's
+  `~/Projects`, the field scoped to its name; picking one opens it in
+  Projects as "<folder> on <computer>", and **New project** makes one
+  there. Its tabs run there and work as tabs here do (see
+  [Projects on another computer](solactl.md#projects-on-another-computer)).
+  The listing never asks for a password: it needs a key or an ssh agent
+  that logs you in, and tmux on that computer. A computer you have not
+  reached before is trusted the first time; one whose key changed is
+  refused. If it cannot be listed, the reason shows above the computers.
+- Escape goes back a step: a computer's projects to the computers, the
+  computers to this one's projects, those to the apps; again closes the
+  launcher.
 
-If Projects is not running, it starts, and the project comes up once its
-first window is there.
+If Projects is not running, it starts and opens the project.
 
 **Browser** asks where to go. Picking Browser turns the launcher into a
 field scoped to "Browser": type an address or what to search for, as in

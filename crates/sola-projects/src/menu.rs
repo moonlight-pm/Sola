@@ -3,12 +3,12 @@ use sola_core::KeyCode;
 
 use crate::APP_ID;
 
-/// Menu action id prefix for Project → Open: `open-project:<project id>`.
+/// Menu action id prefix for Project → Open: `open-project:<folder>`.
 pub const OPEN_PREFIX: &str = "open-project:";
 
-/// The app menu. `closed` lists `(id, name)` of each project without a
-/// window, under Project → Open.
-pub fn app_menu(closed: &[(String, String)]) -> AppMenuPayload {
+/// The app menu. `folders` lists `(path, name)` of each folder of
+/// `~/Projects` not open, under Project → Open.
+pub fn app_menu(folders: &[(String, String)]) -> AppMenuPayload {
     let mut project = vec![
         MenuItem::Action {
             id: "add-project".into(),
@@ -24,15 +24,8 @@ pub fn app_menu(closed: &[(String, String)]) -> AppMenuPayload {
             disabled: false,
             checked: false,
         },
-        MenuItem::Action {
-            id: "drop-project".into(),
-            label: "Drop Project".into(),
-            shortcut: None,
-            disabled: false,
-            checked: false,
-        },
         MenuItem::Divider,
-        // Only the window: the project and its sessions stay (Open).
+        // Closes the project: its sessions end, and it is forgotten.
         MenuItem::Action {
             id: "close-window".into(),
             label: "Close Window".into(),
@@ -41,11 +34,11 @@ pub fn app_menu(closed: &[(String, String)]) -> AppMenuPayload {
             checked: false,
         },
     ];
-    if !closed.is_empty() {
+    if !folders.is_empty() {
         project.push(MenuItem::Divider);
-        for (id, name) in closed {
+        for (path, name) in folders {
             project.push(MenuItem::Action {
-                id: format!("{OPEN_PREFIX}{id}"),
+                id: format!("{OPEN_PREFIX}{path}"),
                 label: format!("Open {name}"),
                 shortcut: None,
                 disabled: false,

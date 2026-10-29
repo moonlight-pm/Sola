@@ -4,11 +4,11 @@
 //! Claude: merge the same handlers into `~/.claude/settings.json`
 //! without dropping permissions, plugins, or other hooks.
 
-use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
+
+use crate::machine::Machine;
 
 const SCRIPT_NAME: &str = "grok-hook.sh";
 const CODEX_SCRIPT_NAME: &str = "codex-hook.sh";
@@ -78,36 +78,60 @@ impl HookPaths {
     }
 }
 
+impl HookPaths {
+    /// Where hooks go on another computer: the agents' homes there, and
+    /// our scripts in `~/.config/sola/remote/` (a Sola there keeps its own
+    /// in `projects/`; both post to `$SOLA_WS_HOOKS_SOCK`). `socket_path`
+    /// is that computer's end of the link's hook socket.
+    pub fn remote(r: &crate::machine::Remote, socket_path: PathBuf) -> Self {
+        let cfg = r.home.join(".config/sola/remote");
+        Self {
+            grok_hooks_dir: r.grok_home.join("hooks"),
+            script_path: cfg.join(SCRIPT_NAME),
+            socket_path,
+            codex_hooks_json: r.codex_home.join("hooks.json"),
+            codex_script_path: cfg.join(CODEX_SCRIPT_NAME),
+            claude_settings_json: r.claude_home.join("settings.json"),
+            claude_script_path: cfg.join(CLAUDE_SCRIPT_NAME),
+        }
+    }
+}
+
 /// Idempotent: rewrite our scripts + hook files. Leave Orca, Impeccable,
 /// and the rest of Claude settings alone.
-pub fn install(paths: &HookPaths) -> std::io::Result<()> {
-    install_grok(paths)?;
-    install_codex(paths)?;
-    install_claude(paths)?;
+pub fn install(paths: &HookPaths) -> Result<(), String> {
+    install_on(&Machine::Local, paths)
+}
+
+/// [`install`] on `m` (this computer, or another a link reaches).
+pub fn install_on(m: &Machine, paths: &HookPaths) -> Result<(), String> {
+    install_grok(m, paths)?;
+    install_codex(m, paths)?;
+    install_claude(m, paths)?;
     Ok(())
 }
 
-fn install_grok(paths: &HookPaths) -> std::io::Result<()> {
+fn install_grok(m: &Machine, paths: &HookPaths) -> Result<(), String> {
     if let Some(dir) = paths.script_path.parent() {
-        fs::create_dir_all(dir)?;
+        m.mkdir_p(dir)?;
     }
-    fs::create_dir_all(&paths.grok_hooks_dir)?;
-    write_executable(&paths.script_path, &hook_script("grok"))?;
+    m.mkdir_p(&paths.grok_hooks_dir)?;
+    write_executable(m, &paths.script_path, &hook_script("grok"))?;
     let hook_json = grok_hook_json(&paths.script_path);
-    fs::write(paths.grok_hooks_dir.join(HOOK_FILE), hook_json)?;
+    m.write(&paths.grok_hooks_dir.join(HOOK_FILE), hook_json.as_bytes(), None)?;
     Ok(())
 }
 
-fn install_codex(paths: &HookPaths) -> std::io::Result<()> {
+fn install_codex(m: &Machine, paths: &HookPaths) -> Result<(), String> {
     if let Some(dir) = paths.codex_script_path.parent() {
-        fs::create_dir_all(dir)?;
+        m.mkdir_p(dir)?;
     }
     if let Some(dir) = paths.codex_hooks_json.parent() {
-        fs::create_dir_all(dir)?;
+        m.mkdir_p(dir)?;
     }
-    write_executable(&paths.codex_script_path, &hook_script("codex"))?;
+    write_executable(m, &paths.codex_script_path, &hook_script("codex"))?;
     let command = hook_command(&paths.codex_script_path);
-    let existing = fs::read_to_string(&paths.codex_hooks_json).unwrap_or_default();
+    let existing = m.read_to_string(&paths.codex_hooks_json).unwrap_or_default();
     let parsed = if existing.trim().is_empty() {
         json!({"hooks": {}})
     } else {
@@ -123,20 +147,20 @@ fn install_codex(paths: &HookPaths) -> std::io::Result<()> {
         }
     };
     let merged = merge_codex_hooks(parsed, &command);
-    write_json_if_changed(&paths.codex_hooks_json, &merged, &existing)?;
+    write_json_if_changed(m, &paths.codex_hooks_json, &merged, &existing)?;
     Ok(())
 }
 
-fn install_claude(paths: &HookPaths) -> std::io::Result<()> {
+fn install_claude(m: &Machine, paths: &HookPaths) -> Result<(), String> {
     if let Some(dir) = paths.claude_script_path.parent() {
-        fs::create_dir_all(dir)?;
+        m.mkdir_p(dir)?;
     }
     if let Some(dir) = paths.claude_settings_json.parent() {
-        fs::create_dir_all(dir)?;
+        m.mkdir_p(dir)?;
     }
-    write_executable(&paths.claude_script_path, &hook_script("claude"))?;
+    write_executable(m, &paths.claude_script_path, &hook_script("claude"))?;
     let command = hook_command(&paths.claude_script_path);
-    let existing = fs::read_to_string(&paths.claude_settings_json).unwrap_or_default();
+    let existing = m.read_to_string(&paths.claude_settings_json).unwrap_or_default();
     let parsed = if existing.trim().is_empty() {
         json!({})
     } else {
@@ -152,29 +176,29 @@ fn install_claude(paths: &HookPaths) -> std::io::Result<()> {
         }
     };
     let merged = merge_claude_hooks(parsed, &command);
-    write_json_if_changed(&paths.claude_settings_json, &merged, &existing)?;
+    write_json_if_changed(m, &paths.claude_settings_json, &merged, &existing)?;
     Ok(())
 }
 
-fn write_json_if_changed(path: &Path, merged: &Value, existing: &str) -> std::io::Result<()> {
+fn write_json_if_changed(
+    m: &Machine,
+    path: &Path,
+    merged: &Value,
+    existing: &str,
+) -> Result<(), String> {
     let Ok(parsed) = serde_json::from_str::<Value>(existing) else {
         let text = serde_json::to_string_pretty(merged).unwrap_or_else(|_| "{}".into());
-        fs::write(path, format!("{text}\n"))?;
-        return Ok(());
+        return m.write(path, format!("{text}\n").as_bytes(), None);
     };
     if &parsed == merged {
         return Ok(());
     }
     let text = serde_json::to_string_pretty(merged).unwrap_or_else(|_| existing.to_string());
-    fs::write(path, format!("{text}\n"))?;
-    Ok(())
+    m.write(path, format!("{text}\n").as_bytes(), None)
 }
 
-fn write_executable(path: &Path, contents: &str) -> std::io::Result<()> {
-    fs::write(path, contents)?;
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(path, perms)
+fn write_executable(m: &Machine, path: &Path, contents: &str) -> Result<(), String> {
+    m.write(path, contents.as_bytes(), Some(0o755))
 }
 
 fn is_marked(command: &str, mark: &str) -> bool {
@@ -314,6 +338,7 @@ fn grok_hook_json(script: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn tmp_paths() -> (HookPaths, PathBuf) {

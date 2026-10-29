@@ -111,6 +111,23 @@ if the tunnel needs it; on Oath the daemon needs a `svc:sola-botsd`.
 
 ---
 
+### D8 — Agents on another computer driving Projects (P2)
+
+**Context:** A project on another computer works as one here, but an agent
+running in its tab cannot drive this Projects: `solactl projects` there
+talks to that computer's own call plane (if any). The link could forward
+this computer's call socket there too (`SOLA_CALL_PATH` on the remote
+panes, as the hook socket is forwarded), so `solactl projects tab.spawn`,
+`pane.send`, `whoami` etc. from there reach this Projects. But the call
+plane is desk-equivalent privilege (D3): every owner (browser, shell,
+design…) would be reachable by anything running as that user on that
+computer.
+
+**Ask:** forward the call plane to remote tabs? Options: no (as built);
+forward it whole; forward a Projects-only proxy (only owner `projects`).
+
+---
+
 ## Open technical questions
 
 ### T1 — Agent pin UI surface — **closed (2026-08-28)**
@@ -178,6 +195,8 @@ runs `cloudflared` while open. Links work only while Design runs.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-10-28 | Projects are ~/Projects folders | Projects keeps no list of projects (Joshua: "We don't need a 'Drop Project' anymore. Closing the window does that basically. Also we don't need to keep a list of projects. Projects are jut whatever is in the ~/Projects directory"): the catalog holds only open projects; closing a window ends its sessions and forgets it. Asked: a reopened project starts on its root tab only; startup scripts live in a settings file by folder; with nothing open Projects quits. A remote project's tab shows its folder alone, its frame "<folder> on <host>". | capabilities `projects`, manual `solactl.md` |
+| 2026-10-28 | Projects on another computer | A project may be a folder in an ssh host's `~/Projects` (Joshua: "When i open projects through launcher, there should be a 'remote' option … type in a hostname, and it should remember recently used … ssh there to get a list of projects … open sessions over ssh to tmux … So the session runs on that machine"; then "remote projects should be identical in operation as local ones"). Each tab is a tmux session on that host on its own socket (`sola-ws-remote`, so a Sola there keeps its own apart); the chooser lists `~/Projects` there, not that host's Projects catalog. A link per host (`ssh -N -R`) brings its agents' hooks back, after Projects installs the same hooks there; worktrees, startup scripts, the pane CLI and resume run there through a `Machine` seam. | capabilities `projects`, manual `solactl.md`, `sola-shell.md` |
 | 2026-10-28 | Themed flower | The top row's flower takes the theme as its own token, `shell-flower`, amber by default (Joshua picked it over painting the flower the accent, which would have turned it cyan on the grey theme): a picture's scheme recolors it as the accent, and the storybook's Shell page edits it. Built with it: Settings' Accent sets it too, and a grey picture keeps the amber. | capabilities `theme-bus`, manual theme / sola-shell, background spec |
 | 2026-10-27 | Browser autoplay; pages off screen rest | Chromium's own autoplay policy replaces `no-user-gesture-required` (Joshua: "no reason that all 5 should be trying to play at once"): muted video plays only while in view, sound waits for a click on the page. A page whose window is off screen rests, the active one too ("make the active page rest off screen"), and under the idle fade once it is full ("let them keep running until the fade reaches full transparency"). | browser manual, compositor manual, capabilities, architecture |
 | 2026-10-26 | Launcher Browser field | Picking Browser in the launcher asks where to go instead of opening a blank page (Joshua: "instead present a omni search bar, then open the browser with that"): the location bar's rules (`sola_core::omnibox`) — Enter opens the address or Kagi's top result; a search offers Kagi's results page; the browser's visits below; the page opens in a new page window. | shell manual, browser manual, capabilities |

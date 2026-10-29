@@ -16,6 +16,7 @@ pub mod open_image;
 pub mod open_url;
 pub mod paths;
 pub mod process;
+pub mod ssh;
 pub mod theme;
 pub mod watcher;
 

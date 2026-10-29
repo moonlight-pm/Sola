@@ -160,8 +160,25 @@ pub enum Msg {
     LauncherEscape,
     /// A row of the Projects chooser clicked.
     LauncherPick(usize),
-    /// Projects' `project.list`, for the chooser's open marks.
-    ProjectsKnown(Result<Vec<(std::path::PathBuf, crate::launcher::projects::Known)>, String>),
+    /// Projects' `project.list`, for the chooser's open marks: each
+    /// project's host (`None`: here), root, and what Projects says of it.
+    ProjectsKnown(
+        Result<
+            Vec<(
+                Option<String>,
+                std::path::PathBuf,
+                crate::launcher::projects::Known,
+            )>,
+            String,
+        >,
+    ),
+    /// New's folder made on a host (or why not).
+    RemoteCreated(String, Result<std::path::PathBuf, String>),
+    /// A host's `~/Projects`, listed over ssh for the chooser (or why not).
+    RemoteListed(
+        String,
+        Result<crate::launcher::remote::Listing, String>,
+    ),
     /// Projects answered `project.open`.
     ProjectOpened(Result<(), String>),
     /// Super+K / flower menu: show the keyboard-shortcuts overlay.
@@ -483,8 +500,6 @@ pub struct Shell {
     /// An event to show once Calendar's window appears (the clock's panel
     /// launched it to open one).
     pub calendar_event_pending: Option<String>,
-    /// A project the chooser asked for while Projects was starting.
-    pub project_pending: Option<std::path::PathBuf>,
     /// Iced-reported live swapchain for menu / launcher /
     /// selection / notify / shortcuts. Composition waits on this so River
     /// does not show a stretched 2×2.
@@ -596,7 +611,6 @@ impl Shell {
             inbox_unread: None,
             calendar_agenda: None,
             calendar_event_pending: None,
-            project_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
 
@@ -2605,6 +2619,7 @@ impl Shell {
                 self.launcher.prior_focus = self.focused_window_id;
                 self.launcher.active = true;
                 self.launcher.chooser = None;
+                self.launcher.hosts = None;
                 self.launcher.web = None;
                 let apps = self.applications.clone();
                 self.launcher.apply_query(&apps, "");
@@ -2626,6 +2641,7 @@ impl Shell {
                 }
                 self.launcher.active = false;
                 self.launcher.chooser = None;
+                self.launcher.hosts = None;
                 self.launcher.web = None;
                 self.emit_composition();
                 self.emit_registered_chords();
@@ -2640,6 +2656,13 @@ impl Shell {
             Msg::LauncherQuery(text) => {
                 if let Some(web) = self.launcher.web.as_mut() {
                     web.apply_query(&text);
+                    self.launcher.query = text;
+                    self.launcher.selected = 0;
+                    return iced::Task::none();
+                }
+                if let Some(hosts) = self.launcher.hosts.as_mut() {
+                    hosts.apply_query(&text);
+                    hosts.error = None;
                     self.launcher.query = text;
                     self.launcher.selected = 0;
                     return iced::Task::none();
@@ -2666,10 +2689,11 @@ impl Shell {
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
-                let len = match (&self.launcher.web, &self.launcher.chooser) {
-                    (Some(web), _) => web.rows().len(),
-                    (None, Some(chooser)) => chooser.rows().len(),
-                    (None, None) => self.launcher.filtered_ids.len(),
+                let len = match (&self.launcher.web, &self.launcher.hosts, &self.launcher.chooser) {
+                    (Some(web), _, _) => web.rows().len(),
+                    (None, Some(hosts), _) => hosts.rows().len(),
+                    (None, None, Some(chooser)) => chooser.rows().len(),
+                    (None, None, None) => self.launcher.filtered_ids.len(),
                 };
                 if len == 0 {
                     return iced::Task::none();
@@ -2690,6 +2714,9 @@ impl Shell {
                 }
                 if self.launcher.web.is_some() {
                     return self.web_pick(self.launcher.selected);
+                }
+                if self.launcher.hosts.is_some() {
+                    return self.hosts_pick(self.launcher.selected);
                 }
                 if self.launcher.chooser.is_some() {
                     return self.chooser_pick(self.launcher.selected);
@@ -2733,11 +2760,22 @@ impl Shell {
                 if self.launcher.web.is_some() {
                     return self.web_pick(i);
                 }
+                if self.launcher.hosts.is_some() {
+                    return self.hosts_pick(i);
+                }
                 self.chooser_pick(i)
             }
+            Msg::RemoteListed(host, listed) => self.on_remote_listed(host, listed),
+            Msg::RemoteCreated(host, made) => self.on_remote_created(host, made),
             Msg::ProjectsKnown(known) => {
                 match (known, self.launcher.chooser.as_mut()) {
-                    (Ok(known), Some(chooser)) => chooser.known = known.into_iter().collect(),
+                    (Ok(known), Some(chooser)) => {
+                        chooser.known = known
+                            .into_iter()
+                            .filter(|(host, _, _)| *host == chooser.host)
+                            .map(|(_, root, k)| (root, k))
+                            .collect()
+                    }
                     (Err(e), _) => tracing::debug!(error = %e, "project chooser: project.list"),
                     _ => {}
                 }
@@ -3204,7 +3242,6 @@ mod pending_launch_tests {
             inbox_unread: None,
             calendar_agenda: None,
             calendar_event_pending: None,
-            project_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
         // Existing window only — still pending, the ghost in the tab bar.
@@ -3325,7 +3362,6 @@ mod hide_tests {
             inbox_unread: None,
             calendar_agenda: None,
             calendar_event_pending: None,
-            project_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
         // Tabs: the first app on the Left, the second on the Right, the

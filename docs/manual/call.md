@@ -220,7 +220,7 @@ right rail is the live catalog.
 | `compositor` | `sola-river` | Whole session | `screenshot`, `sample`, `cursor`, `windows`, `input.click`, `input.move`, `input.scroll`, `input.key` |
 | `session` | `sola-session` | Whole session | `launch`, `close` |
 | `bots` | `sola-botsd` | Whole session | `list`, `poll`, `new`, `send`, `transcript`, `rm`, `cancel` |
-| `projects` | `sola-projects` | While **Projects** is open | `ps`, `project.list`, `project.add`, `project.rm`, `project.startup`, `project.reorder`, `tab.list`, `tab.spawn`, `tab.rm`, `tab.select`, `tab.set`, `tab.exec`, `pane.list`, `pane.send`, `pane.read`, `pane.wait`, `whoami` |
+| `projects` | `sola-projects` | While **Projects** is open | `ps`, `project.list`, `project.open`, `project.close`, `project.startup`, `tab.list`, `tab.spawn`, `tab.rm`, `tab.select`, `tab.set`, `tab.exec`, `pane.list`, `pane.send`, `pane.read`, `pane.wait`, `whoami` |
 | `browser` | `sola-browser` | While the **Browser** is open | `tabs`, `tab.open`, `tab.close`, `tab.focus`, `goto`, `back`, `forward`, `reload`, `stop`, `find.page`, `snapshot`, `find`, `click`, `hover`, `key`, `scroll`, `type`, `fill`, `get`, `links`, `select`, `wait`, `screenshot` |
 | `design` | `sola-design` | While **Design** is open | `project.list`, `project.add`, `project.remove`, `open`, `canvas.new`, `canvas.close`, `status`, `share`, `share.rotate`, `selection`, `view`, `wait`, `reload`, `screenshot`, `pdf`, `inspect` |
 

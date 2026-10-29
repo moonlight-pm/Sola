@@ -72,14 +72,17 @@ state from hue alone — shape differs too.
 `fonts::ui()` on chrome. `fonts::mono()` on the grid. No display face.
 Tab title 14. No agent name on the row — status is the mark, the
 desk card names project, tab, and agent. Sibling rows use the kit hover × (`on_close`, lucide/x).
-Root has no row close. **Project** menu: New Project…, Startup Script…,
-Drop Project. **Edit** menu: Copy / Paste (⌘C / ⌘V) — script editor when
+Root has no row close. **Project** menu: New Project… (a name → its folder
+in `~/Projects`), Startup Script…, Close Window, then Open <folder> for each
+folder of `~/Projects` not open. **Edit** menu: Copy / Paste (⌘C / ⌘V) — script editor when
 open, otherwise the focused pane (same as sola-terminal). Startup is a per-project `/bin/sh` run in each new
 worktree (copy `.grok`, etc.). Script env: `$PROJECT` (folder on disk),
-`$WORKTREE` (this tab), `$NAME` (tab name). The editor lists them. **Drop Project** unregisters the project
-and kills its tmux. Worktrees stay on disk.
+`$WORKTREE` (this tab), `$NAME` (tab name). The editor lists them. Scripts
+are kept by folder (`startup.json`), so they outlive closing.
 ⌘W closes the focused **pane**; ⇧⌘W (Project → Close Window) closes the
-project's window and keeps the project (Project → Open brings it back).
+project: its sessions end (tmux killed) and Projects forgets it; its
+folders and worktrees stay on disk, and opening it again starts on its
+root tab. Projects keeps only open projects (2026-10-28).
 A tab is always one chip in its project's top bar —
 splits stay in the grid, not as child tabs. The mark rolls up every
 Grok or Codex pane in that tab (waiting beats working beats done beats idle).
@@ -155,8 +158,7 @@ terminal.
 - Do rename a worktree tab with a double-click on its chip
   (`tab.set --title`). The chip shows that label, defaulting to the
   worktree slug — do not prefix the slug onto a custom title. Root has
-  no rename. Order is `tab.set --before` / `project.reorder` (no drag in
-  the top bar yet). `--name` still moves `.worktrees/<slug>`.
+  no rename. Order is `tab.set --before` or a drag in the top bar. `--name` still moves `.worktrees/<slug>`.
 - Do notify done and waiting only when unfocused (desk card, not
   menubar whisper): title `{project} · {tab}`, body `grok is done` /
   `grok needs attention`. Tab is the chip label (`root`, slug, or

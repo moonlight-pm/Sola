@@ -8,10 +8,11 @@
 //!
 //! Picking Projects turns the card into the Projects chooser
 //! ([`crate::launcher::projects`]): the field scoped to "Projects", the
-//! folders of `~/Projects` as rows (open ones say where), then New.
-//! Escape steps back to the apps. Picking Browser turns it into the
-//! Browser field ([`crate::launcher::web`]): the field scoped to
-//! "Browser", what Return opens, then matching visits.
+//! folders of `~/Projects` as rows (open ones say where), then New, then
+//! another computer's: the field takes a host ([`crate::launcher::remote`]),
+//! then lists its folders, scoped to that host. Escape steps back. Picking
+//! Browser turns it into the Browser field ([`crate::launcher::web`]): the
+//! field scoped to "Browser", what Return opens, then matching visits.
 
 use iced::widget::{Id as WidgetId, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Element, Length, Padding};
@@ -26,6 +27,7 @@ use sola_kit::fonts;
 
 use crate::app::{Msg, Shell};
 use crate::launcher::projects::{Chooser, Row};
+use crate::launcher::remote::{HostRow, Hosts};
 use crate::launcher::web::{self, WebChooser};
 use sola_kit::components::scroll;
 
@@ -58,11 +60,13 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
 
     let launcher = &shell.launcher;
 
-    let placeholder = match (&launcher.web, &launcher.chooser) {
-        (Some(_), _) => "Search or enter an address",
-        (None, Some(c)) if c.naming => "Name the new project",
-        (None, Some(_)) => "Open a project, or type a new name",
-        (None, None) => "Search…",
+    let placeholder = match (&launcher.web, &launcher.hosts, &launcher.chooser) {
+        (Some(_), _, _) => "Search or enter an address",
+        (None, Some(_), _) => "A computer: its name, or user@name",
+        (None, None, Some(c)) if c.naming => "Name the new project",
+        (None, None, Some(c)) if c.host.is_some() => "Open a project there",
+        (None, None, Some(_)) => "Open a project, or type a new name",
+        (None, None, None) => "Search…",
     };
     // Search field — part of the card chrome, not a loud form control.
     let query_input: Element<'_, Msg> = text_input(placeholder, &launcher.query)
@@ -74,10 +78,14 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .width(Length::Fill)
         .into();
     // In the chooser, the field is scoped: "Projects" before it.
-    let scope = match (&launcher.web, &launcher.chooser) {
-        (Some(_), _) => Some(("lucide/globe", "Browser")),
-        (None, Some(_)) => Some(("lucide/folders", "Projects")),
-        (None, None) => None,
+    let scope = match (&launcher.web, &launcher.hosts, &launcher.chooser) {
+        (Some(_), _, _) => Some(("lucide/globe", "Browser")),
+        (None, Some(_), _) => Some(("lucide/monitor", "Remote")),
+        (None, None, Some(Chooser { host: Some(host), .. })) => {
+            Some(("lucide/monitor", host.as_str()))
+        }
+        (None, None, Some(_)) => Some(("lucide/folders", "Projects")),
+        (None, None, None) => None,
     };
     let query_input: Element<'_, Msg> = match scope {
         Some((icon_name, label)) => row![scope_chip(icon_name, label), query_input]
@@ -89,6 +97,8 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
 
     let rows: Vec<Element<'_, Msg>> = if let Some(web) = &launcher.web {
         web_rows(shell, web)
+    } else if let Some(hosts) = &launcher.hosts {
+        host_rows(shell, hosts)
     } else if let Some(chooser) = &launcher.chooser {
         chooser_rows(shell, chooser)
     } else if launcher.filtered_ids.is_empty() {
@@ -346,38 +356,103 @@ fn chooser_rows<'a>(shell: &'a Shell, chooser: &'a Chooser) -> Vec<Element<'a, M
                 }
                 Row::New => {
                     let name = shell.launcher.query.trim();
+                    let on = chooser
+                        .host
+                        .as_deref()
+                        .map(|h| format!(" on {h}"))
+                        .unwrap_or_default();
                     let label = match (chooser.naming, chooser.new_name()) {
-                        (true, _) if name.is_empty() => "A name for its folder in ~/Projects".into(),
-                        (true, _) => format!("Create ~/Projects/{name}"),
-                        (false, Some(n)) => format!("New project “{n}”"),
-                        (false, None) => "New project…".into(),
+                        (true, _) if name.is_empty() => format!("A name for its folder in ~/Projects{on}"),
+                        (true, _) => format!("Create ~/Projects/{name}{on}"),
+                        (false, Some(n)) => format!("New project “{n}”{on}"),
+                        (false, None) => format!("New project{on}…"),
                     };
                     ("lucide/folder-plus", label, None)
                 }
+                Row::Remote => ("lucide/monitor", "On another computer…".into(), None),
             };
-            let mut content = row![
-                icon(icon_name, ROW_ICON),
-                text(label).font(fonts::ui()).size(ROW_LABEL),
-            ]
-            .spacing(ROW_GAP)
-            .align_y(Alignment::Center);
-            if let Some(note) = note {
-                content = content
-                    .push(iced::widget::Space::new().width(Length::Fill))
-                    .push(text(note).font(fonts::chrome()).size(12).style(dim));
-            }
-            let lp = shell.style.launcher_pad;
-            iced::widget::button(content)
-                .on_press(Msg::LauncherPick(i))
-                .padding(Padding {
-                    top: lp,
-                    bottom: lp,
-                    left: lp + 4.0,
-                    right: lp + 8.0,
-                })
-                .width(Length::Fill)
-                .style(kit_btn::list_item(i == selected))
-                .into()
+            pick_row(shell, i, i == selected, icon_name, label, note)
         })
         .collect()
+}
+
+/// The Remote stage's rows: why the last host could not be listed, then
+/// the recent hosts matching the field, then the one typed. While a host
+/// lists its projects, that alone.
+fn host_rows<'a>(shell: &'a Shell, hosts: &'a Hosts) -> Vec<Element<'a, Msg>> {
+    if let Some(host) = &hosts.connecting {
+        return vec![note_row("lucide/loader", format!("Connecting to {host}…"))];
+    }
+    let selected = shell.launcher.selected;
+    let rows = hosts.rows();
+    let mut out: Vec<Element<'a, Msg>> = Vec::new();
+    if let Some(error) = &hosts.error {
+        out.push(note_row("lucide/unplug", error.clone()));
+    } else if rows.is_empty() {
+        out.push(note_row(
+            "lucide/monitor",
+            "Type a computer's name to open a project on it".into(),
+        ));
+    }
+    out.extend(rows.into_iter().enumerate().map(|(i, r)| {
+        let (icon_name, label, note) = match r {
+            HostRow::Recent(h) => ("lucide/monitor", hosts.recent[h].clone(), None),
+            HostRow::Typed => (
+                "lucide/monitor-up",
+                hosts.typed().unwrap_or_default().to_string(),
+                Some("Connect".to_string()),
+            ),
+        };
+        pick_row(shell, i, i == selected, icon_name, label, note)
+    }));
+    out
+}
+
+/// A pickable chooser row: an icon, a label, and a note at the right.
+fn pick_row<'a>(
+    shell: &'a Shell,
+    i: usize,
+    selected: bool,
+    icon_name: &str,
+    label: String,
+    note: Option<String>,
+) -> Element<'a, Msg> {
+    let mut content = row![
+        icon(icon_name, ROW_ICON),
+        text(label).font(fonts::ui()).size(ROW_LABEL),
+    ]
+    .spacing(ROW_GAP)
+    .align_y(Alignment::Center);
+    if let Some(note) = note {
+        content = content
+            .push(iced::widget::Space::new().width(Length::Fill))
+            .push(text(note).font(fonts::chrome()).size(12).style(dim));
+    }
+    let lp = shell.style.launcher_pad;
+    iced::widget::button(content)
+        .on_press(Msg::LauncherPick(i))
+        .padding(Padding {
+            top: lp,
+            bottom: lp,
+            left: lp + 4.0,
+            right: lp + 8.0,
+        })
+        .width(Length::Fill)
+        .style(kit_btn::list_item(selected))
+        .into()
+}
+
+/// A row that says something and cannot be picked.
+fn note_row<'a>(icon_name: &str, note: String) -> Element<'a, Msg> {
+    container(
+        row![
+            icon(icon_name, ROW_ICON),
+            text(note).font(fonts::chrome()).size(13).style(dim),
+        ]
+        .spacing(ROW_GAP)
+        .align_y(Alignment::Center),
+    )
+    .padding(Padding::new(12.0))
+    .width(Length::Fill)
+    .into()
 }

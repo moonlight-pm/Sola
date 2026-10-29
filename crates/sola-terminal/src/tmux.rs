@@ -39,6 +39,11 @@ fn identity() -> &'static TmuxIdentity {
     IDENTITY.get().unwrap_or(&DEFAULT_IDENTITY)
 }
 
+/// This process's tmux socket name (`-L`).
+pub(crate) fn socket() -> &'static str {
+    identity().socket
+}
+
 fn config_path() -> PathBuf {
     let config_dir = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -99,7 +104,7 @@ pub fn reload_config() {
 // `set -gu terminal-overrides` drops a sticky `*:smcup@:rmcup@` left on a
 // server that was started from an older config. `source-file` does not
 // delete an option this file no longer mentions.
-const TMUX_CONF: &str = "\
+pub(crate) const TMUX_CONF: &str = "\
 set -gu terminal-overrides
 set -g status off
 set -g prefix None

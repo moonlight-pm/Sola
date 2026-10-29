@@ -68,12 +68,20 @@ is still on disk), unfocused desk card
 `--title` is the tab label, defaulting to that slug; `--branch` is
 `git branch -m`; `--before` reorders in the project).
 Hover pencil / double-click on a worktree tab is `--title`. Drag reorders
-tabs inside a project and project groups (`project.reorder`).
+tabs inside a project. A project is a folder of `~/Projects`; Projects
+keeps only the open ones, and closing a project's window ends its
+sessions and forgets it (2026-10-28).
 
 **First-class CLI:** **Grok, Codex, and Claude.** Implement and test Grok first whenever
 adding agent support. OpenCode stays presence-only.
 
-**Out (v1):** editor, browser, issue trackers, remotes, mobile, ACP chat,
+**Another computer (2026-10-28, branch `next`):** a project may be a folder
+in another computer's `~/Projects` (Joshua's ask): its tabs are tmux
+sessions there, over ssh, so they run there, and they work as tabs here do
+— a link per host brings their hooks back; worktrees, startup scripts and
+the pane CLI reach them.
+
+**Out (v1):** editor, browser, issue trackers, mobile, ACP chat,
 mailbox orchestration, 15 hook adapters. OpenCode `--agent`.
 
 **Undecided (do not invent):** App-down is fail (call plane). Codex and

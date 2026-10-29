@@ -383,6 +383,21 @@ Fails if the app or `sola-call` is down; it does not launch a window. A
 tab is one checkout in a project: the project root, a `.worktrees/`
 worktree, or a folder. Each project is its own window (a tab in the
 shell's tab bar, named for the project), with its tabs along the top.
+A project is a folder in `~/Projects` (or in another computer's), and
+Projects keeps only the open ones. Closing a project's window (its close
+dot, Project → Close Window, or `project.close`) closes the project: its
+tabs' sessions end — their tmux is killed, agents and all, here or on its
+computer — and Projects forgets it and its tabs. Its folders, worktrees
+too, stay on disk. Opening it again (the launcher, Project → Open, or
+`project.open`) starts it on its root tab. New Project… (⌘N) makes
+`~/Projects/<name>` and opens it; `project.open` here takes only a folder
+of `~/Projects`. Each project's startup script is kept by its folder
+(`~/.config/sola/projects/startup.json`), so it outlives closing. Closing
+the last window quits Projects; started with nothing to open, Projects
+waits 20 seconds for a `project.open` (the launcher's), then quits.
+Quitting Projects any other way (a restart, logging out) leaves every
+session running, and it opens the same projects again. A project here
+whose folder is gone is closed at start.
 That row in the shell's bar shows a project's activity in place of its
 icon: an amber diamond when any of its tabs is waiting on a decision, a
 spinning ring when any is working (the diamond wins), the icon otherwise.
@@ -394,12 +409,11 @@ alias.
 solactl projects                           # list methods
 solactl projects ps
 solactl projects project.list
-solactl projects project.add --path ~/Workspace/Sola
 solactl projects project.open --path ~/Projects/Sola    # show it, or open it here
+solactl projects project.open --host novus --path /home/joshua/Projects/Sola  # on novus
 solactl projects project.startup [--project Illuno]
 solactl projects project.startup --project Illuno --script 'cp -a "$PROJECT/.grok" "$WORKTREE/"'
-solactl projects project.rm --project Sola
-solactl projects project.reorder --project Sola [--before Illuno]
+solactl projects project.close --project Sola   # as closing its window: sessions end
 solactl projects tab.list [--project Sola]
 solactl projects tab.spawn --project Sola --name ticket-123 \
     [--branch joshua/sc-1234/fix] [--base-branch origin/dev] [--title 'fix login'] \
@@ -421,8 +435,8 @@ solactl projects whoami                    # from a Projects pane; or --pane / -
 
 | Short | Long | Methods |
 |---|---|---|
-| `-p` | `--project` | `project.rm`, `project.startup`, `project.reorder`, `tab.list`, `tab.spawn` |
-| `-p` | `--path` | `project.add`, `project.open` |
+| `-p` | `--project` | `project.close`, `project.startup`, `tab.list`, `tab.spawn` |
+| `-p` | `--path` | `project.open` |
 | `-n` | `--name` | `tab.spawn`, `tab.set` |
 | `-b` | `--branch` | `tab.spawn`, `tab.set` |
 | `-a` | `--agent` | `tab.spawn`, `tab.exec` |
@@ -435,14 +449,14 @@ solactl projects whoami                    # from a Projects pane; or --pane / -
 | `-s` | `--status` | `pane.wait` |
 | `-f` | `--fresh` | `pane.wait` |
 
-Required arguments: `--path` on `project.add` and `project.open`; `project.rm`, `project.reorder`
+Required arguments: `--path` on `project.open`; `project.close`
 `--project`; `tab.spawn --project --name`; `--tab` on `tab.rm`,
 `tab.select`, `tab.set`, `tab.exec`; `pane.send --text`. `--project` on
 `project.startup` and `--tab` on `pane.list` default to the focused
 project window's selected tab; `--pane` on `pane.send`, `pane.read`, and `pane.wait`
 defaults to the focused pane, else the selected tab.
 
-Deadlines: `project.add` and `project.open` 15 s; `tab.spawn` and `tab.exec`
+Deadlines: `project.open` 15 s; `tab.spawn` and `tab.exec`
 60 s; `pane.wait` 302 s, or its `--timeout` plus 2 s; the rest 8 s.
 
 ### Spawn
@@ -497,21 +511,54 @@ an ad hoc tab, pass both:
 Target a tab by id, slug, path, or label. `--before` reorders that tab
 within its project's top bar (`end` = last). On a worktree tab, a
 double-click on its chip sets `--title` (the label, not the folder).
-`project.reorder` moves a project in the project order (the order windows
-open in): `--before` another project, or omit it (or pass `end`) for
-last. `tab.select` shows the tab's project window (opening it if it was
-closed) and selects the tab.
+`tab.select` shows the tab's project window and selects the tab.
+
+### Projects on another computer
+
+`project.open --host <computer> --path <folder>` opens a folder on another
+computer (an ssh host: a name, `user@name`, or a `~/.ssh/config` alias) as
+a project named "<folder> on <computer>". `--path` is the folder's full
+path there (`~` would be this computer's home, so it is refused). The
+launcher's Projects chooser does this from **On another computer…**.
+
+It works as a project here does. Each tab is a tmux session on that
+computer, reached over ssh, so it runs there and survives the connection:
+a Projects restart, or losing the network, leaves it running, and the tab
+attaches it again. While the computer has a project, Projects keeps a
+connection there of its own (the link) that brings its agents' hooks back:
+marks, islands, desk cards and `pane.wait` work as here. The first link
+installs the same agent hooks there (Claude's `settings.json`, Codex's
+`hooks.json`, Grok's `sola-status.json`; scripts in
+`~/.config/sola/remote/`). New tabs make worktrees there, the project's
+startup script runs there, `tab.set --name` / `--branch` move and rename
+there, `tab.rm --worktree` removes there; `pane.send`, `pane.read` and
+`tab.exec` reach its panes; a lost session whose Grok or Claude transcript
+is still there resumes.
+
+That tmux uses its own socket (`sola-ws-remote`), so a Sola running on that
+computer keeps its own sessions apart; its settings are written to
+`~/.config/sola/sola-ws-remote.tmux.conf` there. A tab's ssh may ask for a
+password in the tab. The link and the listing never ask: they need a key or
+an agent that logs you in, tmux there, and curl there for marks.
+
+- The connection drops: the tab says **Can't reach** the computer, with
+  ssh's reason, and **Reconnect**. The session there is left alone, and the
+  link is tried again every 20 seconds; tabs come back with it.
+- The shell in a tab exits: **Start new shell**, as on this computer.
+- Closing a tab, or closing the project's window, ends its sessions there.
+- Agents running there cannot drive this Projects (`solactl projects` there
+  talks to that computer's own Sola).
 
 ### Lists, startup scripts, and sessions
 
 `tab.list` replies `{"tabs": […]}`; `ps` nests each project's tabs under
 `projects[].tabs[]`; `whoami` names the tab as `tab` (id) and `tab_name`;
-`project.add` and `tab.exec` replies carry `tab`. `project.list` gives each
-project's `open` (it has a window). `project.open` brings a project's window
-up (the shell shows its workspace) or opens a closed one in the showing
-workspace, adding the folder first if it is not a project; its reply says
-`opened` (it was closed). The launcher's Projects chooser uses both. Lists include `path`,
-`kind`, and `parent`. `kind` is one of:
+`tab.exec` replies carry `tab`. `project.list` lists the open projects
+(each with `open`). `project.open` brings a project's window up (the shell
+shows its workspace), or opens the folder in the showing workspace on its
+root tab; its reply says `opened` (it was not open). The launcher's
+Projects chooser uses both. Lists include `path`,
+`kind`, and `parent`, and `host` for a project on another computer. `kind` is one of:
 
 - `main` — the project's own tab
 - `worktree`

@@ -10,8 +10,6 @@
 //! the compaction count already reads.
 
 use std::collections::HashSet;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -19,6 +17,7 @@ use sola_kit::components::SidebarIndicator;
 use sola_bus::topics::Activity;
 
 use crate::hooks::Incoming;
+use crate::machine::{Agent, Entry, Machine};
 use crate::presence::Presence;
 use sola_terminal::osc9999::{OscState, OscStatus};
 
@@ -102,7 +101,7 @@ pub fn rail_compaction<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> u
         .unwrap_or(0)
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PaneStatus {
     pub status: AgentStatus,
     pub agent: Option<String>,
@@ -226,7 +225,7 @@ impl PaneStatus {
     /// Claude owner session yet → newest session under this cwd. Codex
     /// needs `owner_session`; a missed file keeps the hook-incremented
     /// count.
-    pub fn refresh_compaction(&mut self, cwd: &Path) {
+    pub fn refresh_compaction(&mut self, m: &Machine, cwd: &Path) {
         if !self.shows_compaction() {
             self.compaction_count = 0;
             self.codex_scan_len = 0;
@@ -234,14 +233,15 @@ impl PaneStatus {
             return;
         }
         if self.is_grok() {
-            if let Some(n) = read_compaction_count(cwd, self.owner_session.as_deref()) {
+            if let Some(n) = read_compaction_count(m, cwd, self.owner_session.as_deref()) {
                 self.compaction_count = n;
             }
             return;
         }
         if self.is_codex() {
             if let Some((n, len)) = read_codex_compaction_in(
-                &codex_home(),
+                m,
+                &m.agent_home(Agent::Codex),
                 self.owner_session.as_deref(),
                 self.codex_scan_len,
                 self.compaction_count,
@@ -253,7 +253,8 @@ impl PaneStatus {
         }
         if self.is_claude() {
             if let Some((n, len)) = read_claude_compaction_in(
-                &claude_home(),
+                m,
+                &m.agent_home(Agent::Claude),
                 cwd,
                 self.owner_session.as_deref(),
                 self.claude_scan_len,
@@ -296,16 +297,22 @@ impl PaneStatus {
     /// Waiting (a hook asked the user something) is left alone while the
     /// turn is open, and becomes done when the turn closes. Returns true
     /// when status or the bound session changed.
-    pub fn observe_codex_turn(&mut self, cwd: &Path, taken: &HashSet<String>) -> bool {
-        self.observe_codex_turn_in(&codex_home(), cwd, taken)
+    pub fn observe_codex_turn(&mut self, m: &Machine, cwd: &Path, taken: &HashSet<String>) -> bool {
+        self.observe_codex_turn_in(m, &m.agent_home(Agent::Codex), cwd, taken)
     }
 
-    fn observe_codex_turn_in(&mut self, home: &Path, cwd: &Path, taken: &HashSet<String>) -> bool {
+    fn observe_codex_turn_in(
+        &mut self,
+        m: &Machine,
+        home: &Path,
+        cwd: &Path,
+        taken: &HashSet<String>,
+    ) -> bool {
         if !self.is_codex() {
             return false;
         }
         let Some((sid, path)) =
-            locate_codex_rollout(home, cwd, self.owner_session.as_deref(), taken)
+            locate_codex_rollout(m, home, cwd, self.owner_session.as_deref(), taken)
         else {
             return false;
         };
@@ -316,14 +323,14 @@ impl PaneStatus {
             self.codex_turn_open = None;
             self.codex_scan_len = 0;
         }
-        let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let len = m.stat(&path).map(|e| e.len).unwrap_or(0);
         let start = if self.codex_phase_len > len {
             self.codex_turn_open = None;
             0
         } else {
             self.codex_phase_len
         };
-        if let Some((open, pos)) = fold_codex_turn(&path, start, self.codex_turn_open) {
+        if let Some((open, pos)) = fold_codex_turn(m, &path, start, self.codex_turn_open) {
             self.codex_turn_open = open;
             self.codex_phase_len = pos;
         }
@@ -406,41 +413,6 @@ pub fn encode_session_cwd(path: &Path) -> String {
         .collect()
 }
 
-fn grok_home() -> PathBuf {
-    std::env::var_os("GROK_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".grok")
-        })
-}
-
-fn codex_home() -> PathBuf {
-    std::env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".codex")
-        })
-}
-
-fn claude_home() -> PathBuf {
-    std::env::var_os("CLAUDE_CONFIG_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".claude")
-        })
-}
-
-/// Claude project dir: every non-alphanumeric byte of the cwd becomes `-`.
-/// `/home/joshua/Workspace/Exit` → `-home-joshua-Workspace-Exit`.
 pub fn encode_claude_project(path: &Path) -> String {
     path.to_string_lossy()
         .chars()
@@ -448,23 +420,13 @@ pub fn encode_claude_project(path: &Path) -> String {
         .collect()
 }
 
-/// True when `~/.grok/sessions/<cwd-encode>/<id>/` (any cwd group) exists.
-pub fn grok_session_exists(session_id: &str) -> bool {
-    grok_session_exists_in(&grok_home(), session_id)
+pub fn grok_session_exists(m: &Machine, session_id: &str) -> bool {
+    grok_session_exists_in(m, &m.agent_home(Agent::Grok), session_id)
 }
 
-fn grok_session_exists_in(home: &Path, session_id: &str) -> bool {
-    if !is_session_id(session_id) {
-        return false;
-    }
-    let sessions = home.join("sessions");
-    let Ok(rd) = std::fs::read_dir(&sessions) else {
-        return false;
-    };
-    rd.filter_map(|e| e.ok()).any(|group| {
-        group.file_type().map(|t| t.is_dir()).unwrap_or(false)
-            && group.path().join(session_id).is_dir()
-    })
+/// `sessions/<group>/<session_id>/` is there.
+fn grok_session_exists_in(m: &Machine, home: &Path, session_id: &str) -> bool {
+    is_session_id(session_id) && m.find(&home.join("sessions"), 2, 2, true, session_id).is_some()
 }
 
 fn is_session_id(s: &str) -> bool {
@@ -473,65 +435,63 @@ fn is_session_id(s: &str) -> bool {
         && !s.contains('/')
         && !s.contains('\\')
         && !s.contains('\0')
+        && !s.contains('*')
 }
 
-pub fn read_compaction_count(cwd: &Path, session_id: Option<&str>) -> Option<u32> {
-    read_compaction_count_in(&grok_home(), cwd, session_id)
+pub fn read_compaction_count(m: &Machine, cwd: &Path, session_id: Option<&str>) -> Option<u32> {
+    read_compaction_count_in(m, &m.agent_home(Agent::Grok), cwd, session_id)
 }
 
-fn read_compaction_count_in(home: &Path, cwd: &Path, session_id: Option<&str>) -> Option<u32> {
+fn read_compaction_count_in(
+    m: &Machine,
+    home: &Path,
+    cwd: &Path,
+    session_id: Option<&str>,
+) -> Option<u32> {
     let group = home.join("sessions").join(encode_session_cwd(cwd));
+    // Each session folder, and the files in it (its signals.json, its
+    // compaction folders): one look.
+    let tree = m.walk(&group, 3);
     let sid = session_id
-        .filter(|s| !s.is_empty() && group.join(s).is_dir())
+        .filter(|s| !s.is_empty() && tree.iter().any(|e| e.dir && e.name == *s))
         .map(|s| s.to_string())
-        .or_else(|| newest_session_id(&group))?;
-    Some(count_session_compactions(&group.join(sid)))
+        .or_else(|| newest_session_id(&tree))?;
+    let signals = m
+        .read_to_string(&group.join(&sid).join("signals.json"))
+        .and_then(|t| parse_compaction_count(&t))
+        .unwrap_or(0);
+    let files_in = |sub: &str, pred: &dyn Fn(&str) -> bool| {
+        let prefix = format!("{sid}/{sub}/");
+        tree.iter()
+            .filter(|e| e.file)
+            .filter_map(|e| e.name.strip_prefix(&prefix))
+            .filter(|n| !n.contains('/') && pred(n))
+            .count() as u32
+    };
+    let segments = files_in("compaction", &|n| n.starts_with("segment_") && n.ends_with(".md"));
+    let checkpoints = files_in("compaction_checkpoints", &|_| true);
+    Some(signals.max(segments).max(checkpoints))
 }
 
-fn newest_session_id(group: &Path) -> Option<String> {
+/// The session folder (of a group's walk) whose `signals.json` (else
+/// itself) changed last.
+fn newest_session_id(tree: &[Entry]) -> Option<String> {
     let mut best: Option<(std::time::SystemTime, String)> = None;
-    let rd = std::fs::read_dir(group).ok()?;
-    for ent in rd.filter_map(|e| e.ok()) {
-        if !ent.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+    for dir in tree.iter().filter(|e| e.dir && !e.name.contains('/')) {
+        if dir.name.starts_with('.') {
             continue;
         }
-        let name = ent.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
-            continue;
-        }
-        let t = std::fs::metadata(ent.path().join("signals.json"))
-            .and_then(|m| m.modified())
-            .or_else(|_| ent.metadata().and_then(|m| m.modified()))
-            .ok()?;
+        let signals = format!("{}/signals.json", dir.name);
+        let t = tree
+            .iter()
+            .find(|e| e.name == signals)
+            .map(|e| e.modified)
+            .unwrap_or(dir.modified);
         if best.as_ref().map(|(bt, _)| t > *bt).unwrap_or(true) {
-            best = Some((t, name));
+            best = Some((t, dir.name.clone()));
         }
     }
     best.map(|(_, n)| n)
-}
-
-/// Max of `signals.json` `compactionCount`, `compaction/segment_*.md`,
-/// and `compaction_checkpoints/` files. Signals can lag; artifacts do not.
-fn count_session_compactions(dir: &Path) -> u32 {
-    let signals = std::fs::read_to_string(dir.join("signals.json"))
-        .ok()
-        .and_then(|t| parse_compaction_count(&t))
-        .unwrap_or(0);
-    let segments = count_dir_files(&dir.join("compaction"), |n| {
-        n.starts_with("segment_") && n.ends_with(".md")
-    });
-    let checkpoints = count_dir_files(&dir.join("compaction_checkpoints"), |_| true);
-    signals.max(segments).max(checkpoints)
-}
-
-fn count_dir_files(dir: &Path, pred: impl Fn(&str) -> bool) -> u32 {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return 0;
-    };
-    rd.filter_map(|e| e.ok())
-        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-        .filter(|e| pred(&e.file_name().to_string_lossy()))
-        .count() as u32
 }
 
 fn parse_compaction_count(text: &str) -> Option<u32> {
@@ -543,61 +503,35 @@ fn parse_compaction_count(text: &str) -> Option<u32> {
 }
 
 fn read_codex_compaction_in(
+    m: &Machine,
     home: &Path,
     session_id: Option<&str>,
     last_len: u64,
     last_count: u32,
 ) -> Option<(u32, u64)> {
     let sid = session_id.filter(|s| is_session_id(s))?;
-    let path = find_codex_rollout(home, sid)?;
-    let len = std::fs::metadata(&path).ok()?.len();
+    let path = find_codex_rollout(m, home, sid)?;
+    let len = m.stat(&path)?.len;
     if len == last_len && last_count > 0 {
         return Some((last_count, len));
     }
-    Some((count_codex_compactions(&path), len))
+    Some((count_codex_compactions(m, &path), len))
 }
 
-/// True when `~/.codex/sessions/**/rollout-*-{session_id}.jsonl` exists.
-pub fn codex_rollout_exists(session_id: &str) -> bool {
-    find_codex_rollout(&codex_home(), session_id).is_some()
+pub fn codex_rollout_exists(m: &Machine, session_id: &str) -> bool {
+    find_codex_rollout(m, &m.agent_home(Agent::Codex), session_id).is_some()
 }
 
-/// `~/.codex/sessions/YYYY/MM/DD/rollout-{ts}-{session_id}.jsonl`
-fn find_codex_rollout(home: &Path, session_id: &str) -> Option<PathBuf> {
+fn find_codex_rollout(m: &Machine, home: &Path, session_id: &str) -> Option<PathBuf> {
     if !is_session_id(session_id) {
         return None;
     }
-    let needle = format!("-{session_id}.jsonl");
-    find_rollout_under(&home.join("sessions"), &needle, 4)
+    let glob = format!("rollout-*-{session_id}.jsonl");
+    m.find(&home.join("sessions"), 1, 5, false, &glob)
 }
 
-fn find_rollout_under(dir: &Path, suffix: &str, depth: u8) -> Option<PathBuf> {
-    let rd = std::fs::read_dir(dir).ok()?;
-    let mut dirs = Vec::new();
-    for ent in rd.filter_map(|e| e.ok()) {
-        let path = ent.path();
-        let Ok(ft) = ent.file_type() else {
-            continue;
-        };
-        if ft.is_file() {
-            let name = path.file_name()?.to_string_lossy();
-            if name.starts_with("rollout-") && name.ends_with(suffix) {
-                return Some(path);
-            }
-        } else if ft.is_dir() && depth > 0 {
-            dirs.push(path);
-        }
-    }
-    for d in dirs {
-        if let Some(found) = find_rollout_under(&d, suffix, depth.saturating_sub(1)) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-/// Our bound rollout, or the newest rollout whose session cwd is `cwd`.
 fn locate_codex_rollout(
+    m: &Machine,
     home: &Path,
     cwd: &Path,
     owner: Option<&str>,
@@ -607,72 +541,46 @@ fn locate_codex_rollout(
     if let Some(sid) = owner {
         skip.remove(sid);
     }
-    if let Some(found) = newest_codex_rollout_for_cwd(home, cwd, &skip) {
+    if let Some(found) = newest_codex_rollout_for_cwd(m, home, cwd, &skip) {
         return Some(found);
     }
-    // Keep a session we already bound when its cwd is not in the head
-    // of the file (huge session_meta) or the tree walk misses it.
     let sid = owner.filter(|s| is_session_id(s))?;
-    let path = find_codex_rollout(home, sid)?;
+    let path = find_codex_rollout(m, home, sid)?;
     Some((sid.to_string(), path))
 }
 
+/// The newest rollout (by change) that names `cwd`, not one in `skip`.
 fn newest_codex_rollout_for_cwd(
+    m: &Machine,
     home: &Path,
     cwd: &Path,
     skip: &HashSet<String>,
 ) -> Option<(String, PathBuf)> {
-    let mut best: Option<(std::time::SystemTime, String, PathBuf)> = None;
-    let mut stack = vec![home.join("sessions")];
-    while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for ent in rd.filter_map(|e| e.ok()) {
-            let path = ent.path();
-            let Ok(ft) = ent.file_type() else {
-                continue;
-            };
-            if ft.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if !ft.is_file() {
-                continue;
-            }
-            let name = ent.file_name();
-            let name = name.to_string_lossy();
+    let sessions = home.join("sessions");
+    let mut rollouts: Vec<(std::time::SystemTime, String, PathBuf)> = m
+        .walk(&sessions, 8)
+        .into_iter()
+        .filter(|e| e.file)
+        .filter_map(|e| {
+            let name = e.name.rsplit('/').next()?;
             if !name.starts_with("rollout-") || !name.ends_with(".jsonl") {
-                continue;
+                return None;
             }
-            let Some(sid) = session_id_from_rollout_name(&name) else {
-                continue;
-            };
-            if skip.contains(&sid) {
-                continue;
-            }
-            let Ok(modified) = ent.metadata().and_then(|m| m.modified()) else {
-                continue;
-            };
-            let newer = best.as_ref().map(|(t, _, _)| modified > *t).unwrap_or(true);
-            if !newer {
-                continue;
-            }
-            if !rollout_cwd_matches(&path, cwd) {
-                continue;
-            }
-            best = Some((modified, sid, path));
-        }
-    }
-    best.map(|(_, sid, path)| (sid, path))
+            let sid = session_id_from_rollout_name(name)?;
+            (!skip.contains(&sid)).then(|| (e.modified, sid, sessions.join(&e.name)))
+        })
+        .collect();
+    rollouts.sort_by(|a, b| b.0.cmp(&a.0));
+    rollouts
+        .into_iter()
+        .find(|(_, _, path)| rollout_cwd_matches(m, path, cwd))
+        .map(|(_, sid, path)| (sid, path))
 }
 
-/// `rollout-YYYY-MM-DDTHH-MM-SS-{session_id}.jsonl`
 fn session_id_from_rollout_name(name: &str) -> Option<String> {
     let rest = name.strip_prefix("rollout-")?.strip_suffix(".jsonl")?;
     let t = rest.find('T')?;
     let after_t = &rest[t + 1..];
-    // `HH-MM-SS-` is 9 bytes. The session id follows.
     let sid = after_t.get(9..)?;
     if sid.is_empty() || !is_session_id(sid) {
         return None;
@@ -680,15 +588,11 @@ fn session_id_from_rollout_name(name: &str) -> Option<String> {
     Some(sid.to_string())
 }
 
-fn rollout_cwd_matches(path: &Path, cwd: &Path) -> bool {
-    let Ok(mut file) = File::open(path) else {
+fn rollout_cwd_matches(m: &Machine, path: &Path, cwd: &Path) -> bool {
+    let Some(head) = m.read_head(path, 4096) else {
         return false;
     };
-    let mut buf = [0u8; 4096];
-    let Ok(n) = file.read(&mut buf) else {
-        return false;
-    };
-    let Ok(head) = std::str::from_utf8(&buf[..n]) else {
+    let Ok(head) = std::str::from_utf8(&head) else {
         return false;
     };
     let want = cwd.to_string_lossy();
@@ -700,44 +604,17 @@ fn rollout_cwd_matches(path: &Path, cwd: &Path) -> bool {
 /// Fold `task_started` / `task_complete` from `start` to the last complete
 /// line. A trailing partial line is left for the next tick (`pos` stops
 /// before it).
-fn fold_codex_turn(path: &Path, start: u64, mut open: Option<bool>) -> Option<(Option<bool>, u64)> {
-    let mut file = File::open(path).ok()?;
-    if start > 0 {
-        file.seek(SeekFrom::Start(start)).ok()?;
+fn fold_codex_turn(
+    m: &Machine,
+    path: &Path,
+    start: u64,
+    mut open: Option<bool>,
+) -> Option<(Option<bool>, u64)> {
+    let read = m.line_heads(path, start, 240)?;
+    for head in &read.heads {
+        open = note_turn_marker(head, open);
     }
-    let mut reader = BufReader::new(file);
-    let mut pos = start;
-    loop {
-        let (nl, head, full) = {
-            let peek = match reader.fill_buf() {
-                Ok(buf) if !buf.is_empty() => buf,
-                Ok(_) => break,
-                Err(_) => return None,
-            };
-            let nl = peek.iter().position(|&b| b == b'\n');
-            let head_len = nl.unwrap_or(peek.len()).min(240);
-            let head = peek[..head_len].to_vec();
-            (nl, head, peek.len())
-        };
-        let Some(nl) = nl else {
-            if full < 8 * 1024 {
-                break;
-            }
-            open = note_turn_marker(&head, open);
-            reader.consume(full);
-            pos += full as u64;
-            let (skipped, done) = skip_counted(&mut reader);
-            pos += skipped;
-            if done {
-                break;
-            }
-            continue;
-        };
-        open = note_turn_marker(&head, open);
-        reader.consume(nl + 1);
-        pos += (nl + 1) as u64;
-    }
-    Some((open, pos))
+    Some((open, read.end))
 }
 
 fn note_turn_marker(head: &[u8], open: Option<bool>) -> Option<bool> {
@@ -761,69 +638,13 @@ fn note_turn_marker(head: &[u8], open: Option<bool>) -> Option<bool> {
     }
 }
 
-/// Bytes skipped, and whether EOF arrived before a newline.
-fn skip_counted(reader: &mut impl BufRead) -> (u64, bool) {
-    let mut n = 0u64;
-    loop {
-        let peek = match reader.fill_buf() {
-            Ok(buf) if !buf.is_empty() => buf,
-            _ => return (n, true),
-        };
-        if let Some(i) = peek.iter().position(|&b| b == b'\n') {
-            reader.consume(i + 1);
-            return (n + (i + 1) as u64, false);
-        }
-        let len = peek.len();
-        reader.consume(len);
-        n += len as u64;
-    }
-}
-
 /// Count jsonl records whose top-level `type` is `compacted`.
 /// Compact payloads are huge; only the first bytes of each line are
-/// inspected, then the rest of the line is skipped without buffering it.
-fn count_codex_compactions(path: &Path) -> u32 {
-    let Ok(file) = File::open(path) else {
-        return 0;
-    };
-    let mut reader = BufReader::new(file);
-    let mut n = 0u32;
-    loop {
-        let peek = match reader.fill_buf() {
-            Ok(buf) if !buf.is_empty() => buf,
-            _ => break,
-        };
-        let nl = peek.iter().position(|&b| b == b'\n');
-        let head_end = nl.unwrap_or(peek.len()).min(192);
-        let compacted = line_is_codex_compacted(&peek[..head_end]);
-        match nl {
-            Some(i) => reader.consume(i + 1),
-            None => {
-                let used = peek.len();
-                reader.consume(used);
-                skip_until_newline(&mut reader);
-            }
-        }
-        if compacted {
-            n += 1;
-        }
-    }
-    n
-}
-
-fn skip_until_newline(reader: &mut impl BufRead) {
-    loop {
-        let peek = match reader.fill_buf() {
-            Ok(buf) if !buf.is_empty() => buf,
-            _ => return,
-        };
-        if let Some(i) = peek.iter().position(|&b| b == b'\n') {
-            reader.consume(i + 1);
-            return;
-        }
-        let n = peek.len();
-        reader.consume(n);
-    }
+/// inspected ([`Machine::line_heads`]).
+fn count_codex_compactions(m: &Machine, path: &Path) -> u32 {
+    m.line_heads(path, 0, 192)
+        .map(|read| read.heads.iter().filter(|h| line_is_codex_compacted(h)).count() as u32)
+        .unwrap_or(0)
 }
 
 fn line_is_codex_compacted(head: &[u8]) -> bool {
@@ -838,105 +659,78 @@ fn line_is_codex_compacted(head: &[u8]) -> bool {
 }
 
 /// True when `~/.claude/projects/*/<session_id>.jsonl` exists.
-pub fn claude_session_exists(session_id: &str) -> bool {
-    find_claude_transcript(&claude_home(), session_id).is_some()
+pub fn claude_session_exists(m: &Machine, session_id: &str) -> bool {
+    find_claude_transcript(m, &m.agent_home(Agent::Claude), session_id).is_some()
 }
 
-fn find_claude_transcript(home: &Path, session_id: &str) -> Option<PathBuf> {
+fn find_claude_transcript(m: &Machine, home: &Path, session_id: &str) -> Option<PathBuf> {
     if !is_session_id(session_id) {
         return None;
     }
-    let name = format!("{session_id}.jsonl");
-    let rd = std::fs::read_dir(home.join("projects")).ok()?;
-    for ent in rd.filter_map(|e| e.ok()) {
-        if !ent.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            continue;
-        }
-        let path = ent.path().join(&name);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    None
+    m.find(&home.join("projects"), 2, 2, false, &format!("{session_id}.jsonl"))
 }
 
-fn newest_claude_transcript(home: &Path, cwd: &Path) -> Option<PathBuf> {
+fn newest_claude_transcript(m: &Machine, home: &Path, cwd: &Path) -> Option<PathBuf> {
     let dir = home.join("projects").join(encode_claude_project(cwd));
-    let rd = std::fs::read_dir(&dir).ok()?;
-    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    for ent in rd.filter_map(|e| e.ok()) {
-        if !ent.file_type().map(|t| t.is_file()).unwrap_or(false) {
+    let mut best: Option<(std::time::SystemTime, String)> = None;
+    for e in m.list(&dir)? {
+        if !e.file {
             continue;
         }
-        let name = ent.file_name();
-        let name = name.to_string_lossy();
-        let Some(sid) = name.strip_suffix(".jsonl") else {
+        let Some(sid) = e.name.strip_suffix(".jsonl") else {
             continue;
         };
         if !is_session_id(sid) {
             continue;
         }
-        let Ok(modified) = ent.metadata().and_then(|m| m.modified()) else {
-            continue;
-        };
-        let newer = best.as_ref().map(|(t, _)| modified > *t).unwrap_or(true);
+        let newer = best.as_ref().map(|(t, _)| e.modified > *t).unwrap_or(true);
         if newer {
-            best = Some((modified, ent.path()));
+            best = Some((e.modified, e.name.clone()));
         }
     }
-    best.map(|(_, path)| path)
+    best.map(|(_, name)| dir.join(name))
 }
 
-fn claude_transcript_for(home: &Path, cwd: &Path, session_id: Option<&str>) -> Option<PathBuf> {
+fn claude_transcript_for(
+    m: &Machine,
+    home: &Path,
+    cwd: &Path,
+    session_id: Option<&str>,
+) -> Option<PathBuf> {
     if let Some(sid) = session_id.filter(|s| is_session_id(s)) {
-        return find_claude_transcript(home, sid);
+        return find_claude_transcript(m, home, sid);
     }
-    newest_claude_transcript(home, cwd)
+    newest_claude_transcript(m, home, cwd)
 }
 
 fn read_claude_compaction_in(
+    m: &Machine,
     home: &Path,
     cwd: &Path,
     session_id: Option<&str>,
     last_len: u64,
     last_count: u32,
 ) -> Option<(u32, u64)> {
-    let path = claude_transcript_for(home, cwd, session_id)?;
-    let len = std::fs::metadata(&path).ok()?.len();
+    let path = claude_transcript_for(m, home, cwd, session_id)?;
+    let len = m.stat(&path)?.len;
     if len == last_len && last_len > 0 {
         return Some((last_count, len));
     }
-    Some((count_claude_compactions(&path), len))
+    Some((count_claude_compactions(m, &path), len))
 }
 
 /// `compact_boundary` rows, or `isCompactSummary` when an older transcript
 /// has no boundary. Both on the same compaction would double-count.
-fn count_claude_compactions(path: &Path) -> u32 {
-    let Ok(file) = File::open(path) else {
+fn count_claude_compactions(m: &Machine, path: &Path) -> u32 {
+    let Some(read) = m.line_heads(path, 0, 384) else {
         return 0;
     };
-    let mut reader = BufReader::new(file);
-    let mut boundaries = 0u32;
-    let mut summaries = 0u32;
-    loop {
-        let peek = match reader.fill_buf() {
-            Ok(buf) if !buf.is_empty() => buf,
-            _ => break,
-        };
-        let nl = peek.iter().position(|&b| b == b'\n');
-        let head_end = nl.unwrap_or(peek.len()).min(384);
-        match line_claude_compact_kind(&peek[..head_end]) {
+    let (mut boundaries, mut summaries) = (0u32, 0u32);
+    for head in &read.heads {
+        match line_claude_compact_kind(head) {
             2 => boundaries += 1,
             1 => summaries += 1,
             _ => {}
-        }
-        match nl {
-            Some(i) => reader.consume(i + 1),
-            None => {
-                let used = peek.len();
-                reader.consume(used);
-                skip_until_newline(&mut reader);
-            }
         }
     }
     if boundaries > 0 {
@@ -1073,6 +867,7 @@ mod tests {
 
     fn hook(session: &str, status: AgentStatus) -> Incoming {
         Incoming {
+            host: None,
             pane_id: "p".into(),
             cwd: None,
             ask: None,
@@ -1093,6 +888,7 @@ mod tests {
 
     fn session_start(session: &str) -> Incoming {
         Incoming {
+            host: None,
             pane_id: "p".into(),
             cwd: None,
             ask: None,
@@ -1113,6 +909,7 @@ mod tests {
 
     fn prompt_submit(session: &str) -> Incoming {
         Incoming {
+            host: None,
             pane_id: "p".into(),
             cwd: None,
             ask: None,
@@ -1133,6 +930,7 @@ mod tests {
 
     fn session_end(session: &str) -> Incoming {
         Incoming {
+            host: None,
             pane_id: "p".into(),
             cwd: None,
             ask: None,
@@ -1216,7 +1014,7 @@ mod tests {
         ));
         let cwd = Path::new("/home/joshua/Workspace/Sola/.worktrees/workspaces-polish");
         write_session(&root, cwd, "sid-a", r#"{"compactionCount":0}"#, 1, 1);
-        assert_eq!(read_compaction_count_in(&root, cwd, Some("sid-a")), Some(1));
+        assert_eq!(read_compaction_count_in(&Machine::Local, &root, cwd, Some("sid-a")), Some(1));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1231,7 +1029,7 @@ mod tests {
         ));
         let cwd = Path::new("/tmp/proj");
         write_session(&root, cwd, "sid-b", r#"{"compactionCount":8}"#, 4, 4);
-        assert_eq!(read_compaction_count_in(&root, cwd, Some("sid-b")), Some(8));
+        assert_eq!(read_compaction_count_in(&Machine::Local, &root, cwd, Some("sid-b")), Some(8));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1248,7 +1046,7 @@ mod tests {
         write_session(&root, cwd, "old", r#"{"compactionCount":3}"#, 0, 0);
         std::thread::sleep(std::time::Duration::from_millis(10));
         write_session(&root, cwd, "new", r#"{"compactionCount":0}"#, 2, 2);
-        assert_eq!(read_compaction_count_in(&root, cwd, None), Some(2));
+        assert_eq!(read_compaction_count_in(&Machine::Local, &root, cwd, None), Some(2));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1405,19 +1203,19 @@ mod tests {
             ),
         )
         .unwrap();
-        assert!(find_claude_transcript(&root, sid).is_some());
-        assert_eq!(count_claude_compactions(&path), 2);
-        let (n, len) = read_claude_compaction_in(&root, cwd, Some(sid), 0, 0).unwrap();
+        assert!(find_claude_transcript(&Machine::Local, &root, sid).is_some());
+        assert_eq!(count_claude_compactions(&Machine::Local, &path), 2);
+        let (n, len) = read_claude_compaction_in(&Machine::Local, &root, cwd, Some(sid), 0, 0).unwrap();
         assert_eq!(n, 2);
         assert!(len > 0);
-        let (cached, _) = read_claude_compaction_in(&root, cwd, Some(sid), len, n).unwrap();
+        let (cached, _) = read_claude_compaction_in(&Machine::Local, &root, cwd, Some(sid), len, n).unwrap();
         assert_eq!(cached, n);
-        let (newest, _) = read_claude_compaction_in(&root, cwd, None, 0, 0).unwrap();
+        let (newest, _) = read_claude_compaction_in(&Machine::Local, &root, cwd, None, 0, 0).unwrap();
         assert_eq!(newest, 2);
-        assert!(read_claude_compaction_in(&root, cwd, Some("missing-session"), 0, 0).is_none());
+        assert!(read_claude_compaction_in(&Machine::Local, &root, cwd, Some("missing-session"), 0, 0).is_none());
         let old = dir.join("older-session.jsonl");
         std::fs::write(&old, "{\"type\":\"user\",\"isCompactSummary\":true}\n").unwrap();
-        assert_eq!(count_claude_compactions(&old), 1);
+        assert_eq!(count_claude_compactions(&Machine::Local, &old), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1511,7 +1309,7 @@ mod tests {
     fn shell_pane_does_not_inherit_compaction() {
         let mut pane = PaneStatus::default();
         pane.compaction_count = 4;
-        pane.refresh_compaction(Path::new("/tmp/not-a-session"));
+        pane.refresh_compaction(&Machine::Local, Path::new("/tmp/not-a-session"));
         assert_eq!(pane.compaction_count, 0);
     }
 
@@ -1523,7 +1321,7 @@ mod tests {
             compaction_count: 4,
             ..PaneStatus::default()
         };
-        pane.refresh_compaction(Path::new("/tmp/not-a-session"));
+        pane.refresh_compaction(&Machine::Local, Path::new("/tmp/not-a-session"));
         assert_eq!(pane.compaction_count, 4);
     }
 
@@ -1559,18 +1357,18 @@ mod tests {
         ));
         let sid = "01a0codex-count-sid";
         write_codex_rollout(&root, sid, 3, true);
-        let path = find_codex_rollout(&root, sid).unwrap();
+        let path = find_codex_rollout(&Machine::Local, &root, sid).unwrap();
         let len = std::fs::metadata(&path).unwrap().len();
         assert_eq!(
-            read_codex_compaction_in(&root, Some(sid), 0, 0),
+            read_codex_compaction_in(&Machine::Local, &root, Some(sid), 0, 0),
             Some((3, len))
         );
         // Unchanged length keeps the previous count (no rescan).
         assert_eq!(
-            read_codex_compaction_in(&root, Some(sid), len, 99),
+            read_codex_compaction_in(&Machine::Local, &root, Some(sid), len, 99),
             Some((99, len))
         );
-        assert_eq!(count_codex_compactions(&path), 3);
+        assert_eq!(count_codex_compactions(&Machine::Local, &path), 3);
         // A megabyte-class compacted line still counts once (type is in
         // the first bytes; later `"type":"compacted"` in the payload is
         // the same record).
@@ -1584,7 +1382,7 @@ mod tests {
         long_line.push_str(r#"","note":"\"type\":\"compacted\" decoy"}}"#);
         long_line.push('\n');
         std::fs::write(&long, long_line).unwrap();
-        assert_eq!(count_codex_compactions(&long), 1);
+        assert_eq!(count_codex_compactions(&Machine::Local, &long), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1616,16 +1414,16 @@ mod tests {
             ..PaneStatus::default()
         };
         let taken = HashSet::new();
-        assert!(pane.observe_codex_turn_in(&root, &cwd, &taken));
+        assert!(pane.observe_codex_turn_in(&Machine::Local, &root, &cwd, &taken));
         assert_eq!(pane.status, AgentStatus::Working);
         assert_eq!(pane.owner_session.as_deref(), Some(sid));
-        assert!(!pane.observe_codex_turn_in(&root, &cwd, &taken));
+        assert!(!pane.observe_codex_turn_in(&Machine::Local, &root, &cwd, &taken));
 
         let mut waiting = pane.clone();
         waiting.status = AgentStatus::Waiting;
         waiting.codex_phase_len = 0;
         waiting.codex_turn_open = None;
-        assert!(!waiting.observe_codex_turn_in(&root, &cwd, &taken));
+        assert!(!waiting.observe_codex_turn_in(&Machine::Local, &root, &cwd, &taken));
         assert_eq!(waiting.status, AgentStatus::Waiting);
 
         std::fs::write(
@@ -1637,7 +1435,7 @@ mod tests {
         )
         .unwrap();
         // File was rewritten shorter than the previous offset; rescan.
-        assert!(pane.observe_codex_turn_in(&root, &cwd, &taken));
+        assert!(pane.observe_codex_turn_in(&Machine::Local, &root, &cwd, &taken));
         assert_eq!(pane.status, AgentStatus::Done);
 
         let mut other = PaneStatus {
@@ -1646,7 +1444,7 @@ mod tests {
         };
         let mut claimed = HashSet::new();
         claimed.insert(sid.to_string());
-        assert!(!other.observe_codex_turn_in(&root, &cwd, &claimed));
+        assert!(!other.observe_codex_turn_in(&Machine::Local, &root, &cwd, &claimed));
         assert!(other.owner_session.is_none());
 
         let _ = std::fs::remove_dir_all(&root);
@@ -1656,6 +1454,7 @@ mod tests {
     fn apply_hook_session_start_names_codex() {
         let mut pane = PaneStatus::default();
         let incoming = Incoming {
+            host: None,
             pane_id: "p".into(),
             cwd: None,
             ask: None,
@@ -1777,9 +1576,9 @@ mod tests {
         ));
         let cwd = Path::new("/tmp/proj");
         write_session(&root, cwd, "sid-live", r#"{"compactionCount":0}"#, 0, 0);
-        assert!(grok_session_exists_in(&root, "sid-live"));
-        assert!(!grok_session_exists_in(&root, "missing"));
-        assert!(!grok_session_exists_in(&root, "../nope"));
+        assert!(grok_session_exists_in(&Machine::Local, &root, "sid-live"));
+        assert!(!grok_session_exists_in(&Machine::Local, &root, "missing"));
+        assert!(!grok_session_exists_in(&Machine::Local, &root, "../nope"));
         let _ = std::fs::remove_dir_all(&root);
     }
 

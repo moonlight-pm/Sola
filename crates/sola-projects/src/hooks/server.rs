@@ -12,6 +12,9 @@ use super::map::{self, MappedHook};
 
 #[derive(Debug, Clone)]
 pub struct Incoming {
+    /// The computer it came from (the link socket it reached); `None`:
+    /// this one.
+    pub host: Option<String>,
     pub pane_id: String,
     pub agent: String,
     pub mapped: MappedHook,
@@ -41,7 +44,7 @@ pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
     Ok(listener)
 }
 
-pub fn serve(listener: UnixListener, tx: mpsc::Sender<Incoming>) {
+pub fn serve(listener: UnixListener, tx: mpsc::Sender<Incoming>, host: Option<String>) {
     let _ = listener.set_nonblocking(false);
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else {
@@ -49,7 +52,8 @@ pub fn serve(listener: UnixListener, tx: mpsc::Sender<Incoming>) {
         };
         let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
         match read_request(&mut stream) {
-            Ok(Some(incoming)) => {
+            Ok(Some(mut incoming)) => {
+                incoming.host = host.clone();
                 let _ = tx.send(incoming);
                 let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
             }
@@ -194,6 +198,7 @@ fn incoming_from_json(
         return Ok(None);
     };
     Ok(Some(Incoming {
+        host: None,
         pane_id,
         agent,
         mapped,

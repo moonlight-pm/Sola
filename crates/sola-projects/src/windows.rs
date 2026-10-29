@@ -12,9 +12,6 @@ use sola_kit::tabs::TabWindows;
 use crate::catalog::Tab;
 use crate::status::AgentStatus;
 
-/// The key of the window shown while there is no project yet.
-pub const EMPTY: &str = "";
-
 pub struct ProjectWindows {
     tabs: TabWindows,
     by_project: HashMap<String, window::Id>,
@@ -35,8 +32,8 @@ impl ProjectWindows {
         }
     }
 
-    /// Open project `project_id`'s window ([`EMPTY`] for the no-project
-    /// window). A `background` window joins its zone behind, unfocused.
+    /// Open project `project_id`'s window. A `background` window joins its
+    /// zone behind, unfocused.
     pub fn open(
         &mut self,
         app_id: &'static str,
@@ -152,6 +149,7 @@ mod tests {
             name: id.into(),
             title: None,
             path: PathBuf::from("/tmp"),
+            host: None,
             kind: Kind::Worktree,
             parent: None,
             layout: None,
@@ -173,6 +171,6 @@ mod tests {
         assert_eq!(project_activity("sola", &tabs), Activity::Waiting);
         assert_eq!(project_activity("oath", &tabs), Activity::Working);
         assert_eq!(project_activity("site", &tabs), Activity::Idle);
-        assert_eq!(project_activity(EMPTY, &tabs), Activity::Idle);
+        assert_eq!(project_activity("", &tabs), Activity::Idle);
     }
 }

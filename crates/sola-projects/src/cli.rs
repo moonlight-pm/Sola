@@ -7,13 +7,32 @@ use crate::calls::WAIT_DEFAULT_SECS;
 use crate::status::AgentStatus;
 use crate::catalog::{Kind, Project, Tab};
 
+/// The last `lines` lines of `text` (all of it for `None` or 0).
+pub fn last_lines(text: &str, lines: Option<u32>) -> String {
+    match lines {
+        Some(n) if n > 0 => {
+            let keep = n as usize;
+            let mut v: Vec<&str> = text.lines().collect();
+            if v.len() > keep {
+                v = v.split_off(v.len() - keep);
+            }
+            v.join("\n")
+        }
+        _ => text.to_string(),
+    }
+}
+
 pub fn project_json(p: &Project) -> serde_json::Value {
-    serde_json::json!({
+    let mut v = serde_json::json!({
         "id": p.id,
         "name": p.name,
         "root": p.root,
-        "startup": !p.startup.is_empty(),
-    })
+        "startup": !crate::startup::script_for(p).is_empty(),
+    });
+    if let Some(host) = &p.host {
+        v["host"] = serde_json::json!(host);
+    }
+    v
 }
 
 pub fn tab_json(w: &Tab, selected: Option<&str>) -> serde_json::Value {
@@ -30,6 +49,9 @@ pub fn tab_json(w: &Tab, selected: Option<&str>) -> serde_json::Value {
         "agent": w.agent,
         "project": w.project_id,
     });
+    if let Some(host) = &w.host {
+        v["host"] = serde_json::json!(host);
+    }
     if let Some(sel) = selected {
         v["selected"] = serde_json::json!(w.id == sel);
     }
@@ -342,6 +364,7 @@ mod tests {
             name: name.into(),
             title: None,
             path: PathBuf::from("/r"),
+            host: None,
             kind,
             parent: None,
             layout: None,

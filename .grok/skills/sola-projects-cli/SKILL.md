@@ -81,7 +81,7 @@ pane. `--name` is the `.worktrees/<name>` folder (rail default). `--title` is th
 | rename this worktree / promote to ticket *N* | `tab.set --name SLUG` (moves `.worktrees/<name>`). Add `--title` for the rail label and `--branch` for the git branch. Do not `git worktree move` by hand. |
 | rename this tab / change the label | `tab.set --title '…'` (empty clears; rail falls back to the slug). Does not move the folder. |
 | reorder this tab / move it before *name* | `tab.set --tab SLUG --before OTHER` (`end` = last in the project). Same project only. |
-| reorder this project / move the group | `project.reorder --project NAME [--before OTHER]` |
+| close this project | `project.close --project NAME` — its sessions end and Projects forgets it (the folder stays) |
 
 ## Fan-out (only when asked)
 

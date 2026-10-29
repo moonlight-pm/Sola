@@ -3,6 +3,8 @@
 **Date:** 2026-08-13  
 **Renamed:** 2026-08-14 — crate / app id / face from `sola-agent-terminal` / `at` to `sola-workspaces` / `ws` (D4.1)  
 **Renamed (2026-10-21, branch `next`):** the app is Projects (`sola-projects`, owner `projects`, `solactl projects`); a workspace is now a tab (`tab.*`, `--tab`, JSON `tabs` / `tab` / `tab_name`). Runtime names (tmux `sola-ws` / `sws-`, `SOLA_WS_PATH`, `ws-*` ids) are unchanged. The body below uses the old names.  
+**Another computer (2026-10-28, branch `next`):** remote is no longer out — a project may be on an ssh host (Joshua: "open a project on another computer"; "remote projects should be identical in operation as local ones"); each tab is a tmux session there (socket `sola-ws-remote`), a link per host brings hooks back, a `Machine` seam runs git / scripts / session reads there. As built in the `projects` capability row.  
+**Projects are folders (2026-10-28, branch `next`):** a project is a folder of `~/Projects`; Projects keeps only the open ones, and closing a project's window ends its sessions and forgets it — the "Drop workspace" lock below is now closing the window (Joshua: "We don't need a 'Drop Project' anymore … Projects are jut whatever is in the ~/Projects directory").  
 **Branch:** base on master; polish on `workspaces-polish`  
 **Status:** approved for implementation (promoted from idea)  
 **Idea:** [`docs/ideas/2026-08-12-sola-agent-terminal.md`](../ideas/2026-08-12-sola-agent-terminal.md)  
@@ -66,8 +68,8 @@ Decision points: [`open-questions.md`](../open-questions.md) D4.
 
 ## Non-goals (v1)
 
-Embedded editor, browser, Design Mode, Linear/GitHub/Jira, SSH/WSL/remote,
-mobile, plugins, ACP chat, mailbox orchestration, 15 hook adapters, usage
+Embedded editor, browser, Design Mode, Linear/GitHub/Jira, WSL (remote over
+SSH landed 2026-10-28, see the header), mobile, plugins, ACP chat, mailbox orchestration, 15 hook adapters, usage
 dashboards, auto-rename, unread badges, setup-hook runners, sparse checkouts.
 
 `sola-terminal` remains the untitled-shell app.

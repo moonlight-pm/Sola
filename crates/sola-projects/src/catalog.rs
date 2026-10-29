@@ -1,4 +1,8 @@
-//! Projects, tabs, catalog persist.
+//! The open projects, their tabs, catalog persist.
+//!
+//! A project is a folder in `~/Projects` (or in another computer's). The
+//! catalog holds only the open ones: closing a project forgets it, and its
+//! tabs.
 //!
 //! Live status stays off the catalog. Demo rows are gone — hooks
 //! supply the marks. Worktree paths are `<root>/.worktrees/<slug>` (D4.2).
@@ -10,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use sola_bus::topics::SplitDir;
 use sola_terminal::state::PaneNode;
 
+use crate::machine::Machine;
 use crate::spawn;
 use crate::status::AgentStatus;
 
@@ -40,12 +45,21 @@ pub struct Project {
     #[serde(default)]
     pub collapsed: bool,
     pub root: PathBuf,
-    /// `/bin/sh -c` after each sibling worktree is created. Empty = skip.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
+    /// The computer `root` is on (an ssh host), when it is not this one.
+    /// Its tabs are tmux sessions there ([`sola_terminal::remote`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// Read from a catalog written before startup scripts moved to
+    /// [`crate::startup`]'s store ([`load`] moves it there); never written.
+    #[serde(default, skip_serializing)]
     pub startup: String,
     /// The tab its window last showed (each project has a window).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected: Option<String>,
+    /// Read from a catalog written while closed projects were kept
+    /// ([`load`] drops them); never written.
+    #[serde(default, skip_serializing)]
+    pub closed: bool,
 }
 
 /// Binary split tree. Omitted in the catalog when the tab is a
@@ -140,6 +154,9 @@ pub struct Tab {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub path: PathBuf,
+    /// Its project's [`Project::host`]: the computer `path` is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     pub kind: Kind,
     #[serde(default)]
     pub parent: Option<String>,
@@ -236,12 +253,31 @@ pub fn load() -> Catalog {
     match serde_json::from_str::<Catalog>(&text) {
         Ok(mut c) => {
             c.version = 1;
+            migrate(&mut c);
             c
         }
         Err(e) => {
             tracing::warn!("catalog parse failed: {e}");
             Catalog::empty()
         }
+    }
+}
+
+/// An older catalog: a project's startup script moves to its store, and a
+/// closed project (kept then) is forgotten with its tabs.
+fn migrate(c: &mut Catalog) {
+    for p in &mut c.projects {
+        let script = std::mem::take(&mut p.startup);
+        if !script.trim().is_empty() && crate::startup::script_for(p).is_empty() {
+            if let Err(e) = crate::startup::set_script(p, &script) {
+                tracing::warn!(project = %p.id, "startup script move failed: {e}");
+            }
+        }
+    }
+    let closed: Vec<String> = c.projects.iter().filter(|p| p.closed).map(|p| p.id.clone()).collect();
+    for id in closed {
+        tracing::info!(project = %id, "forgetting a closed project");
+        unregister_project(c, &id);
     }
 }
 
@@ -402,17 +438,6 @@ fn unused_orphan_name(id: &str) -> String {
     base
 }
 
-/// First launch: one project from `cwd` when that folder is a git checkout.
-pub fn seed_from_cwd() -> Option<(Project, Tab)> {
-    let cwd = std::env::current_dir().ok()?;
-    if !spawn::is_git_checkout(&cwd) {
-        return None;
-    }
-    let taken = HashSet::new();
-    let main_id = main_tab_id(&cwd, &taken);
-    Some(project_from_root(&cwd, "proj-seed", &main_id))
-}
-
 pub fn project_from_root(root: &Path, project_id: &str, main_id: &str) -> (Project, Tab) {
     let name = root
         .file_name()
@@ -426,9 +451,11 @@ pub fn project_from_root(root: &Path, project_id: &str, main_id: &str) -> (Proje
         name,
         collapsed: false,
         root: root.to_path_buf(),
+        host: None,
         startup: String::new(),
+        closed: false,
     };
-    let kind = if spawn::is_git_checkout(root) {
+    let kind = if spawn::is_git_checkout(&Machine::Local, root) {
         Kind::Main
     } else {
         Kind::Folder
@@ -439,7 +466,49 @@ pub fn project_from_root(root: &Path, project_id: &str, main_id: &str) -> (Proje
         name: "root".into(),
         title: None,
         path: root.to_path_buf(),
+        host: None,
         kind,
+        parent: None,
+        layout: None,
+        active_pane: None,
+        status: AgentStatus::Idle,
+        agent: None,
+    };
+    (project, ws)
+}
+
+/// A project in folder `root` on `host`, and its root tab `main_id`.
+/// Named for the folder and the computer ("Sola on novus"), so it never
+/// takes a name a project here has.
+pub fn project_from_remote(
+    host: &str,
+    root: &Path,
+    project_id: &str,
+    main_id: &str,
+) -> (Project, Tab) {
+    let folder = root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("project");
+    let project = Project {
+        id: project_id.into(),
+        name: format!("{folder} on {host}"),
+        collapsed: false,
+        root: root.to_path_buf(),
+        host: Some(host.into()),
+        startup: String::new(),
+        selected: None,
+        closed: false,
+    };
+    let ws = Tab {
+        id: main_id.into(),
+        project_id: project.id.clone(),
+        name: "root".into(),
+        title: None,
+        path: root.to_path_buf(),
+        host: Some(host.into()),
+        kind: Kind::Main,
         parent: None,
         layout: None,
         active_pane: None,
@@ -624,36 +693,6 @@ fn apply_tab_order(all: &mut Vec<Tab>, project_id: &str, order: &[String]) {
     }
 }
 
-/// Reorder a project in the rail. `before` is a project id (`None` = end).
-pub fn move_project_before(
-    projects: &mut Vec<Project>,
-    id: &str,
-    before: Option<&str>,
-) -> Result<(), String> {
-    if !projects.iter().any(|p| p.id == id) {
-        return Err(format!("unknown project '{id}'"));
-    }
-    if let Some(b) = before {
-        if !projects.iter().any(|p| p.id == b) {
-            return Err(format!("unknown project '{b}'"));
-        }
-        if b == id {
-            return Ok(());
-        }
-    }
-    let mut order: Vec<String> = projects.iter().map(|p| p.id.clone()).collect();
-    splice_ids(&mut order, id, before);
-    let mut next = Vec::new();
-    for pid in &order {
-        if let Some(i) = projects.iter().position(|p| p.id == *pid) {
-            next.push(projects.remove(i));
-        }
-    }
-    next.append(projects);
-    *projects = next;
-    Ok(())
-}
-
 /// Sibling worktrees and root tabs can close from the row. The project's
 /// main tab cannot — drop the whole project instead (`unregister_project`).
 pub fn can_close(ws: &Tab) -> bool {
@@ -691,7 +730,7 @@ pub fn worktree_name_taken(
 pub fn missing_worktree_ids(tabs: &[Tab]) -> Vec<String> {
     tabs
         .iter()
-        .filter(|w| has_worktree(w) && !w.path.exists())
+        .filter(|w| w.host.is_none() && has_worktree(w) && !w.path.exists())
         .map(|w| w.id.clone())
         .collect()
 }
@@ -725,6 +764,48 @@ pub fn find_project<'a>(projects: &'a [Project], id: &str) -> Option<&'a Project
     projects.iter().find(|p| p.id == id)
 }
 
+/// `~/Projects`: every project here is a folder in it.
+pub fn projects_dir() -> PathBuf {
+    home_dir().unwrap_or_else(|| PathBuf::from("/")).join("Projects")
+}
+
+/// The folders of `~/Projects` (not hidden ones), by name, each with its
+/// canonical path.
+pub fn project_folders() -> Vec<(String, PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(projects_dir()) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_str()?.to_string();
+            let path = canon(&e.path()).ok()?;
+            (!name.starts_with('.') && path.is_dir()).then_some((name, path))
+        })
+        .collect();
+    out.sort_by_key(|(name, _)| name.to_lowercase());
+    out
+}
+
+/// `root` (canonical) is a folder of `~/Projects`.
+pub fn in_projects_dir(root: &Path) -> bool {
+    let dir = projects_dir();
+    let dir = canon(&dir).unwrap_or(dir);
+    root.parent() == Some(dir.as_path())
+}
+
+/// A new project's folder name, or why not.
+pub fn check_project_name(name: &str) -> Result<&str, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Name the project".into());
+    }
+    if name.starts_with('.') || name.contains('/') || name.contains('\0') {
+        return Err(format!("“{name}” can't be a folder name"));
+    }
+    Ok(name)
+}
+
 /// Expand a leading `~` / `~/…` to `$HOME`. Other paths are unchanged.
 pub fn expand_user_path(raw: &str) -> PathBuf {
     let raw = raw.trim();
@@ -737,6 +818,16 @@ pub fn expand_user_path(raw: &str) -> PathBuf {
         }
     }
     PathBuf::from(raw)
+}
+
+/// A folder on another computer: its full path there (as the launcher's
+/// listing gives it). `~` would be this computer's home, so it is refused.
+pub fn remote_root(path: &str) -> Result<PathBuf, String> {
+    let root = PathBuf::from(path.trim().trim_end_matches('/'));
+    if !root.is_absolute() || root.file_name().is_none() {
+        return Err(format!("“{}” is not a folder's full path there", path.trim()));
+    }
+    Ok(root)
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -817,7 +908,12 @@ pub fn find_tab_mut<'a>(
     tabs.iter_mut().find(|w| w.id == id)
 }
 
+/// `ws` is the checkout at `path` here. A tab on another computer never
+/// is, whatever its path.
 pub fn path_matches(ws: &Tab, path: &Path) -> bool {
+    if ws.host.is_some() {
+        return false;
+    }
     if ws.path == path {
         return true;
     }
@@ -954,7 +1050,9 @@ mod tests {
             name: "Sola".into(),
             collapsed: false,
             root: PathBuf::from("/tmp/sola"),
+            host: None,
             startup: String::new(),
+            closed: false,
         }];
         assert_eq!(resolve_project(&projects, "Sola").unwrap().id, "proj-seed");
         assert_eq!(resolve_project(&projects, "sola").unwrap().id, "proj-seed");
@@ -969,6 +1067,7 @@ mod tests {
             name: "kid".into(),
             title: None,
             path: PathBuf::from("/tmp/sola-ws-kid-resolve"),
+            host: None,
             kind: Kind::Worktree,
             parent: None,
             layout: Some(Layout::single("ws-kid-p2")),
@@ -996,6 +1095,7 @@ mod tests {
             name: "kid".into(),
             title: Some("fix login".into()),
             path: PathBuf::from("/tmp/sola-ws-kid-title"),
+            host: None,
             kind: Kind::Worktree,
             parent: None,
             layout: None,
@@ -1009,6 +1109,7 @@ mod tests {
             name: "other".into(),
             title: Some("kid".into()),
             path: PathBuf::from("/tmp/sola-ws-other-title"),
+            host: None,
             kind: Kind::Worktree,
             parent: None,
             layout: None,
@@ -1040,6 +1141,7 @@ mod tests {
             name: "main".into(),
             title: None,
             path: PathBuf::from("/r"),
+            host: None,
             kind: Kind::Main,
             parent: None,
             layout: None,
@@ -1053,6 +1155,7 @@ mod tests {
             name: "kid".into(),
             title: None,
             path: PathBuf::from("/r/.worktrees/kid"),
+            host: None,
             kind: Kind::Worktree,
             parent: Some("ws-main".into()),
             layout: None,
@@ -1066,6 +1169,7 @@ mod tests {
             name: "zeta".into(),
             title: None,
             path: PathBuf::from("/r/.worktrees/zeta"),
+            host: None,
             kind: Kind::Worktree,
             parent: None,
             layout: None,
@@ -1090,6 +1194,7 @@ mod tests {
             name: name.into(),
             title: None,
             path: PathBuf::from(format!("/{name}")),
+            host: None,
             kind,
             parent: None,
             layout: None,
@@ -1118,42 +1223,6 @@ mod tests {
     }
 
     #[test]
-    fn move_project_before_reorders_rail() {
-        let mut projects = vec![
-            Project {
-                selected: None,
-                id: "a".into(),
-                name: "A".into(),
-                collapsed: false,
-                root: PathBuf::from("/a"),
-                startup: String::new(),
-            },
-            Project {
-                selected: None,
-                id: "b".into(),
-                name: "B".into(),
-                collapsed: false,
-                root: PathBuf::from("/b"),
-                startup: String::new(),
-            },
-            Project {
-                selected: None,
-                id: "c".into(),
-                name: "C".into(),
-                collapsed: false,
-                root: PathBuf::from("/c"),
-                startup: String::new(),
-            },
-        ];
-        move_project_before(&mut projects, "c", Some("a")).unwrap();
-        let ids: Vec<&str> = projects.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, ["c", "a", "b"]);
-        move_project_before(&mut projects, "c", None).unwrap();
-        let ids: Vec<&str> = projects.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids, ["a", "b", "c"]);
-    }
-
-    #[test]
     fn unregister_project_drops_group_keeps_others() {
         let mut c = Catalog::empty();
         c.selected = Some("ws-kid".into());
@@ -1163,7 +1232,9 @@ mod tests {
             name: "A".into(),
             collapsed: false,
             root: PathBuf::from("/a"),
+            host: None,
             startup: String::new(),
+            closed: false,
         });
         c.projects.push(Project {
             selected: None,
@@ -1171,7 +1242,9 @@ mod tests {
             name: "B".into(),
             collapsed: false,
             root: PathBuf::from("/b"),
+            host: None,
             startup: String::new(),
+            closed: false,
         });
         c.tabs.push(Tab {
             id: "ws-main".into(),
@@ -1179,6 +1252,7 @@ mod tests {
             name: "root".into(),
             title: None,
             path: PathBuf::from("/a"),
+            host: None,
             kind: Kind::Main,
             parent: None,
             layout: None,
@@ -1192,6 +1266,7 @@ mod tests {
             name: "kid".into(),
             title: None,
             path: PathBuf::from("/a/.worktrees/kid"),
+            host: None,
             kind: Kind::Worktree,
             parent: Some("ws-main".into()),
             layout: None,
@@ -1205,6 +1280,7 @@ mod tests {
             name: "root".into(),
             title: None,
             path: PathBuf::from("/b"),
+            host: None,
             kind: Kind::Main,
             parent: None,
             layout: None,
@@ -1230,6 +1306,7 @@ mod tests {
             name: "root".into(),
             title: None,
             path: PathBuf::from("/r"),
+            host: None,
             kind: Kind::Main,
             parent: None,
             layout: None,
@@ -1276,6 +1353,7 @@ mod tests {
             name: "kid".into(),
             title: None,
             path: dir.clone(),
+            host: None,
             kind: Kind::Worktree,
             parent: None,
             layout: None,
@@ -1319,6 +1397,59 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_project_keeps_its_host_and_never_matches_a_path_here() {
+        let root = std::env::temp_dir();
+        let (project, tab) = project_from_remote("novus", &root, "proj-novus-tmp", "ws-novus-tmp");
+        let folder = root.file_name().unwrap().to_str().unwrap();
+        assert_eq!(project.name, format!("{folder} on novus"));
+        assert_eq!(tab.host.as_deref(), Some("novus"));
+        assert_eq!(tab.kind, Kind::Main);
+        // The same path here is not this tab.
+        assert!(!path_matches(&tab, &root));
+        let local = Tab {
+            host: None,
+            ..tab.clone()
+        };
+        assert!(path_matches(&local, &root));
+        // The host round-trips; a project here saves none.
+        let text = serde_json::to_string(&project).unwrap();
+        assert!(text.contains("\"host\":\"novus\""));
+        let back: Project = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.host.as_deref(), Some("novus"));
+        let here = Project { host: None, ..project };
+        assert!(!serde_json::to_string(&here).unwrap().contains("host"));
+    }
+
+    #[test]
+    fn an_older_catalog_forgets_its_closed_projects() {
+        let text = r#"{"selected":"ws-b","projects":[
+            {"id":"proj-a","name":"A","root":"/p/A"},
+            {"id":"proj-b","name":"B","root":"/p/B","closed":true}],
+          "tabs":[
+            {"id":"ws-a","project_id":"proj-a","name":"root","path":"/p/A","kind":"main"},
+            {"id":"ws-b","project_id":"proj-b","name":"root","path":"/p/B","kind":"main"}]}"#;
+        let mut c: Catalog = serde_json::from_str(text).unwrap();
+        migrate(&mut c);
+        assert_eq!(c.projects.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["proj-a"]);
+        assert_eq!(c.tabs.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["ws-a"]);
+        assert_eq!(c.selected.as_deref(), Some("ws-a"));
+        // Neither is ever written again.
+        let saved = serde_json::to_string(&c).unwrap();
+        assert!(!saved.contains("closed") && !saved.contains("startup"));
+    }
+
+    #[test]
+    fn a_remote_root_is_a_full_path() {
+        assert_eq!(
+            remote_root(" /home/j/Projects/Sola/ "),
+            Ok(PathBuf::from("/home/j/Projects/Sola"))
+        );
+        assert!(remote_root("~/Projects/Sola").is_err());
+        assert!(remote_root("Projects/Sola").is_err());
+        assert!(remote_root("/").is_err());
+    }
+
+    #[test]
     fn catalog_round_trip_skips_live_status() {
         let mut c = Catalog::empty();
         c.version = 1;
@@ -1329,7 +1460,9 @@ mod tests {
             name: "Sola".into(),
             collapsed: true,
             root: PathBuf::from("/tmp/sola"),
+            host: None,
             startup: String::new(),
+            closed: false,
         });
         c.tabs.push(Tab {
             id: "ws-main".into(),
@@ -1337,6 +1470,7 @@ mod tests {
             name: "main".into(),
             title: None,
             path: PathBuf::from("/tmp/sola"),
+            host: None,
             kind: Kind::Main,
             parent: None,
             layout: None,
@@ -1364,6 +1498,7 @@ mod tests {
             name: "root".into(),
             title: None,
             path: PathBuf::from("/r"),
+            host: None,
             kind: Kind::Main,
             parent: None,
             layout: None,
@@ -1385,6 +1520,7 @@ mod tests {
             name: "root".into(),
             title: None,
             path: PathBuf::from("/r"),
+            host: None,
             kind: Kind::Main,
             parent: None,
             layout: None,
@@ -1415,6 +1551,7 @@ mod tests {
             name: "adhoc".into(),
             title: None,
             path: PathBuf::from("/r/.worktrees/adhoc"),
+            host: None,
             kind: Kind::Worktree,
             parent: None,
             layout: None,
@@ -1428,6 +1565,7 @@ mod tests {
             name: "Fix Login".into(),
             title: None,
             path: PathBuf::from("/r/.worktrees/fix-login"),
+            host: None,
             kind: Kind::Worktree,
             parent: None,
             layout: None,

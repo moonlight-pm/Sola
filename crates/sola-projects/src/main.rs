@@ -27,7 +27,7 @@ use sola_terminal::input::{self, Mods};
 use sola_terminal::pty::PtyBackend;
 use sola_terminal::state::{self as term_state, PaneRuntime};
 use sola_terminal::term_view::{self, CellMetrics, Palette};
-use sola_terminal::{extkeys, links, tmux};
+use sola_terminal::{extkeys, links, remote as rtmux, tmux};
 
 mod calls;
 mod cards;
@@ -36,14 +36,19 @@ mod cli;
 mod hooks;
 mod instance;
 mod islands;
+mod link;
+mod machine;
 mod menu;
 mod paths;
 mod presence;
+mod remote;
 mod spawn;
 mod startup;
 mod status;
 mod topbar;
 mod windows;
+
+use machine::Machine;
 
 const APP_ID: &str = "sola-projects";
 const WINDOW_TITLE: &str = "Projects";
@@ -74,6 +79,12 @@ fn now_millis() -> u128 {
 const TMUX_SOCKET: &str = "sola-ws";
 const TMUX_UNIT: &str = "sola-ws-tmux.service";
 const TMUX_PREFIX: &str = "sws-";
+/// Started with no project open, Projects waits this long for one, then
+/// quits.
+const IDLE_QUIT_AFTER: Duration = Duration::from_secs(20);
+/// A remote pane's ssh that ran less than this and ended with its session
+/// alive is not reattached on its own (it would only end again).
+const REMOTE_REATTACH_AFTER: Duration = Duration::from_secs(5);
 
 const DEFAULT_COLS: u16 = 80;
 /// A window's size before it reports one.
@@ -175,6 +186,20 @@ struct App {
     pending_waits: Vec<PendingWait>,
     /// What each session needs from you: its island in the top row.
     islands: islands::Islands,
+    /// Panes on another computer whose ssh ended with their session out
+    /// of reach, and why. Their tab says so and offers to reconnect.
+    remote_down: HashMap<String, String>,
+    /// Each host's link ([`link`]), and its hook socket here.
+    links: HashMap<String, link::Link>,
+    link_socks: HashMap<String, PathBuf>,
+    /// Remote panes waiting for their link to attach.
+    remote_pending: HashSet<String>,
+    /// Hosts whose status tick is out, and when each last went out.
+    remote_busy: HashSet<String>,
+    remote_ticked: HashMap<String, Instant>,
+    /// Remote tabs whose worktree is moving there (a tick must not take
+    /// the old folder for gone).
+    remote_moving: HashSet<String>,
 }
 
 struct PendingWait {
@@ -218,7 +243,6 @@ enum Msg {
     RenameInput(String),
     RenameCommit,
     OpenSpawn(String),
-    OpenAdd,
     StartupAction(iced::widget::text_editor::Action),
     SaveStartup,
     DismissDialog,
@@ -234,7 +258,6 @@ enum Msg {
         id: String,
         force: bool,
     },
-    DropProject(String),
     /// `git worktree remove` failed after the tab was already closed.
     GitRmFailed {
         id: String,
@@ -251,6 +274,66 @@ enum Msg {
     Osc(String, sola_terminal::osc9999::OscStatus),
     PresenceTick,
     Call(sola_call::Incoming),
+    /// The start's wait for a project is over: quit if none opened.
+    QuitIfIdle,
+    /// A remote pane's ssh ended: is its session there (`Ok(true)`), gone
+    /// (`Ok(false)`), or out of reach (`Err`)? `lived` is how long the
+    /// ssh ran.
+    RemoteExited {
+        pane: String,
+        state: Result<bool, String>,
+        lived: Duration,
+    },
+    /// A host's link came up, failed, or ended ([`link`]).
+    Link(link::LinkEvent),
+    /// A host's status tick: each pane as it was and is ([`remote`]).
+    RemoteTick {
+        host: String,
+        panes: Vec<(String, status::PaneStatus, status::PaneStatus)>,
+        gone: Vec<(String, PathBuf)>,
+    },
+    /// A resumable remote pane's attach, planned off the UI thread.
+    RemoteAttach {
+        pane: String,
+        exec: Vec<String>,
+    },
+    /// `tab.exec` on a remote tab: is its session alive there?
+    RemoteExec {
+        tab: String,
+        pane: String,
+        agent: String,
+        prompt: Option<String>,
+        reply: sola_call::ReplyTx,
+        alive: Result<bool, String>,
+    },
+    /// A remote worktree made (or not); then a CLI reply, or the card.
+    RemoteSpawned {
+        new: Box<NewTab>,
+        made: Result<Option<String>, String>,
+        then: Option<remote::Spawned>,
+    },
+    /// A remote `tab.set` move / branch rename done there.
+    RemoteSet {
+        set: Box<remote::RemoteSet>,
+        done: Result<Option<(String, PathBuf)>, String>,
+        reply: sola_call::ReplyTx,
+    },
+    /// Whether a remote project's root is a git checkout.
+    RemoteKind {
+        tab: String,
+        git: bool,
+    },
+    /// The new-tab card's root branch, for a remote project.
+    SpawnBranch {
+        project: String,
+        branch: Option<String>,
+    },
+    /// A remote pane's screen and transcript message, for its island.
+    IslandScanned {
+        pane: String,
+        screen: String,
+        message: Option<String>,
+    },
 }
 
 /// PTY taken off the iced state so `tmux kill-session` / `git worktree remove`
@@ -258,14 +341,37 @@ enum Msg {
 struct DetachedPane {
     backend: Option<PtyBackend>,
     session: String,
+    /// The computer its session is on, when it is not this one.
+    host: Option<String>,
 }
 
 impl DetachedPane {
+    /// [`Self::close`], waiting until a remote session is gone too (call it
+    /// off the UI thread).
+    fn close_blocking(self) {
+        match self.host.clone() {
+            None => self.close(),
+            Some(host) => {
+                let session = self.session.clone();
+                if let Some(backend) = self.backend {
+                    backend.close();
+                }
+                rtmux::kill_session(&host, &session);
+            }
+        }
+    }
+
     fn close(self) {
         if let Some(backend) = self.backend {
             backend.close();
-        } else {
-            tmux::kill_session(&self.session);
+            return;
+        }
+        match self.host {
+            None => tmux::kill_session(&self.session),
+            Some(host) => {
+                let session = self.session;
+                std::thread::spawn(move || rtmux::kill_session(&host, &session));
+            }
         }
     }
 }
@@ -275,17 +381,17 @@ impl DetachedPane {
 /// `update` freezes every other pane.
 fn close_io_task(
     panes: Vec<DetachedPane>,
-    checkout: Option<(PathBuf, PathBuf, bool)>,
+    checkout: Option<(Result<Machine, String>, PathBuf, PathBuf, bool)>,
     tab_id: String,
 ) -> Task<Msg> {
     Task::perform(
         async move {
             match tokio::task::spawn_blocking(move || {
                 for pane in panes {
-                    pane.close();
+                    pane.close_blocking();
                 }
                 match checkout {
-                    Some((root, path, force)) => spawn::remove_worktree(&root, &path, force),
+                    Some((m, root, path, force)) => spawn::remove_worktree(&m?, &root, &path, force),
                     None => Ok(()),
                 }
             })
@@ -308,19 +414,83 @@ fn close_io_task(
     )
 }
 
+/// [`App::resume_argv`] for a pane's status on `m`: its Grok or Claude
+/// session, if that is still on disk there.
+fn resume_argv_on(m: &Machine, st: &status::PaneStatus) -> Option<Vec<String>> {
+    let sid = st.resume_session_id()?;
+    if st.is_grok() {
+        if !status::grok_session_exists(m, sid) {
+            tracing::warn!(session = %sid, "stored grok session not on disk; starting a shell");
+            return None;
+        }
+        return Some(cli::grok_resume_argv(sid));
+    }
+    if st.is_claude() {
+        if !status::claude_session_exists(m, sid) {
+            tracing::warn!(session = %sid, "stored claude session not on disk; starting a shell");
+            return None;
+        }
+        return Some(cli::claude_resume_argv(sid));
+    }
+    None
+}
+
+/// A tab [`App::plan_tab`] checked, to be made.
+#[derive(Debug, Clone)]
+struct NewTab {
+    project: catalog::Project,
+    /// Its project's startup script, read when it was planned.
+    startup: String,
+    tab: catalog::Tab,
+    slug: String,
+    branch: Option<String>,
+    base: Option<String>,
+    select: bool,
+}
+
+/// Make `new`'s checkout on `m` (a worktree; the root needs none) and run
+/// its project's startup script there. `Ok` carries the script's error.
+fn make_checkout(m: &Machine, new: &NewTab) -> Result<Option<String>, String> {
+    if new.tab.kind != catalog::Kind::Worktree {
+        return Ok(None);
+    }
+    spawn::add_worktree_at(
+        m,
+        &new.project.root,
+        &new.slug,
+        new.branch.as_deref(),
+        new.base.as_deref(),
+    )?;
+    let startup_err = startup::run(m, &new.startup, &new.project, &new.tab).err();
+    if let Some(e) = &startup_err {
+        tracing::warn!(tab = %new.tab.id, "{e}");
+    }
+    Ok(startup_err)
+}
+
+/// Ask `host` whether remote pane `pane`'s session lives, off the UI
+/// thread (ssh may take its connect timeout).
+fn remote_exit_task(pane: String, host: String, lived: Duration) -> Task<Msg> {
+    let session = tmux::session_name(&pane);
+    Task::perform(
+        async move {
+            tokio::task::spawn_blocking(move || rtmux::session_state(&host, &session))
+                .await
+                .unwrap_or_else(|e| Err(format!("session check panicked: {e}")))
+        },
+        move |state| Msg::RemoteExited {
+            pane: pane.clone(),
+            state,
+            lived,
+        },
+    )
+}
+
 impl App {
     fn boot() -> (Self, Task<Msg>) {
         let hook_paths = hooks::start();
         let _ = sola_terminal::osc9999::sender();
-        let mut catalog = catalog::load();
-        if catalog.projects.is_empty() {
-            if let Some((project, ws)) = catalog::seed_from_cwd() {
-                catalog.selected = Some(ws.id.clone());
-                catalog.projects.push(project);
-                catalog.tabs.push(ws);
-                catalog::save(&catalog);
-            }
-        }
+        let catalog = catalog::load();
         let selected = catalog
             .selected
             .clone()
@@ -385,15 +555,48 @@ impl App {
             idle_fading: false,
             pending_waits: Vec::new(),
             islands: islands::Islands::default(),
+            remote_down: HashMap::new(),
+            links: HashMap::new(),
+            link_socks: HashMap::new(),
+            remote_pending: HashSet::new(),
+            remote_busy: HashSet::new(),
+            remote_ticked: HashMap::new(),
+            remote_moving: HashSet::new(),
         };
+        app.link_hosts();
         app.sync_all_rows();
         let reap = app.reap_missing_worktrees();
         let windows = app.open_all_windows();
-        (app, Task::batch([reap, windows]))
+        // Nothing open: stay a moment for the launcher's `project.open`
+        // (it starts Projects, then asks), then quit.
+        let idle = if app.windows.is_empty() {
+            Task::perform(tokio::time::sleep(IDLE_QUIT_AFTER), |_| Msg::QuitIfIdle)
+        } else {
+            Task::none()
+        };
+        (app, Task::batch([reap, windows, idle]))
     }
 
-    /// A project window's title is the project's name.
+    /// A project window's title (its tab in the shell's bar): the
+    /// project's folder — no "on <host>" there.
     fn title(&self, window: window::Id) -> String {
+        self.windows
+            .project_of(window)
+            .and_then(|id| catalog::find_project(&self.projects, id))
+            .map(|p| match &p.host {
+                Some(_) => p
+                    .root
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| p.name.clone()),
+                None => p.name.clone(),
+            })
+            .unwrap_or_else(|| WINDOW_TITLE.into())
+    }
+
+    /// The name in a project window's own frame: the project's name, which
+    /// says which computer it is on ("Oath on buccina").
+    fn frame_title(&self, window: window::Id) -> String {
         self.windows
             .project_of(window)
             .and_then(|id| catalog::find_project(&self.projects, id))
@@ -419,6 +622,7 @@ impl App {
             emulator::exit_subscription().map(Msg::PtyExit),
             emulator::title_subscription().map(|(id, t)| Msg::Title(id, t)),
             hooks::subscription().map(Msg::Hook),
+            link::subscription().map(Msg::Link),
             sola_kit::call_subscription().map(Msg::Call),
             sola_terminal::osc9999::subscription().map(|(id, payload)| Msg::Osc(id, payload)),
             iced::time::every(Duration::from_secs(1)).map(|_| Msg::PresenceTick),
@@ -502,12 +706,16 @@ impl App {
                     .get(&id)
                     .map(|s| s.status)
                     .unwrap_or_default();
-                let cwd = self.tab_for_pane(&id).map(|w| w.path.clone());
+                // A remote pane's files are read by its host's tick.
+                let cwd = self
+                    .tab_for_pane(&id)
+                    .filter(|w| w.host.is_none())
+                    .map(|w| w.path.clone());
                 let st = self.pane_status.entry(id.clone()).or_default();
                 st.apply_hook(&incoming);
                 if incoming.mapped.compacted || incoming.mapped.session_id.is_some() {
                     if let Some(cwd) = cwd.as_deref() {
-                        st.refresh_compaction(cwd);
+                        st.refresh_compaction(&Machine::Local, cwd);
                     }
                 }
                 if incoming.mapped.compacted && st.compaction_count == 0 {
@@ -542,9 +750,11 @@ impl App {
             }
             Msg::PresenceTick => {
                 let reap = self.reap_missing_worktrees();
+                // A remote pane's processes are not here to scan.
                 let ids: Vec<String> = self
                     .tabs
                     .iter()
+                    .filter(|w| w.host.is_none())
                     .flat_map(|w| w.layout().leaves())
                     .collect();
                 let mut claimed: HashSet<String> = HashSet::new();
@@ -556,7 +766,7 @@ impl App {
                         continue;
                     }
                     if let Some(sid) = st.owner_session.clone() {
-                        if status::codex_rollout_exists(&sid) {
+                        if status::codex_rollout_exists(&Machine::Local, &sid) {
                             claimed.insert(sid);
                         }
                     }
@@ -571,7 +781,7 @@ impl App {
                     st.apply_presence(who);
                     if st.is_codex() {
                         if let Some(cwd) = cwd.as_deref() {
-                            if st.observe_codex_turn(cwd, &claimed) {
+                            if st.observe_codex_turn(&Machine::Local, cwd, &claimed) {
                                 dirty = true;
                             }
                             if let Some(sid) = st.owner_session.clone() {
@@ -580,7 +790,7 @@ impl App {
                         }
                     }
                     if let Some(cwd) = cwd.as_deref() {
-                        st.refresh_compaction(cwd);
+                        st.refresh_compaction(&Machine::Local, cwd);
                     }
                     if (st.status, st.agent.clone()) != before {
                         dirty = true;
@@ -591,7 +801,7 @@ impl App {
                 }
                 self.sync_all_rows();
                 self.flush_waits();
-                reap
+                Task::batch([reap, self.remote_ticks()])
             }
             Msg::HoverIn(id) => {
                 self.hover_tab = Some(id);
@@ -647,7 +857,6 @@ impl App {
                 Task::none()
             }
             Msg::OpenSpawn(project_id) => self.open_spawn(&project_id),
-            Msg::OpenAdd => self.open_add(),
             Msg::StartupAction(action) => {
                 self.startup.content.perform(action);
                 Task::none()
@@ -672,14 +881,13 @@ impl App {
             }
             Msg::Spawn => self.spawn_sibling(),
             Msg::AddPath(s) => {
-                self.add.path = s;
+                self.add.name = s;
                 self.add.error = None;
                 Task::none()
             }
             Msg::AddProject => self.add_project(),
             Msg::CloseTab(id) => self.close_tab(&id, false, false),
             Msg::RmCheckout { id, force } => self.close_tab(&id, true, force),
-            Msg::DropProject(id) => self.drop_project(&id),
             Msg::GitRmFailed { id, error } => {
                 tracing::warn!(tab = %id, %error, "git worktree remove failed");
                 self.emit_notice("Worktree leftover".into(), error, format!("git-rm-{id}"));
@@ -703,13 +911,17 @@ impl App {
             Msg::PtyExit(id) => {
                 tracing::info!(pane = %id, "pane PTY exited");
                 // Drop the client without `close()` (plain Drop keeps tmux).
-                self.runtimes.remove(&id);
-                // Tab already dropped (CLI / hover). The session is being
-                // killed off-thread — do not list-sessions or reattach.
+                let lived = self.runtimes.remove(&id).map(|rt| rt.backend.age());
+                // Tab already dropped (CLI / hover / its project closed).
+                // The session is being killed off-thread — do not
+                // list-sessions or reattach.
                 if self.tab_for_pane(&id).is_none() {
                     self.pane_status.remove(&id);
                     status::persist_all(&self.pane_status);
                     return Task::none();
+                }
+                if let Some(host) = self.tab_for_pane(&id).and_then(|w| w.host.clone()) {
+                    return remote_exit_task(id, host, lived.unwrap_or_default());
                 }
                 let want = tmux::session_name(&id);
                 let live = tmux::list_sessions().unwrap_or_default();
@@ -736,6 +948,48 @@ impl App {
                 status::persist_all(&self.pane_status);
                 Task::none()
             }
+            Msg::RemoteExited { pane, state, lived } => self.on_remote_exit(pane, state, lived),
+            Msg::QuitIfIdle => {
+                if self.windows.is_empty() {
+                    tracing::info!("no project opened; quitting");
+                    return iced::exit();
+                }
+                Task::none()
+            }
+            Msg::Link(ev) => self.on_link(ev),
+            Msg::RemoteTick { host, panes, gone } => self.on_remote_tick(host, panes, gone),
+            Msg::RemoteAttach { pane, exec } => self.attach_planned(&pane, exec),
+            Msg::RemoteExec {
+                tab,
+                pane,
+                agent,
+                prompt,
+                reply,
+                alive,
+            } => self.on_remote_exec(tab, pane, agent, prompt, reply, alive),
+            Msg::RemoteSpawned { new, made, then } => self.on_remote_spawned(*new, made, then),
+            Msg::RemoteSet { set, done, reply } => self.on_remote_set(*set, done, reply),
+            Msg::RemoteKind { tab, git } => {
+                if let Some(ws) = self.tabs.iter_mut().find(|w| w.id == tab) {
+                    let kind = if git { catalog::Kind::Main } else { catalog::Kind::Folder };
+                    if ws.kind != kind && ws.kind != catalog::Kind::Worktree {
+                        ws.kind = kind;
+                        self.persist_catalog();
+                    }
+                }
+                Task::none()
+            }
+            Msg::SpawnBranch { project, branch } => {
+                if self.spawn.project_id.as_deref() == Some(project.as_str()) {
+                    self.spawn.root_branch = branch;
+                }
+                Task::none()
+            }
+            Msg::IslandScanned {
+                pane,
+                screen,
+                message,
+            } => self.apply_island_scan(&pane, &screen, message),
             Msg::Title(id, title) => {
                 tracing::debug!(pane = %id, %title, "pane title");
                 Task::none()
@@ -784,10 +1038,8 @@ impl App {
     }
 
     fn view(&self, window: window::Id) -> Element<'_, Msg> {
-        let project_id = self.windows.project_of(window).unwrap_or(windows::EMPTY);
-        let body: Element<'_, Msg> = if project_id.is_empty() {
-            cards::no_project()
-        } else {
+        let project_id = self.windows.project_of(window).unwrap_or_default();
+        let body: Element<'_, Msg> = {
             let selected = self.selected_of(project_id).unwrap_or("");
             let pane: Element<'_, Msg> = match self.tabs.iter().find(|w| w.id == selected) {
                 Some(ws) => self.render_node(&ws.layout().to_node()),
@@ -831,7 +1083,7 @@ impl App {
 
         sola_kit::window_frame(
             self.chrome(window),
-            self.title(window),
+            self.frame_title(window),
             Msg::TitleDrag(window),
             Msg::TitleClose(window),
             move |dir| Msg::TitleResize(window, dir),
@@ -873,18 +1125,34 @@ impl App {
 
     /// Open a window for every project (the one with the saved selection
     /// in front), or the no-project window when there are none.
+    /// At start: a window for each project open when Projects last ran.
+    /// One here whose folder is gone is no project any more: it is closed,
+    /// its sessions ended.
     fn open_all_windows(&mut self) -> Task<Msg> {
+        let gone: Vec<String> = self
+            .projects
+            .iter()
+            .filter(|p| p.host.is_none() && !p.root.is_dir())
+            .map(|p| p.id.clone())
+            .collect();
+        let mut tasks: Vec<Task<Msg>> = gone
+            .iter()
+            .map(|id| {
+                tracing::info!(project = %id, "its folder is gone; closing it");
+                self.end_project(id)
+            })
+            .collect();
+        let ids: Vec<String> = self.projects.iter().map(|p| p.id.clone()).collect();
+        if ids.is_empty() {
+            return Task::batch(tasks);
+        }
         let front = self
             .tabs
             .iter()
             .find(|w| w.id == self.selected)
             .map(|w| w.project_id.clone())
-            .or_else(|| self.projects.first().map(|p| p.id.clone()));
-        let ids: Vec<String> = self.projects.iter().map(|p| p.id.clone()).collect();
-        if ids.is_empty() {
-            return self.open_window(windows::EMPTY, false);
-        }
-        let mut tasks = Vec::new();
+            .filter(|id| ids.contains(id))
+            .or_else(|| ids.first().cloned());
         for id in ids {
             let background = front.as_deref() != Some(id.as_str());
             tasks.push(self.open_window(&id, background));
@@ -892,19 +1160,12 @@ impl App {
         Task::batch(tasks)
     }
 
-    /// Open project `project_id`'s window and attach its selected tab. The
-    /// no-project window goes once a project has one.
+    /// Open project `project_id`'s window and attach its selected tab.
     fn open_window(&mut self, project_id: &str, background: bool) -> Task<Msg> {
         if self.windows.has(project_id) {
             return Task::none();
         }
         let mut tasks = Vec::new();
-        if !project_id.is_empty() {
-            if let Some(empty) = self.windows.window_of(windows::EMPTY) {
-                self.windows.forget(empty);
-                tasks.push(window::close(empty));
-            }
-        }
         tasks.push(self.windows.open(APP_ID, project_id, background).map(|_| Msg::Ignore));
         if let Some(tab) = self.selected_of(project_id).map(str::to_string) {
             tasks.push(self.attach_tab(&tab));
@@ -913,17 +1174,66 @@ impl App {
         Task::batch(tasks)
     }
 
-    /// Close a project window. The project stays, and its tmux sessions
-    /// keep running; Project → Open brings it back. The last window
-    /// closing quits.
+    /// Close a project window (its close dot, Close Window, or
+    /// `project.close`): the project is closed — forgotten, its tabs'
+    /// sessions ended ([`Self::end_project`]). The launcher or Project →
+    /// Open opens its folder again, on its root tab. The last window
+    /// closing quits, once its sessions are gone.
     fn close_window(&mut self, window: window::Id) -> Task<Msg> {
-        let project = self.windows.forget(window);
+        let project = self.windows.forget(window).filter(|p| !p.is_empty());
         tracing::info!(project = ?project, "project window closed");
         self.publish_menu();
+        let end = match project {
+            Some(id) => self.end_project(&id),
+            None => Task::none(),
+        };
         if self.windows.is_empty() {
-            return Task::batch([window::close(window), iced::exit()]);
+            return Task::batch([window::close(window), end.chain(iced::exit())]);
         }
-        window::close(window)
+        Task::batch([window::close(window), end])
+    }
+
+    /// Project `project_id` closed: forget it and its tabs, and end their
+    /// sessions — their tmux killed, here or on its computer, off the UI
+    /// thread. Its folders (worktrees too) stay on disk.
+    fn end_project(&mut self, project_id: &str) -> Task<Msg> {
+        if !self.projects.iter().any(|p| p.id == project_id) {
+            return Task::none();
+        }
+        let panes: Vec<String> = self
+            .tabs
+            .iter()
+            .filter(|w| w.project_id == project_id)
+            .flat_map(|w| w.layout().leaves())
+            .collect();
+        tracing::info!(project = %project_id, panes = panes.len(), "project closed; ending its sessions");
+        let detached: Vec<DetachedPane> = panes.iter().map(|id| self.detach_pane(id)).collect();
+        for id in &panes {
+            self.remote_pending.remove(id);
+            self.remote_down.remove(id);
+        }
+        let mut catalog = catalog::Catalog {
+            version: 1,
+            selected: (!self.selected.is_empty()).then(|| self.selected.clone()),
+            projects: std::mem::take(&mut self.projects),
+            tabs: std::mem::take(&mut self.tabs),
+        };
+        catalog::unregister_project(&mut catalog, project_id);
+        self.projects = catalog.projects;
+        self.tabs = catalog.tabs;
+        self.selected = catalog.selected.unwrap_or_default();
+        self.last_tab.remove(project_id);
+        self.focused = self
+            .tabs
+            .iter()
+            .find(|w| w.id == self.selected)
+            .map(|w| w.active_pane_id())
+            .unwrap_or_default();
+        self.persist_catalog();
+        status::persist_all(&self.pane_status);
+        self.unlink_unused();
+        self.publish_menu();
+        close_io_task(detached, None, project_id.to_string())
     }
 
     /// Window lifecycle: sizes, focus, and the close button / request.
@@ -979,14 +1289,21 @@ impl App {
     }
 
     /// The app menu, with Project → Open for each project without a window.
+    /// The app menu; Project → Open lists the folders of `~/Projects` not
+    /// open here.
     fn publish_menu(&self) {
-        let closed: Vec<(String, String)> = self
+        let open: HashSet<&PathBuf> = self
             .projects
             .iter()
-            .filter(|p| !self.windows.has(&p.id))
-            .map(|p| (p.id.clone(), p.name.clone()))
+            .filter(|p| p.host.is_none())
+            .map(|p| &p.root)
             .collect();
-        sola_kit::menu::publish(menu::app_menu(&closed));
+        let folders: Vec<(String, String)> = catalog::project_folders()
+            .into_iter()
+            .filter(|(_, path)| !open.contains(path))
+            .map(|(name, path)| (path.to_string_lossy().into_owned(), name))
+            .collect();
+        sola_kit::menu::publish(menu::app_menu(&folders));
     }
 
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
@@ -1068,8 +1385,14 @@ impl App {
                         None => Task::none(),
                     },
                     open if open.starts_with(menu::OPEN_PREFIX) => {
-                        let id = open[menu::OPEN_PREFIX.len()..].to_string();
-                        self.open_window(&id, false)
+                        let path = open[menu::OPEN_PREFIX.len()..].to_string();
+                        match self.cli_open_project(&path, None) {
+                            Ok((_, task)) => task,
+                            Err(e) => {
+                                tracing::warn!(%path, "Project → Open: {e}");
+                                Task::none()
+                            }
+                        }
                     }
                     "startup-script" => self.open_startup(),
                     "split-down" => self.split_focused(SplitDir::Horizontal),
@@ -1080,17 +1403,6 @@ impl App {
                             Task::none()
                         } else {
                             self.close_pane(&id)
-                        }
-                    }
-                    "drop-project" => {
-                        let pid = self
-                            .tabs
-                            .iter()
-                            .find(|w| w.id == self.selected)
-                            .map(|w| w.project_id.clone());
-                        match pid {
-                            Some(id) => self.drop_project(&id),
-                            None => Task::none(),
                         }
                     }
                     "copy" => self.copy_selection(),
@@ -1169,6 +1481,20 @@ impl App {
                 };
                 canvas(view).width(Length::Fill).height(Length::Fill).into()
             }
+            None if self.remote_pending.contains(pane_id) => {
+                let host = self
+                    .tab_for_pane(pane_id)
+                    .and_then(|w| w.host.as_deref())
+                    .unwrap_or_default();
+                cards::connecting_pane(host)
+            }
+            None if self.remote_down.contains_key(pane_id) => {
+                let host = self
+                    .tab_for_pane(pane_id)
+                    .and_then(|w| w.host.as_deref())
+                    .unwrap_or_default();
+                cards::unreachable_pane(pane_id, host, &self.remote_down[pane_id])
+            }
             None if self.is_sole_leaf(pane_id) => cards::exited_pane(pane_id),
             None => cards::empty_pane(),
         };
@@ -1236,6 +1562,10 @@ impl App {
         let (cols, rows) = self.pane_grid(id);
         let cols = if cols == 0 { DEFAULT_COLS } else { cols };
         let rows = if rows == 0 { DEFAULT_ROWS } else { rows };
+        if let Some(host) = ws.host.clone() {
+            let cwd = ws.path.to_string_lossy().into_owned();
+            return self.attach_remote_pane(id, &host, &cwd, cols, rows, exec);
+        }
         let tmux_session = catalog::bind_session(id, &ws.path);
         if tmux_session.is_empty() {
             tracing::error!(pane = %id, "refusing attach; leftover tmux is another checkout");
@@ -1312,42 +1642,23 @@ impl App {
     /// `grok -r` or `claude --resume` when last-status still names that
     /// agent and the session is on disk. A live tmux is left as-is.
     fn resume_argv(&self, pane_id: &str) -> Option<Vec<String>> {
-        let st = self.pane_status.get(pane_id)?;
-        let sid = st.resume_session_id()?;
-        if st.is_grok() {
-            if !status::grok_session_exists(sid) {
-                tracing::warn!(
-                    pane = %pane_id,
-                    session = %sid,
-                    "stored grok session not on disk; starting a shell"
-                );
-                return None;
-            }
-            return Some(cli::grok_resume_argv(sid));
-        }
-        if st.is_claude() {
-            if !status::claude_session_exists(sid) {
-                tracing::warn!(
-                    pane = %pane_id,
-                    session = %sid,
-                    "stored claude session not on disk; starting a shell"
-                );
-                return None;
-            }
-            return Some(cli::claude_resume_argv(sid));
-        }
-        None
+        resume_argv_on(&Machine::Local, self.pane_status.get(pane_id)?)
     }
 
     fn resolve_hook_pane(&self, incoming: &hooks::Incoming) -> Option<String> {
-        let header = self.resolve_pane(&incoming.pane_id);
+        let header = self
+            .resolve_pane(&incoming.pane_id)
+            .filter(|id| self.tab_for_pane(id).is_some_and(|w| w.host == incoming.host));
         let header_path = header
             .as_deref()
             .and_then(|id| self.tab_for_pane(id))
             .map(|ws| ws.path.clone());
+        // A hook names a folder on the computer it came from: only that
+        // computer's tabs can be its pane.
         let located: Vec<(String, std::path::PathBuf)> = self
             .tabs
             .iter()
+            .filter(|ws| ws.host == incoming.host)
             .flat_map(|ws| {
                 let path = ws.path.clone();
                 ws.layout()
@@ -1592,12 +1903,21 @@ impl App {
         let Some(project) = self.projects.iter().find(|p| p.id == project_id) else {
             return Task::none();
         };
-        let root_branch = spawn::current_branch(&project.root);
+        let host = project.host.clone();
+        let root_branch = match host {
+            Some(_) => None,
+            None => spawn::current_branch(&Machine::Local, &project.root),
+        };
         self.add = cards::AddDraft::default();
         self.startup = cards::StartupDraft::default();
         self.renaming = None;
-        self.spawn = cards::SpawnDraft::open(project_id, root_branch);
-        iced::widget::operation::focus::<Msg>(iced::widget::Id::new(cards::SPAWN_INPUT_ID))
+        let remote = host.is_some();
+        self.spawn = cards::SpawnDraft::open(project_id, root_branch, host);
+        let focus = iced::widget::operation::focus::<Msg>(iced::widget::Id::new(cards::SPAWN_INPUT_ID));
+        if remote {
+            return Task::batch([focus, self.remote_root_branch(project_id)]);
+        }
+        focus
     }
 
     fn open_add(&mut self) -> Task<Msg> {
@@ -1606,7 +1926,7 @@ impl App {
         self.renaming = None;
         self.add = cards::AddDraft {
             open: true,
-            path: String::new(),
+            name: String::new(),
             error: None,
         };
         iced::widget::operation::focus::<Msg>(iced::widget::Id::new(cards::ADD_INPUT_ID))
@@ -1628,7 +1948,7 @@ impl App {
             .projects
             .iter()
             .find(|p| p.id == pid)
-            .map(|p| p.startup.clone())
+            .map(startup::script_for)
             .unwrap_or_default();
         self.spawn = cards::SpawnDraft::default();
         self.add = cards::AddDraft::default();
@@ -1641,10 +1961,11 @@ impl App {
             return Task::none();
         };
         let text = self.startup.content.text();
-        if let Some(p) = self.projects.iter_mut().find(|p| p.id == pid) {
-            p.startup = text;
+        if let Some(p) = self.projects.iter().find(|p| p.id == pid) {
+            if let Err(e) = startup::set_script(p, &text) {
+                tracing::warn!(project = %pid, "startup script save failed: {e}");
+            }
         }
-        self.persist_catalog();
         self.startup = cards::StartupDraft::default();
         Task::none()
     }
@@ -1655,6 +1976,26 @@ impl App {
         };
         let name = self.spawn.name.clone();
         let in_root = self.spawn.in_root;
+        let remote = self
+            .projects
+            .iter()
+            .any(|p| p.id == project_id && p.host.is_some());
+        if remote && !in_root {
+            if self.spawn.pending {
+                return Task::none();
+            }
+            return match self.plan_tab(&project_id, &name, None, None, None, None, None, false, true) {
+                Ok(new) => {
+                    self.spawn.pending = true;
+                    self.spawn.error = None;
+                    self.make_remote_checkout(new, None)
+                }
+                Err(e) => {
+                    self.spawn.error = Some(e);
+                    Task::none()
+                }
+            };
+        }
         match self.spawn_tab(
             &project_id,
             &name,
@@ -1681,7 +2022,9 @@ impl App {
     /// Create a worktree (or a root tab when `in_root`) + catalog row.
     /// Does not attach a PTY. Second value is a startup-script error
     /// (tab still exists). `select` takes the rail (UI /
-    /// `--select`). CLI default is false.
+    /// `--select`). CLI default is false. A project on another computer
+    /// goes through [`Self::plan_tab`] and [`make_checkout`] off the UI
+    /// thread instead ([`remote`]).
     fn spawn_tab(
         &mut self,
         project_q: &str,
@@ -1694,14 +2037,34 @@ impl App {
         in_root: bool,
         select: bool,
     ) -> Result<(String, Option<String>), String> {
+        let new = self.plan_tab(project_q, name, parent, agent, branch, base, title, in_root, select)?;
+        let startup_err = make_checkout(&Machine::Local, &new)?;
+        Ok((self.add_planned_tab(new), startup_err))
+    }
+
+    /// A new tab, checked: its id, its folder (the root, or
+    /// `.worktrees/<slug>`), its parent and title. Nothing made yet.
+    fn plan_tab(
+        &self,
+        project_q: &str,
+        name: &str,
+        parent: Option<String>,
+        agent: Option<&str>,
+        branch: Option<&str>,
+        base: Option<&str>,
+        title: Option<&str>,
+        in_root: bool,
+        select: bool,
+    ) -> Result<NewTab, String> {
         let project = catalog::resolve_project(&self.projects, project_q)?.clone();
         let slug = spawn::slug(name);
         if slug.is_empty() {
             return Err("name needs a letter or number".into());
         }
+        spawn::check_slug(&slug)?;
         let agent = cli::first_class_agent(agent)?;
+        let given = |v: Option<&str>| v.is_some_and(|s| !s.trim().is_empty());
         let (dest, kind) = if in_root {
-            let given = |v: Option<&str>| v.is_some_and(|s| !s.trim().is_empty());
             if given(branch) || given(base) {
                 return Err("--branch / --base-branch need a worktree (drop --root)".into());
             }
@@ -1710,8 +2073,7 @@ impl App {
             }
             (project.root.clone(), catalog::Kind::Root)
         } else {
-            let dest = spawn::add_worktree_at(&project.root, &slug, branch, base)?;
-            (dest, catalog::Kind::Worktree)
+            (spawn::worktree_path(&project.root, &slug), catalog::Kind::Worktree)
         };
         let taken: HashSet<String> = self.tabs.iter().map(|w| w.id.clone()).collect();
         let id = catalog::unique_id("ws", &slug, &taken);
@@ -1731,12 +2093,13 @@ impl App {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
-        let ws = catalog::Tab {
-            id: id.clone(),
+        let tab = catalog::Tab {
+            id,
             project_id: project.id.clone(),
             name: name.trim().to_string(),
             title,
             path: dest,
+            host: project.host.clone(),
             kind,
             parent,
             layout: None,
@@ -1744,19 +2107,30 @@ impl App {
             status: status::AgentStatus::Idle,
             agent: agent.map(str::to_string),
         };
-        // Startup prepares a fresh worktree; a root tab has none.
-        let startup_err = if in_root {
-            None
-        } else {
-            startup::run(&project, &ws).err()
-        };
-        if let Some(e) = &startup_err {
-            tracing::warn!(tab = %ws.id, "{e}");
+        Ok(NewTab {
+            startup: startup::script_for(&project),
+            project,
+            tab,
+            slug,
+            branch: branch.map(str::to_string),
+            base: base.map(str::to_string),
+            select,
+        })
+    }
+
+    /// Add a [`NewTab`] whose checkout is made. Its id is made again if
+    /// another tab took it meanwhile.
+    fn add_planned_tab(&mut self, new: NewTab) -> String {
+        let mut ws = new.tab;
+        if self.tabs.iter().any(|w| w.id == ws.id) {
+            let taken: HashSet<String> = self.tabs.iter().map(|w| w.id.clone()).collect();
+            ws.id = catalog::unique_id("ws", &new.slug, &taken);
         }
+        let id = ws.id.clone();
         self.tabs.push(ws);
-        catalog::apply_spawn_focus(&mut self.selected, &mut self.focused, &id, select);
+        catalog::apply_spawn_focus(&mut self.selected, &mut self.focused, &id, new.select);
         self.persist_catalog();
-        Ok((id, startup_err))
+        id
     }
 
     /// Follow every session's status into its island; send the islands.
@@ -1810,7 +2184,17 @@ impl App {
     /// question's, a permission's) or, with nothing from the hook, the end
     /// of the screen as the body. Tries again while the prompt is not up.
     fn scan_island(&mut self, id: &str) -> Task<Msg> {
+        if self.tab_for_pane(id).is_some_and(|w| w.host.is_some()) {
+            return self.remote_island_scan(id);
+        }
         let screen = tmux::capture_scrollback(&tmux::session_name(id)).unwrap_or_default();
+        let message = self.islands.last_message(id);
+        self.apply_island_scan(id, &screen, message)
+    }
+
+    /// [`Self::scan_island`] with the screen and the transcript's last
+    /// message read (here, or fetched from another computer).
+    fn apply_island_scan(&mut self, id: &str, screen: &str, message: Option<String>) -> Task<Msg> {
         let Some(need) = self.islands.need_mut(id) else {
             return Task::none();
         };
@@ -1824,10 +2208,6 @@ impl App {
         }
         if need.state == IslandState::Done && !need.asked {
             // The transcript may not have had the last message yet.
-            let message = self.islands.last_message(id);
-            let Some(need) = self.islands.need_mut(id) else {
-                return Task::none();
-            };
             match message {
                 Some(m) => {
                     need.body = m;
@@ -1851,7 +2231,6 @@ impl App {
     /// its tab pulled up.
     fn on_island_action(&mut self, a: AgentIslandAction) -> Task<Msg> {
         let pane = a.key;
-        let session = tmux::session_name(&pane);
         match a.action {
             IslandAction::Show => {
                 self.islands.answer(&pane);
@@ -1870,9 +2249,8 @@ impl App {
                     return Task::none();
                 };
                 tracing::info!(%pane, choice = %choice.label, "island answer");
-                if let Err(e) = tmux::send_literal(&session, &choice.key.to_string()) {
-                    tracing::warn!(%pane, "island answer failed: {e}");
-                }
+                let key = choice.key.to_string();
+                self.tmux_job(&pane, "island answer", move |t| t.send_literal(&key));
                 Task::none()
             }
             IslandAction::Reply(text) => {
@@ -1880,16 +2258,18 @@ impl App {
                     return Task::none();
                 };
                 // A question's own answer: pick its "Type something" first.
-                if need.state == IslandState::Waiting {
-                    if let Some(own) = need.choices.iter().find(|c| islands::is_free_text(&c.label)) {
-                        let _ = tmux::send_literal(&session, &own.key.to_string());
+                let own = (need.state == IslandState::Waiting)
+                    .then(|| need.choices.iter().find(|c| islands::is_free_text(&c.label)))
+                    .flatten()
+                    .map(|c| c.key.to_string());
+                tracing::info!(%pane, "island reply");
+                self.tmux_job(&pane, "island reply", move |t| {
+                    if let Some(key) = own {
+                        let _ = t.send_literal(&key);
                         std::thread::sleep(ISLAND_TYPE_SETTLE);
                     }
-                }
-                tracing::info!(%pane, "island reply");
-                if let Err(e) = self.write_pane(&pane, &text, true) {
-                    tracing::warn!(%pane, "island reply failed: {e}");
-                }
+                    t.send_prompt(&text, true)
+                });
                 Task::none()
             }
         }
@@ -1965,6 +2345,9 @@ impl App {
         if inc.method == "pane.wait" {
             return self.cli_wait(inc);
         }
+        if let Some(task) = self.remote_call(&inc) {
+            return task;
+        }
         let (result, task) = self.dispatch_call(&inc.method, &inc.params);
         match result {
             Ok(data) => inc.reply.ok(data),
@@ -1995,12 +2378,18 @@ impl App {
                     Task::none(),
                 )
             }
-            "project.add" => {
-                let Some(path) = param_str(params, "path") else {
-                    return (Err("missing path".into()), Task::none());
+            "project.close" => {
+                let Some(q) = param_str(params, "project") else {
+                    return (Err("missing project".into()), Task::none());
                 };
-                match self.cli_add_project(&path) {
-                    Ok((data, task)) => (Ok(data), task),
+                match catalog::resolve_project(&self.projects, &q).map(|p| p.id.clone()) {
+                    Ok(id) => {
+                        let task = match self.windows.window_of(&id) {
+                            Some(window) => self.close_window(window),
+                            None => self.end_project(&id),
+                        };
+                        (Ok(serde_json::json!({ "project": id, "closed": true })), task)
+                    }
                     Err(e) => (Err(e), Task::none()),
                 }
             }
@@ -2008,7 +2397,8 @@ impl App {
                 let Some(path) = param_str(params, "path") else {
                     return (Err("missing path".into()), Task::none());
                 };
-                match self.cli_open_project(&path) {
+                let host = param_str(params, "host").filter(|h| !h.trim().is_empty());
+                match self.cli_open_project(&path, host.as_deref()) {
                     Ok((data, task)) => (Ok(data), task),
                     Err(e) => (Err(e), Task::none()),
                 }
@@ -2021,21 +2411,6 @@ impl App {
                 ),
                 Task::none(),
             ),
-            "project.rm" => {
-                let Some(q) = param_str(params, "project") else {
-                    return (Err("missing project".into()), Task::none());
-                };
-                match self.cli_rm_project(&q) {
-                    // Reply first; teardown on the next tick so solactl
-                    // (maybe running in a pane we are about to kill)
-                    // gets {ok:true} instead of a hang / timeout.
-                    Ok(id) => (
-                        Ok(serde_json::json!({ "ok": true })),
-                        Task::done(Msg::DropProject(id)),
-                    ),
-                    Err(e) => (Err(e), Task::none()),
-                }
-            }
             "tab.list" => (
                 self.cli_tab_list(param_str(params, "project").as_deref()),
                 Task::none(),
@@ -2112,15 +2487,6 @@ impl App {
                         params.get("branch").and_then(|v| v.as_str()),
                         param_before(params, "before"),
                     ),
-                    Task::none(),
-                )
-            }
-            "project.reorder" => {
-                let Some(q) = param_str(params, "project") else {
-                    return (Err("missing project".into()), Task::none());
-                };
-                (
-                    self.cli_reorder_project(&q, param_before(params, "before")),
                     Task::none(),
                 )
             }
@@ -2275,18 +2641,14 @@ impl App {
                 .selected_project_id()
                 .ok_or_else(|| "no project selected".to_string())?,
         };
-        let id = catalog::resolve_project(&self.projects, &q)?.id.clone();
+        let p = catalog::resolve_project(&self.projects, &q)?;
         if set {
-            if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
-                p.startup = script.unwrap_or("").to_string();
-            }
-            self.persist_catalog();
+            startup::set_script(p, script.unwrap_or(""))?;
         }
-        let p = catalog::resolve_project(&self.projects, &id)?;
         Ok(serde_json::json!({
             "project": p.id,
             "name": p.name,
-            "script": p.startup,
+            "script": startup::script_for(p),
         }))
     }
 
@@ -2304,9 +2666,6 @@ impl App {
         Ok(ws.id.clone())
     }
 
-    fn cli_rm_project(&self, q: &str) -> Result<String, String> {
-        Ok(catalog::resolve_project(&self.projects, q)?.id.clone())
-    }
 
     fn cli_select(&mut self, q: &str) -> Result<(serde_json::Value, Task<Msg>), String> {
         let id = catalog::resolve_tab(&self.tabs, q)?
@@ -2372,28 +2731,11 @@ impl App {
         Ok(cli::tab_json(ws, Some(&self.selected)))
     }
 
-    fn cli_reorder_project(
-        &mut self,
-        q: &str,
-        before: Option<Option<String>>,
-    ) -> Result<serde_json::Value, String> {
-        let id = catalog::resolve_project(&self.projects, q)?.id.clone();
-        let before_id = match before {
-            None => None,
-            Some(None) => None,
-            Some(Some(q)) => Some(catalog::resolve_project(&self.projects, &q)?.id.clone()),
-        };
-        // Missing --before still moves to end when the method is called.
-        catalog::move_project_before(&mut self.projects, &id, before_id.as_deref())?;
-        self.persist_catalog();
-        Ok(cli::project_json(catalog::resolve_project(
-            &self.projects,
-            &id,
-        )?))
-    }
 
     /// Rail slug + `git worktree move` to `.worktrees/<slug>`. Id stays.
-    fn rename_tab(&mut self, id: &str, raw: &str) -> Result<(), String> {
+    /// `tab.set --name` checked: the project root, the new slug, and the
+    /// worktree's new folder.
+    fn rename_plan(&self, id: &str, raw: &str) -> Result<(PathBuf, String, PathBuf), String> {
         let slug = spawn::slug(raw);
         spawn::check_slug(&slug)?;
         let ws = catalog::resolve_tab(&self.tabs, id)?;
@@ -2403,18 +2745,22 @@ impl App {
         if !catalog::has_worktree(ws) {
             return Err("cannot rename the project root".into());
         }
-        let project_id = ws.project_id.clone();
-        let from = ws.path.clone();
-        if catalog::worktree_name_taken(&self.tabs, &project_id, &slug, id) {
+        if catalog::worktree_name_taken(&self.tabs, &ws.project_id, &slug, id) {
             return Err(format!("tab '{slug}' already exists"));
         }
-        let root = catalog::resolve_project(&self.projects, &project_id)?
+        let root = catalog::resolve_project(&self.projects, &ws.project_id)?
             .root
             .clone();
         let dest = spawn::worktree_path(&root, &slug);
+        Ok((root, slug, dest))
+    }
+
+    fn rename_tab(&mut self, id: &str, raw: &str) -> Result<(), String> {
+        let (root, slug, dest) = self.rename_plan(id, raw)?;
+        let from = catalog::resolve_tab(&self.tabs, id)?.path.clone();
         let path_changed = !catalog::path_same(&from, &dest);
         if path_changed {
-            spawn::move_worktree(&root, &from, &slug)?;
+            spawn::move_worktree(&Machine::Local, &root, &from, &slug)?;
         }
         if let Some(ws) = self.tabs.iter_mut().find(|w| w.id == id) {
             ws.name = slug;
@@ -2436,7 +2782,7 @@ impl App {
         if !catalog::has_worktree(ws) {
             return Err("cannot rename the project root branch".into());
         }
-        spawn::rename_branch(&ws.path, raw)
+        spawn::rename_branch(&Machine::Local, &ws.path, raw)
     }
 
     fn restamp_tab_path(&self, id: &str) {
@@ -2465,6 +2811,7 @@ impl App {
             .id
             .clone();
         let pane = self.preferred_pane_for(Some(&ws_id), Some(agent))?;
+        self.local_pane(&pane)?;
         let is_same = self
             .pane_status
             .get(&pane)
@@ -2507,32 +2854,46 @@ impl App {
         ))
     }
 
-    fn cli_add_project(&mut self, path: &str) -> Result<(serde_json::Value, Task<Msg>), String> {
-        let (project_id, main_id, task) = self.register_project(path)?;
-        // CLI adds stay quiet: the window joins its zone behind.
-        let task = Task::batch([task, self.open_window(&project_id, true)]);
-        let project = self
-            .projects
-            .iter()
-            .find(|p| p.id == project_id)
-            .ok_or_else(|| "project vanished".to_string())?;
-        let mut data = cli::project_json(project);
-        data["tab"] = serde_json::json!(main_id);
-        Ok((data, task))
-    }
 
     /// `project.open` (the launcher's project chooser): the project at
     /// `path` in front. Its window shows if open (the shell brings up its
     /// workspace), else opens in front (it lands in the showing workspace);
     /// a folder that is not a project yet is added first, on its root tab.
-    fn cli_open_project(&mut self, path: &str) -> Result<(serde_json::Value, Task<Msg>), String> {
-        let root = catalog::expand_user_path(path.trim())
-            .canonicalize()
-            .map_err(|e| format!("path: {e}"))?;
-        let known = self.projects.iter().find(|p| p.root == root).map(|p| p.id.clone());
-        let (project_id, added) = match known {
-            Some(id) => (id, None),
+    /// With `host`, `path` is an absolute folder on that computer.
+    fn cli_open_project(
+        &mut self,
+        path: &str,
+        host: Option<&str>,
+    ) -> Result<(serde_json::Value, Task<Msg>), String> {
+        let known = match host {
+            Some(host) => {
+                let host = sola_core::ssh::check_host(host)?;
+                let root = catalog::remote_root(path)?;
+                self.projects
+                    .iter()
+                    .find(|p| p.host.as_deref() == Some(host) && p.root == root)
+                    .map(|p| p.id.clone())
+            }
             None => {
+                let root = catalog::expand_user_path(path.trim())
+                    .canonicalize()
+                    .map_err(|e| format!("path: {e}"))?;
+                if !catalog::in_projects_dir(&root) {
+                    return Err(format!("{} is not a folder of ~/Projects", root.display()));
+                }
+                self.projects
+                    .iter()
+                    .find(|p| p.host.is_none() && p.root == root)
+                    .map(|p| p.id.clone())
+            }
+        };
+        let (project_id, added) = match (known, host) {
+            (Some(id), _) => (id, None),
+            (None, Some(host)) => {
+                let (id, main_id, task) = self.register_remote_project(host, path)?;
+                (id, Some((main_id, task)))
+            }
+            (None, None) => {
                 let (id, main_id, task) = self.register_project(path)?;
                 (id, Some((main_id, task)))
             }
@@ -2632,7 +2993,21 @@ impl App {
         self.preferred_pane(pane)
     }
 
+    /// These sync paths reach this computer's tmux; a remote pane's calls
+    /// go through [`App::remote_call`]. Never send to a remote pane's
+    /// session name here.
+    fn local_pane(&self, id: &str) -> Result<(), String> {
+        match self.tab_for_pane(id).and_then(|w| w.host.as_deref()) {
+            Some(host) => Err(self
+                .machine_for(Some(host))
+                .err()
+                .unwrap_or_else(|| format!("pane '{id}' runs on {host}"))),
+            None => Ok(()),
+        }
+    }
+
     fn write_pane(&self, id: &str, text: &str, enter: bool) -> Result<(), String> {
+        self.local_pane(id)?;
         let session = tmux::session_name(id);
         tmux::send_prompt(&session, text, enter)
     }
@@ -2645,20 +3020,10 @@ impl App {
 
     fn cli_read(&self, pane: Option<&str>, lines: Option<u32>) -> Result<(String, String), String> {
         let id = self.cli_pane_id(pane)?;
+        self.local_pane(&id)?;
         let session = tmux::session_name(&id);
         let text = tmux::capture_scrollback(&session)?;
-        let text = match lines {
-            Some(n) if n > 0 => {
-                let keep = n as usize;
-                let mut v: Vec<&str> = text.lines().collect();
-                if v.len() > keep {
-                    v = v.split_off(v.len() - keep);
-                }
-                v.join("\n")
-            }
-            _ => text,
-        };
-        Ok((id, text))
+        Ok((id, cli::last_lines(&text, lines)))
     }
 
     fn cli_whoami(
@@ -2786,15 +3151,18 @@ impl App {
         self.pending_waits = keep;
     }
 
+    /// New Project: `~/Projects/<name>` (made if it is not there), opened
+    /// in front on its root tab.
     fn add_project(&mut self) -> Task<Msg> {
-        let raw = self.add.path.clone();
-        match self.register_project(&raw) {
-            Ok((project_id, main_id, task)) => {
+        let made = catalog::check_project_name(&self.add.name).and_then(|name| {
+            let path = catalog::projects_dir().join(name);
+            std::fs::create_dir_all(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            Ok(path)
+        });
+        match made.and_then(|path| self.cli_open_project(&path.to_string_lossy(), None)) {
+            Ok((_, task)) => {
                 self.add = cards::AddDraft::default();
-                // The new project's window, in front, on its root tab.
-                let open = self.open_window(&project_id, false);
-                let select = self.select_tab(&main_id);
-                Task::batch([task, open, select])
+                task
             }
             Err(e) => {
                 self.add.error = Some(e);
@@ -2813,7 +3181,7 @@ impl App {
             Ok(_) => return Err("not a folder".into()),
             Err(e) => return Err(format!("path: {e}")),
         };
-        if self.projects.iter().any(|p| p.root == root) {
+        if self.projects.iter().any(|p| p.host.is_none() && p.root == root) {
             return Err("already a project".into());
         }
         let slug = spawn::slug(
@@ -2843,6 +3211,41 @@ impl App {
         Ok((project_id, attach_id, task))
     }
 
+    /// [`Self::register_project`] for folder `path` on `host` (checked by
+    /// the caller's listing, not here: it is not on this computer).
+    fn register_remote_project(
+        &mut self,
+        host: &str,
+        path: &str,
+    ) -> Result<(String, String, Task<Msg>), String> {
+        let host = sola_core::ssh::check_host(host)?;
+        let root = catalog::remote_root(path)?;
+        let folder = root.file_name().and_then(|s| s.to_str()).unwrap_or("project");
+        let slug = spawn::slug(&format!("{host}-{folder}"));
+        let taken_p: HashSet<String> = self.projects.iter().map(|p| p.id.clone()).collect();
+        let project_id = catalog::unique_id("proj", &slug, &taken_p);
+        let taken_w: HashSet<String> = self.tabs.iter().map(|w| w.id.clone()).collect();
+        let main_id = catalog::unique_id("ws", &slug, &taken_w);
+        let (project, ws) = catalog::project_from_remote(host, &root, &project_id, &main_id);
+        tracing::info!(project = %project_id, %host, root = %root.display(), "remote project");
+        self.projects.push(project);
+        self.ensure_link(host);
+        if self.selected.is_empty() {
+            self.selected = ws.id.clone();
+            self.focused = ws.active_pane_id();
+        }
+        let attach_id = ws.id.clone();
+        self.tabs.push(ws);
+        self.persist_catalog();
+        let attach = if self.selected == attach_id {
+            self.attach_tab(&attach_id)
+        } else {
+            Task::none()
+        };
+        let task = Task::batch([attach, self.learn_remote_root(&attach_id)]);
+        Ok((project_id, attach_id, task))
+    }
+
     fn teardown_pane(&mut self, id: &str) {
         self.detach_pane(id).close();
     }
@@ -2854,9 +3257,11 @@ impl App {
         let backend = self.runtimes.remove(id).map(|rt| rt.backend);
         self.pane_status.remove(id);
         self.pane_grids.remove(id);
+        self.remote_down.remove(id);
         DetachedPane {
             backend,
             session: tmux::session_name(id),
+            host: self.tab_for_pane(id).and_then(|w| w.host.clone()),
         }
     }
 
@@ -2918,7 +3323,7 @@ impl App {
                 self.projects
                     .iter()
                     .find(|p| p.id == project_id)
-                    .map(|p| (p.root.clone(), path.clone(), force))
+                    .map(|p| (self.machine_for(p.host.as_deref()), p.root.clone(), path.clone(), force))
             })
             .flatten();
         let attach = self.attach_selected_if_needed();
@@ -2939,52 +3344,6 @@ impl App {
             tracing::info!(tab = %id, "worktree path gone; closing tab");
             tasks.push(self.close_tab(&id, true, false));
         }
-        Task::batch(tasks)
-    }
-
-    /// Unregister the project and every tab under it. Kills those
-    /// tmux sessions. Leaves git worktrees and folders on disk.
-    fn drop_project(&mut self, project_id: &str) -> Task<Msg> {
-        let pane_ids: Vec<String> = self
-            .tabs
-            .iter()
-            .filter(|w| w.project_id == project_id)
-            .flat_map(|w| w.layout().leaves())
-            .collect();
-        let mut catalog = catalog::Catalog {
-            version: 1,
-            selected: if self.selected.is_empty() {
-                None
-            } else {
-                Some(self.selected.clone())
-            },
-            projects: std::mem::take(&mut self.projects),
-            tabs: std::mem::take(&mut self.tabs),
-        };
-        let removed = catalog::unregister_project(&mut catalog, project_id);
-        self.projects = catalog.projects;
-        self.tabs = catalog.tabs;
-        self.selected = catalog.selected.unwrap_or_default();
-        let detached: Vec<DetachedPane> = pane_ids.iter().map(|id| self.detach_pane(id)).collect();
-        // Its window goes; with no project left, the no-project window.
-        let mut tasks = Vec::new();
-        if self.projects.is_empty() {
-            tasks.push(self.open_window(windows::EMPTY, false));
-        }
-        if let Some(window) = self.windows.window_of(project_id) {
-            self.windows.forget(window);
-            tasks.push(window::close(window));
-        }
-        self.publish_menu();
-        if removed.is_empty() {
-            tasks.push(close_io_task(detached, None, project_id.to_string()));
-            return Task::batch(tasks);
-        }
-        self.persist_catalog();
-        status::persist_all(&self.pane_status);
-        let attach = self.attach_selected_if_needed();
-        tasks.push(attach);
-        tasks.push(close_io_task(detached, None, project_id.to_string()));
         Task::batch(tasks)
     }
 
@@ -3161,8 +3520,8 @@ impl App {
         if self.spawn.is_open() && !self.spawn.name.is_empty() {
             return iced::clipboard::write(self.spawn.name.clone());
         }
-        if self.add.open && !self.add.path.is_empty() {
-            return iced::clipboard::write(self.add.path.clone());
+        if self.add.open && !self.add.name.is_empty() {
+            return iced::clipboard::write(self.add.name.clone());
         }
         if let Some((_, draft)) = &self.renaming {
             if !draft.is_empty() {
@@ -3201,7 +3560,7 @@ impl App {
             return Task::none();
         }
         if self.add.open {
-            self.add.path.push_str(&text.replace('\n', ""));
+            self.add.name.push_str(&text.replace('\n', ""));
             return Task::none();
         }
         if let Some((_, draft)) = &mut self.renaming {

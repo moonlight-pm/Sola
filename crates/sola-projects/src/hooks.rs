@@ -47,13 +47,29 @@ pub fn start() -> HookPaths {
             let tx = HOOK_TX.get().unwrap().clone();
             std::thread::Builder::new()
                 .name("sola-ws-hooks".into())
-                .spawn(move || server::serve(listener, tx))
+                .spawn(move || server::serve(listener, tx, None))
                 .ok();
             tracing::info!(sock = %paths.socket_path.display(), "hook socket listening");
         }
         Err(e) => tracing::warn!("hook socket bind failed: {e}"),
     }
     paths
+}
+
+/// A hook socket here for `host`'s agents alone (its link forwards
+/// theirs to it, [`crate::link`]): every hook it takes says `host`.
+pub fn listen_host(host: &str) -> std::io::Result<std::path::PathBuf> {
+    let path = sola_core::env::runtime_dir()
+        .join(format!("sola-ws-hooks-{}.sock", crate::spawn::slug(host)));
+    let listener = server::bind(&path)?;
+    ensure_channel();
+    let tx = HOOK_TX.get().unwrap().clone();
+    let host = host.to_string();
+    std::thread::Builder::new()
+        .name(format!("hooks-{host}"))
+        .spawn(move || server::serve(listener, tx, Some(host)))?;
+    tracing::info!(sock = %path.display(), "remote hook socket listening");
+    Ok(path)
 }
 
 pub fn subscription() -> Subscription<Incoming> {

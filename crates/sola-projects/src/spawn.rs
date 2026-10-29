@@ -5,10 +5,10 @@
 //! and a gone path call [`remove_worktree`]. `tab.set --name` calls
 //! [`move_worktree`].
 
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Mutex, OnceLock};
+
+use crate::machine::Machine;
 
 /// Serialize `git worktree add|move|remove`. Off-thread removes would
 /// otherwise race each other (and a live spawn) on `.git/*.lock`.
@@ -49,42 +49,23 @@ pub fn slug(name: &str) -> String {
     out
 }
 
-pub fn is_git_checkout(path: &Path) -> bool {
-    let Some(dir) = path.to_str() else {
-        return false;
-    };
-    let output = Command::new("git")
-        .args(["-C", dir, "rev-parse", "--is-inside-work-tree"])
-        .output();
-    match output {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim() == "true",
-        _ => false,
-    }
+pub fn is_git_checkout(m: &Machine, path: &Path) -> bool {
+    git_stdout(m, path, &["rev-parse", "--is-inside-work-tree"]).as_deref() == Some("true")
 }
 
 /// Append `.worktrees/` to `.gitignore` when git does not already ignore it.
-pub fn ensure_worktrees_ignored(root: &Path) -> Result<(), String> {
-    if git_ignores(root, WORKTREE_DIR) {
+pub fn ensure_worktrees_ignored(m: &Machine, root: &Path) -> Result<(), String> {
+    if git_ok(m, root, &["check-ignore", "-q", WORKTREE_DIR]) {
         return Ok(());
     }
     let gi = root.join(".gitignore");
-    let mut text = fs::read_to_string(&gi).unwrap_or_default();
+    let mut text = m.read_to_string(&gi).unwrap_or_default();
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
     text.push_str("/.worktrees/\n");
-    fs::write(&gi, text).map_err(|e| format!("write .gitignore: {e}"))
-}
-
-fn git_ignores(root: &Path, path: &str) -> bool {
-    let Some(dir) = root.to_str() else {
-        return false;
-    };
-    Command::new("git")
-        .args(["-C", dir, "check-ignore", "-q", path])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    m.write(&gi, text.as_bytes(), None)
+        .map_err(|e| format!("write .gitignore: {e}"))
 }
 
 /// `git worktree add` at `<root>/.worktrees/<slug>`.
@@ -92,17 +73,18 @@ fn git_ignores(root: &Path, path: &str) -> bool {
 /// `branch` is the git branch (default: `slug`). `base` is the start-point
 /// (default: HEAD). Does not start a pane.
 pub fn add_worktree(root: &Path, slug: &str) -> Result<PathBuf, String> {
-    add_worktree_at(root, slug, None, None)
+    add_worktree_at(&Machine::Local, root, slug, None, None)
 }
 
 pub fn add_worktree_at(
+    m: &Machine,
     root: &Path,
     slug: &str,
     branch: Option<&str>,
     base: Option<&str>,
 ) -> Result<PathBuf, String> {
     check_slug(slug)?;
-    if !is_git_checkout(root) {
+    if !is_git_checkout(m, root) {
         return Err("project root is not a git checkout".into());
     }
     let branch = branch
@@ -113,7 +95,7 @@ pub fn add_worktree_at(
         return Err(format!("branch name is not safe ({branch})"));
     }
     if let Some(start) = base.map(str::trim).filter(|s| !s.is_empty()) {
-        if !rev_exists(root, start) {
+        if !rev_exists(m, root, start) {
             return Err(format!(
                 "unknown start-point '{start}' (fetch remotes if this is origin/…)"
             ));
@@ -121,11 +103,12 @@ pub fn add_worktree_at(
     }
     let _lock = git_worktree_lock();
     let dest = worktree_path(root, slug);
-    if dest.exists() {
+    if m.exists(&dest) {
         return Err(format!("{} already exists", dest.display()));
     }
-    fs::create_dir_all(worktree_base(root)).map_err(|e| format!("create .worktrees: {e}"))?;
-    ensure_worktrees_ignored(root)?;
+    m.mkdir_p(&worktree_base(root))
+        .map_err(|e| format!("create .worktrees: {e}"))?;
+    ensure_worktrees_ignored(m, root)?;
 
     let dest_s = dest
         .to_str()
@@ -136,20 +119,20 @@ pub fn add_worktree_at(
     if let Some(s) = start {
         create.push(s);
     }
-    if git_ok(root, &create) {
+    if git_ok(m, root, &create) {
         return Ok(dest);
     }
-    if start.is_none() && git_ok(root, &["worktree", "add", dest_s, branch]) {
+    if start.is_none() && git_ok(m, root, &["worktree", "add", dest_s, branch]) {
         return Ok(dest);
     }
-    let _ = git_ok(root, &["worktree", "prune"]);
-    if git_ok(root, &create) {
+    let _ = git_ok(m, root, &["worktree", "prune"]);
+    if git_ok(m, root, &create) {
         return Ok(dest);
     }
-    if start.is_none() && git_ok(root, &["worktree", "add", dest_s, branch]) {
+    if start.is_none() && git_ok(m, root, &["worktree", "add", dest_s, branch]) {
         return Ok(dest);
     }
-    let err = git_stderr(root, &create);
+    let err = git_stderr(m, root, &create);
     Err(if err.is_empty() {
         "git worktree add failed".into()
     } else {
@@ -172,30 +155,31 @@ pub fn check_slug(slug: &str) -> Result<(), String> {
 ///
 /// Always `--force` so a live or dirty pane can take a ticket name (the
 /// files are renamed, not discarded). Same-path is a no-op.
-pub fn move_worktree(root: &Path, from: &Path, slug: &str) -> Result<PathBuf, String> {
+pub fn move_worktree(m: &Machine, root: &Path, from: &Path, slug: &str) -> Result<PathBuf, String> {
     check_slug(slug)?;
-    if !is_git_checkout(root) {
+    if !is_git_checkout(m, root) {
         return Err("project root is not a git checkout".into());
     }
     let _lock = git_worktree_lock();
     let dest = worktree_path(root, slug);
-    if path_eq(from, &dest) {
+    if path_eq(m, from, &dest) {
         return Ok(dest);
     }
-    if dest.exists() {
+    if m.exists(&dest) {
         return Err(format!("{} already exists", dest.display()));
     }
-    fs::create_dir_all(worktree_base(root)).map_err(|e| format!("create .worktrees: {e}"))?;
+    m.mkdir_p(&worktree_base(root))
+        .map_err(|e| format!("create .worktrees: {e}"))?;
     let from_s = from
         .to_str()
         .ok_or_else(|| "worktree path is not utf-8".to_string())?;
     let dest_s = dest
         .to_str()
         .ok_or_else(|| "worktree path is not utf-8".to_string())?;
-    if git_ok(root, &["worktree", "move", "--force", from_s, dest_s]) {
+    if git_ok(m, root, &["worktree", "move", "--force", from_s, dest_s]) {
         return Ok(dest);
     }
-    let err = git_stderr(root, &["worktree", "move", "--force", from_s, dest_s]);
+    let err = git_stderr(m, root, &["worktree", "move", "--force", from_s, dest_s]);
     Err(if err.is_empty() {
         "git worktree move failed".into()
     } else {
@@ -205,18 +189,18 @@ pub fn move_worktree(root: &Path, from: &Path, slug: &str) -> Result<PathBuf, St
 
 /// Rename the current branch in this checkout (`git branch -m`).
 /// Same name is a no-op. Does not move the worktree folder.
-pub fn rename_branch(worktree: &Path, branch: &str) -> Result<(), String> {
+pub fn rename_branch(m: &Machine, worktree: &Path, branch: &str) -> Result<(), String> {
     let branch = branch.trim();
     if !valid_branch(branch) {
         return Err(format!("branch name is not safe ({branch})"));
     }
-    if current_branch(worktree).as_deref() == Some(branch) {
+    if current_branch(m, worktree).as_deref() == Some(branch) {
         return Ok(());
     }
-    if git_ok(worktree, &["branch", "-m", branch]) {
+    if git_ok(m, worktree, &["branch", "-m", branch]) {
         return Ok(());
     }
-    let err = git_stderr(worktree, &["branch", "-m", branch]);
+    let err = git_stderr(m, worktree, &["branch", "-m", branch]);
     Err(if err.is_empty() {
         "git branch rename failed".into()
     } else {
@@ -225,13 +209,16 @@ pub fn rename_branch(worktree: &Path, branch: &str) -> Result<(), String> {
 }
 
 /// Checked-out branch, or `None` when detached / not a checkout.
-pub fn current_branch(worktree: &Path) -> Option<String> {
-    let s = git_stdout(worktree, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+pub fn current_branch(m: &Machine, worktree: &Path) -> Option<String> {
+    let s = git_stdout(m, worktree, &["rev-parse", "--abbrev-ref", "HEAD"])?;
     if s == "HEAD" { None } else { Some(s) }
 }
 
-fn path_eq(a: &Path, b: &Path) -> bool {
-    match (fs::canonicalize(a), fs::canonicalize(b)) {
+fn path_eq(m: &Machine, a: &Path, b: &Path) -> bool {
+    if !m.is_local() {
+        return a == b;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(x), Ok(y)) => x == y,
         _ => a == b,
     }
@@ -239,15 +226,15 @@ fn path_eq(a: &Path, b: &Path) -> bool {
 
 /// `git worktree remove` at `dest`. Already-gone paths prune leftover
 /// git metadata and succeed. `force` is `--force` (dirty / toss).
-pub fn remove_worktree(root: &Path, dest: &Path, force: bool) -> Result<(), String> {
+pub fn remove_worktree(m: &Machine, root: &Path, dest: &Path, force: bool) -> Result<(), String> {
     let _lock = git_worktree_lock();
-    if !dest.exists() {
-        if is_git_checkout(root) {
-            let _ = git_ok(root, &["worktree", "prune"]);
+    if !m.exists(dest) {
+        if is_git_checkout(m, root) {
+            let _ = git_ok(m, root, &["worktree", "prune"]);
         }
         return Ok(());
     }
-    if !is_git_checkout(root) {
+    if !is_git_checkout(m, root) {
         return Err("project root is not a git checkout".into());
     }
     let dest_s = dest
@@ -258,10 +245,10 @@ pub fn remove_worktree(root: &Path, dest: &Path, force: bool) -> Result<(), Stri
         args.push("--force");
     }
     args.push(dest_s);
-    if git_ok(root, &args) {
+    if git_ok(m, root, &args) {
         return Ok(());
     }
-    let err = git_stderr(root, &args);
+    let err = git_stderr(m, root, &args);
     Err(if err.is_empty() {
         "git worktree remove failed".into()
     } else {
@@ -280,28 +267,24 @@ fn valid_branch(name: &str) -> bool {
         && !name.contains(" ")
 }
 
-fn rev_exists(root: &Path, rev: &str) -> bool {
+fn rev_exists(m: &Machine, root: &Path, rev: &str) -> bool {
     git_ok(
+        m,
         root,
         &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
     )
 }
 
-fn git_ok(root: &Path, args: &[&str]) -> bool {
-    git_output(root, args).0
+fn git_ok(m: &Machine, root: &Path, args: &[&str]) -> bool {
+    git_output(m, root, args).0
 }
 
-fn git_stderr(root: &Path, args: &[&str]) -> String {
-    git_output(root, args).1
+fn git_stderr(m: &Machine, root: &Path, args: &[&str]) -> String {
+    git_output(m, root, args).1
 }
 
-fn git_stdout(root: &Path, args: &[&str]) -> Option<String> {
-    let dir = root.to_str()?;
-    let o = Command::new("git")
-        .args(["-C", dir])
-        .args(args)
-        .output()
-        .ok()?;
+fn git_stdout(m: &Machine, root: &Path, args: &[&str]) -> Option<String> {
+    let o = git_run(m, root, args).ok()?;
     if !o.status.success() {
         return None;
     }
@@ -309,22 +292,28 @@ fn git_stdout(root: &Path, args: &[&str]) -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
 }
 
-fn git_output(root: &Path, args: &[&str]) -> (bool, String) {
-    let Some(dir) = root.to_str() else {
-        return (false, "path is not utf-8".into());
-    };
-    match Command::new("git").args(["-C", dir]).args(args).output() {
+fn git_output(m: &Machine, root: &Path, args: &[&str]) -> (bool, String) {
+    match git_run(m, root, args) {
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
             (o.status.success(), err)
         }
-        Err(e) => (false, format!("git: {e}")),
+        Err(e) => (false, e),
     }
+}
+
+/// `git -C <root> <args>` there.
+fn git_run(m: &Machine, root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
+    let dir = root.to_str().ok_or("path is not utf-8")?;
+    let mut argv = vec!["git", "-C", dir];
+    argv.extend_from_slice(args);
+    m.run(None, &[], &argv, None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -381,7 +370,7 @@ mod tests {
         assert_eq!(dest, root.join(".worktrees/kvm-perf"));
         assert!(dest.join("README").exists());
         assert!(dest.join(".git").exists() || dest.join(".git").is_file());
-        assert!(git_ignores(&root, WORKTREE_DIR));
+        assert!(git_ok(&Machine::Local, &root, &["check-ignore", "-q", WORKTREE_DIR]));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -409,7 +398,7 @@ mod tests {
         )
         .unwrap();
         let first = first.trim().to_string();
-        let dest = add_worktree_at(
+        let dest = add_worktree_at(&Machine::Local, 
             &root,
             "sc-1234",
             Some("joshua/sc-1234/fix-login"),
@@ -439,7 +428,7 @@ mod tests {
     #[test]
     fn add_worktree_unknown_base_errors() {
         let root = temp_git();
-        let err = add_worktree_at(&root, "x", None, Some("origin/nope")).unwrap_err();
+        let err = add_worktree_at(&Machine::Local, &root, "x", None, Some("origin/nope")).unwrap_err();
         assert!(err.contains("unknown start-point"), "{err}");
         let _ = fs::remove_dir_all(&root);
     }
@@ -464,11 +453,11 @@ mod tests {
         let root = temp_git();
         let from = add_worktree(&root, "adhoc").expect("add");
         fs::write(from.join("scratch"), "wip").unwrap();
-        let dest = move_worktree(&root, &from, "sc-1234").expect("move");
+        let dest = move_worktree(&Machine::Local, &root, &from, "sc-1234").expect("move");
         assert_eq!(dest, root.join(".worktrees/sc-1234"));
         assert!(!from.exists());
         assert_eq!(fs::read_to_string(dest.join("scratch")).unwrap(), "wip");
-        assert_eq!(current_branch(&dest).as_deref(), Some("adhoc"));
+        assert_eq!(current_branch(&Machine::Local, &dest).as_deref(), Some("adhoc"));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -477,7 +466,7 @@ mod tests {
         let root = temp_git();
         let from = add_worktree(&root, "adhoc").expect("add");
         add_worktree(&root, "sc-1234").unwrap();
-        let err = move_worktree(&root, &from, "sc-1234").unwrap_err();
+        let err = move_worktree(&Machine::Local, &root, &from, "sc-1234").unwrap_err();
         assert!(err.contains("already exists"), "{err}");
         assert!(from.exists());
         let _ = fs::remove_dir_all(&root);
@@ -487,7 +476,7 @@ mod tests {
     fn move_worktree_same_path_is_ok() {
         let root = temp_git();
         let from = add_worktree(&root, "sc-1234").expect("add");
-        let dest = move_worktree(&root, &from, "sc-1234").expect("same");
+        let dest = move_worktree(&Machine::Local, &root, &from, "sc-1234").expect("same");
         assert_eq!(dest, from);
         assert!(from.exists());
         let _ = fs::remove_dir_all(&root);
@@ -497,9 +486,9 @@ mod tests {
     fn rename_branch_moves_head() {
         let root = temp_git();
         let dest = add_worktree(&root, "adhoc").expect("add");
-        rename_branch(&dest, "joshua/sc-1234/fix").expect("branch");
-        assert_eq!(current_branch(&dest).as_deref(), Some("joshua/sc-1234/fix"));
-        rename_branch(&dest, "joshua/sc-1234/fix").expect("same");
+        rename_branch(&Machine::Local, &dest, "joshua/sc-1234/fix").expect("branch");
+        assert_eq!(current_branch(&Machine::Local, &dest).as_deref(), Some("joshua/sc-1234/fix"));
+        rename_branch(&Machine::Local, &dest, "joshua/sc-1234/fix").expect("same");
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -508,9 +497,9 @@ mod tests {
         let root = temp_git();
         let dest = add_worktree(&root, "kid").expect("add");
         assert!(dest.exists());
-        remove_worktree(&root, &dest, false).expect("remove");
+        remove_worktree(&Machine::Local, &root, &dest, false).expect("remove");
         assert!(!dest.exists());
-        remove_worktree(&root, &dest, false).expect("already gone");
+        remove_worktree(&Machine::Local, &root, &dest, false).expect("already gone");
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -519,12 +508,12 @@ mod tests {
         let root = temp_git();
         let dest = add_worktree(&root, "dirty").expect("add");
         fs::write(dest.join("scratch"), "nope").unwrap();
-        let err = remove_worktree(&root, &dest, false).unwrap_err();
+        let err = remove_worktree(&Machine::Local, &root, &dest, false).unwrap_err();
         assert!(
             err.to_lowercase().contains("force") || dest.exists(),
             "{err}"
         );
-        remove_worktree(&root, &dest, true).expect("force");
+        remove_worktree(&Machine::Local, &root, &dest, true).expect("force");
         assert!(!dest.exists());
         let _ = fs::remove_dir_all(&root);
     }

@@ -44,7 +44,7 @@ impl Shell {
                 self.on_windows(w);
                 self.resolve_pending_launch_if_window();
                 self.flush_calendar_event();
-                self.flush_project_pending()
+                Task::none()
             }
             Topic::SetAppMenu(m) => {
                 self.on_set_app_menu(m);

@@ -3,6 +3,7 @@
 **Date:** 2026-08-18  
 **Status:** approved for implementation  
 **Renamed (2026-10-21, branch `next`):** the app is Projects (`sola-projects`, owner `projects`, `solactl projects`); a workspace is now a tab (`tab.*`, `--tab`, JSON `tabs` / `tab` / `tab_name`). Runtime names (tmux `sola-ws` / `sws-`, `SOLA_WS_PATH`, `ws-*` ids) are unchanged. The body below uses the old names.  
+**Projects are folders (2026-10-28, branch `next`):** Projects keeps only the open projects; `project.add`, `project.rm` and `project.reorder` are gone (`project.open` adds a folder of `~/Projects`; `project.close` closes one, its sessions ended); `project.open --host` opens one on another computer. As built in the `projects` capability row.  
 **Parent:** [`2026-08-13-sola-agent-terminal-design.md`](2026-08-13-sola-agent-terminal-design.md)  
 **Call plane:** [`2026-08-13-sola-call-plane-design.md`](2026-08-13-sola-call-plane-design.md)  
 **Product:** [`crates/sola-projects/PRODUCT.md`](../../crates/sola-projects/PRODUCT.md)

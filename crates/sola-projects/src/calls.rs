@@ -18,30 +18,23 @@ pub fn methods() -> Vec<MethodSpec> {
         method("ps", "Project → tab → state table", &[]),
         method("project.list", "List projects", &[]),
         method_ms(
-            "project.add",
-            "Register a project from a folder path",
-            &[req(
-                "path",
-                Some('p'),
-                ArgType::Path,
-                "Folder path (`~` ok)",
-            )],
-            ADD_TIMEOUT_MS,
-        ),
-        method_ms(
             "project.open",
-            "Bring a project's window up (its workspace shows), opening it if closed (it lands in the showing workspace); a folder that is not a project yet is added first",
-            &[req(
-                "path",
-                Some('p'),
-                ArgType::Path,
-                "Folder path (`~` ok)",
-            )],
+            "Bring a project's window up (its workspace shows), opening it if closed (it lands in the showing workspace); a folder that is not a project yet is added first. \
+             With --host, the folder is on that computer: its tabs run there, in tmux over ssh",
+            &[
+                req(
+                    "path",
+                    Some('p'),
+                    ArgType::Path,
+                    "Folder path (`~` ok); with --host, its full path there",
+                ),
+                opt_s("host", None, "The computer it is on (an ssh host); omit for this one"),
+            ],
             ADD_TIMEOUT_MS,
         ),
         method(
-            "project.rm",
-            "Unregister a project and kill its tmux sessions",
+            "project.close",
+            "Close a project as its window's close does: the window goes, its tabs' sessions end (tmux killed, here or on its computer), and it stays closed until opened again",
             &[req_s("project", Some('p'), "Project id or name")],
         ),
         method(
@@ -53,18 +46,6 @@ pub fn methods() -> Vec<MethodSpec> {
                     "script",
                     None,
                     "Set the script; omit to read. Empty clears.",
-                ),
-            ],
-        ),
-        method(
-            "project.reorder",
-            "Move a project in the project order (window order)",
-            &[
-                req_s("project", Some('p'), "Project id or name"),
-                opt_s(
-                    "before",
-                    None,
-                    "Sit in front of this project; omit or `end` = last",
                 ),
             ],
         ),
@@ -299,11 +280,9 @@ mod tests {
         for need in [
             "ps",
             "project.list",
-            "project.add",
             "project.open",
-            "project.rm",
+            "project.close",
             "project.startup",
-            "project.reorder",
             "tab.list",
             "tab.spawn",
             "tab.rm",
@@ -342,10 +321,5 @@ mod tests {
         assert!(set.args.iter().any(|a| a.name == "title"));
         assert!(set.args.iter().any(|a| a.name == "branch"));
         assert!(set.args.iter().any(|a| a.name == "before"));
-        let reorder = methods
-            .iter()
-            .find(|m| m.name == "project.reorder")
-            .unwrap();
-        assert!(reorder.args.iter().any(|a| a.name == "before"));
     }
 }
