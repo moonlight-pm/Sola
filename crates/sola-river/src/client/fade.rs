@@ -26,6 +26,10 @@
 //! Idle comes from `ext_idle_notifier_v1.get_idle_notification`, which
 //! honors idle inhibitors (a video player keeping the screen awake); and
 //! no fade runs while a window is fullscreen (Cinema).
+//!
+//! Once the fade is full, the picture itself dims after a while ([`dim`]).
+
+mod dim;
 
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
@@ -75,6 +79,13 @@ pub struct FadeState {
     failed: bool,
     /// What `Topic::IdleFade` last said.
     told: Option<IdleFade>,
+    /// The background's dim (`Appearance.dim_*`); `None` while it is off.
+    dim: Option<dim::Times>,
+    /// When the fade became full (the windows out of sight).
+    full_since: Option<Instant>,
+    dimmer: Option<dim::Dimmer>,
+    /// Making the dim's layer failed this idle.
+    dim_failed: bool,
 }
 
 impl Default for FadeState {
@@ -97,6 +108,10 @@ impl Default for FadeState {
             overlay: None,
             failed: false,
             told: None,
+            dim: dim::times(&look),
+            full_since: None,
+            dimmer: None,
+            dim_failed: false,
         }
     }
 }
@@ -173,6 +188,10 @@ pub fn settings(state: &mut AppData, look: Option<&Appearance>) {
         .then(|| u32::from(look.fade_after_min.max(1)) * 60_000);
     // A new length takes from the next step: the fade so far keeps going.
     state.fade.over = over(&look);
+    state.fade.dim = dim::times(&look);
+    if state.fade.dim.is_none() && state.fade.dimmer.take().is_some() {
+        flush(state);
+    }
     if wanted == state.fade.wanted {
         return;
     }
@@ -207,12 +226,14 @@ pub fn tick(state: &mut AppData) {
         let t = at.elapsed().as_secs_f64() / RETURN.as_secs_f64();
         if t >= 1.0 || state.fade.overlay.is_none() {
             state.fade.returning = None;
+            state.fade.dimmer = None;
             rest(state);
             return;
         }
         if let Some(overlay) = &mut state.fade.overlay {
             overlay.set(returning_level(from, floor, t), floor);
         }
+        dim::returning(state, t);
         flush(state);
         return;
     }
@@ -226,6 +247,7 @@ pub fn tick(state: &mut AppData) {
         }
         tell(state, true, false);
         state.fade.since = Some(Instant::now());
+        state.fade.full_since = None;
         return;
     }
     let target = multiplier(floor, since.elapsed(), state.fade.over);
@@ -240,16 +262,24 @@ pub fn tick(state: &mut AppData) {
         overlay.set(target, floor);
         flush(state);
     }
-    // Full: the windows are out of sight until input.
+    // Full: the windows are out of sight until input, and the dim's
+    // wait begins.
     if state.fade.overlay.as_ref().is_some_and(|o| o.level == u32::MAX) {
         tell(state, true, true);
+        state.fade.full_since.get_or_insert_with(Instant::now);
+        dim::tick(state);
     }
 }
 
 /// Run during every render sequence, last: make the overlay when the rest
 /// or the fade needs it (again when what it keeps moved), and keep it on
-/// top.
+/// top, with the dim's black over it.
 pub fn sync_on_render(state: &mut AppData) {
+    sync_overlay(state);
+    dim::sync(state);
+}
+
+fn sync_overlay(state: &mut AppData) {
     let fading = state.fade.wanted.is_some()
         && (state.fade.since.is_some() || state.fade.returning.is_some());
     if !fading && state.fade.floor == 0 {
@@ -378,15 +408,19 @@ fn ensure(state: &mut AppData) {
 fn resume(state: &mut AppData) {
     tell(state, false, false);
     state.fade.since = None;
+    state.fade.full_since = None;
     state.fade.failed = false;
+    state.fade.dim_failed = false;
     match state.fade.overlay.as_ref().map(|o| o.level) {
         Some(level) if level > state.fade.floor => {
             if state.fade.returning.is_none() {
+                dim::start_return(state);
                 state.fade.returning = Some((level, Instant::now()));
             }
         }
         _ => {
             state.fade.returning = None;
+            state.fade.dimmer = None;
             rest(state);
         }
     }
@@ -430,13 +464,17 @@ fn tell(state: &mut AppData, fading: bool, out: bool) {
 fn wake(state: &mut AppData) {
     tell(state, false, false);
     state.fade.since = None;
+    state.fade.full_since = None;
     state.fade.failed = false;
+    state.fade.dim_failed = false;
     state.fade.returning = None;
+    state.fade.dimmer = None;
     rest(state);
 }
 
 fn drop_overlay(state: &mut AppData) {
     state.fade.returning = None;
+    state.fade.dimmer = None;
     let Some(mut overlay) = state.fade.overlay.take() else {
         return;
     };
@@ -449,6 +487,23 @@ fn flush(state: &AppData) {
     if let Some(conn) = &state.conn {
         let _ = conn.flush();
     }
+}
+
+/// A pool of `w` × `h` XRGB pixels, all black: a fresh memfd reads as
+/// zeros.
+fn black_pool(
+    state: &AppData,
+    w: i32,
+    h: i32,
+) -> Result<(rustix::fd::OwnedFd, wl_shm_pool::WlShmPool), String> {
+    let shm = state.screenshot.shm.as_ref().ok_or("wl_shm not bound")?;
+    let qh = state.qh.as_ref().ok_or("queue handle missing")?;
+    let size = w.checked_mul(h).and_then(|p| p.checked_mul(4)).ok_or("size")?;
+    let memfd =
+        memfd_create("sola-fade", MemfdFlags::CLOEXEC).map_err(|e| format!("memfd_create: {e}"))?;
+    ftruncate(&memfd, size as u64).map_err(|e| format!("ftruncate: {e}"))?;
+    let pool = shm.create_pool(memfd.as_fd(), size, qh, ());
+    Ok((memfd, pool))
 }
 
 fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
@@ -464,13 +519,7 @@ fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
     let (pool, bw, bh, scale, black) = match crate::client::background::overlay_pool(state) {
         Some((pool, w, h, scale)) => (pool, w, h, scale.max(1), None),
         None => {
-            let shm = state.screenshot.shm.clone().ok_or("wl_shm not bound")?;
-            let size = ow.checked_mul(oh).and_then(|p| p.checked_mul(4)).ok_or("size")?;
-            // A fresh memfd reads as zeros: black.
-            let memfd = memfd_create("sola-fade", MemfdFlags::CLOEXEC)
-                .map_err(|e| format!("memfd_create: {e}"))?;
-            ftruncate(&memfd, size as u64).map_err(|e| format!("ftruncate: {e}"))?;
-            let pool = shm.create_pool(memfd.as_fd(), size, &qh, ());
+            let (memfd, pool) = black_pool(state, ow, oh)?;
             (pool.clone(), ow, oh, 1, Some((memfd, pool)))
         }
     };
@@ -539,6 +588,8 @@ impl Dispatch<ExtIdleNotificationV1, ()> for AppData {
                 tell(state, true, false);
                 state.fade.returning = None;
                 state.fade.since = Some(Instant::now());
+                state.fade.full_since = None;
+                state.fade.dim_failed = false;
                 state.pending.render_dirty = true;
             }
             ext_idle_notification_v1::Event::Resumed => {

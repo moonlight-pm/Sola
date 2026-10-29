@@ -295,7 +295,7 @@ list shows the picture (or black) at `100 − Appearance.opacity` % at rest
 picture, the output size or the kept rectangle change);
 `ext_idle_notifier_v1` says idle / resumed, and the opacity rises from
 there over `fade_over_min` (`wp_alpha_modifier_v1`), stepped back down to
-the rest over a second on input. It is cut in pieces (sub-buffers of the picture's memory) around
+the rest over a second on input. Once it is full, the dim (`client/fade/dim.rs`) waits `dim_after_min`, then raises a black output-sized surface over it to 90 % over `dim_over_min` (a tenth of the picture's light left), and steps it down with the return. The overlay is cut in pieces (sub-buffers of the picture's memory) around
 the shell's sticky `Topic::IdleKeep` — the top row's flower and agent
 islands — whose piece stays at the rest. Sticky `Topic::IdleFade`
 says it is fading and, once full, `out`: the shell then reports every tab

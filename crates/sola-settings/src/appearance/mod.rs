@@ -1,6 +1,6 @@
 //! Appearance: the background picture, whether the theme's colors follow
 //! it (and which of its schemes), the looks you make with your own colors,
-//! how opaque the desk is over the picture, and the idle fade. The picture is set from Paint (File → Set as
+//! how opaque the desk is over the picture, and the idle fade and dim. The picture is set from Paint (File → Set as
 //! Background) or `solactl background`; here it can be cleared. The
 //! settings are `Topic::Appearance`: the shell acts on the colors,
 //! sola-river on the opacity and the fade. The schemes come from the shell
@@ -46,7 +46,12 @@ pub enum AppearanceMsg {
     /// The fade delay and length sliders moved (shown, not yet sent).
     FadeAfter(u16),
     FadeOver(u16),
-    /// A fade slider was let go: send it.
+    /// Dim the background once the fade is full on / off.
+    Dim(bool),
+    /// The dim's delay and length sliders moved (shown, not yet sent).
+    DimAfter(u16),
+    DimOver(u16),
+    /// A fade or dim slider was let go: send it.
     FadeDone,
     /// Back to the plain ground.
     ClearPicture,
@@ -116,6 +121,15 @@ pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) {
         }
         AppearanceMsg::FadeOver(m) => {
             look.fade_over_min = m;
+            return;
+        }
+        AppearanceMsg::Dim(on) => look.dim_idle = on,
+        AppearanceMsg::DimAfter(m) => {
+            look.dim_after_min = m;
+            return;
+        }
+        AppearanceMsg::DimOver(m) => {
+            look.dim_over_min = m;
             return;
         }
         AppearanceMsg::ClearPicture => {
@@ -237,11 +251,35 @@ fn idle(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
                     format!("{} min", look.fade_over_min),
                 ),
             ),
+            page::setting(
+                "Then dim the background",
+                toggler(look.dim_idle)
+                    .on_toggle(AppearanceMsg::Dim)
+                    .style(toggle_style),
+            ),
+            page::setting(
+                "Dim after",
+                slider_with(
+                    slider(1..=240u16, look.dim_after_min, AppearanceMsg::DimAfter)
+                        .on_release(AppearanceMsg::FadeDone),
+                    format!("{} min", look.dim_after_min),
+                ),
+            ),
+            page::setting(
+                "Dim over",
+                slider_with(
+                    slider(1..=120u16, look.dim_over_min, AppearanceMsg::DimOver)
+                        .on_release(AppearanceMsg::FadeDone),
+                    format!("{} min", look.dim_over_min),
+                ),
+            ),
         ]),
         Some(
             "After the first time with no input, the windows fade into the \
-             background over the second. Any input brings them back. Not while \
-             a window is fullscreen or an app keeps the screen awake (a video)."
+             background over the second. Once only the background shows, it \
+             dims after the third, over the fourth, to a tenth of its light. \
+             Any input brings them back. Not while a window is fullscreen or an \
+             app keeps the screen awake (a video)."
                 .into(),
         ),
     )

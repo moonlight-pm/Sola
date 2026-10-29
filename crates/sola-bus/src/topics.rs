@@ -398,6 +398,16 @@ pub struct Appearance {
     /// Minutes the fade takes, from the first sign to fully faded.
     #[serde(default = "Appearance::default_fade_over")]
     pub fade_over_min: u16,
+    /// Once the fade is full and only the picture shows, dim the picture
+    /// too (sola-river draws black over it), to a tenth of its light.
+    #[serde(default = "Appearance::default_dim_idle")]
+    pub dim_idle: bool,
+    /// Minutes after the fade is full before the dim starts.
+    #[serde(default = "Appearance::default_dim_after")]
+    pub dim_after_min: u16,
+    /// Minutes the dim takes.
+    #[serde(default = "Appearance::default_dim_over")]
+    pub dim_over_min: u16,
     /// How opaque the desk's surfaces are at rest, in % (the windows,
     /// the bar, the top row): sola-river draws the background over them
     /// at the rest, and the idle fade rises from there.
@@ -434,6 +444,8 @@ impl Appearance {
     pub const DEFAULT_STRENGTH: u8 = 60;
     pub const DEFAULT_FADE_AFTER_MIN: u16 = 5;
     pub const DEFAULT_FADE_OVER_MIN: u16 = 30;
+    pub const DEFAULT_DIM_AFTER_MIN: u16 = 60;
+    pub const DEFAULT_DIM_OVER_MIN: u16 = 30;
     pub const DEFAULT_OPACITY: u8 = 90;
     /// The least opacity Settings offers: below it, text over a busy
     /// picture stops reading.
@@ -457,6 +469,18 @@ impl Appearance {
         Self::DEFAULT_FADE_OVER_MIN
     }
 
+    fn default_dim_idle() -> bool {
+        true
+    }
+
+    fn default_dim_after() -> u16 {
+        Self::DEFAULT_DIM_AFTER_MIN
+    }
+
+    fn default_dim_over() -> u16 {
+        Self::DEFAULT_DIM_OVER_MIN
+    }
+
     fn default_opacity() -> u8 {
         Self::DEFAULT_OPACITY
     }
@@ -471,6 +495,9 @@ impl Default for Appearance {
             fade_idle: true,
             fade_after_min: Self::DEFAULT_FADE_AFTER_MIN,
             fade_over_min: Self::DEFAULT_FADE_OVER_MIN,
+            dim_idle: true,
+            dim_after_min: Self::DEFAULT_DIM_AFTER_MIN,
+            dim_over_min: Self::DEFAULT_DIM_OVER_MIN,
             opacity: Self::DEFAULT_OPACITY,
             colors: Default::default(),
             customs: Vec::new(),
@@ -2050,6 +2077,9 @@ mod tests {
         assert!(old.fade_idle);
         assert_eq!(old.fade_after_min, Appearance::DEFAULT_FADE_AFTER_MIN);
         assert_eq!(old.fade_over_min, Appearance::DEFAULT_FADE_OVER_MIN);
+        assert!(old.dim_idle);
+        assert_eq!(old.dim_after_min, Appearance::DEFAULT_DIM_AFTER_MIN);
+        assert_eq!(old.dim_over_min, Appearance::DEFAULT_DIM_OVER_MIN);
         assert_eq!(old.opacity, Appearance::DEFAULT_OPACITY);
         assert!(old.customs.is_empty() && old.custom.is_none());
         let mine = Appearance {
