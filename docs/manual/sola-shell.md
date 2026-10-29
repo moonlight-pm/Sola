@@ -174,8 +174,9 @@ read.
 When a Projects session asks you something (a permission, a question) or
 finishes its turn, an island for it appears on the left of the top row,
 after the flower: a diamond for a question, a check for a finished turn,
-the session's name and what it wants. The session you are looking at gets
-none. Past half the row, a **+N** island lists the rest.
+the session's name and what it wants. A project on another computer goes
+by its folder alone ("Oath", not "Oath on buccina"). The session you are
+looking at gets none. Past half the row, a **+N** island lists the rest.
 
 Click an island for its card. A question's card shows the question and
 its answers as buttons, with a field for your own answer; a finished

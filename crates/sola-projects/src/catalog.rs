@@ -518,6 +518,21 @@ pub fn project_from_remote(
     (project, ws)
 }
 
+/// What an agent island calls a project: its name, but a project on
+/// another computer by its folder alone ("Oath", not "Oath on buccina";
+/// Joshua, 2026-10-29).
+pub fn island_name(project: &Project) -> &str {
+    if project.host.is_none() {
+        return &project.name;
+    }
+    project
+        .root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&project.name)
+}
+
 /// Reuse `ws-main` only when that tmux session is free or already in
 /// this checkout. Stops a first-added other project from stealing a
 /// leftover pane — including when the path query fails.
@@ -1402,6 +1417,7 @@ mod tests {
         let (project, tab) = project_from_remote("novus", &root, "proj-novus-tmp", "ws-novus-tmp");
         let folder = root.file_name().unwrap().to_str().unwrap();
         assert_eq!(project.name, format!("{folder} on novus"));
+        assert_eq!(island_name(&project), folder);
         assert_eq!(tab.host.as_deref(), Some("novus"));
         assert_eq!(tab.kind, Kind::Main);
         // The same path here is not this tab.
@@ -1418,6 +1434,7 @@ mod tests {
         assert_eq!(back.host.as_deref(), Some("novus"));
         let here = Project { host: None, ..project };
         assert!(!serde_json::to_string(&here).unwrap().contains("host"));
+        assert_eq!(island_name(&here), here.name);
     }
 
     #[test]

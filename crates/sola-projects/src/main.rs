@@ -2156,7 +2156,7 @@ impl App {
         let mut place = HashMap::new();
         for pane in self.islands.panes() {
             looked.insert(pane.clone(), self.looked_at(&pane));
-            let (project, name) = self.toast_place(&pane);
+            let (project, name) = self.island_place(&pane);
             place.insert(pane, (project.unwrap_or_default(), name));
         }
         self.islands.sync(&looked, &place, &known);
@@ -2281,6 +2281,17 @@ impl App {
         };
         let project =
             catalog::find_project(&self.projects, &ws.project_id).map(|p| p.name.clone());
+        (project, cli::rail_label(ws))
+    }
+
+    /// As [`Self::toast_place`], with the project as its island names it
+    /// ([`catalog::island_name`]).
+    fn island_place(&self, pane_id: &str) -> (Option<String>, String) {
+        let Some(ws) = self.tab_for_pane(pane_id) else {
+            return (None, pane_id.to_string());
+        };
+        let project = catalog::find_project(&self.projects, &ws.project_id)
+            .map(|p| catalog::island_name(p).to_string());
         (project, cli::rail_label(ws))
     }
 
