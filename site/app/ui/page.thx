@@ -16,7 +16,7 @@ conform Page to Component {
                 <title>{title}</title>
                 <meta
                     name="description"
-                    content="Sola is a desktop environment for Linux on Wayland, written in Rust: a session, a shell, and its own applications on one toolkit. Pre-release; NixOS, x86-64."
+                    content="Sola is a desktop environment for Linux on Wayland, written in Rust: a session, a shell, and its own applications on one toolkit. Pre-release; Oath, x86-64."
                 />
                 <meta name="color-scheme" content="dark" />
                 <link rel="icon" href="/flower.svg" type="image/svg+xml" />
