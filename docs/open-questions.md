@@ -128,6 +128,103 @@ forward it whole; forward a Projects-only proxy (only owner `projects`).
 
 ---
 
+### D9 — Unpackaged apps in the launcher on Oath (P1)
+
+**Context:** Kit, Monitor, Preview, Arcade, Scope and Spotify are launcher
+built-ins (`crates/sola-shell/src/builtins.rs`), but no Oath package carries
+them (`crates/sola-make/src/oath/packages.rs`). On Oath, choosing one fails
+with a launch error. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+
+**Ask:** hide them from the launcher on Oath, or package them (which)?
+
+**Related:** `shell-launcher`, `oath-platform` capabilities.
+
+---
+
+### D10 — A Bots service on Oath (P2)
+
+**Context:** Oath's desk profile has no `svc:sola-botsd` (Oath repo,
+`crates/oath-core/seed/desk.json`), so the `bots` owner, `solactl bots` and
+the Bots window have nothing to talk to on Oath. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+
+**Ask:** add `svc:sola-botsd` to the desk profile (an Oath change), or leave
+Bots off Oath?
+
+**Related:** `bots` capability; [D7](#d7--bots-http-api-exposure-p0).
+
+---
+
+### D11 — What Quit Sola means on Oath (P1)
+
+**Context:** After **Quit Sola** on Oath, `sola-shell`, `sola-river` and
+`sola-session` exit cleanly and stay down: a clean exit is not restarted
+(on-failure / always policies). `sola-bus`, `sola-call` and `sola-kvm` keep
+running. Nothing brings a desktop back short of a reboot. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+
+**Ask:** intended? If not: Quit Sola restarts the desk, logs out to a
+console, is hidden on Oath, or something else?
+
+**Related:** `oath-platform`, `shell-menubar` capabilities;
+[manual/sola-shell.md](manual/sola-shell.md#flower-menu).
+
+---
+
+### D12 — The public manual says the desk has no login and no lock screen (P1)
+
+**Context:** The manual's Introduction ("Starting a session"), published at
+sola.moonlight.pm/manual, says the desk starts at boot with no login and no
+lock screen. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+
+**Ask:** fine to say publicly, or reword / drop it (and is a lock screen
+wanted)?
+
+---
+
+### D13 — Bot refusals in the compositor can be bypassed (P1)
+
+**Context:** The `SOLA_BOT` refusals on compositor input can be bypassed
+through `solactl sola-river input.*` and over MCP. The browser's rules follow
+the calling owner; these don't. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+
+**Ask:** close the bypass (refuse by caller everywhere), or accept that
+anything with the call socket is desk-equivalent (D3)?
+
+**Related:** [D3](#d3--which-call-plane-methods-need-a-human-confirm-p1), `call`, `bots` capabilities.
+
+---
+
+### D14 — What `pkg:sola` ships on Oath (P2)
+
+**Context:** *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).* `pkg:sola` carries none of:
+
+- `.desktop` files, so `xdg-open` does not route to Sola apps
+  (`sola-browser.desktop` also hardcodes `Exec=/opt/sola/bin/sola-browser`);
+- the KVM udev rule (see [D2](#d2--sola-kvm-permanent-input-acl-p1));
+- `cloudflared` for Design's share links;
+- log rotation: nothing rotates `sola.log` on Oath (only the `sola` process
+  manager did).
+
+**Ask:** which of these should Oath get, and from which package (Sola's or
+Oath's)?
+
+**Related:** `oath-platform`, `install-make`, `kvm`, `design` capabilities.
+
+---
+
+### D15 — Google Calendar's client on Oath (P2)
+
+**Context:** `GOOGLE_CALENDAR_CLIENT_ID` / `_SECRET` are empty constants on
+`next`, so Google sign-in needs `SOLA_GOOGLE_CALENDAR_CLIENT_ID` / `_SECRET`
+in the environment. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+
+**Ask:** how should Oath provide them (a secret in the desk profile, a file
+under `~/.config/sola`, built in at publish)? Does Google sign-in work on
+canto today?
+
+**Related:** `calendar` capability.
+
+---
+
 ## Open technical questions
 
 ### T1 — Agent pin UI surface — **closed (2026-08-28)**
