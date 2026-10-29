@@ -428,6 +428,10 @@ pub struct Appearance {
     /// then its own. `None`: the scheme alone.
     #[serde(default)]
     pub custom: Option<u8>,
+    /// Light mode: what the desk tells web pages it prefers
+    /// (`prefers-color-scheme`); off, dark. Sola's own windows stay dark.
+    #[serde(default)]
+    pub light: bool,
 }
 
 /// A look you made: your colors (`Appearance.colors`' keys) over one of the
@@ -502,6 +506,7 @@ impl Default for Appearance {
             colors: Default::default(),
             customs: Vec::new(),
             custom: None,
+            light: false,
         }
     }
 }

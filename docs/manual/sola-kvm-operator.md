@@ -12,7 +12,7 @@ injects it: a Linux peer runs `sola-kvm listen`, a Mac peer runs
 | Machine | How it runs |
 |---------|-------------|
 | Server (the machine whose keyboard and mouse are shared) | Started by `sola` after River is up: `sola-kvm` is in the process manager's managed set (`MANAGED`) and runs `server --input evdev`. |
-| Linux peer | `sola-kvm listen` (Wayland virtual pointer and keyboard). On Oath: `svc:sola-kvm` as `home`. |
+| Linux peer | `sola-kvm listen` (Wayland virtual pointer and keyboard). The keyboard starts with NumLock on, so the server's number pad types digits (a Mac's has no NumLock); the server's NumLock key (a Mac's Clear) toggles it. On Oath: `svc:sola-kvm` as `home`. |
 | Mac peer (optional) | LaunchAgent `com.sola.kvm-mac` runs `/opt/sola/bin/sola-kvm-mac listen`. |
 
 ## Requirements

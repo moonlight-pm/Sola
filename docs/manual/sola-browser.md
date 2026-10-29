@@ -389,6 +389,15 @@ keys; the candidate window sits on the last caret box.
 `<select>` dropdowns paint as an overlay on the page (Chromium's
 off-screen popup buffer).
 
+## Light or dark
+
+Pages are told whether you prefer light or dark (`prefers-color-scheme`):
+**Settings → Appearance → Light or dark**, Dark by default. A site with
+both looks shows the one you chose; one with a single look is unchanged.
+Pages that load after a change follow it at once; one already open
+follows it when it is next on screen. Web apps follow it too. Design's
+boards do not. The browser's own chrome stays dark either way.
+
 ## Not covered here
 
 This chapter does not yet include a full keyboard reference for the

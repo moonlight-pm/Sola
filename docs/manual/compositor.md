@@ -353,7 +353,9 @@ River starts each keyboard with NumLock off, which makes the number pad
 send navigation keys. `sola-river` turns NumLock on for each keyboard as it
 appears: at session start, when one is plugged in, and when you return
 from another console. The NumLock key still toggles it. The log shows
-`numlock enabled by default`.
+`numlock enabled by default`. Keys typed from another computer through
+the KVM come from `sola-kvm`'s own keyboard, which also starts with NumLock
+on ([KVM](sola-kvm-operator.md)).
 
 ### Key bindings
 

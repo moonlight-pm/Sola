@@ -508,6 +508,8 @@ pub struct App<E: Engine> {
     /// The output's size (`Topic::OutputGeometry`): the shape a desktop
     /// background is cut to.
     screen_size: Option<(u32, u32)>,
+    /// Light or dark as last told the pages (`Appearance.light`).
+    pages_light: Option<bool>,
     nav_hold: Option<NavHold>,
     page_menus: PageMenusHandle,
     /// Float tracker + iced window id for CSD while floating.
@@ -700,6 +702,7 @@ impl<E: Engine> App<E> {
             context_menu: None,
             wallpaper: None,
             screen_size: None,
+            pages_light: None,
             nav_hold: None,
             page_menus,
             float: sola_kit::FloatState::new(app_id),
@@ -2437,10 +2440,15 @@ impl<E: Engine> App<E> {
             Msg::Bus(message) => {
                 self.windows.update(&message);
                 use sola_bus::topics::Topic;
-                if let Some(Topic::OutputGeometry(g)) = Topic::parse(&message) {
-                    if g.width > 0 && g.height > 0 {
+                match Topic::parse(&message) {
+                    Some(Topic::OutputGeometry(g)) if g.width > 0 && g.height > 0 => {
                         self.screen_size = Some((g.width as u32, g.height as u32));
                     }
+                    Some(Topic::Appearance(look)) if self.pages_light != Some(look.light) => {
+                        self.pages_light = Some(look.light);
+                        let _ = self.cmd_tx.send(Cmd::ColorScheme { light: look.light });
+                    }
+                    _ => {}
                 }
                 // The tab bar's stoplight: as the window's own close.
                 if let Some(window) = self.windows.close_request(&message) {

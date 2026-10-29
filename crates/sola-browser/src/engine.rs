@@ -424,6 +424,11 @@ pub enum Cmd<E: Engine> {
         id: TabId,
         start: String,
     },
+    /// Light or dark, as pages see it (`prefers-color-scheme`): Settings →
+    /// Appearance (`Appearance.light`). Every helper takes it.
+    ColorScheme {
+        light: bool,
+    },
     Quit,
 }
 

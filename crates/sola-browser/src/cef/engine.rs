@@ -460,6 +460,9 @@ struct CefThreadState {
     /// Live profile request context (cookies/storage). Unused when CEF
     /// root_cache_path is the active profile (global context).
     request_context: RefCell<Option<cef::RequestContext>>,
+    /// Light or dark for pages (`Cmd::ColorScheme`): each page is told as
+    /// it is made. `None` until chrome says (Design never does).
+    light: Cell<Option<bool>>,
     /// Live profile id (for parking under the right key).
     live_profile_id: RefCell<String>,
     /// Parked profile workspaces — CEF browsers kept alive so switching
@@ -740,6 +743,7 @@ pub(super) fn run_worker(
         active_atomic,
         next_id,
         snapshot_dirty: std::cell::Cell::new(false),
+        light: Cell::new(None),
         request_context: RefCell::new(None),
         live_profile_id: RefCell::new(String::new()),
         parked: RefCell::new(std::collections::HashMap::new()),
@@ -2589,6 +2593,26 @@ fn apply_media_content_settings(origin: &str, granted: bool) {
     }
 }
 
+/// Light or dark for a page's `prefers-color-scheme`. CEF's own
+/// `set_chrome_color_scheme` does not reach windowless pages, so the page's
+/// DevTools session emulates the media feature; it holds across navigations.
+fn emulate_color_scheme(host: &cef::BrowserHost, light: bool) {
+    let (Some(mut params), Some(mut features), Some(mut feature)) = (
+        cef::dictionary_value_create(),
+        cef::list_value_create(),
+        cef::dictionary_value_create(),
+    ) else {
+        return;
+    };
+    let s = cef::CefString::from;
+    let value = if light { "light" } else { "dark" };
+    feature.set_string(Some(&s("name")), Some(&s("prefers-color-scheme")));
+    feature.set_string(Some(&s("value")), Some(&s(value)));
+    features.set_dictionary(0, Some(&mut feature));
+    params.set_list(Some(&s("features")), Some(&mut features));
+    crate::cef::agent::cdp(host, "Emulation.setEmulatedMedia", Some(&mut params));
+}
+
 fn apply_stored_media_content_settings() {
     let Some(profile) = crate::profiles::active_if_bound() else {
         return;
@@ -3521,6 +3545,15 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
             if let Some(tab) = tab_state_by_id(state, id) {
                 tab.app_site.replace(Some(start));
             }
+        }
+        Cmd::ColorScheme { light } => {
+            state.light.set(Some(light));
+            for tab in state.tabs.borrow().iter() {
+                if let Some(host) = tab.browser.host() {
+                    emulate_color_scheme(&host, light);
+                }
+            }
+            tracing::info!(light, "color scheme");
         }
         Cmd::Resize { width, height, .. } if state.target.get().is_some() => {
             if let Some(id) = state.target.get() {
@@ -5752,6 +5785,9 @@ fn push_tab(
         let show = (is_active || board.is_some()) && state.is_front.get();
         set_host_hidden(&host, !show);
         let obs = crate::cef::agent::attach(&mut host);
+        if let Some(light) = state.light.get() {
+            emulate_color_scheme(&host, light);
+        }
         if let Some(b) = board {
             apply_board_zoom(&host, &b);
             // Pin the layout to the board before the page lays out.

@@ -1,10 +1,11 @@
-//! Appearance: the background picture, whether the theme's colors follow
-//! it (and which of its schemes), the looks you make with your own colors,
-//! how opaque the desk is over the picture, and the idle fade and dim. The picture is set from Paint (File → Set as
-//! Background) or `solactl background`; here it can be cleared. The
-//! settings are `Topic::Appearance`: the shell acts on the colors,
-//! sola-river on the opacity and the fade. The schemes come from the shell
-//! (`Topic::ThemeVariations`).
+//! Appearance: light or dark (for web pages), the background picture,
+//! whether the theme's colors follow it (and which of its schemes), the
+//! looks you make with your own colors, how opaque the desk is over the
+//! picture, and the idle fade and dim. The picture is set from Paint (File
+//! → Set as Background) or `solactl background`; here it can be cleared.
+//! The settings are `Topic::Appearance`: the shell acts on the colors,
+//! sola-river on the opacity and the fade, the browser on light or dark.
+//! The schemes come from the shell (`Topic::ThemeVariations`).
 
 mod looks;
 
@@ -24,6 +25,8 @@ pub use looks::settle;
 
 #[derive(Debug, Clone)]
 pub enum AppearanceMsg {
+    /// Light (`true`) or dark, for web pages.
+    Light(bool),
     /// Adapt colors to the background on / off.
     Adapt(bool),
     /// The strength slider moved: sent as it moves (at most every
@@ -89,6 +92,7 @@ const LIVE_EVERY: std::time::Duration = std::time::Duration::from_millis(40);
 pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) {
     let look = &mut state.look;
     match msg {
+        AppearanceMsg::Light(on) => look.light = on,
         AppearanceMsg::Adapt(on) => look.adapt_theme = on,
         AppearanceMsg::Strength(v) | AppearanceMsg::Opacity(v) => {
             match msg {
@@ -178,12 +182,37 @@ fn send(write: impl FnOnce(&mut sola_bus::BusClient) -> std::io::Result<()>) {
 
 pub fn view(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
     page::page(vec![
+        mode(state),
         picture(state),
         looks::colors(state),
         looks::yours(state),
         desk(state),
         idle(state),
     ])
+}
+
+fn mode(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
+    let choice = |label, light: bool| {
+        let style = if state.look.light == light {
+            kit_btn::primary
+        } else {
+            kit_btn::secondary
+        };
+        kit_btn::labeled_sm(label, style).on_press(AppearanceMsg::Light(light))
+    };
+    page::section(
+        "Light or dark",
+        None,
+        page::group(vec![page::setting(
+            "Mode",
+            row![choice("Dark", false), choice("Light", true)].spacing(SPACE_SM),
+        )]),
+        Some(
+            "What web pages are told you prefer: a site with a light and a \
+             dark look shows that one. Sola's own windows stay dark."
+                .into(),
+        ),
+    )
 }
 
 fn desk(state: &AppearanceState) -> Element<'_, AppearanceMsg> {

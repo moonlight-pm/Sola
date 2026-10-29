@@ -81,6 +81,8 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::Application,
     // The output's size: the shape Use as Desktop Background cuts to.
     TopicKind::OutputGeometry,
+    // Light or dark for the pages (`Appearance.light`).
+    TopicKind::Appearance,
 ];
 
 /// The "Browser" app-menu published to the shell at startup. Each entry is

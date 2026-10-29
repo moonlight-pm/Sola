@@ -523,6 +523,11 @@ fn should_build_sequence(input: &KeyInput) -> bool {
     if disambiguate {
         return true;
     }
+    // Nor the pad's navigation keys (NumLock off): tmux knows no kitty pad
+    // codes and hands `CSI 57424 u` to the app as text.
+    if input.modify_other_keys && !any_mods && input.location == keyboard::Location::Numpad {
+        return false;
+    }
 
     match key {
         keyboard::Key::Named(named) => named_to_text(named).is_none(),
@@ -1377,6 +1382,16 @@ mod tests {
         k.location = keyboard::Location::Numpad;
         k.modify_other_keys = true;
         assert_eq!(resolve_bytes(&k), Some(b"\r".to_vec()));
+    }
+
+    // NumLock off: the pad's End is End to tmux, not `CSI 57424 u`.
+    #[test]
+    fn numpad_end_under_modify_other_keys_is_end() {
+        let key = Key::Named(Named::End);
+        let mut k = kk(&key, Mods::NONE, kitty());
+        k.location = keyboard::Location::Numpad;
+        k.modify_other_keys = true;
+        assert_eq!(resolve_bytes(&k), Some(b"\x1b[F".to_vec()));
     }
 
     // ── encode_key: basic named keys ──────────────────────────────────

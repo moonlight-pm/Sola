@@ -439,6 +439,7 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             id: TabId(id),
             start,
         },
+        ToEngine::ColorScheme { light } => Cmd::ColorScheme { light },
         ToEngine::Shutdown => return None,
     })
 }

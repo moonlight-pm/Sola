@@ -81,6 +81,10 @@ folders, the field scoped to "Projects". Type to filter.
 
 If Projects is not running, it starts and opens the project.
 
+Super+V pastes into the launcher's field (an address for Browser, say),
+and Super+C / X / A copy, cut and select in it, whatever app was focused
+when it opened.
+
 **Browser** asks where to go. Picking Browser turns the launcher into a
 field scoped to "Browser": type an address or what to search for, as in
 the browser's location bar.

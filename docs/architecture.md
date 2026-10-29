@@ -255,7 +255,10 @@ browser runs one CEF helper per profile, all live: its router keeps a page
 → profile map and routes commands by page (the rest to the active page's
 helper), merges every helper's pages, and makes a helper front only while
 it has a page on screen or the active one; helper-minted page ids sit in a
-per-profile range above chrome's. Each workspace has a profile of its
+per-profile range above chrome's. Light or dark (`Appearance.light`) goes
+to every helper as `Cmd::ColorScheme` (told again to each new one); a
+helper emulates `prefers-color-scheme` on each page's DevTools session
+(`Emulation.setEmulatedMedia`). Each workspace has a profile of its
 own, paired by the workspace's id (`profiles.json` `workspaces`,
 `profiles::pair`; a profile is only a uuid, so a workspace renames
 freely; no Profiles menu since 2026-10-26); a page runs its

@@ -79,6 +79,9 @@ struct Shared {
     sites: Mutex<HashMap<u64, String>>,
     /// Profiles whose helper was last told it is front.
     fronts: Mutex<HashSet<String>>,
+    /// Light or dark for pages (`Cmd::ColorScheme`), told to each helper
+    /// as it starts. `None` until chrome has said.
+    light: Mutex<Option<bool>>,
 }
 
 /// What a helper asked chrome about, by kind: their ids come from each
@@ -168,6 +171,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         shown: Mutex::new(HashSet::new()),
         sites: Mutex::new(HashMap::new()),
         fronts: Mutex::new(HashSet::new()),
+        light: Mutex::new(None),
     });
 
     let shared_w = shared.clone();
@@ -294,6 +298,12 @@ fn router_main(
                 break;
             }
             Cmd::Release { .. } | Cmd::FrameDone { .. } => {}
+            Cmd::ColorScheme { light } => {
+                *shared.light.lock().unwrap() = Some(light);
+                for h in helpers.lock().unwrap().map.values() {
+                    let _ = h.to_engine.send(ToEngine::ColorScheme { light });
+                }
+            }
             Cmd::Resize {
                 width,
                 height,
@@ -721,6 +731,9 @@ fn spawn_helper(
         height,
         scale,
     });
+    if let Some(light) = *shared.light.lock().unwrap() {
+        let _ = to_tx.send(ToEngine::ColorScheme { light });
+    }
 
     tracing::info!(profile = %profile_id, "router: helper ready");
     Ok(Helper {
@@ -1048,6 +1061,7 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
         }),
         Cmd::ShowPage { id, shown } => Some(ToEngine::ShowPage { id: id.0, shown }),
         Cmd::AppSite { id, start } => Some(ToEngine::AppSite { id: id.0, start }),
+        Cmd::ColorScheme { light } => Some(ToEngine::ColorScheme { light }),
         Cmd::InProfile { .. }
         | Cmd::DropParkedProfile { .. }
         | Cmd::CancelDownload { .. }

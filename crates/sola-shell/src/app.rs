@@ -1683,7 +1683,11 @@ impl Shell {
 
         // Focused app's menu shortcuts (meta-bound only, only while focused so
         // River doesn't grab them globally when other clients have focus).
-        if let Some(focused) = self.focused_app_id.as_deref() {
+        // Not while the launcher or the shortcuts overlay is up: their field
+        // has the keyboard, and Super+V / C / X / A must reach it (the modal
+        // eats a grabbed chord).
+        let modal = self.launcher.active || self.shortcuts.active;
+        if let Some(focused) = self.focused_app_id.as_deref().filter(|_| !modal) {
             if focused != Self::APP_ID {
                 bindings.extend(
                     self.menus
@@ -3390,6 +3394,31 @@ mod hide_tests {
                 .any(|c| c.keycode == KeyCode::K && c.meta && !c.shift && !c.ctrl && !c.alt),
             "Super+K must be a registered shell chord (Omarchy cheatsheet)"
         );
+    }
+
+    #[test]
+    fn the_launcher_leaves_the_focused_apps_paste_to_its_field() {
+        let mut shell = desktop();
+        shell.menus.set_menu(sola_bus::topics::AppMenuPayload {
+            app_id: "sola-terminal".into(),
+            menus: vec![sola_bus::topics::MenuDefinition {
+                label: "Edit".into(),
+                items: vec![MenuItem::Action {
+                    id: "edit-paste".into(),
+                    label: "Paste".into(),
+                    shortcut: Some(KeyCode::V.meta()),
+                    disabled: false,
+                    checked: false,
+                }],
+            }],
+        });
+        let paste = |s: &Shell| s.shell_key_chords().contains(&KeyCode::V.meta());
+        assert!(paste(&shell), "the focused app's Super+V is grabbed");
+        shell.launcher.active = true;
+        assert!(!paste(&shell), "the launcher's field takes Super+V");
+        shell.launcher.active = false;
+        shell.shortcuts.active = true;
+        assert!(!paste(&shell), "the shortcuts filter takes Super+V");
     }
 
     #[test]

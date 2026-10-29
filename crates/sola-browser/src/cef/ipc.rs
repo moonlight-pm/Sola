@@ -145,6 +145,10 @@ pub enum ToEngine {
         id: u64,
         start: String,
     },
+    /// See `Cmd::ColorScheme`.
+    ColorScheme {
+        light: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
