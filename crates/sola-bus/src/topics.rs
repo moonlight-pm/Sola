@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sola_core::Encrypted;
 pub use sola_core::KeyChord;
 pub use sola_core::applications::{AppKind, Application, ApplicationsConfig};
-pub use sola_core::theme::{NamedTheme, Theme};
+pub use sola_core::theme::Theme;
 
 use crate::define_topics;
 
@@ -57,8 +57,7 @@ pub struct LaunchResultPayload {
 /// Request that the shell omit an app's surfaces from composition
 /// (River `hide`). Sticky and keyed by `app_id`: emit to hide, retract
 /// to show again. Super+H on the focused app emits this; restore via
-/// Super+Tab or the launcher (already-running). Also used to park Steam's
-/// client UI while a game runs under windowed gamescope.
+/// Super+Tab or the launcher (already-running).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppHidden {
     pub app_id: String,
@@ -1738,16 +1737,6 @@ define_topics! {
     // sola-kit isn't running.
     #[persistent(namespace = "theme/current")]
     Theme(Theme),
-
-    // User-named theme presets persisted by sola-kit's storybook. Keyed
-    // by `name` so each preset lives at
-    // `~/.config/sola/theme/presets/<name>.yaml`. Emit to add/update,
-    // retract to unlink. `name` is constrained to kebab-case (see
-    // `sola_core::theme::is_valid_theme_name`) — it doubles as the
-    // filename. The hardcoded "Default" preset is owned by Rust
-    // constants and never travels through this topic.
-    #[persistent(keys = [name], namespace = "theme/presets/:name")]
-    CustomTheme(NamedTheme),
 
     // One launchable application (user-edited; built-ins live in code).
     // Keyed by `app_id` so each entry has its own item under

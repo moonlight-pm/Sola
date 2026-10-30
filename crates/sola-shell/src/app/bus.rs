@@ -338,7 +338,7 @@ impl Shell {
                 self.focused_app_id = None;
             }
             // Last surface gone — drop AppHidden so a later map of this
-            // app_id is not stuck hidden (Super+H / Arcade).
+            // app_id is not stuck hidden (Super+H).
             if self.is_app_hidden(id) {
                 self.retract_app_hidden(id);
             }
@@ -974,8 +974,8 @@ impl Shell {
     /// Extends the application catalog; if the launcher is active, re-runs
     /// the filter so new entries appear immediately.
     ///
-    /// `sticky=false` is a retract (settings remove, Arcade nest label
-    /// clear) — drop the catalog entry rather than re-adding an empty one.
+    /// `sticky=false` is a retract (a Settings remove) — drop the catalog
+    /// entry rather than re-adding an empty one.
     fn on_application(&mut self, a: Application, sticky: bool) {
         if !sticky {
             tracing::info!(app_id = %a.app_id, "Application retract");

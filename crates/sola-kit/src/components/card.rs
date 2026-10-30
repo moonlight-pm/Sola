@@ -173,7 +173,7 @@ pub fn accent_backplate_style(theme: &Theme) -> container::Style {
     backplate_style(Color { a: 0.18, ..accent }, Color { a: 0.35, ..accent })(theme)
 }
 
-/// Accent-tinted translucent backplate (storybook demo of primary glass):
+/// Accent-tinted translucent backplate (primary glass):
 /// primary colour at low alpha for fill and border, `RADIUS_XL`. Returns a
 /// `Container` so the caller can chain sizing/padding.
 pub fn accent_backplate<'a, Message: 'a>(

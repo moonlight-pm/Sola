@@ -194,13 +194,13 @@ Settings, Monitor, and others) subscribe to every kind and ignore most.
 
 | Topic | Payload | Published by | Acted on by | Kept |
 |---|---|---|---|---|
-| `Windows` | Every window: `window_id`, `app_id`, `title`, `pid` | `sola-river` | Shell, `sola-session`, Settings, Arcade; kit apps with a floating titlebar | Sticky |
-| `OutputGeometry` | Output `width` and `height` | `sola-river`, when River reports the output size and after a bus reconnect | Shell, Arcade | Sticky |
-| `WindowGeometry` | One window's `x`, `y`, `width`, `height` | `sola-river`; retracted when the window closes | Shell, Arcade | Sticky by `window_id` |
+| `Windows` | Every window: `window_id`, `app_id`, `title`, `pid` | `sola-river` | Shell, `sola-session`, Settings; kit apps with a floating titlebar | Sticky |
+| `OutputGeometry` | Output `width` and `height` | `sola-river`, when River reports the output size and after a bus reconnect | Shell | Sticky |
+| `WindowGeometry` | One window's `x`, `y`, `width`, `height` | `sola-river`; retracted when the window closes | Shell | Sticky by `window_id` |
 | `WindowFloating` | `window_id`, `floating` | Shell; `sola-river` re-sends its set after a bus reconnect | `sola-river`; kit apps with a floating titlebar | Sticky by `window_id` |
 | `Composition` | Window ids to show, bottom to top | Shell | `sola-river` | Ephemeral |
 | `Frame` | One window's position, size, and `fullscreen` flag | Shell | `sola-river` | Ephemeral |
-| `Focus` | The `window_id` to focus | Shell; Paint, Design, Arcade (to raise themselves) | `sola-river` | Ephemeral |
+| `Focus` | The `window_id` to focus | Shell; Paint, Design (to raise themselves) | `sola-river` | Ephemeral |
 | `AppHidden` | An `app_id` left out of `Composition` | Shell ([Hide](sola-shell.md#hide)); retracted to show it again | Shell | Sticky by `app_id` |
 | `MouseEntered` | The `window_id` the pointer entered; `still` when the pointer did not move (the window under it changed), sent again without it on the next move | `sola-river` | Shell | Ephemeral |
 | `MouseLeft` | None | `sola-river` | Shell | Ephemeral |
@@ -215,10 +215,10 @@ What `sola-river` does with these is in [Compositor](compositor.md).
 
 | Topic | Payload | Published by | Acted on by | Kept |
 |---|---|---|---|---|
-| `LaunchApp` | `app_id`, `command` | Shell (launcher), Arcade | `sola-session` | Ephemeral |
-| `LaunchResult` | `app_id`, `command`, `ok`, `error` | `sola-session` | Shell, Arcade | Ephemeral |
-| `UserAppExited` | `app_id`, `command`, exit `code` or `signal` | `sola-session` | Shell, Arcade | Ephemeral |
-| `CloseApp` | An `app_id` | Shell, a kit app's floating-titlebar close button, Arcade | `sola-session` (stops it), `sola-river` (closes its windows), the named app (quits) | Ephemeral |
+| `LaunchApp` | `app_id`, `command` | Shell (launcher) | `sola-session` | Ephemeral |
+| `LaunchResult` | `app_id`, `command`, `ok`, `error` | `sola-session` | Shell | Ephemeral |
+| `UserAppExited` | `app_id`, `command`, exit `code` or `signal` | `sola-session` | Shell | Ephemeral |
+| `CloseApp` | An `app_id` | Shell, a kit app's floating-titlebar close button | `sola-session` (stops it), `sola-river` (closes its windows), the named app (quits) | Ephemeral |
 | `CloseWindow` | A `window_id` | Shell (a tab bar row's stoplight, for a window that is not a tab) | `sola-river`: asks that window to close, as its own close button would | Ephemeral |
 | `CloseTab` | A tab's `key` | Shell (a tab bar row's stoplight) | The app that opened the tab: closes its window as its own close button would | Ephemeral |
 | `AgentIsland` | A session's `key` (its pane), `name`, `project`, `state` (waiting / done), `title`, `body`, `choices`, `reply`, `since` | Projects | Shell (its island in the top row) | Sticky by `key` |
@@ -229,7 +229,7 @@ What `sola-river` does with these is in [Compositor](compositor.md).
 | `IdleKeep` | `x`, `y`, `w`, `h` (output-local logical pixels: the top row's flower and agent islands) | Shell | sola-river (the idle fade leaves it uncovered) | Sticky |
 | `IdleFade` | `fading` (the desk is idle and fading into the picture), `out` (the fade is full: the windows are out of sight) | sola-river | Projects (a focused session's tab is not being looked at: its island shows); the shell (`out`: every tab window is reported off screen in `TabWindow`) | Sticky |
 | `SessionApps` | Open apps: `app_id`, `command` | `sola-session` | `sola-session`, at its next start | Persistent |
-| `Application` | A launcher entry: `app_id`, `label`, `command`, `icon`, `kind`, `url`, `profile` | Settings; Browser (web apps); Arcade (a running game's label, retracted when it stops) | Shell, Settings, Arcade, Browser | Persistent by `app_id` |
+| `Application` | A launcher entry: `app_id`, `label`, `command`, `icon`, `kind`, `url`, `profile` | Settings; Browser (web apps) | Shell, Settings, Browser | Persistent by `app_id` |
 | `Shutdown` | None | Shell (Exit Sola); `sola` on SIGINT, SIGTERM, or SIGHUP | `sola`, `sola-session`, `sola-river` | Ephemeral |
 | `SetAppMenu` | `app_id` and its menus: labels and items (action id, label, shortcut, disabled, checked) or dividers | Each app with a menu, at start | Shell (menubar) | Sticky by `app_id` |
 | `MenuAction` | `app_id`, `action_id` of a chosen item or shortcut | Shell | The app named by `app_id` | Ephemeral |

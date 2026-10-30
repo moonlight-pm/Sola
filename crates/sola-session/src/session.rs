@@ -704,7 +704,7 @@ fn restore_plan(
 
 /// Topics sola-session needs. Re-applied after every bus reconnect so a
 /// mid-session `sola-bus` restart does not leave LaunchApp undelivered
-/// (launcher toast with no process — the arcade/games launch failure mode).
+/// (a launcher toast with no process).
 const SESSION_TOPICS: &[TopicKind] = &[
     TopicKind::LaunchApp,
     TopicKind::CloseApp,
@@ -740,7 +740,7 @@ pub fn run() {
     loop {
         // sola-bus restarts drop the reader; kit apps reconnect via their
         // poller. Session is the LaunchApp owner — must reconnect itself or
-        // launcher/arcade spawns vanish (toast only).
+        // launcher spawns vanish (toast only).
         if !session.bus.is_connected() {
             warn!("sola-session bus disconnected; reconnecting");
             connect_and_subscribe(&mut session.bus);

@@ -1,8 +1,8 @@
 //! sola-preview — standalone kit image viewer (argv path opens).
 //!
 //! Session history in a left sidebar; main pane fits the selected PNG.
-//! Screenshots land here (shell Super+Shift+3/4/5). MIME / `solactl open`
-//! image paths go to **sola-paint**. Preview also accepts argv paths.
+//! The shell's screenshots go to the clipboard, not here. MIME / `solactl
+//! open` image paths go to **sola-paint**. Preview opens argv paths.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

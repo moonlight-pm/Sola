@@ -35,10 +35,10 @@ rows for feature-level progress.
 **Status: done (v0)**
 
 - Shell iced port (menubar, launcher, switcher)  
-- sola-kit + theme protocol + storybook  
+- sola-kit + theme protocol (+ a storybook, retired 2026-10-30)  
 - Settings / monitor kit ports  
 
-**Remaining:** storybook page composition (Overview-style where it matters); shell token adoption.
+**Remaining:** shell token adoption.
 
 ---
 

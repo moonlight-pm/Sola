@@ -51,7 +51,7 @@ pub(crate) enum SizeDecision {
 }
 
 /// Default host size for nested gamescope when the shell has not framed it
-/// yet and the client self-size path yields `(0, 0)`. Matches Arcade's
+/// yet and the client self-size path yields `(0, 0)`. Matches gamescope's
 /// default nest (`-W 1920 -H 1080`).
 pub(crate) const GAMESCOPE_DEFAULT_W: i32 = 1920;
 pub(crate) const GAMESCOPE_DEFAULT_H: i32 = 1080;

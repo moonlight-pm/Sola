@@ -5,7 +5,7 @@
 //!
 //! - `solactl open` (and `xdg-open` / terminal `open` when MIME points here)
 //! - sola-shell handling of `Topic::OpenUrl`
-//! - terminal / mail / arcade clickable links
+//! - terminal / mail clickable links
 //!
 //! Spawns `paths::bin_path("sola-browser")` (`/bin` on Oath, `/opt/sola/bin`
 //! on NixOS). Override the binary with `SOLA_BROWSER`. No other browser

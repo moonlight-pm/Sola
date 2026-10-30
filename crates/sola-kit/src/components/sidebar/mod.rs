@@ -103,7 +103,7 @@ pub use crate::components::status_mark::{STATUS_MARK_SLOT, SidebarIndicator, sta
 
 /// List density for [`SidebarPanel`] (and the [`sidebar`] helper).
 ///
-/// [`Self::Normal`] is settings / mail / preview / storybook nav.
+/// [`Self::Normal`] is settings / mail / preview nav.
 /// [`Self::Large`] is the browser / terminal tab-strip density.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SidebarDensity {
@@ -765,8 +765,7 @@ pub fn section_overflow_counts(scroll: SectionScroll, n_items: usize) -> (usize,
     (above, below)
 }
 
-/// Default sidebar width — matches the storybook's nav column. Public
-/// so consumers can lay out alongside it (`width = Fill - SIDEBAR_WIDTH`).
+/// Default sidebar width. Public so consumers can lay out alongside it (`width = Fill - SIDEBAR_WIDTH`).
 pub const SIDEBAR_WIDTH: f32 = 220.0;
 
 /// Build the sidebar panel from its sections. Returns a `Container` so
@@ -783,7 +782,7 @@ where
 }
 
 /// Like [`sidebar`], with an optional leading header (brand, search, …)
-/// stacked above the section list. Used by the storybook brand block.
+/// stacked above the section list.
 pub fn sidebar_with_header<'a, Message>(
     header: Option<Element<'a, Message, Theme>>,
     sections: Vec<SidebarSection<'a, Message>>,
@@ -3191,7 +3190,7 @@ where
 
 pub fn style(theme: &Theme) -> container::Style {
     let _p = theme.extended_palette();
-    // Full outline is intentionally off — the storybook / shell draws a
+    // Full outline is intentionally off — the shell draws a
     // single right hairline separator against the content column.
     container::Style {
         background: Some(Background::Color(chrome_surface())),

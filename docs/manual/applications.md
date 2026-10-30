@@ -18,8 +18,7 @@ do and what it lacks. Applications that offer methods on the
 | Browser | `sola-browser` | Chromium's engine (CEF) under Sola's own chrome: a window per page, profiles, a Bitwarden vault, downloads, developer tools. The default for web links. Call owner `browser`. | [notes](sola-browser.md) |
 | Mail | `sola-mail` | IMAP and SMTP for several accounts, with drafts and attachments | [notes](sola-mail.md) |
 | Calendar | `sola-calendar` | Month, week, and day views of local, Google, iCloud, CalDAV, and ICS calendars, with reminders | [notes](sola-calendar.md) |
-| Settings | `sola-settings` | Applications in the launcher, and mail and calendar accounts | — |
-| Arcade | `sola-arcade` | The Steam library in a window; each game runs in a nested gamescope session sized to it | [notes](sola-arcade.md) |
+| Settings | `sola-settings` | The launcher's applications and web apps, the look (background pictures, colors, light or dark), the login, and mail and calendar accounts | — |
 | Paint | `sola-paint` | The default image viewer and editor | [notes](sola-paint.md) |
 | Preview | `sola-preview` | A quick viewer for screenshots and images | [notes](sola-preview.md) |
 | Design | `sola-design` | HTML artboards on a canvas, written and edited by AI agents. Call owner `design`. | [notes](sola-design.md) |
@@ -32,6 +31,3 @@ do and what it lacks. Applications that offer methods on the
 The notes are kept in the repository beside this manual and are not part of
 it: they describe each application's keys, menus, and files in detail, and
 change as often as the applications do.
-
-`sola-kit` is also a binary, **Kit**: the storybook, which shows every
-toolkit component, and the theme editor (see [Theme and toolkit](theme.md)).

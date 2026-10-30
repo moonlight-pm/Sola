@@ -301,9 +301,9 @@ pub const FLOAT_MARGIN: i32 = 50;
 /// a very small source rect can't collapse to a sliver (or go negative).
 const MIN_FLOAT_DIM: i32 = 100;
 
-/// Arcade default host nest for first map (`gamescope -W/-H` / default float).
-/// After paint, zoning may resize the **host** surface; nested game res is
-/// fixed by Arcade `-w/-h` + `-S fit` (letterbox scale-to-fit).
+/// gamescope's host nest at its first map (gamescope's default `-W/-H`).
+/// After paint, zoning may resize the **host** surface; the nested game's
+/// size is its own `-w/-h`, scaled to fit (`-S fit`, letterboxed).
 const GAMESCOPE_NEST_W: i32 = 1920;
 const GAMESCOPE_NEST_H: i32 = 1080;
 
@@ -460,7 +460,7 @@ impl ZoningState {
     }
 
     /// `window_id` floats. A float that `remembers` gets its app's saved
-    /// rectangle back; gamescope gets the Arcade nest size; anything else
+    /// rectangle back; gamescope gets the nest size; anything else
     /// keeps the size it asks for (sola-river centers it).
     pub fn float(&mut self, app_id: &str, window_id: u32, remembers: bool) -> Option<FrameUpdate> {
         self.floats.insert(window_id, remembers);
@@ -479,7 +479,7 @@ impl ZoningState {
                 }
             }
         }
-        // gamescope: first map at Arcade nest size, centered. Must match
+        // gamescope: first map at the nest size, centered. Must match
         // initial `gamescope -W/-H` so the host can commit before a resize.
         if app_id.eq_ignore_ascii_case("gamescope") {
             let (out_w, out_h) = self.output_size?;
@@ -621,7 +621,7 @@ fn float_frame(window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
     inset_rect(window_id, x, y, w, h)
 }
 
-/// Float gamescope at the Arcade nest aspect (16:9), centered in the usable
+/// Float gamescope at the nest aspect (16:9), centered in the usable
 /// area. Prefer the default nest size when it fits; otherwise scale 16:9 down
 /// to the margin box. Avoids inheriting a tall zone host rect (heavy letterbox).
 fn gamescope_float_frame(window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {

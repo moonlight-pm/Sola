@@ -63,7 +63,7 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | `crates/sola-river` | River ↔ bus bridge |
 | `crates/sola-session` | User-app session manager (spawn / close / reap; `SessionApps` restore; apps that exit with their compositor — `display.rs`, the Wayland socket's identity — stay saved and start again on the next one; a restarted session adopts the running saved apps — `adopted.rs`) |
 | `crates/sola-shell` | Menubar, launcher (a running app comes forward — `activate_window` on its last-used window — except Terminal, which opens a new window; picking Browser opens the Browser field (`launcher/web.rs`: an address or a search over the browser's visits via `sola_core::omnibox`, the pick handed to `sola_core::open_url`); while an app starts, a ghost row in the tab bar at `Stacks::landing_slot`; its Projects chooser lists `~/Projects` and calls Projects' `project.list` / `project.open` on the call plane), switcher, Super+K shortcuts overlay, zoning, notification HUD, Bluetooth popover, volume popover + 12-band LED spectrum (iced daemon; BlueZ over system D-Bus; PipeWire via `pw-dump`/`wpctl`/`pw-cat`; Lamzu mouse battery over hidraw). Flower menu: Exit Sola, Restart Computer, Shut Down (logind; on Oath `sudo oath set host:local power=reboot|halt` + `oath apply --confirm host:local`). |
-| `crates/sola-kit` | Iced app kit + storybook (incl. `TabWindows` — per-document windows that take the compositor's close requests; `FilePicker` — the one Open / Save / Choose Folder panel, keys and several files; `style::BAR_H` for app bars; `show_window` → `Topic::ShowWindow`; shared **Window** menu, compositor clipboard helper for images; `scroll` — the kit scrollbar, a pill in a rounded channel, which apps take through `scroll::scrollable`; `prose_letter` — prose with rules and lines of pictures the app supplies by key) |
+| `crates/sola-kit` | Iced app kit, a library (the storybook binary retired 2026-10-30) (incl. `TabWindows` — per-document windows that take the compositor's close requests; `FilePicker` — the one Open / Save / Choose Folder panel, keys and several files; `style::BAR_H` for app bars; `show_window` → `Topic::ShowWindow`; shared **Window** menu, compositor clipboard helper for images; `scroll` — the kit scrollbar, a pill in a rounded channel, which apps take through `scroll::scrollable`; `prose_letter` — prose with rules and lines of pictures the app supplies by key) |
 | `crates/sola-settings` | Settings panel (theme, apps, mail config, calendar accounts + shelf, Login — the password and auto-login through Oath's login service, …) |
 | `crates/sola-oath` | **Oath** catalog app: packages, Needs / Used by, pins, apply, over `oath --json` (sudo for writes). Launcher entry **Oath** only when `/oath/INDEX.md` exists |
 | `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). On `next`: an `iced::daemon` with a window per tab (each a tab in the shell's bar via kit `tabs::TabWindows`), no tab strip, one process (`$XDG_RUNTIME_DIR/sola/terminal.sock`; a second launch emits `MenuAction new_tab` and exits). |
@@ -78,7 +78,6 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | `crates/sola-preview` | Argv / launcher image viewer (shell hotkeys copy screenshots to the clipboard) |
 | `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; on `next` a window per image, kit `TabWindows` keyed by path; open images in sticky `PaintSession`; ships in `pkg:sola` on Oath) |
 | `crates/sola-scope` | Pixel loupe: magnified grid around the pointer (`compositor.sample`) |
-| `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |
 | `crates/solactl` | Operator CLI (`compositor`, `session`, `projects`, `browser`, `bots`, `design`, emit, logs, …). `Path` args resolve against the caller's cwd before the call. `solactl mcp`: stdio MCP server — live owners' methods as `<owner>_<method>` tools (schema from `ArgSpec`), `tools/list_changed` on a 2 s catalog rescan, calls on their own thread, a reply `path` to a PNG / JPEG returned as image content. |
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |
 | `crates/sola-make` | `cargo make` xtask (build / install / publish / **vm** / **iso**) |
@@ -113,9 +112,6 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | Persistent stickies | Bus writes `~/.config/sola/state.yaml` (some topics have their own files, e.g. `theme/current.yaml`; the shell seeds `Topic::Theme` when that file is missing and, on `next`, re-emits a saved theme still on the retired slate values with their greys) |
 | Browser vault session | `~/.local/share/sola/browser/vault-session.json` (age-encrypted tokens + user key; **Log out** deletes). Prefs `~/.config/sola/browser/vault.json`. |
 | Browser HTTP auth | Per-profile `profiles/<uuid>/http-auth.json` (age-encrypted Basic/Digest; kit Sign in). |
-| Arcade library cache | `~/.config/sola/arcade-library.json` (scan snapshot; bg rescan on open; `steamapps/` watch) |
-| Arcade nest settings | `~/.config/sola/arcade-nest.json` (per-title Fit vs locked resolution; default 1080p) |
-| Arcade singleton | `$XDG_RUNTIME_DIR/sola/arcade.lock.sock` (second spawn raises) |
 | Projects catalog | `~/.config/sola/projects/catalog.json` (projects / tabs / selected; migrated once from `~/.config/sola/workspaces/`, before that `agent-terminal/`; a `workspaces` key still loads). Hook scripts (`grok-hook.sh`, `codex-hook.sh`, `claude-hook.sh`) live in the same dir |
 | Projects on another computer | Recent hosts `~/.config/sola/shell/remote-hosts.json` (the launcher's chooser; eight, latest first). Shared ssh connections `$XDG_RUNTIME_DIR/sola-ssh/%C` (`ControlMaster`, 10 min). Per-host hook socket here `$XDG_RUNTIME_DIR/sola-ws-hooks-<host>.sock`. On the host: tmux socket `sola-ws-remote`, sessions `sws-<pane>`, config `~/.config/sola/sola-ws-remote.tmux.conf`; the link's hook socket `~/.config/sola/remote/hooks-<this computer>.sock` and hook scripts `~/.config/sola/remote/{claude,codex,grok}-hook.sh` |
 | Projects last-status | `~/.config/sola/projects/last-status.json` (per-pane status / agent / Grok or Claude `session_id`; a new tmux after reboot execs `grok -r` or `claude --resume`) |
@@ -172,7 +168,7 @@ always-on vsync pumps** to “fix” a gesture or helper drain.
 |------------|--------|-----------|------------------------|---------------------|
 | No 16 ms chrome timer | `sola-browser` `subscription` | Page copy + context menu wake iced via `chrome_wake::wake` from the CEF router | Morph2 tab reorder is **not** this timer | Idle chrome presenting ~60 Hz; copy/right-click delayed >1 frame if wake is dropped |
 | Chrome `Tick` is not a 250 ms pump | `sola-browser` `Msg::Tick` | Helper queues (tabs, downloads, handoff, vault, ⌘-click, copy/menu) **wake** `Tick`. 250 ms `time::every` only while copy-URL flash, vault TOTP on the open item, or vault fill-wait | Loading titles/progress still wake on `FromEngine::Tabs` | Strip titles / load line frozen; handoff (`solactl open`) ignored until another chrome event; copy-URL check never clears |
-| Working ring `At` ~20 Hz | `sola-kit` `status_mark` | `RedrawRequest::At(50ms)` on `RedrawRequested`, **not** `NextFrame` / `window::frames()` | n/a | Storybook Sidebar or a Working Grok row pins GPU; ring frozen (no `RedrawRequested` after status change) |
+| Working ring `At` ~20 Hz | `sola-kit` `status_mark` | `RedrawRequest::At(50ms)` on `RedrawRequested`, **not** `NextFrame` / `window::frames()` | n/a | A Working Grok row pins GPU; ring frozen (no `RedrawRequested` after status change) |
 | Projects pointer gated | `sola-projects` `subscription` | No `window::frames()`; `CursorMoved` only while a split drag is live; ignored mouse is not `Msg::Input` | Split divider drag | Split resize only updates on press; whole window presents on every pixel over empty chrome |
 | Morph2 drag pump | `sola-kit` `sidebar/strip.rs` | Idle: no vsync chain | While `dragging` / FLIP: `invalidate_layout` on pointer (ghost Y is layout) + `request_redraw` on `RedrawRequested` | Tab/group reorder stutters or ghost stuck; idle vsync if `request_redraw` is left on when not dragging |
 | Browser HTML5 drag | `sola-browser` `FrameSlot.page_drag` + shader `should_pump` | Idle: hangover 50 ms after last paint | While helper `FrameMeta.drag`: `request_redraw` without `Msg::NewFrame` | Kanban ghost lags / smears if overlay full-uploads; idle vsync if `page_drag` sticks after drop |
@@ -332,21 +328,11 @@ A hard-killed `sola-shell` can leave parked surfaces in sola-river (no
 `closed`). River prunes entries whose `/proc/<pid>` is gone so a respawn
 can map a new menubar. Shell composition also ignores dead-pid windows.
 
-### Games / Arcade (as-built)
+### Games
 
-| Piece | Role |
-|-------|------|
-| `sola-arcade` | Kit app: Steam library gallery (search; A–Z / Recent; Ready-to-play filter default on; Install on uninstalled; Stop-on-row). Singleton (`$XDG_RUNTIME_DIR/sola/arcade.lock.sock`); second spawn raises. |
-| Library data | Offline: ACF manifests + `localconfig` activity + `appinfo.vdf` names; cache `~/.config/sola/arcade-library.json`; UI opens from cache, full scan always in background; debounced non-recursive watch on each `steamapps/` (ACF + `libraryfolders.vdf`) |
-| Gallery prefs | `~/.config/sola/arcade-prefs.json` — A–Z / Recent sort (default A–Z) |
-| Banners | Lazy viewport decode (+ overscan); paths resolved when row visible |
-| Launch | `Topic::LaunchApp` → `sola-arcade --run <id> <w> <h> [fit]` → `gamescope … --cursor-scale-height <H> -- sola-arcade --nested-steam <id>` → desktop Steam `-applaunch` (no BPM). Play **refused** if a desktop Steam client is already running (no exclusive fullscreen). Nested helper kills nested Steam when the **game** `AppId=` reaper exits (not `Install=1` / `iscriptevaluator`). `<w> <h>` from per-title nest (Fit or locked res). Host cursor is downsampled to desktop size (nested X cursors otherwise present 1:1 to River). |
-| Fit follow | Arcade UI watches `Topic::Windows` / `WindowGeometry` for `app_id=gamescope` and pokes **nested** X only (`DISPLAY` from `--nested-steam`, never gamescope's host `:0`), debounced ~250 ms. Writes `GAMESCOPE_XWAYLAND_MODE_CONTROL` + focused window `0,0,w,h`. Locked res does not follow. |
-| Session lock | Active Play → Stop on that row; other Plays disabled. Session end is `UserAppExited` on `steam-game-<id>` (`--run` waits on gamescope). Stop: `CloseApp` then Arcade-owned pids only (`--run` / `--nested-steam` / that gamescope), never `pkill AppId=`. |
-| River | gamescope pre-init pin then zone/float; Cinema exit-fullscreen on next zone Frame; empty app_id → `gamescope` via pid; nest `-S fit` letterbox |
-| AppHidden | Super+H + switcher/launcher restore (no menubar chip); Arcade UI does not expose hide-Steam |
-
-Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
+`sola-arcade` (the Steam library in a window, each game in a gamescope
+nest) was retired on 2026-10-30; it stays in git history. sola-river and
+the shell still give any `gamescope` window its nest size and float it.
 
 ---
 

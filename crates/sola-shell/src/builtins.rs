@@ -59,13 +59,6 @@ pub fn builtin_apps() -> Vec<Application> {
             ..Default::default()
         },
         Application {
-            app_id: "sola-kit".into(),
-            label: "Kit".into(),
-            command: kit_command("sola-kit"),
-            icon: "lucide/palette".into(),
-            ..Default::default()
-        },
-        Application {
             app_id: "sola-preview".into(),
             label: "Preview".into(),
             command: kit_command("sola-preview"),
@@ -77,8 +70,8 @@ pub fn builtin_apps() -> Vec<Application> {
             label: "Paint".into(),
             command: kit_command("sola-paint"),
             // `brush` — simple 20px silhouette. Distinct from Preview
-            // (`image`) and Kit (`palette`). The detailed `paintbrush`
-            // glyph turns to noise at launcher density.
+            // (`image`). The detailed `paintbrush` glyph turns to noise at
+            // launcher density.
             icon: "lucide/brush".into(),
             ..Default::default()
         },
@@ -104,13 +97,6 @@ pub fn builtin_apps() -> Vec<Application> {
             ..Default::default()
         },
         Application {
-            app_id: "sola-arcade".into(),
-            label: "Arcade".into(),
-            command: kit_command("sola-arcade"),
-            icon: "lucide/gamepad-2".into(),
-            ..Default::default()
-        },
-        Application {
             app_id: "sola-scope".into(),
             label: "Scope".into(),
             command: kit_command("sola-scope"),
@@ -121,8 +107,7 @@ pub fn builtin_apps() -> Vec<Application> {
             app_id: "sola-design".into(),
             label: "Design".into(),
             command: kit_command("sola-design"),
-            // `frame` — artboards. Distinct from Paint (`brush`) and Kit
-            // (`palette`).
+            // `frame` — artboards. Distinct from Paint (`brush`).
             icon: "lucide/frame".into(),
             ..Default::default()
         },

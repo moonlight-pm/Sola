@@ -78,7 +78,7 @@ impl FilePicker {
         iced::widget::opaque(dimmed)
     }
 
-    /// The modal panel (no dim). Storybook uses this; apps usually want [`Self::overlay`].
+    /// The modal panel (no dim); apps usually want [`Self::overlay`].
     pub fn view(&self) -> Element<'_, Message, Theme> {
         let body = row![self.places_rail(), self.file_list()]
             .spacing(SPACE_MD)

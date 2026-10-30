@@ -9,8 +9,8 @@ and Design are not restyled.
 
 ## sola-kit
 
-`sola-kit` is a Rust library that every Sola application links, plus the
-Kit application. It has no generic entry point: each application builds its
+`sola-kit` is a Rust library that every Sola application links. It has
+no generic entry point: each application builds its
 own `iced::application` or `iced::daemon` from the kit's parts.
 
 | Part | What it gives an application |
@@ -20,16 +20,8 @@ own `iced::application` or `iced::daemon` from the kit's parts.
 | `CallSetup`, `call_subscription` | Call-plane methods ([Call plane](call.md)) |
 | `theme` | The palette, the shell style, and conversion from the bus theme |
 | `fonts` | System font loading and the five font roles |
-| `components` | Shared widgets: buttons, badges, cards, fields and forms, select, number input, colour picker, file picker, popover, context menu, sidebar, split, toolbar, titlebar, prose, JSON view, icons |
+| `components` | Shared widgets: buttons, badges, cards, fields and forms, select, colour picker, file picker, popover, context menu, sidebar, split, toolbar, titlebar, prose, JSON view, icons |
 | `float`, `menu`, `app::window_settings` | The titlebar and drag for floating windows, the standard Window menu, and window settings that carry the application's Wayland `app_id` and turn off server decorations |
-
-### The Kit application
-
-Kit (`sola-kit`, **Kit** in the launcher) is the toolkit's storybook. Each
-component has a page showing it in use, grouped as System (Overview, Theme,
-Shell), Layout, and Components. Kit is also the theme editor
-([Editing the theme](#editing-the-theme)). It remembers the last page in
-`~/.config/sola/kit/storybook-page`.
 
 ## The theme on the bus
 
@@ -60,9 +52,9 @@ palette:
       - accent
 ```
 
-The bus reads the file only when it starts, so edit the theme with Kit, not
-in the file. Saved presets are separate records (`CustomTheme`), one file
-each in `~/.config/sola/theme/presets/`.
+The bus reads the file only when it starts, so an edit in the file shows
+only after `sola-bus` restarts. Settings → Appearance changes the colors
+through the shell instead.
 
 ## Palette tokens
 
@@ -182,7 +174,7 @@ the default families.
 | A palette token, or a colour not in `#rrggbb` or `#rrggbbaa` form | That token's default |
 | A font token, or a family that is not installed | The role's fallback family |
 | A shell token, or a spacing value not in `<number>px` form | That token's default |
-| A `theme/current.yaml` that does not match the theme schema | The bus restores no theme, and the shell publishes none because the file exists; applications draw the compile-time defaults until a theme is published from Kit (by choosing or editing a preset) |
+| A `theme/current.yaml` that does not match the theme schema | The bus restores no theme, and the shell publishes none because the file exists; applications draw the compile-time defaults until a theme is published (`solactl emit Theme`), or the file is removed and the shell starts again |
 
 ## Colors from the background picture
 
@@ -240,8 +232,7 @@ unfocused rim is opaque: the window's face 7% lighter in its hue. Other
 applications' windows get the same rims from the compositor.
 
 Turning it off, or clearing the picture, puts the default greys back on
-those colors. While it is on, a color edited in Kit is replaced by the
-picture's.
+those colors.
 
 ### Kept pictures
 
@@ -259,40 +250,14 @@ look and puts the incoming one's back. A picture never set before keeps
 the look already in use. Light or dark, the desk's opacity and the idle
 settings are the same for every picture.
 
-## Editing the theme
+## Changing the theme
 
-Kit is the theme editor. Settings does not edit the theme or the fonts
-(only **Adapt colors to the background**, above); it follows the theme
-like any other application.
-
-Kit's header holds the theme menu, **New Theme**, and **Delete**. The
-presets are **Default**, the built-in values, which is read-only (edits are
-ignored and **Delete** is disabled while it is selected), and your own,
-each a `CustomTheme` record in `~/.config/sola/theme/presets/<name>.yaml`.
-
-1. Choose **New Theme**, type a name of lowercase letters joined by single
-   hyphens (such as `solar-flare`), and press **Save**. Kit copies the
-   active preset under that name, saves it, and selects it.
-2. On the **Theme** page, pick a family for each font role (from the
-   families fontconfig reported when Kit started) and click a swatch to edit
-   a colour; **reset** under a changed swatch restores its default. On the
-   **Shell** page, edit the seven shell colours (the picker has an alpha
-   rail) and the four spacing values: switcher padding 0 to 64 px, icon
-   cell inset 0 to 48 px, launcher width 320 to 1280 px, launcher row
-   padding 0 to 32 px.
-3. Each change is published at once as `Theme`, so every running
-   application restyles as you edit and the bus saves it to
-   `theme/current.yaml`. The header shows **Edited •**.
-4. **Save** writes the preset file. **Revert** returns the preset to its
-   last saved state and publishes that.
-
-Choosing another preset publishes it and discards unsaved edits to the one
-you leave. **Delete**, then **Confirm?**, removes the preset's file and
-publishes Default. Kit publishes nothing when it opens. It does not store
-which preset is live: it selects the preset whose values equal the live
-theme, and if none matches (after quitting with unsaved edits, which stay
-live) it shows Default while every application keeps drawing the live
-theme.
+Settings → Appearance is where the theme changes: the colors from the
+background picture, a scheme, your own colors and looks
+([above](#colors-from-the-background-picture)). The fonts, the shell's
+spacing and the other tokens stay at their defaults. There is no theme
+editor and there are no named themes: Kit, the storybook that edited
+them, was retired on 2026-10-30, and with it `CustomTheme` presets.
 
 ## Following the theme in a new application
 
@@ -322,9 +287,10 @@ wiring.
   application runs is not available to it until it restarts.
 - Iced's default font, used by widgets that set no font, is chosen when an
   application starts, before the theme arrives: the default UI family in
-  most applications, Inter in Kit and the shell, the default mono family in
+  most applications, Inter in the shell, the default mono family in
   Terminal and Projects. It does not follow `font-ui`. Text that a
   component draws with a role does follow the theme.
 - Iced treats every theme as dark, whatever its colours.
-- Kit is the only editor. `solactl emit Theme` can publish a whole theme
-  as JSON, but there is no command to change one token.
+- Only the colors have an editor (Settings → Appearance). `solactl emit
+  Theme` can publish a whole theme as JSON, but there is no command to
+  change one token.

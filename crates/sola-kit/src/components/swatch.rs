@@ -1,6 +1,5 @@
-//! Swatch — color preview tile. Used by the theme storybook page to
-//! catalog every palette atom; also useful for in-app color pickers,
-//! token editors, syntax-highlighting indicators.
+//! Swatch — color preview tile, for in-app color pickers and
+//! indicators.
 //!
 //! Default tile is 56×56 with the kit hairline border and 6px corner
 //! radius. Override either via the explicit `swatch_sized` form.

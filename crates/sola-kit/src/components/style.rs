@@ -163,8 +163,7 @@ pub fn primary_fill(accent: Color) -> Background {
     linear_bg(180.0, &[(0.0, mix_white(accent, 0.08)), (1.0, accent)])
 }
 
-/// Quiet panel face — same whisper as [`card_fill`]. Kept as a named
-/// helper so storybook desks share one fill. Accent/selection are unused:
+/// Quiet panel face — same whisper as [`card_fill`]. Accent/selection are unused:
 /// mixing neon toward graphite produced the muddy “dark cyan” we dropped.
 pub fn hero_fill(_bg: Color, raised: Color, _selection: Color) -> Background {
     card_fill(raised)
@@ -176,7 +175,7 @@ pub fn stage_fill(_bg: Color, raised: Color, _accent: Color) -> Background {
     card_fill(raised)
 }
 
-/// Optional soft canvas wash — **not** used as the storybook page fill.
+/// Optional soft canvas wash.
 ///
 /// OD layers dual *radials* that fade to transparent over solid `--bg`
 /// (`#0b0b0b`). A full-pane linear with a strong selection stop reads as a

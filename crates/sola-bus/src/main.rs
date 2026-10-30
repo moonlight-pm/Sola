@@ -288,19 +288,6 @@ fn persist_if_needed(event: &sola_bus::Message, bus: &mut BusState) {
     if !kind.behavior().is_persistent() {
         return;
     }
-    // Defensive: a CustomTheme's `name` doubles as a filename under
-    // `theme/presets/`. Drop persists with non-kebab names instead of
-    // letting a misbehaving emitter create `Alpha.yaml` etc.
-    if let Topic::CustomTheme(named) = &topic
-        && !sola_core::theme::is_valid_theme_name(&named.name)
-    {
-        warn!(
-            topic = kind.as_str(),
-            name = %named.name,
-            "rejecting CustomTheme persist: name must match [a-z]+(-[a-z]+)*",
-        );
-        return;
-    }
     if kind.namespace().is_some() {
         let path = match topic.path_for_safe() {
             Ok(p) => p,

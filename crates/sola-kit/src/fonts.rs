@@ -103,7 +103,7 @@ static FONTS: std::sync::LazyLock<std::sync::RwLock<Fonts>> =
 
 /// Swap the kit's role→family mapping for this process. Re-callable —
 /// bus-driven theme deliveries call this on every `Topic::Theme` so a
-/// font edit in the storybook propagates everywhere on the next render.
+/// font change propagates everywhere on the next render.
 pub fn install(fonts: Fonts) {
     if let Ok(mut guard) = FONTS.write() {
         *guard = fonts;
@@ -339,10 +339,9 @@ fn metrics_from_face(face: &ttf_parser::Face) -> Option<FontMetrics> {
     })
 }
 
-/// Recommended families Sola defaults to (and common fallbacks). These seed
-/// the font picker vocabulary; [`pickable_families`] folds in every
-/// system-installed family on top. SF faces are **not** shipped in-repo —
-/// see `.local/fonts/README.md`.
+/// Recommended families Sola defaults to (and common fallbacks): the
+/// canonical spellings a theme's font tokens are matched against. SF faces
+/// are **not** shipped in-repo — see `.local/fonts/README.md`.
 pub const INSTALLED_FAMILIES: &[&str] = &[
     "SF Pro Text",
     "SF Pro Display",
@@ -443,22 +442,6 @@ fn static_family(name: &str) -> &'static str {
     Box::leak(name.to_string().into_boxed_str())
 }
 
-/// Every family name an in-app font picker can offer: the shipped
-/// Families the picker offers = exactly what's installed system-wide
-/// (fontconfig); falls back to [`INSTALLED_FAMILIES`] only when no system
-/// fonts are found (e.g. a headless test environment with no font dirs).
-pub fn pickable_families() -> Vec<String> {
-    let sys = system_families();
-    if sys.is_empty() {
-        // Headless / no fontconfig: fall back to the recommended list so the
-        // picker is never empty (and the invariant test holds).
-        INSTALLED_FAMILIES.iter().map(|s| s.to_string()).collect()
-    } else {
-        sys
-    }
-}
-/// Family names fontdb finds installed on the system, sorted and
-
 /// True when `family` is present in iced's font database (i.e. the renderer
 /// can actually draw it). Mirrors the DB the renderer uses, so "available"
 /// == "renders as itself" (not a fontconfig substitute).
@@ -483,10 +466,9 @@ pub fn family_available(family: &str) -> bool {
         Err(_) => true,
     }
 }
+/// Family names fontdb finds installed on the system, sorted and
 /// deduped. Empty if the scan finds nothing (e.g. a headless box with
-/// no font directories) — callers should fall back to
-/// [`INSTALLED_FAMILIES`] or use [`pickable_families`], which folds
-/// both.
+/// no font directories).
 pub fn system_families() -> Vec<String> {
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
@@ -558,78 +540,6 @@ mod tests {
             m.line_per_em > 1.0 && m.line_per_em < 1.6,
             "mono line_per_em out of range: {}",
             m.line_per_em
-        );
-    }
-
-    // pickable_families() returns system-installed families (or
-    // INSTALLED_FAMILIES on headless). Only require that installed
-    // fallbacks appear — SF Pro may be absent until the user installs
-    // faces from `.local/fonts/`.
-    #[test]
-    fn pickable_families_always_contains_shipped() {
-        let all = pickable_families();
-        let sys = system_families();
-        if sys.is_empty() {
-            for fam in INSTALLED_FAMILIES {
-                assert!(
-                    all.contains(&fam.to_string()),
-                    "{fam} missing from headless pickable_families"
-                );
-            }
-            return;
-        }
-        for fam in [
-            FALLBACK_UI_FAMILY,
-            FALLBACK_MONO_FAMILY,
-            DEFAULT_MONO_FAMILY,
-        ] {
-            if family_available(fam) {
-                assert!(
-                    all.contains(&fam.to_string()),
-                    "{fam} installed but missing from pickable_families"
-                );
-            }
-        }
-    }
-
-    // When system fonts are present the picker returns only families that
-    // actually pass family_available(), plus dedup guarantees no duplicates.
-    // This test checks structural invariants rather than exact membership so
-    // it stays valid regardless of which families are installed on the host.
-    #[test]
-    fn pickable_families_only_installed() {
-        let sys = system_families();
-        // Only run structural assertions when there are real system fonts;
-        // headless CI uses the INSTALLED_FAMILIES fallback path which is
-        // covered by pickable_families_always_contains_shipped above.
-        if sys.is_empty() {
-            return;
-        }
-        let all = pickable_families();
-        // No duplicates.
-        let mut sorted = all.clone();
-        sorted.sort();
-        sorted.dedup();
-        assert_eq!(
-            all.len(),
-            sorted.len(),
-            "pickable_families contains duplicates"
-        );
-        // Every returned family either passes family_available() or is one of
-        // the INSTALLED_FAMILIES fallback entries (which are valid system names
-        // on this machine since sys was non-empty above).
-        let fallbacks: Vec<String> = INSTALLED_FAMILIES.iter().map(|s| s.to_string()).collect();
-        for fam in &all {
-            assert!(
-                family_available(fam) || fallbacks.contains(fam),
-                "pickable_families contains '{}' which is not available and not a known fallback",
-                fam
-            );
-        }
-        // The guaranteed-absent sentinel must never appear.
-        assert!(
-            !all.contains(&"Definitely Not A Real Font Family 9c4e".to_string()),
-            "bogus family must not appear in pickable_families"
         );
     }
 

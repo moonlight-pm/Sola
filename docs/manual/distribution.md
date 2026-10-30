@@ -28,21 +28,17 @@ use.
 
 ## Other families
 
-The font picker in Kit (the `sola-kit` storybook) offers any family
-fontconfig finds installed, in addition to the families above.
-
-A family you select in the picker must be installed system-wide. Picking
-one that is not installed falls back to the default face for that role.
-Install the family first, then select it. The family name you install must
-match the name the picker shows (fontconfig's family name).
+Sola has no font picker: the theme's font roles name the families above.
+A role that names a family not installed falls back to the default face
+for that role.
 
 ## Installing the fonts
 
 ### NixOS
 
 `services.sola.enable = true` installs **Inter** and **JetBrains Mono**
-through the Sola NixOS module. Add other families yourself if you want them
-in the picker:
+through the Sola NixOS module. Add other families yourself if you want
+them:
 
 ```nix
 fonts.packages = with pkgs; [

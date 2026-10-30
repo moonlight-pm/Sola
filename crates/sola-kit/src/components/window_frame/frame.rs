@@ -49,8 +49,8 @@ impl State {
 }
 
 /// A window's frame around its content. Usually built by
-/// [`super::window_frame`]; the builder is for previews (storybook) that
-/// pin the menus or the focus.
+/// [`super::window_frame`]; the builder is for previews that pin the menus
+/// or the focus.
 pub struct WindowFrame<'a, Message> {
     content: Element<'a, Message, Theme>,
     chrome: Chrome,

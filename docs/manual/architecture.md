@@ -76,7 +76,7 @@ delivering while the call host restarts.
 | `$XDG_RUNTIME_DIR/sola-display` | The X display River's XWayland serves (`:0`); absent when XWayland did not come up within 3 seconds of River |
 | `$XDG_RUNTIME_DIR/sola-bus` | The bus |
 | `$XDG_RUNTIME_DIR/sola-call` | The call plane (mode 0600) |
-| `$XDG_RUNTIME_DIR/sola/` | Single-instance sockets of Arcade, Paint, Design, Calendar, Terminal, and Projects |
+| `$XDG_RUNTIME_DIR/sola/` | Single-instance sockets of Paint, Design, Calendar, Terminal, and Projects |
 
 If `XDG_RUNTIME_DIR` is unset, Sola's processes use `/tmp` instead.
 `SOLA_BUS_PATH` and `SOLA_CALL_PATH` override the bus and call socket paths

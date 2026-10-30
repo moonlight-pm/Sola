@@ -19,7 +19,7 @@ A launch arrives in one of two ways:
 
 | Path | Sent by | Command run |
 |---|---|---|
-| `LaunchApp {app_id, command}` on the bus | The launcher; Arcade, for games | The one in the request |
+| `LaunchApp {app_id, command}` on the bus | The launcher | The one in the request |
 | The `launch` call: `solactl session launch <app_id> [--command CMD]` | You, scripts, agents | `--command`; else `/opt/sola/bin/<app_id>` if that file exists; else the app id itself |
 
 The call does not read the catalog: `solactl session launch sola-mail`
@@ -143,8 +143,8 @@ ignoring case. Each entry has:
 ### Built-in entries
 
 The shell defines these in code: Settings, Monitor, Terminal, Projects,
-Browser, Kit, Preview, Paint, Mail, Calendar, Bots, Arcade, Scope and
-Design. Each app id is `sola-` and the name in lower case
+Browser, Preview, Paint, Mail, Calendar, Bots, Scope and Design. Each
+app id is `sola-` and the name in lower case
 (`sola-settings`, `sola-browser`), and each runs `/opt/sola/bin/<app_id>`.
 They are not stored, they do not appear in Settings, and they cannot be
 edited there.
@@ -169,9 +169,8 @@ entry (Sola's own applications, every `sola-…` app id, excepted), with a
 command guessed from the app id or from the window's process.
 **Add** starts a new entry with both filled in.
 
-Other applications publish entries too. Arcade adds an entry with no
-command so the tab bar can name a running game. Entries with no command
-never appear in the launcher.
+An entry with no command only names an app id for the tab bar; it never
+appears in the launcher.
 
 ### Web apps
 
@@ -276,7 +275,7 @@ the application.
 
 `sola-session` has no notion of a single instance: every launch starts a
 new process. Applications that keep one instance do it themselves:
-Browser (with its web apps), Paint, Arcade, Design, Calendar, Terminal, and
+Browser (with its web apps), Paint, Design, Calendar, Terminal, and
 Projects. A second process hands its request (a URL, an image, a file, a
 new tab, or a request to come forward) to the running one and exits.
 `sola-session` reaps it like any other exit. A second Projects shows the

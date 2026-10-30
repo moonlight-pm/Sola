@@ -82,7 +82,7 @@ impl DividerColors {
         }
     }
 
-    /// Raised | border | raised — storybook cards / same-elevation panes.
+    /// Raised | border | raised — cards / same-elevation panes.
     pub fn raised(theme: &Theme) -> Self {
         let p = theme.extended_palette();
         Self {

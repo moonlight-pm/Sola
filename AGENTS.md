@@ -89,7 +89,7 @@ crates/
   sola-bus/            # IPC bus host + client library
   sola-call/           # Call host + client (request/reply; not the bus)
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
-  sola-kit/            # Iced app kit + storybook binary
+  sola-kit/            # Iced app kit (a library)
   sola-assets/         # Vendored icon/asset bundles
   sola-browser/        # Iced browser chrome + CEF engine (single crate)
   sola-make/           # Build/install orchestration (xtask)
@@ -283,9 +283,8 @@ port. CEF binding notes at the end of this file apply to `sola-browser`
 
 ## sola-kit (the Iced app kit)
 
-`sola-kit` is the shared Iced app kit + a `sola-kit` **storybook** binary that
-dogfoods every component (each widget has a showcase page, so regressions show
-up there first). Library surface in `src/lib.rs`: `BusSetup`, `CallSetup`, `call_subscription`,
+`sola-kit` is the shared Iced app kit, a library (its storybook app was
+retired 2026-10-30). Library surface in `src/lib.rs`: `BusSetup`, `CallSetup`, `call_subscription`,
 `apply_theme_update`, `default_theme`, the `components` / `fonts` / `theme` /
 `menu` / `float` / `clipboard` modules, plus re-exported `iced`, `sola_bus`, and
 `sola_call` (so consumers don't take their own direct deps just to spell trait
@@ -325,8 +324,7 @@ The kit bridges three representations of the palette:
 1. **Compile-time defaults** — the `hex::*` constants.
 2. **`Atoms`** — 11 editable `iced::Color`s: `bg`, `bg_raised`, `bg_hover`,
    `border`, `fg`, `fg_muted`, `accent`, `success`, `warning`, `danger`,
-   `selection` (no iced palette slot; installed process-wide). The editable
-   bridge the storybook mutates.
+   `selection` (no iced palette slot; installed process-wide).
 3. **Bus theme** — `sola_core::theme::Theme`, broadcast as the persistent
    `Topic::Theme` and shared with every other sola process.
 
@@ -338,18 +336,19 @@ compile-time defaults for any missing/malformed token. The consumer path is
 theme, installs the font role table, and installs the selection colour. Call
 it in `update` for bus messages, then return `self.theme.clone()` from the
 app's theme function. `to_bus_theme()` is canned-default-only — the iced→bus
-direction is lossy by design (iced derives many colours from a few atoms), so a
-real theme editor should emit the bus value directly, not reverse it out of an
-iced `Theme`.
+direction is lossy by design (iced derives many colours from a few atoms), so
+whatever writes a theme (the shell's adapt) emits the bus value directly, not
+reversed out of an iced `Theme`. The colors change only through Settings →
+Appearance; there is no theme editor and no named themes.
 
 Spec: `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`.
 
 **Shell chrome** rides the same palette as `shell-*` tokens (8 alpha-capable
 colors + 4 spacing values, group `"shell"`). `ShellStyle` is the typed view:
 `shell_style_from_bus_theme` extracts (per-token fallback to compile-time
-defaults), `bus_theme_with_shell` writes back. The shell refreshes it on every
-`Topic::Theme`; the storybook's Shell page is the editor. Colors round-trip as
-`#rrggbbaa` when translucent. Spec:
+defaults). The shell refreshes it on every `Topic::Theme`; nothing edits the
+tokens (they stay at their defaults). Colors round-trip as `#rrggbbaa` when
+translucent. Spec:
 `docs/specs/2026-06-06-shell-customization-design.md`.
 
 ### Fonts (`src/fonts.rs`)
@@ -367,10 +366,10 @@ defaults), `bus_theme_with_shell` writes back. The shell refreshes it on every
   `chrome()`, `mono()`. The `Fonts` table (those 5 roles) lives in a process-wide
   `RwLock`; `fonts::install(Fonts)` hot-swaps it, and the bus theme path calls
   `install` on every `Topic::Theme` so a font edit propagates on the next render.
-- **`INSTALLED_FAMILIES` / `pickable_families()`** is the font-picker vocabulary
-  (settings UI + bus `FontFamily` tokens). `fonts_from_families` builds a
-  `Fonts` table from per-role family-name selections; `FontSelection` (in
-  `theme.rs`) is the per-role wire form.
+- **`INSTALLED_FAMILIES`** holds the canonical family spellings the theme's
+  `FontFamily` tokens are matched against. `fonts_from_families` builds a
+  `Fonts` table from per-role family names; `FontSelection` (in `theme.rs`)
+  is the default per-role selection. There is no font picker.
 
 ### Components (`src/components/`)
 
@@ -385,10 +384,9 @@ pictures), `readable`, `scroll` (the kit scrollbar — use
 `swatch`, `text`, `text_input` (fork — style/padding only; see module
 docs), `toolbar`. Prefer `button::labeled` / `labeled_sm` and named
 `PAD_CONTROL*` pads. An app's bar under its titlebar (tabs, a toolbar, a
-heading with its controls) is `style::BAR_H` tall. Each has a storybook page under `src/storybook/pages/`.
-**Always update that page in the same change** as the component (see
-`.grok/rules/kit-storybook-pages.md`). Grow this surface only as real
-apps need shared pieces — no speculative widgets.
+heading with its controls) is `style::BAR_H` tall. Look at a component
+change in the apps that use it. Grow this surface only as real apps need
+shared pieces — no speculative widgets.
 
 ## sola-shell (the Iced desktop shell)
 

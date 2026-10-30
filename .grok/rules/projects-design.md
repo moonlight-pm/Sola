@@ -30,4 +30,3 @@ Canonical sketch: [`docs/ideas/2026-08-12-sola-agent-terminal.md`](../../docs/id
 
 - Cargo-cult Orca’s worktree cards or today’s graphite sidebar as the look.
 - Skip the skills because “it’s just a list of terminals.”
-- Rewrite unrelated storybook pages without asking (see `kit-storybook-pages`).

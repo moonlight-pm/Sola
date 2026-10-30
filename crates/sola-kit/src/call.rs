@@ -180,6 +180,16 @@ fn ensure_observe_poller() {
         .name("sola-kit-observe".into())
         .spawn(|| {
             loop {
+                // Leave events queued until a subscription takes them: the
+                // catalog comes right after connecting, before iced has
+                // subscribed, and a dropped one leaves Monitor "Host down".
+                let attached = OBSERVE_STREAM_TX
+                    .lock()
+                    .map_or_else(|p| p.into_inner().is_some(), |slot| slot.is_some());
+                if !attached {
+                    std::thread::sleep(Duration::from_millis(8));
+                    continue;
+                }
                 let next = match OBSERVE_RX.lock() {
                     Ok(guard) => guard.as_ref().and_then(|rx| rx.try_recv().ok()),
                     Err(poisoned) => {

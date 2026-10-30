@@ -8243,24 +8243,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sola-arcade"
-version = "0.1.0"
-dependencies = [
- "iced",
- "image",
- "notify",
- "serde",
- "serde_json",
- "sola-bus",
- "sola-core",
- "sola-kit",
- "tempfile",
- "tokio",
- "tracing",
- "x11rb",
-]
-
-[[package]]
 name = "sola-assets"
 version = "0.1.0"
 dependencies = [

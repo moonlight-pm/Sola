@@ -43,9 +43,9 @@ impl LauncherState {
 
 /// Case-insensitive substring match on `label`, preserving config order.
 ///
-/// Entries with an empty `command` are label-only overlays (e.g. Arcade's
-/// gamescope host name while a nest is running) and never appear in the
-/// launcher — they exist so the menubar and tab bar can resolve a display name.
+/// Entries with an empty `command` are label-only overlays (a display name
+/// for a window's app id) and never appear in the launcher — they exist so
+/// the menubar and tab bar can resolve a display name.
 pub fn filter(apps: &ApplicationsConfig, query: &str) -> Vec<String> {
     let q = query.trim().to_lowercase();
     apps.apps

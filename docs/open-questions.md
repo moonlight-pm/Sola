@@ -128,7 +128,15 @@ forward it whole; forward a Projects-only proxy (only owner `projects`).
 
 ---
 
-### D9 — Unpackaged apps in the launcher on Oath (P1)
+### D9 — Unpackaged apps in the launcher on Oath (P1) — **answered (2026-10-30)**
+
+**Answer (Joshua, 2026-10-30):** "lets get rid of arcade (it remains in git
+history), lets bring in scope, preview, monitor"; Kit: "i'm not sure we need
+the app anymore -- we use the appearance settings and tweaking a bunch of
+padding and whatnot is just not something a user wants to bother with. Thus
+we can also get rid of the state that kit app would have saved". Arcade and
+the Kit storybook (with its `CustomTheme` presets) are removed; Monitor,
+Preview and Scope ship in `pkg:sola`. Bots and Install wait.
 
 **Context:** Kit, Monitor, Preview, Arcade and Scope are launcher
 built-ins (Spotify was one; `sola-spotify` is retired on `next` since
@@ -308,6 +316,8 @@ runs `cloudflared` while open. Links work only while Design runs.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-10-30 | D9 launcher apps on Oath | Arcade and the Kit storybook removed (Kit's `CustomTheme` presets with it: Settings → Appearance supersedes them; the 2026-08-15 storybook-page rule goes too); Monitor, Preview and Scope ship in `pkg:sola`; Bots and Install later | open-questions D9, capabilities, AGENTS |
+| 2026-10-30 | Spotify | `sola-spotify` removed on `next`; Spotify runs as a web app | capabilities `spotify` |
 | 2026-10-28 | Projects are ~/Projects folders | Projects keeps no list of projects (Joshua: "We don't need a 'Drop Project' anymore. Closing the window does that basically. Also we don't need to keep a list of projects. Projects are jut whatever is in the ~/Projects directory"): the catalog holds only open projects; closing a window ends its sessions and forgets it. Asked: a reopened project starts on its root tab only; startup scripts live in a settings file by folder; with nothing open Projects quits. A remote project's tab shows its folder alone, its frame "<folder> on <host>". | capabilities `projects`, manual `solactl.md` |
 | 2026-10-28 | Projects on another computer | A project may be a folder in an ssh host's `~/Projects` (Joshua: "When i open projects through launcher, there should be a 'remote' option … type in a hostname, and it should remember recently used … ssh there to get a list of projects … open sessions over ssh to tmux … So the session runs on that machine"; then "remote projects should be identical in operation as local ones"). Each tab is a tmux session on that host on its own socket (`sola-ws-remote`, so a Sola there keeps its own apart); the chooser lists `~/Projects` there, not that host's Projects catalog. A link per host (`ssh -N -R`) brings its agents' hooks back, after Projects installs the same hooks there; worktrees, startup scripts, the pane CLI and resume run there through a `Machine` seam. | capabilities `projects`, manual `solactl.md`, `sola-shell.md` |
 | 2026-10-28 | Themed flower | The top row's flower takes the theme as its own token, `shell-flower`, amber by default (Joshua picked it over painting the flower the accent, which would have turned it cyan on the grey theme): a picture's scheme recolors it as the accent, and the storybook's Shell page edits it. Built with it: Settings' Accent sets it too, and a grey picture keeps the amber. | capabilities `theme-bus`, manual theme / sola-shell, background spec |
@@ -378,7 +388,7 @@ runs `cloudflared` while open. Links work only while Design runs.
 | 2026-08-15 | Browser tab groups | In-strip folders (spaces later); groups at top, loose run at bottom; menu + drag join/leave; New group is menu-only; collapse keeps the page; empty dissolves; kit context menu | [freeze](specs/2026-08-15-sola-browser-tab-groups-design.md), CURRENT, capabilities |
 | 2026-08-15 | Browser instance | One iced chrome via `chrome.sock`; second process hands off (does not reap live helpers). Helper death respawns + restores tabs. | CURRENT, capabilities, architecture, manual/sola-browser |
 | 2026-08-15 | Browser passkey | `get()` intercept in every frame; same-site duplicate/retry coalesced (Gemini Exchange 2FA was failing the page before pick); `create()` vault confirm + persist (new login or attach) | CURRENT, capabilities, manual/sola-browser |
-| 2026-08-15 | Kit storybook | Always update the matching storybook page in the same change; do not ask | `.grok/rules/kit-storybook-pages.md`, AGENTS |
+| 2026-08-15 | Kit storybook | Always update the matching storybook page in the same change; do not ask (*superseded 2026-10-30: the storybook is retired*) | AGENTS |
 | 2026-08-14 | D4.1 | Product is `sola-workspaces`. Owner `ws` (`solactl ws …`). Tmux `sola-ws` / `sws-`. Config `~/.config/sola/workspaces/`. | CURRENT + freeze + PRODUCT |
 | 2026-08-14 | workspaces | No `sat` binary. Face is `solactl ws …` only. | CURRENT + freeze |
 | 2026-08-14 | Browser downloads | Auto-save `~/Downloads`; toolbar icon with progress; click-to-open panel; persist completed in `shared/downloads.json`; cancel + open + remove-row (no Finder) | [freeze](specs/2026-08-14-sola-browser-downloads-design.md), CURRENT, capabilities, manual |

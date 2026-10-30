@@ -204,14 +204,13 @@ pub fn build_theme(atoms: &Atoms) -> Theme {
 /// palette has no selection slot, so — exactly like the font role table
 /// (`crate::fonts`) — this rides a process-wide cell reinstalled on
 /// every live theme build and every bus `Topic::Theme` delivery.
-/// Component style fns read it via [`selection`]; the storybook and the
-/// bus consumer path both refresh it via [`install_selection`].
+/// Component style fns read it via [`selection`]; the bus consumer path
+/// refreshes it via [`install_selection`].
 static SELECTION: std::sync::LazyLock<std::sync::RwLock<Color>> =
     std::sync::LazyLock::new(|| std::sync::RwLock::new(parse(hex::SELECTION)));
 
-/// Swap the process-wide selection colour. Re-callable — the storybook
-/// calls it as the user edits the `selection` atom, and the bus theme
-/// consumer path calls it on every `Topic::Theme` so a selection edit
+/// Swap the process-wide selection colour. Re-callable — the bus theme
+/// consumer path calls it on every `Topic::Theme` so a selection change
 /// propagates everywhere on the next render.
 pub fn install_selection(color: Color) {
     if let Ok(mut guard) = SELECTION.write() {
@@ -222,7 +221,7 @@ pub fn install_selection(color: Color) {
 /// Install the process-wide colours that have no iced palette slot from
 /// `atoms`: the selection ([`install_selection`]) and the chrome surface
 /// ([`crate::components::style::chrome_surface`]). Every theme path calls
-/// it (the bus consumer, the storybook, the shell).
+/// it (the bus consumer, the shell).
 pub fn install_atoms(atoms: &Atoms) {
     install_selection(atoms.selection);
     if let Ok(mut guard) = HIGHLIGHT.write() {
@@ -309,8 +308,8 @@ pub fn to_bus_theme() -> BusTheme {
     bus_theme_from_atoms(&Atoms::default())
 }
 
-/// Editable atom set — every colour the iced kit's theme depends on,
-/// held as `iced::Color` so the storybook can mutate one and rebuild.
+/// The atom set — every colour the iced kit's theme depends on, held as
+/// `iced::Color`.
 ///
 /// This is the bridge between the kit's compile-time palette (the
 /// `hex::*` constants) and the bus-side `BusTheme` schema. Both
@@ -320,9 +319,8 @@ pub fn to_bus_theme() -> BusTheme {
 ///   `Atoms` → `iced::Theme` via [`build_theme`]
 ///   `Atoms` → `BusTheme`   via [`bus_theme_from_atoms`]
 ///
-/// The storybook's editor mutates an `Atoms` value, then rebuilds and
-/// re-emits both forms; other kit apps consume the bus form via
-/// [`theme_from_bus`] and pick up the change on their next render.
+/// Kit apps consume the bus form via [`theme_from_bus`] and pick up a
+/// change on their next render.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Atoms {
     pub bg: Color,
@@ -512,34 +510,6 @@ impl Default for FontSelection {
     }
 }
 
-/// Merge font role selections into a `BusTheme`. Adds five
-/// `FontFamily`-kind tokens — `font-ui`, `font-ui-medium`, `font-display`,
-/// `font-chrome`, `font-mono` — so consumers can read them out via
-/// [`fonts_from_bus_theme`] and reinstall the role table.
-pub fn bus_theme_with_fonts(mut t: BusTheme, fonts: &FontSelection) -> BusTheme {
-    use sola_core::theme::{Token, TokenKind};
-    let writes = [
-        ("font-ui", fonts.ui.clone()),
-        ("font-ui-medium", fonts.ui_medium.clone()),
-        ("font-display", fonts.display.clone()),
-        ("font-chrome", fonts.chrome.clone()),
-        ("font-mono", fonts.mono.clone()),
-    ];
-    for (name, value) in writes {
-        t.palette.tokens.insert(
-            name.to_string(),
-            Token::new(TokenKind::FontFamily, &value, &["font-family"]),
-        );
-    }
-    t
-}
-
-/// Build a complete `BusTheme` from an atoms + fonts pair. Convenience
-/// over chaining [`bus_theme_from_atoms`] and [`bus_theme_with_fonts`].
-pub fn bus_theme_from(atoms: &Atoms, fonts: &FontSelection) -> BusTheme {
-    bus_theme_with_fonts(bus_theme_from_atoms(atoms), fonts)
-}
-
 /// Read the kit's font role tokens out of a `BusTheme` and build a
 /// `crate::fonts::Fonts` table. Missing tokens fall back to the
 /// process-wide default font selection.
@@ -578,31 +548,9 @@ pub fn atoms_from_bus_theme(bus: &BusTheme) -> Atoms {
     atoms
 }
 
-/// Read the font roles out of a `BusTheme` as a `FontSelection`
-/// (string family names). Sibling to [`fonts_from_bus_theme`], which
-/// returns the resolved `crate::fonts::Fonts` table.
-pub fn font_selection_from_bus_theme(bus: &BusTheme) -> FontSelection {
-    let default = FontSelection::default();
-    let read = |name: &str, fallback: &str| {
-        bus.palette
-            .tokens
-            .get(name)
-            .map(|t| t.value.clone())
-            .unwrap_or_else(|| fallback.to_string())
-    };
-    FontSelection {
-        ui: read("font-ui", &default.ui),
-        ui_medium: read("font-ui-medium", &default.ui_medium),
-        display: read("font-display", &default.display),
-        chrome: read("font-chrome", &default.chrome),
-        mono: read("font-mono", &default.mono),
-    }
-}
-
 /// Format an iced `Color` as `#rrggbb`, or `#rrggbbaa` when alpha < 1 —
 /// so existing opaque values don't churn on round-trip. The inverse of
-/// [`parse`]; shared with the storybook's atom grid so it doesn't
-/// reimplement the conversion.
+/// [`parse`].
 pub fn color_to_hex(c: Color) -> String {
     let r = (c.r * 255.0).round().clamp(0.0, 255.0) as u8;
     let g = (c.g * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -708,10 +656,9 @@ fn shell_space(bus: &BusTheme, token: &str, fallback: f32) -> f32 {
         .unwrap_or(fallback)
 }
 
-/// Read the shell style out of a `BusTheme` (the inverse of
-/// [`bus_theme_with_shell`]). Missing or malformed tokens fall back
-/// per-field to the compile-time defaults, so a stale preset (saved
-/// before the shell tokens existed) renders exactly as before.
+/// Read the shell style out of a `BusTheme`. Missing or malformed tokens
+/// fall back per-field to the compile-time defaults, so a theme saved
+/// before the shell tokens existed renders exactly as before.
 pub fn shell_style_from_bus_theme(bus: &BusTheme) -> ShellStyle {
     let d = ShellStyle::default();
     ShellStyle {
@@ -732,84 +679,6 @@ pub fn shell_style_from_bus_theme(bus: &BusTheme) -> ShellStyle {
         launcher_width: shell_space(bus, "shell-launcher-width", d.launcher_width),
         launcher_pad: shell_space(bus, "shell-launcher-pad", d.launcher_pad),
     }
-}
-
-/// Write `shell`'s values into `t`'s palette as `shell-*` tokens
-/// (the inverse of [`shell_style_from_bus_theme`]). Mirrors
-/// `bus_theme_from_atoms`'s upsert behavior — overwrite when present,
-/// insert when the seed somehow lacks the token — preserving the
-/// write-list ⊇ read-list invariant.
-pub fn bus_theme_with_shell(mut t: BusTheme, shell: &ShellStyle) -> BusTheme {
-    use sola_core::theme::{Token, TokenKind};
-    let entries: [(&str, TokenKind, String); 12] = [
-        (
-            "shell-menubar-bg",
-            TokenKind::Color,
-            color_to_hex(shell.menubar_bg),
-        ),
-        ("shell-flower", TokenKind::Color, color_to_hex(shell.flower)),
-        (
-            "shell-backdrop-dim",
-            TokenKind::Color,
-            color_to_hex(shell.backdrop_dim),
-        ),
-        (
-            "shell-switcher-bg",
-            TokenKind::Color,
-            color_to_hex(shell.switcher_bg),
-        ),
-        (
-            "shell-switcher-border",
-            TokenKind::Color,
-            color_to_hex(shell.switcher_border),
-        ),
-        (
-            "shell-switcher-icon-bg",
-            TokenKind::Color,
-            color_to_hex(shell.switcher_icon_bg),
-        ),
-        (
-            "shell-switcher-icon-fg",
-            TokenKind::Color,
-            color_to_hex(shell.switcher_icon_fg),
-        ),
-        (
-            "shell-switcher-icon-fg-sel",
-            TokenKind::Color,
-            color_to_hex(shell.switcher_icon_fg_sel),
-        ),
-        (
-            "shell-switcher-pad",
-            TokenKind::Space,
-            format!("{}px", shell.switcher_pad),
-        ),
-        (
-            "shell-switcher-tile-pad",
-            TokenKind::Space,
-            format!("{}px", shell.switcher_tile_pad),
-        ),
-        (
-            "shell-launcher-width",
-            TokenKind::Space,
-            format!("{}px", shell.launcher_width),
-        ),
-        (
-            "shell-launcher-pad",
-            TokenKind::Space,
-            format!("{}px", shell.launcher_pad),
-        ),
-    ];
-    for (name, kind, value) in entries {
-        match t.palette.tokens.get_mut(name) {
-            Some(tok) => tok.value = value,
-            None => {
-                t.palette
-                    .tokens
-                    .insert(name.to_string(), Token::new(kind, &value, &["shell"]));
-            }
-        }
-    }
-    t
 }
 
 #[cfg(test)]
@@ -1096,18 +965,6 @@ mod tests {
             components: Default::default(),
         };
         assert_eq!(shell_style_from_bus_theme(&empty), ShellStyle::default());
-    }
-
-    #[test]
-    fn shell_style_bus_roundtrip() {
-        let mut style = ShellStyle::default();
-        // parse() quantizes to u8 channels, so equality after the string
-        // round-trip is exact. Don't use raw f32 alphas here (0.5 → 0x80
-        // → 128/255 ≠ 0.5).
-        style.switcher_bg = parse("#ffb80080");
-        style.switcher_pad = 48.0;
-        let bus = bus_theme_with_shell(BusTheme::default(), &style);
-        assert_eq!(shell_style_from_bus_theme(&bus), style);
     }
 
     #[test]

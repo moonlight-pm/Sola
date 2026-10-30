@@ -25,7 +25,7 @@ fallback.
 
 | Path | Behavior |
 |------|----------|
-| Link click in Terminal, Mail, or Arcade | `sola_core::open_url`: hands the URL to `chrome.sock` if the browser is running, else starts it |
+| Link click in Terminal or Mail | `sola_core::open_url`: hands the URL to `chrome.sock` if the browser is running, else starts it |
 | `solactl open <url>` | Same |
 | Bus `Topic::OpenUrl` | A running browser opens a tab; the shell starts the browser only if it is not running |
 | Terminal `open` / `xdg-open` | `xdg-open`; MIME via `sola-browser.desktop`; a second process hands off and exits |
