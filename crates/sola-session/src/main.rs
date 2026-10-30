@@ -1,3 +1,5 @@
+mod adopted;
+mod display;
 mod session;
 
 use tracing::info;

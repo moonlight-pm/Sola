@@ -246,6 +246,14 @@ every launch, close, and exit. An application you close, or one that quits
 or crashes, leaves the list. Ending the session does not change it, so the
 applications open at **Exit Sola** are the ones restored.
 
+An application that exits because its compositor went (River restarted
+under the running desk, say an Oath update that moved it) did not close: it
+stays on the list, and once a new compositor has answered for 2 s it is
+started again. `sola-session` tells by the compositor's Wayland socket: the
+one the application was launched on no longer answers, or a new one has
+taken its place. The log says `app went with its display` and `the display
+is back: starting it again`.
+
 When it starts, `sola-session` spends 750 ms collecting the stored
 `SessionApps` and the current `Windows`. Then it launches every listed
 application that has no window with that app id and is not already
@@ -253,7 +261,9 @@ tracked, once, with its stored command. A stored entry for an application
 that has since been renamed launches under the new name (`sola-workspaces`
 runs as `sola-projects`). After a fresh start everything on the list
 opens. After a restart of `sola-session` alone, the applications
-are still open and nothing is launched.
+are still open and nothing is launched: the listed ones that have windows
+stay on the list (`keeping the saved apps already running`) until their
+windows have been gone for 3 s.
 
 Restore does not place windows: the shell puts each window back in its
 saved zone or floating rectangle when it appears
@@ -369,9 +379,9 @@ Call methods, owner `session` (also the MCP tools `session_launch` and
 
 | What restarts | What happens |
 |---|---|
-| sola-session | Open applications keep running, but the new `sola-session` does not know them: no `UserAppExited`, `solactl session close` does not find them, and they leave `SessionApps` at the next launch, close, or exit. Super+Q still closes their windows. Restore launches only listed applications that have no window. |
+| sola-session | Open applications keep running, but the new `sola-session` did not start them: no `UserAppExited`, and `solactl session close` does not find them. The listed ones with windows stay in `SessionApps` while they have windows (3 s grace). Super+Q still closes their windows. Restore launches only listed applications that have no window. On Oath, an apply that moves `pkg:sola` stops `sola-session`, which closes the applications as at Exit Sola; the new one opens them again. |
 | sola-bus | `sola-session` reconnects and subscribes again. A `LaunchApp` sent while the bus was down is lost. |
-| River | The session ends ([Compositor § Restarts](compositor.md#restarts)). |
+| River | Under the `sola` process manager the session ends ([Compositor § Restarts](compositor.md#restarts)). On Oath, PID 1 starts River again: the applications lose their display and exit, stay in `SessionApps`, and are started again on the new River. |
 
 ## Logs
 

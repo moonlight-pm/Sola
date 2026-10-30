@@ -16,6 +16,13 @@ const RESTORE_SETTLE: Duration = Duration::from_millis(750);
 
 use sola_core::{env, paths};
 
+use crate::adopted::{self, Adopted};
+use crate::display;
+
+/// How long a new compositor runs before the apps that went with the last
+/// one are started on it (sola-river and the shell come back first).
+const DISPLAY_SETTLE: Duration = Duration::from_secs(2);
+
 /// Hard ceiling for the per-shutdown poll loop: 5s `TimeoutStopSec` set
 /// on each scope plus 1s slack.
 const SHUTDOWN_POLL_BUDGET: Duration = Duration::from_secs(6);
@@ -33,6 +40,16 @@ pub struct AppRecord {
     pub launched_at: Instant,
     /// True once `systemctl stop` has been issued; suppresses re-stops.
     pub closing: bool,
+    /// The compositor it was launched on (`display::live`).
+    pub display: Option<String>,
+}
+
+/// An app that exited because its compositor went: still in the session,
+/// started again on the next compositor.
+struct Lost {
+    app_id: String,
+    command: String,
+    display: Option<String>,
 }
 
 pub struct Session {
@@ -42,6 +59,12 @@ pub struct Session {
     /// app_id get distinct scope unit names.
     launch_counter: u64,
     call_rx: Option<std::sync::mpsc::Receiver<sola_call::Incoming>>,
+    /// Apps that went with their display, waiting for the next compositor.
+    lost: Vec<Lost>,
+    /// A new compositor, and since when it has answered.
+    back_since: Option<(String, Instant)>,
+    /// Saved apps found running at start (not started by this process).
+    adopted: Vec<Adopted>,
 }
 
 impl Session {
@@ -53,6 +76,9 @@ impl Session {
             children: HashMap::new(),
             launch_counter: 0,
             call_rx: None,
+            lost: Vec::new(),
+            back_since: None,
+            adopted: Vec::new(),
         }
     }
 
@@ -88,7 +114,9 @@ impl Session {
                 .find(|r| !r.closing)
                 .map(|r| (app_id.clone(), r.command.clone()))
         });
-        let apps = session_apps_from_pairs(pairs);
+        let lost = self.lost.iter().map(|l| (l.app_id.clone(), l.command.clone()));
+        let adopted = self.adopted.iter().map(|a| (a.app_id.clone(), a.command.clone()));
+        let apps = session_apps_from_pairs(pairs.chain(lost).chain(adopted));
         let _ = self.bus.emit(Topic::SessionApps(apps));
     }
 
@@ -123,6 +151,22 @@ impl Session {
         }
 
         let children_keys: HashSet<String> = self.children.keys().cloned().collect();
+        // Saved apps already running (this process restarted under them):
+        // keep them in the session while they have windows.
+        let on = display::live();
+        self.adopted = persisted
+            .iter()
+            .filter(|a| running.contains(&a.app_id) && !children_keys.contains(&a.app_id))
+            .map(|a| Adopted {
+                app_id: a.app_id.clone(),
+                command: a.command.clone(),
+                display: on.clone(),
+                missing_since: None,
+            })
+            .collect();
+        if !self.adopted.is_empty() {
+            info!(count = self.adopted.len(), "session restore: keeping the saved apps already running");
+        }
         let plan = restore_plan(&persisted, &running, &children_keys);
         if plan.is_empty() {
             info!(
@@ -271,7 +315,10 @@ impl Session {
         match cmd.spawn() {
             Ok(child) => {
                 let pid = child.id();
-                info!(%app_id, %unit, pid, "user app launched");
+                let on = display::live();
+                // Started by this process now: its record supersedes adoption.
+                self.adopted.retain(|a| a.app_id != app_id);
+                info!(%app_id, %unit, pid, display = ?on, "user app launched");
                 self.children
                     .entry(app_id.clone())
                     .or_default()
@@ -282,6 +329,7 @@ impl Session {
                         child,
                         launched_at: Instant::now(),
                         closing: false,
+                        display: on,
                     });
                 self.emit_launch_result(&app_id, &command, true, None);
                 self.emit_session_apps();
@@ -392,13 +440,66 @@ impl Session {
 
     pub fn tick(&mut self) {
         self.reap_exited();
+        self.settle_adopted();
+        self.bring_back_lost();
+    }
+
+    /// One bus message: a live window list goes to the adopted apps (a
+    /// retraction, sola-river down, says nothing about them).
+    pub fn on_message(&mut self, msg: &sola_bus::Message) {
+        match Topic::parse(msg) {
+            Some(Topic::Windows(ws)) if msg.sticky => {
+                let open: HashSet<String> = ws.into_iter().map(|w| w.app_id).collect();
+                adopted::note_windows(&mut self.adopted, &open, Instant::now());
+            }
+            Some(topic) => self.handle(topic),
+            None => {}
+        }
+    }
+
+    /// Adopted apps whose windows stayed gone: closed, or (their
+    /// compositor changed) gone with the display, to come back.
+    fn settle_adopted(&mut self) {
+        let gone = adopted::gone(&mut self.adopted, Instant::now());
+        if gone.is_empty() {
+            return;
+        }
+        let live = display::live();
+        for a in gone {
+            if display::went_with_display(a.display.as_deref(), live.as_deref()) {
+                info!(app_id = %a.app_id, "adopted app went with its display; it comes back on the next one");
+                if !self.lost.iter().any(|l| l.app_id == a.app_id) {
+                    self.lost.push(Lost {
+                        app_id: a.app_id,
+                        command: a.command,
+                        display: a.display,
+                    });
+                }
+            } else {
+                info!(app_id = %a.app_id, "adopted app closed (its windows are gone)");
+            }
+        }
+        self.emit_session_apps();
     }
 
     fn reap_exited(&mut self) {
         let mut to_emit: Vec<(String, String, std::process::ExitStatus)> = Vec::new();
+        // Asked once, and only when something exited: it connects.
+        let mut now: Option<Option<String>> = None;
+        let mut lost: Vec<Lost> = Vec::new();
         for (_app_id, records) in self.children.iter_mut() {
             records.retain_mut(|r| match r.child.try_wait() {
                 Ok(Some(status)) => {
+                    let live = now.get_or_insert_with(display::live);
+                    tracing::debug!(app_id = %r.app_id, launched_on = ?r.display, now = ?live, "display at exit");
+                    if !r.closing && display::went_with_display(r.display.as_deref(), live.as_deref()) {
+                        info!(app_id = %r.app_id, ?status, "app went with its display; it comes back on the next one");
+                        lost.push(Lost {
+                            app_id: r.app_id.clone(),
+                            command: r.command.clone(),
+                            display: r.display.clone(),
+                        });
+                    }
                     to_emit.push((r.app_id.clone(), r.command.clone(), status));
                     false
                 }
@@ -410,6 +511,11 @@ impl Session {
             });
         }
         self.children.retain(|_, v| !v.is_empty());
+        for l in lost {
+            if !self.lost.iter().any(|k| k.app_id == l.app_id) {
+                self.lost.push(l);
+            }
+        }
         let reaped_any = !to_emit.is_empty();
         for (app_id, command, status) in to_emit {
             info!(%app_id, ?status, "user app exited");
@@ -417,6 +523,51 @@ impl Session {
         }
         if reaped_any {
             self.emit_session_apps();
+        }
+    }
+}
+
+impl Session {
+    /// Start the apps that went with the last compositor once a new one has
+    /// answered for [`DISPLAY_SETTLE`].
+    fn bring_back_lost(&mut self) {
+        if self.lost.is_empty() {
+            return;
+        }
+        let Some(now) = display::live() else {
+            self.back_since = None;
+            return;
+        };
+        let before = self.lost.len();
+        self.lost.retain(|l| l.display.as_deref() != Some(now.as_str()));
+        if self.lost.len() != before {
+            // Their compositor still answers: they exited on their own.
+            self.emit_session_apps();
+            if self.lost.is_empty() {
+                return;
+            }
+        }
+        match &self.back_since {
+            Some((id, at)) if *id == now => {
+                if at.elapsed() < DISPLAY_SETTLE {
+                    return;
+                }
+            }
+            _ => {
+                self.back_since = Some((now, Instant::now()));
+                return;
+            }
+        }
+        self.back_since = None;
+        for l in std::mem::take(&mut self.lost) {
+            if self.children.contains_key(&l.app_id) {
+                continue;
+            }
+            info!(app_id = %l.app_id, "the display is back: starting it again");
+            self.launch(LaunchAppPayload {
+                app_id: l.app_id,
+                command: l.command,
+            });
         }
     }
 }
@@ -596,14 +747,10 @@ pub fn run() {
         }
 
         while let Some(msg) = session.bus.try_recv() {
-            if let Some(topic) = Topic::parse(&msg) {
-                session.handle(topic);
-            }
+            session.on_message(&msg);
         }
         if let Some(msg) = session.bus.recv_timeout(poll) {
-            if let Some(topic) = Topic::parse(&msg) {
-                session.handle(topic);
-            }
+            session.on_message(&msg);
         }
         session.drain_calls();
         session.tick();
