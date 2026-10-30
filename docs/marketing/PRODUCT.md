@@ -23,7 +23,7 @@ host `sola.moonlight.pm`). Build and deploy steps:
 
 ## Users
 
-**Primary:** Linux / NixOS developers deciding whether Sola is real and
+**Primary:** Linux developers deciding whether Sola is real and
 worth building. Technical; expects honest status and real paths.
 
 **Secondary:** colleagues and friends already running it.
@@ -48,9 +48,9 @@ documenting them.
 `/`:
 
 1. **Intro** — flower + "Sola"; one-paragraph definition; facts line
-   (Pre-release · NixOS, x86-64 · No releases yet · Manual · Source); then
-   the desk from `design/foundation/07-desk.html`, rendered to
-   `site/web/desk.png` and captioned as a drawing.
+   (Pre-release · Oath, x86-64 · No releases yet · Manual · Source); then
+   a screenshot of the desk (`site/web/desk.webp`), captioned with its
+   date.
 2. **Design** — four bold-lead paragraphs: one toolkit + live theme;
    separate restartable processes; native, not web (CEF only where pages
    are the content); scriptable (`solactl`, `solactl mcp`), with a short
@@ -60,10 +60,12 @@ documenting them.
    incomplete (links the manual and capabilities).
 4. **Architecture** — process table (`sola`, bus, call, river bridge,
    shell, session, kit).
-5. **Status** — pre-release, one workstation, no images; "Not there yet"
-   list.
-6. **Building** — NixOS module, `cargo make install-cef` / `install`,
-   link to CONTRIBUTING.
+5. **Status** — pre-release, runs on Oath as `pkg:sola`, `pkg:sola-browser`
+   and `pkg:sola-design` from `next`; "Not there yet" list. Since
+   2026-10-29 the page names Oath, not NixOS, and the app is Projects
+   ("workspaces" are the shell's desktop workspaces).
+6. **Building** — on an Oath machine, from `next`: `cargo make oath stage`
+   / `apply`.
 
 ## Voice
 
@@ -81,8 +83,9 @@ of future features. Name gaps instead of hedging.
 ## Brand commitments
 
 - Visual law: root [`DESIGN.md`](../../DESIGN.md) — graphite ladder, one
-  cyan signal (here: the pre-release ring, link underlines, focus), flower
-  mark in cyan.
+  signal (here: link underlines, focus, the flower mark). Since 2026-10-29
+  the site takes the desk screenshot's look: the ladder tinted violet, the
+  signal rose (`#e398a9`), contrast kept.
 - Fonts: SF Pro Text → Inter; Iosevka Term Slab → JetBrains Mono (Google
   Fonts; the CSP allows only those).
 - Dark only (the product is dark).

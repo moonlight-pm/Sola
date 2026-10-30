@@ -13,7 +13,8 @@ use super::{App, Msg};
 use crate::boards::Board;
 use crate::camera;
 use crate::scene::{Choice, Scene};
-use crate::tour::{self, Nav, Tour, Tween};
+use crate::annot::Annotations;
+use crate::tour::{self, Nav, Notes, Tour, Tween};
 
 impl App {
     /// The annotations of the canvas on screen, as drawn.
@@ -21,6 +22,13 @@ impl App {
         self.shown_live()
             .map(|l| Scene::build(&l.boards, &l.annot))
             .unwrap_or_default()
+    }
+
+    /// Whether any note card on the canvas on screen is open (hovered
+    /// ones aside).
+    pub(super) fn any_note_open(&self) -> bool {
+        self.shown_live()
+            .is_some_and(|l| any_note_open(&l.annot, &self.notes, self.tour.as_ref()))
     }
 
     /// After a re-layout of the canvas on screen: a tour keeps only the
@@ -33,7 +41,7 @@ impl App {
             }
         }
         let notes = self.shown_live().map_or(0, |l| l.annot.notes.len());
-        self.open_notes.retain(|n| *n <= notes);
+        self.notes.keep(notes);
     }
 
     /// An exit (or a board link) in board `tab` was clicked: go to `to`.
@@ -59,7 +67,10 @@ impl App {
 
     pub(super) fn nav(&mut self, nav: Nav) {
         match nav {
-            Nav::Notes => self.notes_open = !self.notes_open,
+            Nav::Notes => {
+                let any = self.any_note_open();
+                self.notes.toggle(any);
+            }
             Nav::End => {
                 self.tour = None;
                 self.flows_open = false;
@@ -239,4 +250,11 @@ fn floating<'a>(body: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
             left: 16.0,
         })
         .into()
+}
+
+/// Whether any note card of `annot` is open as `notes` says, on `tour`'s
+/// step (hovered ones aside).
+pub(super) fn any_note_open(annot: &Annotations, notes: &Notes, tour: Option<&Tour>) -> bool {
+    let step = tour.map(Tour::step);
+    annot.notes.iter().any(|n| notes.open(n.n, n.board(), step))
 }

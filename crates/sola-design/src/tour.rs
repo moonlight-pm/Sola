@@ -3,6 +3,7 @@
 //! A tour starts from a `[[flow]]`, or by clicking an exit in a page (so
 //! Back works). Panning and zooming never end it.
 
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use iced::Size;
@@ -75,6 +76,55 @@ pub enum Nav {
     Notes,
 }
 
+/// Which note cards are open. On a tour step its notes are open; the notes
+/// toggle opens every card, or closes every card while any is open (they
+/// stay closed on the next steps). A click on a marker flips that one card
+/// from what the toggle says.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Notes {
+    shown: Shown,
+    flipped: HashSet<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Shown {
+    #[default]
+    Step,
+    All,
+    Hidden,
+}
+
+impl Notes {
+    /// Is note `n`, on `board` (none for a spot on the canvas), open while
+    /// `step` is the tour's step?
+    pub fn open(&self, n: usize, board: Option<&str>, step: Option<&str>) -> bool {
+        let shown = match self.shown {
+            Shown::All => true,
+            Shown::Hidden => false,
+            Shown::Step => step.is_some() && board == step,
+        };
+        shown != self.flipped.contains(&n)
+    }
+
+    /// A click on note `n`'s marker.
+    pub fn flip(&mut self, n: usize) {
+        if !self.flipped.remove(&n) {
+            self.flipped.insert(n);
+        }
+    }
+
+    /// The notes toggle, `any_open` saying whether any card is open now.
+    pub fn toggle(&mut self, any_open: bool) {
+        self.shown = if any_open { Shown::Hidden } else { Shown::All };
+        self.flipped.clear();
+    }
+
+    /// Forget clicks on notes past `count` (the canvas lost them).
+    pub fn keep(&mut self, count: usize) {
+        self.flipped.retain(|n| *n <= count);
+    }
+}
+
 /// A camera glide.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tween {
@@ -119,6 +169,31 @@ mod tests {
         assert!(t.keep(|b| b != "b"));
         assert_eq!(t.path, vec!["a".to_string()], "a gone board leaves no repeat");
         assert!(!t.keep(|_| false));
+    }
+
+    #[test]
+    fn the_toggle_closes_step_notes_and_they_stay_closed() {
+        let mut notes = Notes::default();
+        let (story, board) = (Some("story"), Some("board"));
+        assert!(notes.open(7, story, story), "a step's notes open by themselves");
+        assert!(!notes.open(2, board, story) && !notes.open(1, None, story));
+        assert!(!notes.open(7, story, None), "off a tour, closed");
+
+        notes.toggle(true);
+        assert!(!notes.open(7, story, story), "the toggle closes the step's notes");
+        assert!(!notes.open(2, board, board), "and the next step's");
+        notes.flip(7);
+        assert!(notes.open(7, story, story), "a marker click opens just that one");
+        assert!(!notes.open(8, story, story));
+
+        notes.toggle(true);
+        assert!(!notes.open(7, story, story), "with one open, the toggle closes it");
+        notes.toggle(false);
+        assert!(notes.open(2, board, story) && notes.open(1, None, None), "with none open, it opens all");
+        notes.flip(1);
+        assert!(!notes.open(1, None, None), "a marker click closes one of all");
+        notes.keep(0);
+        assert!(notes.open(1, None, None), "a note the canvas lost forgets its click");
     }
 
     #[test]

@@ -56,7 +56,7 @@ use crate::select::{self, Selection};
 use crate::serve::Server;
 use crate::share::{self, Share};
 use crate::topbar;
-use crate::tour::{Nav, Tour, Tween};
+use crate::tour::{Nav, Notes, Tour, Tween};
 use crate::watch;
 use crate::windows::{self, DesignWindows};
 
@@ -270,9 +270,8 @@ struct App {
     tour: Option<Tour>,
     /// The camera gliding to a tour step.
     tween: Option<Tween>,
-    /// Note cards clicked open, and the open-every-card toggle.
-    open_notes: HashSet<usize>,
-    notes_open: bool,
+    /// Which note cards are open.
+    notes: Notes,
     /// The flows list above the pill is open.
     flows_open: bool,
     /// Board with the keyboard.
@@ -333,8 +332,7 @@ impl App {
             glows: Glows::default(),
             tour: None,
             tween: None,
-            open_notes: HashSet::new(),
-            notes_open: false,
+            notes: Notes::default(),
             flows_open: false,
             focus: None,
             focused: true,
@@ -888,11 +886,7 @@ impl App {
                 self.camera.zoom_at(at, factor);
             }
             overlay::Event::Follow { tab, to } => self.follow(tab, &to),
-            overlay::Event::ToggleNote(n) => {
-                if !self.open_notes.remove(&n) {
-                    self.open_notes.insert(n);
-                }
-            }
+            overlay::Event::ToggleNote(n) => self.notes.flip(n),
             overlay::Event::Nav(nav) => self.nav(nav),
             overlay::Event::Pick { tab, x, y } => self.pick(tab, x, y),
             overlay::Event::ClearSelection => self.selection = None,
@@ -1447,8 +1441,7 @@ impl App {
                 camera: self.camera,
                 selection: self.selection.as_ref(),
                 tour: self.tour.as_ref(),
-                open_notes: &self.open_notes,
-                notes_open: self.notes_open,
+                notes: &self.notes,
                 active: true,
             });
         }
@@ -1458,16 +1451,14 @@ impl App {
                 camera: p.camera,
                 selection: p.selection.as_ref(),
                 tour: p.tour.as_ref(),
-                open_notes: &p.open_notes,
-                notes_open: p.notes_open,
+                notes: &p.notes,
                 active: false,
             },
             None => View {
                 camera: plane.and_then(|v| live.fit_camera(v)).unwrap_or_default(),
                 selection: None,
                 tour: None,
-                open_notes: &EMPTY_NOTES,
-                notes_open: false,
+                notes: &EMPTY_NOTES,
                 active: false,
             },
         })
@@ -1521,8 +1512,7 @@ impl App {
                 let overlay = Overlay {
                     scene,
                     step: view.tour.map(Tour::step),
-                    notes_open: view.notes_open,
-                    open_notes: view.open_notes,
+                    notes: view.notes,
                     camera: view.camera,
                     boards: &open.boards,
                     painted: open
@@ -1618,7 +1608,8 @@ impl App {
         let mut right = 10.0;
         let annot = &open.annot;
         if !annot.notes.is_empty() {
-            let tip = if view.notes_open { "Hide notes (N)" } else { "Show notes (N)" };
+            let open = tour::any_note_open(annot, view.notes, view.tour);
+            let tip = if open { "Hide notes (N)" } else { "Show notes (N)" };
             bar = bar.push(pill_tool("lucide/sticky-note", tip, Msg::ToggleNotes));
             right = 3.0;
         }
@@ -1659,14 +1650,13 @@ struct View<'a> {
     camera: Camera,
     selection: Option<&'a Selection>,
     tour: Option<&'a Tour>,
-    open_notes: &'a HashSet<usize>,
-    notes_open: bool,
+    notes: &'a Notes,
     /// The shown canvas: the active window's.
     active: bool,
 }
 
 /// No note open (a canvas without a view yet).
-static EMPTY_NOTES: std::sync::LazyLock<HashSet<usize>> = std::sync::LazyLock::new(HashSet::new);
+static EMPTY_NOTES: std::sync::LazyLock<Notes> = std::sync::LazyLock::new(Notes::default);
 
 impl Drop for App {
     fn drop(&mut self) {

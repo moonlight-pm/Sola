@@ -6,10 +6,10 @@
 //! pointer. Super+click picks an element instead (Super+click on empty
 //! canvas clears the pick). Right-drag pans and the wheel zooms. A click on
 //! an exit (or a plain link to another board) is the app's: the camera
-//! goes to that board. A click on a note marker keeps its card open. With
-//! no page focused, → ← Esc 1–9 drive a tour and N opens every note.
+//! goes to that board. A click on a note marker opens or closes its card.
+//! With no page focused, → ← Esc 1–9 drive a tour and N opens every note
+//! card, or closes them all while any is open.
 
-use std::collections::HashSet;
 use std::time::Instant;
 
 use iced::alignment::Vertical;
@@ -27,7 +27,7 @@ use crate::camera::{self, Camera};
 use crate::glow;
 use crate::scene::Scene;
 use crate::select;
-use crate::tour::Nav;
+use crate::tour::{Nav, Notes};
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -68,10 +68,8 @@ pub struct Overlay<'a> {
     pub scene: Scene,
     /// The tour's step board, while a tour is on.
     pub step: Option<&'a str>,
-    /// Every note card open (the notes toggle).
-    pub notes_open: bool,
-    /// Note cards clicked open.
-    pub open_notes: &'a HashSet<usize>,
+    /// Which note cards are open.
+    pub notes: &'a Notes,
 }
 
 /// What a hover over the plane would act on.
@@ -470,15 +468,11 @@ impl canvas::Program<Event> for Overlay<'_> {
             };
             glow::draw(&mut frame, self.camera.rect_to_screen(canvas_rect), lit, accent);
         }
-        // Notes on top of everything. On a tour step, its notes are open.
-        let step_notes: HashSet<usize> = self
-            .scene
-            .notes
-            .iter()
-            .filter(|n| self.step.is_some() && n.board.as_deref() == self.step)
-            .map(|n| n.n)
-            .collect();
-        let open = |n: usize| self.notes_open || self.open_notes.contains(&n) || step_notes.contains(&n);
+        // Notes on top of everything, open as `notes` says.
+        let open = |n: usize| {
+            let board = self.scene.notes.iter().find(|m| m.n == n).and_then(|m| m.board.as_deref());
+            self.notes.open(n, board, self.step)
+        };
         let hover = match mark {
             Some(Mark::Note(n)) => Some(n),
             _ => None,

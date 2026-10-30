@@ -1,25 +1,27 @@
 # Sola manual
 
-The manual for Sola as it works today. The site renders these chapters, in
-this order, as one page at
+The manual for Sola as it works today: on Oath, from the `next` branch. On
+master it describes `next` too (Joshua, 2026-10-29), so check a chapter
+against `next`'s code, not master's. The site renders these
+chapters, in this order, as one page at
 [sola.moonlight.pm/manual](https://sola.moonlight.pm/manual) (`names` in
 [`site/app/pages/manual.thx`](../../site/app/pages/manual.thx) — keep the
 two lists the same).
 
 | Chapter | Contents |
 |---------|----------|
-| [Introduction](introduction.md) | What Sola is, requirements, the NixOS module, fonts, building, starting a session, paths |
+| [Introduction](introduction.md) | What Sola is, requirements, the Oath packages, building from source, starting a session, updating and rolling back, fonts, paths |
+| [Security](security.md) | Each way into a running desk, what it lets through by default, and how to close it: the password and auto-login, the lock screen, Exit Sola's console, KVM pairing, what stays open |
 | [Architecture](architecture.md) | How a session is put together: the processes, the three planes, sockets, start-up, restarts |
-| [Process manager](process-manager.md) | `sola`: what it starts, in what order, restart policy, binary watch, ending the session |
+| [Process manager](process-manager.md) | Oath's PID 1 and Sola's services: what runs, in what order, restarts, updates, logs, ending the session |
 | [The bus](bus.md) | `sola-bus`: socket, wire format, every topic, sticky and persisted state, reconnects |
 | [The call plane](call.md) | `sola-call`: owners and methods, the wire format, timeouts, observers, MCP |
-| [Compositor](compositor.md) | River and `sola-river`: window management, focus, zones, outputs, screenshots, input |
+| [Compositor](compositor.md) | rivulet and `sola-river`: windows, focus, zones and workspaces, frames, the background picture, the idle fade, outputs, screenshots, input |
 | [Session manager](session.md) | `sola-session`: launching, tracking, and closing applications; opening URLs and files |
-| [Shell](sola-shell.md) | `sola-shell`: menubar, tab bar, launcher, zones, keyboard shortcuts |
-| [Security](security.md) | The password, auto-login, the lock screen, Exit Sola's console, KVM pairing: each way in, and how to close it |
-| [Theme and toolkit](theme.md) | `sola-kit` and the theme protocol: palette tokens, font roles, live updates |
+| [Shell](sola-shell.md) | `sola-shell`: the top row, agent islands, the bar, workspaces, zones, the launcher, keyboard shortcuts |
+| [Theme and toolkit](theme.md) | `sola-kit` and the theme protocol: palette tokens, font roles, live updates, Appearance and the picture's colors |
 | [solactl](solactl.md) | The command line: every command, method, and flag |
-| [Applications](applications.md) | The applications, one line each, with links to their notes |
+| [Applications](applications.md) | The applications, one line each, with links to their notes; which ship in the Oath packages |
 
 Application notes — kept here, linked from the Applications chapter, not on
 the page: [Browser](sola-browser.md), [Mail](sola-mail.md),

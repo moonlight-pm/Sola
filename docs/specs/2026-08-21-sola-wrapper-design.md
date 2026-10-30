@@ -7,7 +7,7 @@
 | | |
 |--|--|
 | **Implementation** | Crate `crates/sola-wrapper`. Argv `sola-wrapper <id>`. Settings Applications can create/edit a wrapper (`kind` + `url`); command is synthesized. CEF via `sola-browser` (`default-features = false`) plus `profiles::bind_external` so cookies are not under the browser root. Edit menu (⌘X/C/V/A) via shell `MenuAction` + iced clipboard. Web `Notification` → `Topic::AppNotification` with the wrapper `app_id`. Off-site popups → `sola_core::open_url`. Same-site / `about:blank` NEW_POPUP is a windowless CEF tab (Slack huddle). `getUserMedia` → kit Allow / Block (`media.json`) + Chromium `MEDIASTREAM_*` content settings. |
-| **Dogfood** | **On master.** Slack paints. Operator: [`manual/sola-wrapper.md`](../manual/sola-wrapper.md). Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). LifeCam huddle camera **smoked** 2026-09-01. |
+| **Dogfood** | **On master.** Slack paints. Operator: [`manual/web-apps.md`](../manual/web-apps.md) (the manual follows `next`, where the wrapper is a web app in the browser). Edit, off-site links, desk notifications, huddle OSR + mic **smoked** 2026-08-29 (`wrapper` debug). LifeCam huddle camera **smoked** 2026-09-01. |
 | **Gaps** | No Bitwarden / downloads / tab chrome; no throwaway `--url`; no PWA manifest install. |
 
 ## Intent

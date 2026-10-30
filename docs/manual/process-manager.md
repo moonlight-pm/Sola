@@ -1,339 +1,265 @@
 # Process manager
 
-`sola` is the program you start. It starts River and the session's managed
-components, starts again any that exit, restarts any whose binary is
-replaced, and stops everything when the session ends. It has no window, no
-configuration file, and no call-plane methods. Its only bus traffic is the
-session's `Shutdown` message. The source is
-[crates/sola/src/main.rs](../../crates/sola/src/main.rs) and
-[crates/sola/src/river.rs](../../crates/sola/src/river.rs).
-
-## Starting a session
-
-Log in on a text console as the user the session is for, and run:
+On Oath, PID 1 is Sola's process manager. Each of Sola's long-running
+processes is a service, a `svc:*` object in Oath's catalog. Oath's `desk`
+profile defines them, and PID 1 (Oath's init) runs them as the desk user,
+`home` (uid 1, home directory `/home`, runtime directory `/run/user/1`).
+PID 1 starts them at boot, restarts them by their restart policy, restarts
+those whose program moved when an apply changes a package, and stops them
+when the machine shuts down. Applications are not services: the
+[session manager](session.md) starts them.
 
 ```bash
-/opt/sola/bin/sola
+oath ls --kind svc            # every service on the machine
+oath get svc:sola-shell       # its spec, and actual: state, pid, restarts, last exit, package
+oath logs svc:sola-shell      # its last 50 lines of output; -n 200 for more
 ```
 
-`sola` needs:
+Sola's own process manager, `sola`, does not run on Oath; see
+[The sola program](#the-sola-program).
 
-- `XDG_RUNTIME_DIR`, which a console login sets. Sola's own sockets fall
-  back to `/tmp` without it; Wayland does not.
-- `river` on `PATH`. The NixOS module installs it.
-- The managed binaries in the same directory as `sola`. It starts them from
-  the directory its own executable is in, not from `PATH`.
-- Write access to `/opt/sola/log` (the NixOS module makes it mode 1777).
-  Without it, every process logs to the console only.
+## The services
 
-There is one session per user. At start, `sola` sends SIGKILL to every
-`river` executable the same user is running, and deletes every `wayland-*`
-entry in `XDG_RUNTIME_DIR` except XWayland's `wayland-x*`. Starting `sola`
-on a second console while a session runs ends the first session.
+The desk profile's services for the session are below. A machine's
+catalog can differ from the profile; `oath get` shows what it runs.
 
-## Start-up sequence
-
-1. Rotates `sola.log` (see [Logs](#logs)) and starts logging.
-2. Sets the cursor variables (see [Environment](#environment)).
-3. Registers SIGINT, SIGTERM, and SIGHUP as shutdown requests.
-4. Starts watching its own directory (see [Binary watch](#binary-watch)).
-5. Starts River (see [River](#river)) and waits for its socket. It looks
-   for a `wayland-N` socket that accepts a connection, waiting 10 ms
-   between tries at first and doubling up to 1 s, for at most 30 seconds.
-   It writes the socket's name to `$XDG_RUNTIME_DIR/sola-wayland`. If River
-   exits first, or 30 seconds pass, `sola` stops River and exits with
-   status 1.
-6. Polls `/tmp/.X11-unix/` every 100 ms, for up to 3 seconds, for an X
-   display that accepts a connection, and writes its name (`:0`) to
-   `$XDG_RUNTIME_DIR/sola-display`. Without XWayland the file is absent.
-7. Starts the managed components in order. It does not wait for any of
-   them to be ready, except for a 750 ms pause before `sola-kvm`, which
-   gives `sola-river` time to bind River's layer-shell protocol.
-8. Connects to the bus as app id `sola`, retrying once a second until it
-   succeeds, and subscribes to `Shutdown`.
-9. Supervises until the session ends.
-
-## Managed components
-
-| Order | Binary | Arguments | Role |
+| Service | Runs | Wants | Restart |
 |---|---|---|---|
-| 1 | `sola-bus` | none | The bus ([The bus](bus.md)) |
-| 2 | `sola-call` | none | The call host ([The call plane](call.md)) |
-| 3 | `sola-botsd` | none | Bots daemon: call owner `bots`, HTTP on the socket `$XDG_RUNTIME_DIR/sola-bots` ([solactl](solactl.md)) |
-| 4 | `sola-river` | none | River's window manager; call owner `compositor` ([Compositor](compositor.md)) |
-| 5 | `sola-shell` | none | Menubar, tab bar, launcher, zones ([Shell](sola-shell.md)) |
-| 6 | `sola-session` | none | Applications; call owner `session` ([Session manager](session.md)) |
-| 7 | `sola-kvm` | `server --input evdev` | KVM server ([KVM](sola-kvm-operator.md)) |
+| `svc:seatd` | `seatd -u home -g home`, as root: opens the GPU and input devices for the session | none | always |
+| `svc:rivulet` | `rivulet -log-level info -c :`, the compositor | `svc:seatd` | always |
+| `svc:sola-bus` | `sola-bus`, the [bus](bus.md) | none | always |
+| `svc:sola-call` | `sola-call`, the [call host](call.md) | `svc:sola-bus` | always |
+| `svc:sola-river` | `sola-river`, the window manager, a client of rivulet's River protocols ([Compositor](compositor.md)) | `svc:rivulet`, `svc:sola-bus`, `svc:sola-call` | always |
+| `svc:sola-shell` | `sola-shell`: the top row, the bar, the launcher ([Shell](sola-shell.md)) | `svc:sola-river`, `svc:pipewire-pulse`, `svc:wireplumber` | on-failure |
+| `svc:sola-tmux` | `tmux -L sola -f /home/.config/sola/tmux.conf -D`, the tmux server that holds Terminal's shells | none | always |
+| `svc:sola-tmux-ws` | The same on socket `sola-ws`, for Projects' tabs | none | always |
+| `svc:sola-session` | `sola-session`, the [session manager](session.md) | `svc:sola-bus`, `svc:sola-call`, `svc:sola-tmux`, `svc:sola-tmux-ws` | on-failure |
+| `svc:sola-kvm` | `sola-kvm listen --bind 0.0.0.0:4242`, which takes another machine's keyboard and mouse ([KVM](sola-kvm-operator.md)); from any machine on the network until it is paired ([Security](security.md#pairing-the-kvm)) | `svc:sola-river` | always |
 
-The list is compiled into `sola`. A component cannot be added, removed, or
-disabled without rebuilding it, so `sola-botsd` and `sola-kvm` run in every
-session.
+Each Sola service runs its program from `/bin`, where `pkg:sola` links
+it. The two tmux servers are services of their own so that shells
+outlive a restart of the session manager: the applications it starts
+share its cgroup, and PID 1 stops a service's whole cgroup.
 
-Each component is started with:
+Beside these, the desk runs `svc:dbus-session`, `svc:pipewire`,
+`svc:wireplumber`, and `svc:pipewire-pulse` as `home`, for sound and a
+session D-Bus; Oath's own manual covers them.
 
-- `sola`'s environment, plus `SOLA_NO_SELF_WATCH=1`;
-- `sola`'s standard output and error, so their console lines interleave on
-  the console `sola` runs on;
-- a session of its own (`setsid`), so Ctrl-C on the console reaches only
-  `sola`;
-- a parent-death signal (`PR_SET_PDEATHSIG`) of SIGTERM, so it is stopped
-  if `sola` dies.
+The bots daemon, `sola-botsd`, is in `pkg:sola`, but no service runs it,
+so Bots and `solactl bots` have nothing to talk to on Oath.
 
-Each waits for its own dependencies:
+## Start-up
 
-| Binary | Waits for |
+At boot, once it has brought up the network, PID 1 starts every enabled
+service in `wants` order: a service starts after the enabled services it
+wants. `wants` orders start-up only; PID 1 does not wait for a service to
+be ready. The display drivers load after the services start; rivulet
+waits for the GPU, and its `restart: always` covers one that takes
+longer.
+
+Each Sola process waits for what it needs:
+
+| Process | Waits for |
 |---|---|
-| `sola-bus`, `sola-call` | Nothing. Each deletes a leftover socket file and binds its socket. |
-| `sola-botsd` | The call socket file, for up to 10 seconds; its call provider then retries every 400 ms. |
-| `sola-river` | Reads `sola-wayland` once, and exits if it is missing. Retries the bus every 20 ms. |
-| `sola-shell` | `sola-wayland` for up to 20 seconds and the socket file for 10 more; the bus, retrying every 250 ms. |
-| `sola-session` | The bus, retrying every second. It then collects saved state for 750 ms before it relaunches applications. |
-| `sola-kvm` | `sola-wayland` and the socket file, up to 30 seconds each. Reads `~/.config/sola-kvm/config.toml`, or uses defaults when it is missing. |
+| `sola-bus`, `sola-call` | Nothing. Each deletes a leftover socket file and binds its socket, `/run/user/1/sola-bus` or `/run/user/1/sola-call`. |
+| `sola-river` | Rivulet's socket: it tries each `wayland-N` in `/run/user/1` every 500 ms for up to 15 seconds, then waits up to 5 seconds more for the socket file. Without one it exits with status 1, and PID 1 starts it again. Then the bus, retrying. |
+| `sola-shell`, and every application | The same socket for up to 20 seconds, then up to 10 seconds for the socket file, then connects anyway. The bus, retrying every 250 ms. |
+| `sola-session` | The bus, retrying every second. It then collects saved state for 750 ms before it reopens the applications that were open. |
+| `sola-kvm` | Rivulet's socket, for up to 30 seconds. Reads `~/.config/sola-kvm/config.toml`, or uses defaults when it is missing. |
 
-### River
+Nothing writes `$XDG_RUNTIME_DIR/sola-wayland` or `sola-display` on Oath;
+those files are the `sola` program's. Sola's processes find rivulet's
+socket by connecting to each `wayland-N` in name order, skipping
+XWayland's `wayland-x*`, and take the first that answers. Applications find XWayland's display by probing
+`/tmp/.X11-unix/`.
 
-`sola` runs River as:
+## Restarts
 
-```bash
-river -log-level info -c :
-```
+PID 1 restarts a service by its `restart`:
 
-- `river` is looked up on `PATH`.
-- Its standard output and error are appended to `/opt/sola/log/river.log`.
-- `WAYLAND_DISPLAY` and `DISPLAY` are removed from its environment, so River
-  drives the screen and input devices directly instead of opening a window
-  inside another display server.
-- `-c :` runs the no-op command `:` as River's init, so River's own init
-  script (`~/.config/river/init`) is not run.
-- It gets its own session and SIGTERM as its parent-death signal, like the
-  managed components. It is not watched for binary changes and is never
-  restarted.
+- `always`: after any exit.
+- `on-failure`: after an exit with a non-zero status or by a signal. An
+  exit with status 0 leaves the service `stopped`.
 
-## Environment
+A run shorter than 10 seconds is a quick failure. Restarts after quick
+failures wait 1, 2, 4, then 8 seconds; a run of 10 seconds or more
+restarts at once. After five quick failures in a row the service is
+`failed`, and it stays down until its spec or its program's package
+changes. `oath get svc:<name> --actual` shows its `state` (`running`,
+`restarting`, `stopped`, or `failed`), its `restarts` this boot, and its
+`last_exit`.
 
-`sola` itself sets two variables, which River, the managed components, and
-the applications they start all inherit:
-
-| Variable | Value |
-|---|---|
-| `XCURSOR_PATH` | `/opt/sola/share/cursors` put in front of the existing value; `/opt/sola/share/cursors:~/.icons:/usr/share/icons` when unset |
-| `XCURSOR_THEME` | `McMojave`, only if unset |
-
-It does not set `WAYLAND_DISPLAY` for its children. Each Wayland client reads
-the socket name from `$XDG_RUNTIME_DIR/sola-wayland` and sets
-`WAYLAND_DISPLAY` for itself. Applications built on sola-kit also set, each
-only if unset, `__EGL_VENDOR_LIBRARY_DIRS`, `LIBVA_DRIVERS_PATH`, and
-`VK_ICD_FILENAMES` to paths under `/run/opengl-driver/`, and
-`GSETTINGS_BACKEND=memory`. `VK_ICD_FILENAMES` names the NVIDIA Vulkan
-driver. On other hardware, set it before starting `sola` to the driver's
-file in `/run/opengl-driver/share/vulkan/icd.d/`; every process inherits it,
-and the kit leaves a set value alone.
-
-`sola-session` builds the environment of the applications it launches:
-`WAYLAND_DISPLAY`, `DISPLAY` (from `sola-display`, or a live probe),
-`XDG_SESSION_TYPE=wayland`, and `XDG_RUNTIME_DIR`, without
-`SOLA_NO_SELF_WATCH`. See [Session manager](session.md).
-
-## Supervision and restarts
-
-The supervisor wakes when a bus message arrives, or every 500 ms. On each
-pass it:
-
-1. Shuts down if a signal asked for it.
-2. Reconnects to the bus if the connection dropped (at most once a second),
-   and shuts down on a `Shutdown` message.
-3. Checks River. If River has exited, it sends SIGKILL to every managed
-   component and exits with status 1.
-4. Handles binary changes (see [Binary watch](#binary-watch)).
-5. Starts again every managed component that has exited, whatever its exit
-   status.
-
-A component that ran for less than 5 seconds is started after a 2-second
-wait, logged as `crashed quickly, waiting before restart`. One that ran
-longer is started at once, logged as `exited, restarting`. A binary that
-could not be started at all, because it is missing or not executable, is
-logged as `failed to launch` and tried again on the next pass.
-
-There is no limit on restarts and the wait does not grow: a component that
-fails at start is started again roughly every 2.5 seconds until it stops
-failing. The 2-second wait blocks the supervisor, so signals, binary
-changes, and other exits are handled after it. The restart log lines record
-the uptime, not the exit status; the reason is in the component's own lines
-in `sola.log`, including a panic message with a backtrace if it panicked.
-
-Not restarted:
-
-- River. Its exit ends the session.
-- `sola`. Nothing supervises it.
-- Applications. `sola-session` publishes their exit and leaves them closed.
-
-`sola` has no call-plane methods, so `solactl` cannot list, stop, or
-restart managed components. To restart one by hand, stop it and let `sola`
-start it again:
+To restart a service by hand, kill its process. An exit by a signal is a
+failure, so PID 1 starts it again under either policy:
 
 ```bash
 pkill -x sola-shell
 ```
 
-## Binary watch
+When a service's main process exits, PID 1 also kills what is left in its
+cgroup. Killing `sola-session` therefore ends the applications it
+started, and the new session manager reopens them.
 
-`sola` watches the directory its executable is in (normally
-`/opt/sola/bin`) for its own file and the managed components' files. A
-file being created, modified, or removed starts a 500 ms settle period.
-Every further event in that period is absorbed, including events for other
-files, so of two binaries replaced within half a second only the first is
-restarted. After the period:
+Not restarted by PID 1: applications. When one exits, the session
+manager publishes its exit and leaves it closed. A stopped shell or
+session manager comes back only when PID 1 next starts the services that
+are not running: at boot, or when an apply that changes a service or a
+package makes it converge them.
 
-- For a managed component, `sola` sends SIGKILL to the running process,
-  waits for it, and starts the new binary at once, without the restart
-  wait.
-- For `sola` itself, it sends SIGKILL to every managed component and
-  executes the new `sola` with the same arguments, in the same process. The
-  new `sola` runs the whole start-up sequence: it kills the old River as a
-  leftover and starts a fresh one. Applications lose the River they were
-  connected to, and `sola-session` relaunches the saved open-application
-  set. The session manager was killed rather than told to shut down, so the
-  saved set is the one from before the restart.
+## Updates
 
-Other binaries in the directory, such as applications and `solactl`, are not
-watched by `sola`. An application built on sola-kit watches its own file and
-executes the new one in place, keeping its process id and arguments. It
-skips this when `SOLA_NO_SELF_WATCH` is set, which is how the managed
-`sola-shell` avoids restarting twice.
+Nothing watches Sola's binaries on Oath. PID 1 follows each service's
+program through its `/bin` link into the store, and when an apply moves
+that program's package to another hash, it restarts the service. An
+apply of `pkg:sola` (`cargo make oath apply` does one) therefore restarts
+`svc:sola-bus`, `svc:sola-call`, `svc:sola-river`, `svc:sola-shell`,
+`svc:sola-session`, and `svc:sola-kvm`. It does not restart rivulet or the
+two tmux servers, whose programs are in other packages.
 
-`cargo make install` copies only binaries whose contents changed, so an
-unchanged file restarts nothing. It replaces them in this order, waiting
-1 second between replacements so each restart settles: `sola-bus`,
-`sola-call`, `sola-botsd`, `sola-river`, `sola-shell`, `sola-session`,
-`sola-kvm`, `sola`, then everything else. It asks for confirmation before
-replacing `sola`, because that restarts the session.
+Stopping `svc:sola-session` stops the applications in its cgroup with it.
+The new session manager reopens the applications that were open, and
+Terminal and Projects reattach to their tmux sessions, which kept running.
+An application does not restart itself: its program is in the store
+directory it started from, which never changes, so an application started
+before an apply runs the old program until it is opened again or the
+session manager restarts. `sudo oath undo` takes an apply back the same
+way, restarting the same services on the previous programs.
 
-When the release is installed by the NixOS module (`installRelease`, the
-default), `/opt/sola/bin` is a link into the Nix store. `sola` watches, and
-starts its components from, the store directory its executable resolves
-to, which never changes. Switching the system to a new release restarts
-nothing; quit the session and start it again.
+## Environment
+
+PID 1 gives every service `PATH=/bin`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
+and `XDG_RUNTIME_DIR` for its account, then `host:local`'s environment,
+then `TZ`, then the service's own `env`, which wins on the same name. The
+desk profile sets, in `host:local`, `LANG=en_US.UTF-8` (tmux refuses a
+locale that is not UTF-8), `SSL_CERT_FILE`, `DBUS_SESSION_BUS_ADDRESS`, and
+`PKG_CONFIG_PATH`. Each Sola service's own `env` has:
+
+| Variable | Value |
+|---|---|
+| `XCURSOR_PATH` | `/oath/store/pkg/sola/share/cursors` |
+| `XCURSOR_THEME` | `McMojave` |
+| `FONTCONFIG_FILE` | `/oath/store/pkg/fontconfig/live/etc/fonts/fonts.conf` ([Fonts](distribution.md)) |
+| `SHELL` | `/bin/zsh`, so terminals start the login shell |
+
+Each Wayland client sets `WAYLAND_DISPLAY` for itself to the socket it
+found, and `XDG_SESSION_TYPE=wayland` unless it is already `wayland` or
+`x11`. Applications built on sola-kit also set `GSETTINGS_BACKEND=memory`
+when it is unset. The session manager builds the environment of the
+applications it launches from its own; see [Session manager](session.md).
 
 ## Ending the session
 
-| Action | How the request reaches `sola` |
+| Action | What happens |
 |---|---|
-| **Exit Sola** in the flower menu | `sola-shell` publishes `Shutdown` on the bus |
-| Ctrl-C on `sola`'s console | SIGINT |
-| `pkill -x sola` from another console | SIGTERM |
-| A hangup of `sola`'s terminal | SIGHUP |
-| `solactl emit Shutdown null` | `Shutdown` on the bus |
-| **Restart Computer** or **Shut Down** in the flower menu | logind reboots or powers off the machine; `sola` receives SIGTERM with the rest of the system |
+| **Restart Computer** or **Shut Down** in the flower menu | The shell runs `sudo oath set host:local power=reboot` (`power=halt` for Shut Down), then `sudo oath apply --confirm host:local`. PID 1 stops every service (SIGTERM, up to 5 seconds, then SIGKILL) and reboots or powers off. If either command fails, the shell shows **Could not restart the computer** or **Could not shut down**. |
+| `sudo reboot` or `sudo poweroff`, over SSH | The same shutdown by PID 1. |
+| **Exit Sola** in the flower menu | The shell publishes `Shutdown` on the bus and exits with status 0. The session manager sends SIGTERM to every application, sends SIGKILL to any still running after 6 seconds, and exits with status 0. `sola-river` exits with status 0. Once the session manager is gone (up to 10 seconds), the shell tells Oath's login service that the desk ended on purpose. |
+| `solactl emit Shutdown null` | As **Exit Sola**, except that the shell keeps running: it does not act on a `Shutdown` it did not send. |
 
-All of these take the same path:
+After **Exit Sola**, PID 1 stops the desk's services and starts the
+console on tty1, signed in or asking for the password as Settings → Login
+says; `oath desk` gives the screen back and starts the desk again
+([Security](security.md#the-console)). Without Oath's login service
+(before R42), nothing takes the screen: the shell and the session manager
+stay stopped, since their policy is `on-failure` and they exited cleanly,
+while `sola-river` is started again at once and the bus, the call host,
+`sola-kvm`, rivulet, and the tmux servers keep running. Restarting the
+machine is then the way back.
 
-1. `sola` publishes `Shutdown` on the bus, if it is connected.
-2. Subscribers react. `sola-session` asks systemd to stop every
-   application's scope, which sends SIGTERM and, after 5 seconds, SIGKILL;
-   without a systemd user manager it sends SIGTERM to each application
-   directly. `sola-river` exits.
-3. After 200 ms, `sola` sends SIGKILL to every managed component still
-   running.
-4. It sends SIGTERM to River, waits up to 2 seconds, then sends SIGKILL.
-5. It exits with status 0.
-
-The saved open-application set is not cleared, so the next session
-relaunches the applications that were open.
-
-`pkill sola` without `-x` also matches `sola-bus`, `sola-session`, and every
-other process whose name contains `sola`. They die at once, before the
-session manager can stop applications, and programs that are not Sola's
-keep running.
-
-Two other ways the session ends skip this path:
-
-- River exits. `sola` sends SIGKILL to the managed components and exits
-  with status 1. No `Shutdown` is published, so `sola-session` does not stop
-  applications; they lose their display.
-- `sola` is killed with SIGKILL or crashes. The kernel sends SIGTERM to
-  River and to every managed component. Applications are not stopped by the
-  session manager.
+Neither **Exit Sola** nor a shutdown clears the saved set of open
+applications, so the session manager reopens them when it next starts.
 
 ## Logs
 
-| File | Written by | Rotation |
+| File | Written by | Limit |
 |---|---|---|
-| `/opt/sola/log/sola.log` | Every Sola process, through `tracing`: plain text, UTC times | When `sola` starts and the file is 100,000 bytes or larger, it becomes `sola.log.1`, older files shift up, and `sola.log.10` is deleted. Not rotated during a session. |
-| `/opt/sola/log/river.log` | River's standard output and error | None; appended to |
-| `/opt/sola/log/app-<app id>.log` | Standard output and error of each application `sola-session` launched | Truncated at the next launch once it is larger than 8 MiB |
+| `~/.local/state/sola/sola.log` | Every Sola process, through `tracing`: plain text, UTC times | None on Oath: only the `sola` program rotates it |
+| `~/.local/state/sola/app-<app id>.log` | Standard output and error of each application the session manager launched | Emptied at the next launch once it is larger than 8 MiB |
+| `/oath/log/svc/<service>.log` | Standard output and error of each service, as PID 1 records them, each line with a UTC time in front. Sola's processes write their log lines here too, without colour. | Rotated to `<service>.log.1` past 256 KiB |
 
-Every Sola process also writes coloured lines to its standard error. The
-managed components share `sola`'s, so its console shows all of them; River
-and the applications write to their own files instead.
+`~` is `/home`. Rivulet's output is only in `/oath/log/svc/rivulet.log`.
+Read a service's file with `oath logs svc:<name>`, and Sola's with
+`solactl logs <name>`, which prints `~/.local/state/sola/<name>.log`
+(`sola.log` when no name is given); `-f` keeps following it:
+
+```bash
+oath logs svc:sola-session -n 200
+oath logs svc:rivulet
+solactl logs -f
+solactl logs app-sola-mail -f
+```
 
 A line in `sola.log`:
 
 ```text
-2026-10-19T09:12:03.512204Z  INFO [sola]     sola::river    river socket is live path=/run/user/1000/wayland-1
+2026-10-29T09:12:03.512204Z  INFO [river]    sola::river    sola-river starting
 ```
 
-The bracket is the process: the binary name without `sola-` (`[sola]`,
-`[bus]`, `[call]`, `[botsd]`, `[shell]`, `[session]`, `[kvm]`), or an
-application's app id without `sola-` (`[mail]`). `[river]` is `sola-river`;
-River's own output is only in `river.log`. The next column is the module:
-`sola::river` is the process manager's River supervisor, `sola::bus` the bus
-library in any process.
+The bracket is the process: the binary name without `sola-` (`[bus]`,
+`[call]`, `[river]`, `[shell]`, `[session]`, `[kvm]`), or an
+application's app id without `sola-` (`[mail]`). The next column is the
+module: `sola::bus` is the bus library in any process.
 
-Each process's default filter is its own crate and Sola's shared libraries
-(`sola_core`, `sola_bus`, `sola_call`, `sola_kit`, `sola_browser`,
-`sola_assets`) at `info`; other crates log nothing. `RUST_LOG` replaces that
-filter, in `tracing` filter syntax, for `sola` and for every process it
-starts, since they inherit it:
+Each process's default filter is its own crate and Sola's shared
+libraries (`sola_core`, `sola_bus`, `sola_call`, `sola_kit`,
+`sola_browser`, `sola_assets`) at `info`; other crates log nothing.
+`RUST_LOG` replaces that filter, in `tracing` filter syntax. On Oath, set
+it in a service's `env` and apply it, which restarts the service.
+`oath set` replaces a field whole, so the new `env` must repeat the
+variables `oath get svc:<name> --desired` shows:
 
 ```bash
-RUST_LOG=info,sola_river=debug /opt/sola/bin/sola       # one component in detail
-RUST_LOG=info,sola_bus::traffic=trace /opt/sola/bin/sola  # every bus message
-RUST_LOG=debug /opt/sola/bin/sola                        # everything; very large
+oath get svc:sola-river --desired
+sudo oath set svc:sola-river --from-json '{"env": {…the variables it has…, "RUST_LOG": "info,sola_river=debug"}}'
+sudo oath apply svc:sola-river
+sudo oath undo            # back to the previous env
 ```
 
-`sola-botsd` sets its own filter only when `RUST_LOG` is unset.
-
-`solactl logs <name>` prints `/opt/sola/log/<name>.log` (`sola.log` when no
-name is given); `-f` keeps following it:
-
-```bash
-solactl logs -f
-solactl logs river
-solactl logs app-sola-mail -f
-```
+`RUST_LOG=info,sola_bus::traffic=trace` on `svc:sola-bus` logs every bus
+message; `RUST_LOG=debug` logs everything and is very large.
 
 ## Files and variables
 
 | Path | Role |
 |---|---|
-| `/opt/sola/bin/` | `sola` and the managed binaries (the directory `sola` was started from) |
-| `/opt/sola/log/` | Logs |
-| `/opt/sola/share/cursors/` | The bundled cursor theme |
-| `$XDG_RUNTIME_DIR/sola-wayland` | River's socket name; deleted and rewritten at each start |
-| `$XDG_RUNTIME_DIR/sola-display` | XWayland's display; deleted and rewritten at each start |
-| `~/.config/sola/state.yaml` | Holds `SessionApps`, the open-application set `sola-session` relaunches |
+| `/bin/sola-*`, `/bin/solactl` | Links to the programs in the store; PID 1 follows them to their package |
+| `/oath/store/pkg/sola/share/cursors/` | The McMojave cursor theme |
+| `/run/user/1/sola-bus`, `/run/user/1/sola-call` | The bus and call sockets |
+| `/run/user/1/wayland-N` | Rivulet's socket |
+| `~/.config/sola/state.yaml` | The bus's saved state, including `SessionApps`, the open-application set the session manager reopens |
+| `~/.config/sola/tmux.conf` | The configuration both tmux services load |
 | `~/.config/sola-kvm/config.toml` | `sola-kvm` settings |
+| `~/.local/state/sola/` | Sola's logs |
+| `/oath/log/svc/` | PID 1's record of each service's output |
 
 | Variable | Effect |
 |---|---|
-| `RUST_LOG` | Log filter for every process in the session |
-| `XDG_RUNTIME_DIR` | Where sockets and name files live (`/tmp` when unset) |
-| `XDG_CONFIG_HOME` | Where `sola/state.yaml` and `sola-kvm/config.toml` live (`~/.config` when unset) |
-| `PATH` | Where `river` is found |
-| `SOLA_BUS_PATH`, `SOLA_CALL_PATH` | Override the bus and call socket paths for every process that inherits them |
-| `SOLA_NO_SELF_WATCH` | Set to `1` for managed components; stops sola-kit's own binary watch |
-| `XCURSOR_PATH`, `XCURSOR_THEME` | See [Environment](#environment) |
+| `RUST_LOG` | Log filter, per service |
+| `SOLA_BIN_DIR`, `SOLA_SHARE_DIR`, `SOLA_LOG_DIR` | Replace `/bin`, `/oath/store/pkg/sola/share`, and `~/.local/state/sola` |
+| `XDG_STATE_HOME` | When absolute, logs go to `$XDG_STATE_HOME/sola` |
+| `XDG_RUNTIME_DIR` | Where the sockets are. When unset, as in an SSH login on Oath, the user's `/run/user/<uid>` when it exists, else `/tmp` |
+| `XDG_CONFIG_HOME` | Where `sola/` and `sola-kvm/` live (`~/.config` when unset) |
+| `SOLA_BUS_PATH`, `SOLA_CALL_PATH` | Replace the bus and call socket paths |
+
+Sola takes Oath's paths when `/oath/INDEX.md` is a file.
 
 ## Troubleshooting
 
 | Symptom | Cause |
 |---|---|
-| `failed to spawn river` with `river not found in PATH` | River is not installed or not on `PATH`. Enable the NixOS module and switch to the new configuration. |
-| `river socket never appeared` | River exited before opening a socket, or opened none within 30 seconds. `river.log` says why; another session holding the display is a common cause. |
-| `river exited; shutting down sola` | River stopped during the session. See `river.log`. |
-| `crashed quickly, waiting before restart` for the same process every few seconds | That component fails at start. Search `sola.log` for its tag (`[shell]`, `[session]`, …) and `ERROR` or `panicked`. |
-| `failed to launch` twice a second | The binary is missing from `sola`'s directory, or is not executable. |
-| Repeated `bus reconnect failed` from `[sola]` | `sola-bus` is not running. Look for `[bus]` lines, such as `failed to bind bus socket`. |
-| A new binary did not take effect | It is not a managed component and not a sola-kit application; its contents were unchanged; or `/opt/sola/bin` is a Nix store link (see [Binary watch](#binary-watch)). |
-| The running session ended when `sola` was started on another console | One session per user; see [Starting a session](#starting-a-session). |
-| Nothing in `sola.log`, only console output | `/opt/sola/log` is not writable by the session's user. |
+| `oath get svc:<name> --actual` shows `failed` | It exited within 10 seconds of starting five times in a row. `oath logs svc:<name>` says why; it stays down until its spec or its package changes. |
+| `restarting`, with `restarts` climbing | It fails at start. See its `oath logs` and `ERROR` or `panicked` lines with its tag in `sola.log`. |
+| `stopped` for `svc:sola-shell` and `svc:sola-session` | **Exit Sola** ended them cleanly, on an Oath without the login service. See [Ending the session](#ending-the-session). |
+| `wayland socket never appeared` from `[river]` | Rivulet opened no socket in `/run/user/1` in time. See `oath logs svc:rivulet`. |
+| `bus connect failed, retrying` from `[session]` | `sola-bus` is not running. See `oath get svc:sola-bus --actual`. |
+| A new build does not run | It was not applied. `oath get pkg:sola` shows the live hash; `cargo make install` writes `/opt/sola/bin`, which nothing on Oath runs. |
+| An open application runs an old build after an apply | It started before the apply, and the session manager did not restart. Close it and open it again. |
+| Nothing in `sola.log` | `~/.local/state/sola` is not writable by `home`. Each process then logs only to its standard error, which PID 1 records in the service's file. |
+
+## The sola program
+
+Sola's source also builds `sola`, a process manager that starts the
+compositor and Sola's processes itself, for a session started by hand
+from a text console. It is not in `pkg:sola`. On Oath it prints
+`sola: not on Oath; PID 1 runs Sola's services (oath ls --kind svc)` and
+exits with status 1 before it starts anything.

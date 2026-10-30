@@ -6,26 +6,32 @@ pointer.
 ## Use
 
 - Launch **Scope** from the launcher.
-- Move the pointer anywhere on the output. The grid follows.
-- **Zoom in / zoom out** (toolbar, `+` / `-`, or the wheel over the grid).
-  Zoom out goes up to **65×65**; zoom in goes down to **3×3**.
+- Move the pointer anywhere on the output. The grid follows; the toolbar
+  shows the pointer's `x, y`, and the strip under the grid shows the
+  swatch, hex, and RGB of the pixel under the pointer (marked on the
+  grid).
+- **Zoom in / zoom out**: the toolbar, `+` / `-`, the wheel over the grid,
+  or **View → Zoom In / Zoom Out** (⌘= / ⌘-). Zoom out goes up to
+  **65×65** pixels; zoom in goes down to **3×3**.
 - Click the swatch or hex, or use **Edit → Copy Color** (⌘C), to copy
   `#RRGGBB`.
 
-The window is a remembered float: close and reopen it and it comes back
-where you left it.
+The titlebar has the **Scope**, **View**, and **Edit** menus. The window
+floats and is remembered: close and reopen it and it comes back where you
+left it.
 
 The magnified grid is the desktop under the pointer, **without** the cursor
 sprite. The pointer stays visible on the desktop.
 
 ## Requirements
 
-Live follow and the cursor-free grid need Sola's patched River compositor
-at `/opt/sola/bin/river`:
+Live follow and the cursor-free grid need River (on `PATH`) built with two
+of Sola's patches, both in `nix/patches/`:
 
-- patched wlroots (`wlroots-screencopy-omit-sw-cursor`: copy on precommit,
-  then blit the cursor for scanout)
-- River's live pointer position (`river-live-pointer-position`)
+- `wlroots-screencopy-omit-sw-cursor.patch`: wlroots copies the screen
+  before it draws a software cursor into it;
+- `river-live-pointer-position.patch`: River sends the pointer's position
+  on every move.
 
 ## Call
 

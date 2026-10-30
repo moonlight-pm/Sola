@@ -25,7 +25,7 @@ use crate::canvas;
 use crate::pace;
 use crate::projects::CanvasRef;
 use crate::select::Selection;
-use crate::tour::Tour;
+use crate::tour::{Notes, Tour};
 
 /// An off-screen canvas closes after this long without a call.
 pub(super) const IDLE: Duration = Duration::from_secs(10 * 60);
@@ -66,8 +66,7 @@ pub(super) struct Parked {
     /// canvas stays on screen in its window).
     pub selection: Option<Selection>,
     pub tour: Option<Tour>,
-    pub open_notes: HashSet<usize>,
-    pub notes_open: bool,
+    pub notes: Notes,
     pub flows_open: bool,
 }
 
@@ -80,8 +79,7 @@ impl Parked {
             human_camera: false,
             selection: None,
             tour: None,
-            open_notes: HashSet::new(),
-            notes_open: false,
+            notes: Notes::default(),
             flows_open: false,
         }
     }
@@ -90,8 +88,7 @@ impl Parked {
     fn leave(&mut self) {
         self.selection = None;
         self.tour = None;
-        self.open_notes.clear();
-        self.notes_open = false;
+        self.notes = Notes::default();
         self.flows_open = false;
     }
 }
@@ -306,8 +303,7 @@ impl App {
         self.selection = p.selection;
         self.tour = p.tour;
         self.tween = None;
-        self.open_notes = p.open_notes;
-        self.notes_open = p.notes_open;
+        self.notes = p.notes;
         self.flows_open = p.flows_open;
         tracing::info!(canvas = %key, "show canvas");
         self.shown = Some(key.to_string());
@@ -335,8 +331,7 @@ impl App {
             human_camera: self.human_camera,
             selection: self.selection.take(),
             tour: self.tour.take(),
-            open_notes: std::mem::take(&mut self.open_notes),
-            notes_open: std::mem::take(&mut self.notes_open),
+            notes: std::mem::take(&mut self.notes),
             flows_open: std::mem::take(&mut self.flows_open),
         };
         if let Some(l) = self.live_mut(&key) {

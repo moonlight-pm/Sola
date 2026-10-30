@@ -2,8 +2,11 @@
 
 `solactl` is the operator command line. Most of its commands are calls on
 the call plane, `sola-call` ([The call plane](call.md)); `emit` and
-`background` write to the bus; `logs`, `open`, and `media` work locally. It is installed as
-`/opt/sola/bin/solactl`.
+`background` write to the bus; `logs`, `open`, and `media` work locally.
+On Oath it comes in the `sola` package as `/bin/solactl`; elsewhere it is
+installed as `/opt/sola/bin/solactl`. Oath is recognised by
+`/oath/INDEX.md`; the same test picks Oath's directories for logs and
+programs below.
 
 ## Synopsis
 
@@ -24,7 +27,7 @@ solactl projects [METHOD [ARGS…]]
 solactl browser [METHOD [ARGS…]]
 solactl bots [METHOD [ARGS…]]
 solactl design [METHOD [ARGS…]]
-solactl OWNER [METHOD [ARGS…]]       # any other live owner, by owner or app id
+solactl OWNER [METHOD [ARGS…]]       # any live owner, by owner or app id
 solactl mcp [--owner OWNER]…
 solactl logs [APP] [-f]
 solactl emit KIND PAYLOAD
@@ -41,26 +44,36 @@ solactl help [COMMAND…]
 | `projects`, `browser`, `bots`, `design`, any other name | Call plane; flags read from the owner's advertised methods | `sola-call` and the owner, also for help |
 | `mcp` | Call plane | `sola-call`; tools appear as owners do |
 | `emit`, `background` | Bus | `sola-bus` (the picture is drawn by `sola-river`) |
-| `logs` | Files in `/opt/sola/log` | nothing |
-| `open` | Hands off to, or starts, the Browser or Paint | their binaries |
+| `logs` | Files in Sola's log directory | nothing |
+| `open` | Hands off to, or starts, the Browser, Paint, or Calendar | their binaries |
 | `media` | Session D-Bus (MPRIS) and `wpctl` | a player, PipeWire |
 
 `solactl` never starts an application to answer a call. There is no
-`--version` and no `eval` command.
+`--version`, and there are no `eval`, `watch`, or generic `call` commands:
+a method is called by its owner's name, and [Monitor](sola-monitor.md)
+shows bus and call traffic.
 
 ## Output and exit status
 
 A successful call prints the reply's `data` to stdout as indented JSON,
 and prints nothing when the reply has no data. Method lists and help are
-plain text. Errors go to stderr, prefixed `solactl: `. Writing into a
-closed pipe (`solactl browser tabs | head`) is not an error.
+plain text. Errors go to stderr, prefixed `solactl: ` (`solactl media: `
+for `media`); usage errors in a compiled command are clap's `error: …`.
+Call output written into a closed pipe (`solactl browser tabs | head`) is
+not an error.
 
 | Status | Meaning |
 |---|---|
 | 0 | Success; also `media` with no player to act on |
-| 1 | The owner or the host answered with an error. This includes `timeout`, and `<owner> is not running` for `compositor` and `session` |
+| 1 | The owner or the host answered with an error. This includes `timeout`, and `<owner> is not running` for `compositor` and `session`. Also any failure of `compositor input drag` |
 | 2 | Usage error in a compiled command (`compositor`, `session`, `mcp`, `logs`, `emit`, `open`, `background`, `media`): a missing or bad argument or an unknown subcommand; usage is printed |
 | 3 | Local failure: `sola-call` unreachable, a live owner not in the catalog, an unknown method, a flag error, a `SOLA_BOT=1` refusal, a bad chord, or a failed `logs`, `emit`, `open`, `background`, or `media` |
+
+In a compiled command a negative value must be joined to its flag:
+`solactl compositor input scroll --dy=-5`. Written apart (`--dy -5`), the
+`-5` is read as a flag and the command fails with status 2. Live-owner
+flags are the other way round: they take a negative number written apart
+(`--dy -5`), and have no `--name=value` form.
 
 ### When the call host or an owner is down
 
@@ -81,17 +94,23 @@ misspelt command reports `<name> is not running`.
 | Variable | Read by | Effect |
 |---|---|---|
 | `SOLA_CALL_PATH` | call commands, `mcp` | Call socket. Default `$XDG_RUNTIME_DIR/sola-call` |
-| `SOLA_BUS_PATH` | `emit` | Bus socket. Default `$XDG_RUNTIME_DIR/sola-bus` |
-| `XDG_RUNTIME_DIR` | call commands, `mcp`, `emit` | Directory of the default sockets; `/tmp` when unset |
+| `SOLA_BUS_PATH` | `emit`, `background` | Bus socket. Default `$XDG_RUNTIME_DIR/sola-bus` |
+| `XDG_RUNTIME_DIR` | call commands, `mcp`, `emit`, `background` | Directory of the default sockets. When it is unset or empty (an SSH login on Oath sets none): `/run/user/<uid>` if that directory exists, else `/tmp` |
 | `SOLA_BOT` | `compositor`, `browser`, `mcp` | `1`, `true`, `TRUE`, or `yes` turns on the [bot rules](#bot-rules) |
 | `SOLA_PANE_ID` | `projects whoami`, `projects tab.spawn` | Default `--pane` and `--parent`. Projects sets it in each pane |
 | `SOLA_WS_PATH` | `projects whoami` | Default `--path`. Projects sets it in each pane to the tab's checkout path |
-| `HOME` | path arguments, `open` | `~` expansion; default location of `chrome.sock` |
+| `HOME` | path arguments, `open`, `logs` | `~` expansion; default location of `chrome.sock` and, on Oath, of the logs |
+| `SOLA_LOG_DIR` | `logs` | Log directory. Default `$XDG_STATE_HOME/sola` on Oath (`~/.local/state/sola` when that is unset or not absolute), else `/opt/sola/log` |
+| `SOLA_BIN_DIR` | `open` | Where Sola's programs are. Default `/bin` on Oath, else `/opt/sola/bin` |
 | `XDG_DATA_HOME` | `open` | The Browser's handoff socket is `$XDG_DATA_HOME/sola/browser/chrome.sock` (default `~/.local/share/…`) |
-| `SOLA_BROWSER` | `open` | Browser binary to start. Default `/opt/sola/bin/sola-browser` |
-| `SOLA_PAINT` | `open` | Paint binary to start. Default `/opt/sola/bin/sola-paint` |
+| `SOLA_BROWSER` | `open` | Browser binary to start. Default `sola-browser` in Sola's bin directory. A path that is not a file is ignored |
+| `SOLA_PAINT` | `open` | Paint binary to start. Default `sola-paint` in Sola's bin directory. A path that is not a file is ignored |
 | `DBUS_SESSION_BUS_ADDRESS` | `media` | Session D-Bus used to find MPRIS players |
 | `PATH` | `media` | Finds `wpctl` |
+
+Over SSH, `XDG_RUNTIME_DIR` is the one that matters: with the fallback to
+`/run/user/<uid>`, `solactl` run as the desk user from an SSH login reaches
+the session's sockets without setting anything.
 
 The working directory matters too: relative path arguments resolve
 against it, and `design canvas.new` makes its canvas in it by default.
@@ -103,6 +122,27 @@ for any other owner, take their methods and flags from what the running
 owner advertises ([The call plane](call.md#methods-and-arguments)). The
 sections below list each owner's methods as they are advertised today.
 
+### Owners
+
+| Owner | App id | Process | Present | Section |
+|---|---|---|---|---|
+| `compositor` | `sola-river` | `sola-river` | Whole session | [Compositor](#compositor-solactl-compositor) |
+| `session` | `sola-session` | `sola-session` | Whole session | [Session](#session-solactl-session) |
+| `bots` | `sola-botsd` | `sola-botsd` | While the daemon runs | [Bots](#bots-solactl-bots) |
+| `projects` | `sola-projects` | `sola-projects` | While **Projects** is open | [Projects](#projects-solactl-projects) |
+| `browser` | `sola-browser` | `sola-browser` | While the **Browser** is open | [Browser](#browser-solactl-browser) |
+| `design` | `sola-design` | `sola-design` | While **Design** is open | [Design](#design-solactl-design) |
+
+No other application offers methods: Calendar, Mail, Settings, Paint, and
+the Shell have none. The Shell's desktop workspaces have no `solactl`
+command; `solactl workspaces` is read as an owner name and fails with
+`workspaces is not running` (status 3).
+
+`compositor` and `session` have compiled commands, but they are live
+owners too, so their app ids reach them through the generic parser:
+`solactl sola-river cursor --visible false` (see
+[Methods with no compiled flags](#methods-with-no-compiled-flags)).
+
 ### Listing and help
 
 ```text
@@ -111,15 +151,17 @@ solactl OWNER --help           # the same (-h too)
 solactl OWNER METHOD --help    # the method's flags
 ```
 
-`OWNER` may be the owner or its app id (`solactl sola-design status`). A
-method's help lists each flag as `-s, --long <value>`, then its help text
-and `(required)` or `(optional)`; bool flags have no `<value>`. `-h` or
+`OWNER` may be the owner or its app id (`solactl sola-design status`). The
+list starts with `solactl <name> — <app id>`, then each method's name and
+summary. A method's help lists each flag as `-s, --long <value>`, then
+its help text and `(required)` or `(optional)`; bool flags have no
+`<value>`. `-h` or
 `--help` anywhere after the method prints that help instead of calling.
 
 ### Arguments
 
-- `--name VALUE` or `-s VALUE` sets an argument. When a flag is given
-  twice, the last one wins.
+- `--name VALUE` or `-s VALUE` sets an argument; `--name=VALUE` is not
+  split. When a flag is given twice, the last one wins.
 - A bool flag alone is `true`. `--name true`, `false`, `1`, or `0` sets it
   explicitly. Bool flags may come before other flags.
 - A value that starts with `-` is refused (`--name needs a value`), except
@@ -128,9 +170,11 @@ and `(required)` or `(optional)`; bool flags have no `<value>`. `-h` or
   advertised order: `solactl design open design/home`,
   `solactl bots new Suno`. A bare word with no required argument left is
   an error (`unexpected argument`).
-- A single JSON object as the only argument is sent as the params
-  unchanged, without conversion or path resolution:
-  `solactl browser tab.open '{"url":"https://example.com"}'`.
+- A single JSON object as the only argument is sent as the params,
+  without conversion or path resolution:
+  `solactl browser tab.open '{"url":"https://example.com"}'`. The
+  [context](#context) is still added and the [bot rules](#bot-rules)
+  still apply. JSON that does not parse is an error (status 3).
 - Values are converted by the argument's type: `int` and `float` are
   parsed (a value that does not parse is sent as a string and the owner
   answers with its error), `json` is parsed (else sent as a string), and
@@ -145,8 +189,10 @@ and `(required)` or `(optional)`; bool flags have no `<value>`. `-h` or
 Arguments of type `path` are resolved by `solactl` before the call: `~`
 and `~/…` expand, and a relative path is taken from **your** working
 directory, not the owner's. They are `projects` `--path` and
-`--prompt-file`; `browser` `--file` and screenshot `--path`; and `design`
-`--path`, `--canvas`, and `--out`. Other arguments are sent as typed.
+`--prompt-file`; `browser` `--file` and screenshot `--path`; `design`
+`--path`, `--canvas`, and `--out`; and the compositor's screenshot
+`--output` when you reach it by app id (`solactl sola-river screenshot`).
+Other arguments are sent as typed.
 
 ### Deadline
 
@@ -176,7 +222,11 @@ the human's seat. A refusal exits 3 with a message naming the rule.
 - `compositor screenshot`, `sample`, and `input` are refused;
   `compositor windows` is allowed.
 
-The web path for a bot is `solactl browser` only.
+The web path for a bot is `solactl browser` only. The Browser rules go
+with the owner, so they hold however the Browser is named (`browser` or
+`sola-browser`) and over MCP. Limit: the compositor refusals belong to the
+`solactl compositor` command, not to its methods, so they do not apply
+over MCP or through the app id (`solactl sola-river …`).
 
 ## Compositor (`solactl compositor`)
 
@@ -190,20 +240,21 @@ Owner `compositor`, process `sola-river`, present for the whole session
 | `-o`, `--output PATH` | `/tmp/sola/screenshots/<ms>.png` | Where to write. Sent as given: a relative path is taken from `sola-river`'s working directory, so pass an absolute one. Parent directories are created |
 | `-a`, `--app APP` | the whole output | Capture this app's window (exact app id) |
 | `-w`, `--window TITLE` | the app's first window | With `--app`, the window whose title is exactly `TITLE`; ignored without `--app` |
-| `--format png\|rgba` | `png` | `rgba` (or `rgba8`) writes packed RGBA8 with no PNG encode; its default path is `/dev/shm/sola-freeze-<ms>.rgba` |
+| `--format png\|rgba` | `png` | `rgba` (or `rgba8`) writes packed RGBA8 with no PNG encode; its default path is `/dev/shm/sola-freeze-<ms>.rgba` (`/tmp/sola/screenshots/<ms>.rgba` without `/dev/shm`) |
 | `-t`, `--timeout SECS` | 10 | Deadline |
 
 `--app` copies that window's own buffer (`ext-image-copy-capture`). The
 window does not need to be on top and is not raised. The default PNG uses
 fast compression. The reply is `{"path": …}`; with `rgba` it adds `width`,
-`height`, and `"format": "rgba8"`. Errors: `screenshot already in
-progress`, `window not found for capture: app_id=… title=…`, and `unknown
-screenshot format …`.
+`height`, and `"format": "rgba8"`. Errors:
+`screenshot already in progress`,
+`window not found for capture: app_id=… title=…`, and
+`unknown screenshot format … (png|rgba)`.
 
 The Shell's screenshot chords copy to the clipboard instead of writing
 this file (see [Shell § Screenshots](sola-shell.md#screenshots)). The
-method also takes a region (`x`, `y`, `width`, `height`, all four) that
-has no flags here; over MCP, `compositor_screenshot` accepts it.
+method also takes a region, which has no flags here (see
+[Methods with no compiled flags](#methods-with-no-compiled-flags)).
 
 ### sample
 
@@ -224,21 +275,23 @@ each value is an array of `{"title", "window_id", "pid"}`.
 
 | Command | Arguments | Defaults |
 |---|---|---|
-| `input click X Y` | `-b`, `--button left\|right\|middle` (also `l`, `r`, `m`) | `left` |
+| `input click X Y` | `-b`, `--button left\|right\|middle` (also `l`, `r`, `m`; lower case only) | `left` |
 | `input move X Y` | none | |
-| `input scroll` | `-x`, `--dx DX`; `-y`, `--dy DY` (decimal; down is positive) | `0`, `5` |
+| `input scroll` | `-x`, `--dx DX`; `-y`, `--dy DY` (decimal; down is positive; a negative value as `--dy=-5`) | `0`, `5` |
 | `input key CHORD` | none | |
 | `input press [X Y]` | `-b`, `--button` as for `click` | `left` |
 | `input release [X Y]` | `-b`, `--button` as for `click` | `left` |
 | `input drag X1 Y1 X2 Y2` | `-b`, `--button`; `-s`, `--steps N` (moves between press and release) | `left`, `12` |
 
 Each takes `-t`, `--timeout SECS` (default 5) and replies `{"ok": true}`
-(`drag` prints nothing). `X` and `Y` are integer output coordinates. The
+(`drag` prints nothing; on failure it prints `solactl: <method>: <error>`
+for the step that failed, and exits 1). Another button name fails with
+`unknown button …`. `X` and `Y` are integer output coordinates. The
 events go through the seat like real input, to whatever is under the
 pointer or focused. `press` holds the button until a `release`; with
 `X Y` either moves there first. `drag` is a press at `X1 Y1`, `STEPS`
 moves about 16 ms apart, and a release at `X2 Y2`, so it is seen as a drag
-(a tab bar row, a sidebar reorder) rather than a click.
+(a row in the bar, a sidebar reorder) rather than a click.
 
 `CHORD` is `MODIFIER+…+KEY`, in any case. Modifiers: `Meta` (or `Super`,
 `Win`, `Cmd`), `Alt` (or `Option`), `Ctrl` (or `Control`), `Shift`. Keys:
@@ -249,16 +302,35 @@ moves about 16 ms apart, and a release at `X2 Y2`, so it is seen as a drag
 `KPDecimal` (or `KP.`). Any other key is refused (`unknown key '…'`,
 status 3).
 
-### Methods without a command
+### Methods with no compiled flags
 
-`cursor` (`--visible true|false`, default `true`; deadline 2 s) shows or
-hides the compositor's pointer and replies `{"visible": …}`. It has no
-`solactl compositor` command; over MCP it is `compositor_cursor`.
+- `cursor` (`--visible true|false`, default `true`; deadline 2 s) shows or
+  hides the compositor's pointer and replies `{"visible": …}`.
+- `screenshot` also takes a region: `--x`, `--y`, `--width`, `--height`,
+  all four, in output coordinates. With `--app` the region is ignored.
 
-Over MCP, `compositor_input_key` expects `chord` as an object (`keycode`,
-an XKB key code, and `meta`, `alt`, `ctrl`, `shift` booleans), which
+`solactl compositor` has no command or flag for either. Reach them by the
+compositor's app id, which goes through the generic parser, or over MCP
+(`compositor_cursor`, `compositor_screenshot`):
+
+```bash
+solactl sola-river cursor --visible false
+solactl sola-river screenshot --x 0 --y 0 --width 640 --height 480 -o shot.png
+```
+
+That way the deadline is the method's own (2 s for `cursor`, 8 s for
+`screenshot`), `-o`/`--output` is a path argument resolved against your
+working directory, and the bot refusals do not apply.
+
+`input.key` expects `chord` as an object (`keycode`, an XKB key code, and
+`meta`, `alt`, `ctrl`, `shift` booleans, all five given), which
 `solactl compositor input key` builds from the text form. A text chord
-sent to it is refused with `chord: invalid type …`.
+sent to it by app id or over MCP (`compositor_input_key`) is refused with
+`chord: invalid type …`; the JSON form works:
+
+```bash
+solactl sola-river input.key '{"chord":{"keycode":23,"meta":true,"alt":false,"ctrl":false,"shift":false}}'
+```
 
 ## Session (`solactl session`)
 
@@ -271,10 +343,11 @@ Owner `session`, process `sola-session`, present for the whole session
 | `close APP_ID` | `-t`, `--timeout SECS` (5) | `{"app_id", "stopped": N}` |
 
 `launch` runs `COMMAND`, split on whitespace with no shell quoting. The
-default is `/opt/sola/bin/<APP_ID>` when that file exists, else `APP_ID`
+default is `<APP_ID>` in Sola's bin directory (`/bin/<APP_ID>` on Oath,
+`/opt/sola/bin/<APP_ID>` elsewhere) when that file exists, else `APP_ID`
 itself. Errors: `empty command`, or the spawn error. `close` stops the
-processes the session launched for `APP_ID`; with none it fails with `no
-live children for <APP_ID>`.
+processes the session launched for `APP_ID`; with none it fails with
+`no live children for <APP_ID>`.
 
 ## Bots (`solactl bots`)
 
@@ -283,7 +356,9 @@ A bot is a named informational agent session. Each bot is a directory in
 AI it was made with: **Grok**, **Claude**, or **Gab AI**. The AI is chosen
 when the bot is made and does not change after. `solactl bots` needs the
 bots daemon, `sola-botsd` (owner `bots`). It fails if the daemon or
-`sola-call` is down; it does not launch a window.
+`sola-call` is down; it does not launch a window. The process manager
+`sola` keeps the daemon running; on Oath no service starts it, and until
+it is started by hand `solactl bots` fails with `bots is not running`.
 
 ```text
 solactl bots                         # list methods
@@ -299,12 +374,13 @@ solactl bots cancel -b BOT
 
 `-b`, `--bot` is a bot's id, slug, or name; `-n`, `--name` is a display
 name; `-a`, `--ai` is `grok`, `claude`, or `gab`; `-t`, `--text` is the
-message. Every method has the default 8 s deadline.
+message. All are required where they appear, except `--bot` on `poll`.
+Every method has the default 8 s deadline.
 
 | Method | Does |
 |---|---|
 | `list` | Bots, their AI, and their status |
-| `poll` | `{"bots", "transcript"}` in one call; `transcript` is `null` without `--bot` |
+| `poll` | `{"bots", "transcript"}` in one call; `transcript` is `null` without `--bot`, or for a bot it does not find |
 | `new` | Creates a bot on an AI, and its home |
 | `setup` | Gives a bot directory without an AI its AI; fails if it has one |
 | `send` | Sends a message and returns while the turn runs; read the answer with `transcript` or `poll` |
@@ -320,9 +396,9 @@ dialog is `dialog.json`. A directory made in `~/Bots` by hand shows up as
 a bot with no AI; it talks once `setup` (or its header in the **Bots**
 window) gives it one. `new` and `setup` seed the home and start a first
 turn, an introduction (the orientation prompt is not shown as a user
-message). Bots made before 2026-10-28 moved from
-`~/.config/sola/bots/catalog.json` into their `bot.json` (all on Grok);
-the old file is kept as `catalog.json.moved`.
+message). A catalog from before bots were directories,
+`~/.config/sola/bots/catalog.json`, is moved once into each bot's
+`bot.json` (all on Grok); the old file is kept as `catalog.json.moved`.
 
 The write fence is enforced by the prompt only. By default a bot writes
 only inside its home. To open the fence for one task, say “drop the write
@@ -342,16 +418,17 @@ Grok and Claude bots are agents in their home: shell, files, and the
 browser through `solactl browser`, under `AGENTS.md` (Claude reads it
 through the home's `CLAUDE.md`). An `AGENTS.md` that was already in a
 directory made by hand is kept as `AGENTS.md.orig`. A Gab AI bot only
-chats: no tools, its `CURRENT.md` in its system prompt. The bot's binaries
-are `grok` and `claude` on `PATH` (or `~/.local/bin`, or `SOLA_GROK` /
-`SOLA_CLAUDE`).
+chats: no tools, its `CURRENT.md` in its system prompt. The daemon runs
+`$SOLA_GROK` / `$SOLA_CLAUDE` when set, else `~/.local/bin/grok` /
+`~/.local/bin/claude` when that file exists, else `grok` / `claude` on
+`PATH`.
 
 ### The socket API
 
 The daemon serves HTTP on a Unix socket, `$XDG_RUNTIME_DIR/sola-bots`
 (mode 0600; `SOLA_BOTS_PATH` overrides it), with no token: the socket is
-the user's alone. There is no TCP port. Remote access is meant to come
-later through a tunnel to the socket, which brings its own sign-in.
+the user's alone. There is no TCP port and no access from another
+computer.
 
 ```text
 GET  /health
@@ -366,23 +443,22 @@ POST /bots/{id}/send     { "text": "…" }
 POST /bots/{id}/cancel
 ```
 
-```sh
+```bash
 curl --unix-socket "$XDG_RUNTIME_DIR/sola-bots" http://localhost/bots
 ```
 
 `GET /events` is `text/event-stream` (chunked), with keepalive comments
 every 15 s. The **Bots** window uses this surface (list, send, create,
 delete, and live events). `solactl bots` uses `sola-call`, not HTTP. The
-iPhone app (SolaBot) spoke the old TCP API and has no way in until the
-tunnel.
+iPhone app (SolaBot) spoke the old TCP API and cannot reach this one.
 
 ## Projects (`solactl projects`)
 
 Needs **Projects** running (owner `projects`, app id `sola-projects`).
 Fails if the app or `sola-call` is down; it does not launch a window. A
 tab is one checkout in a project: the project root, a `.worktrees/`
-worktree, or a folder. Each project is its own window (a tab in the
-shell's tab bar, named for the project), with its tabs along the top.
+worktree, or a folder. Each project is its own window (a row in the
+shell's bar, named for the project), with its tabs along the top.
 A project is a folder in `~/Projects` (or in another computer's), and
 Projects keeps only the open ones. Closing a project's window (its close
 dot, Project → Close Window, or `project.close`) closes the project: its
@@ -401,7 +477,7 @@ whose folder is gone is closed at start.
 That row in the shell's bar shows a project's activity in place of its
 icon: an amber diamond when any of its tabs is waiting on a decision, a
 spinning ring when any is working (the diamond wins), the icon otherwise.
-The app was called Workspaces, and a tab a workspace, until 2026-10-21;
+Projects was called Workspaces, and a tab a workspace;
 `solactl workspaces` and the `workspace.*` methods are gone, with no
 alias.
 
@@ -410,7 +486,7 @@ solactl projects                           # list methods
 solactl projects ps
 solactl projects project.list
 solactl projects project.open --path ~/Projects/Sola    # show it, or open it here
-solactl projects project.open --host novus --path /home/joshua/Projects/Sola  # on novus
+solactl projects project.open --host <computer> --path /home/<user>/Projects/Sola
 solactl projects project.startup [--project Illuno]
 solactl projects project.startup --project Illuno --script 'cp -a "$PROJECT/.grok" "$WORKTREE/"'
 solactl projects project.close --project Sola   # as closing its window: sessions end
@@ -453,11 +529,17 @@ Required arguments: `--path` on `project.open`; `project.close`
 `--project`; `tab.spawn --project --name`; `--tab` on `tab.rm`,
 `tab.select`, `tab.set`, `tab.exec`; `pane.send --text`. `--project` on
 `project.startup` and `--tab` on `pane.list` default to the focused
-project window's selected tab; `--pane` on `pane.send`, `pane.read`, and `pane.wait`
-defaults to the focused pane, else the selected tab.
+project window's selected tab; `--pane` on `pane.send`, `pane.read`, and
+`pane.wait` defaults to the focused pane, else the selected tab.
+`tab.list` without `--project` lists every tab.
 
 Deadlines: `project.open` 15 s; `tab.spawn` and `tab.exec`
 60 s; `pane.wait` 302 s, or its `--timeout` plus 2 s; the rest 8 s.
+
+Errors name what went wrong: `<path> is not a folder of ~/Projects` for
+`project.open`, `cannot close the project root` for `tab.rm` on a
+project's own tab, `--force needs --worktree`, and `no project selected`
+or `no tab selected` when a default has nothing to fall back on.
 
 ### Spawn
 
@@ -466,6 +548,10 @@ Deadlines: `project.open` 15 s; `tab.spawn` and `tab.exec`
 `--title` is the tab label. An empty `--title`, or a title equal to
 `--name`, falls back to the folder slug; the slug is not prefixed onto a
 custom title.
+
+The reply is the new tab: `id`, `name`, `title`, `label`, `path`, `kind`,
+`parent`, `project`, and `selected`, plus `startup_error` when the
+project's startup script failed (the tab is made anyway).
 
 Spawn runs in the background: the new tab appears in its project
 window's top bar, and the windows stay on what they show. `--select`
@@ -518,8 +604,10 @@ double-click on its chip sets `--title` (the label, not the folder).
 `project.open --host <computer> --path <folder>` opens a folder on another
 computer (an ssh host: a name, `user@name`, or a `~/.ssh/config` alias) as
 a project named "<folder> on <computer>". `--path` is the folder's full
-path there (`~` would be this computer's home, so it is refused). The
-launcher's Projects chooser does this from **On another computer…**.
+path there. `solactl` resolves `--path` on this computer, so `~` becomes
+this computer's home and a relative path is taken from your working
+directory here; write the full path. The launcher's Projects chooser does
+this from **On another computer…**.
 
 It works as a project here does. Each tab is a tmux session on that
 computer, reached over ssh, so it runs there and survives the connection:
@@ -551,14 +639,27 @@ an agent that logs you in, tmux there, and curl there for marks.
 
 ### Lists, startup scripts, and sessions
 
-`tab.list` replies `{"tabs": […]}`; `ps` nests each project's tabs under
-`projects[].tabs[]`; `whoami` names the tab as `tab` (id) and `tab_name`;
-`tab.exec` replies carry `tab`. `project.list` lists the open projects
-(each with `open`). `project.open` brings a project's window up (the shell
-shows its workspace), or opens the folder in the showing workspace on its
-root tab; its reply says `opened` (it was not open). The launcher's
-Projects chooser uses both. Lists include `path`,
-`kind`, and `parent`, and `host` for a project on another computer. `kind` is one of:
+`tab.list` replies `{"tabs": […]}`; `ps` replies
+`{"projects", "selected"}` with each project's tabs under
+`projects[].tabs[]`. A tab has `id`, `name`, `title`, `label`, `path`,
+`kind`, `parent`, `status`, `agent`, and `project`, plus `host` on
+another computer; in `ps` and the `tab.set` reply it also says
+`selected`. A project has `id`, `name`, `root`, `startup` (whether it has
+a startup script), and `host` on another computer.
+
+`project.list` replies `{"projects": […]}`, the projects Projects keeps
+(the open ones), each with `open`. `project.open` brings a project's
+window up (the shell shows its workspace), or opens the folder in the
+showing workspace on its root tab; its reply is the project with `opened`
+(it was not open). The launcher's Projects chooser uses both.
+`project.close` replies `{"project", "closed": true}`, `tab.select`
+`{"id", "selected": true}`, and `tab.rm` `{"ok": true}`.
+
+`whoami` replies `pane`, `tab` (id), `tab_name`, `project`,
+`project_name`, `path`, `kind`, `status`, `agent`, and `session_id`.
+`tab.exec` replies `{"tab", "pane", "started", "sent"}`: `started` when it
+launched the agent, `sent` when it pasted the prompt into one already
+running. `kind` is one of:
 
 - `main` — the project's own tab
 - `worktree`
@@ -583,17 +684,21 @@ exec-ing (the Codex leaf with `--agent codex`, the Claude leaf with
 address that tab’s tmux session exactly (`=session:` current pane),
 so a split leaf `…-p` is not confused with its parent.
 
-`pane.send` and `tab.exec --prompt` **paste** into the live agent
-(tmux bracketed paste, then Enter), so a multiline brief does not submit
-on the first newline and a long prompt is not truncated. A failed paste
-returns the tmux error, not a bare `send failed`.
+`pane.send` and `tab.exec --prompt` **paste** into the live agent (tmux
+bracketed paste), so a multiline brief does not submit on the first
+newline and a long prompt is not truncated. `tab.exec` then presses
+Enter; `pane.send` does only with `--enter`. A failed paste returns the
+tmux error, not a bare `send failed`.
 
-`pane.read` replies `{"text", "pane"}` with the whole scrollback, or the
-last `--lines N` lines.
+`pane.send` replies `{"ok": true, "pane"}`. `pane.read` replies
+`{"text", "pane"}` with the whole scrollback, or the last `--lines N`
+lines.
 
 `pane.wait` holds until the pane's status is `--status` (`working`,
 `waiting`, `done`, or `idle`; default `done`), for up to `--timeout`
-seconds (default 300). `--fresh` waits for a transition onto that status.
+seconds (default 300, at most 3600). `--fresh` waits for
+a transition onto that status. It replies `{"pane", "status"}`, or fails
+with `timeout waiting for pane <pane> to be <status>`.
 
 ### Remove
 
@@ -614,7 +719,7 @@ working spinner left behind.
 
 Needs the **Browser** (`sola-browser`) running (owner `browser`). Fails if
 the Browser or `sola-call` is down; it does not launch a window. Each tab
-is a page with its own window, a row in the shell's tab bar, the same
+is a page with its own window, a row in the shell's bar, the same
 pages the human uses.
 
 ```text
@@ -665,13 +770,27 @@ solactl browser screenshot [--tab 3] [-o PATH]
 
 `reload --hard` has no usable short flag: `solactl` reads `-h` as help.
 
-`--tab` is an id, or a unique URL or title substring. Without it, page
-methods use the focused tab, except `click`, `hover`, `type`, `fill`,
-`get`, and `select`, which use the tab of the last snapshot. `tab.open`
-opens the page in its own window behind the shown one in the focused zone,
-and does **not** focus it unless you pass `--select`; `goto` does not focus
-either. `tab.focus` and `--select` show the page's window and focus it.
-`tab.close` never closes the last tab.
+Required arguments: `--url` on `tab.open` and `goto`; `tab.focus --tab`;
+`--text` on `find.page` and `find`; `key --chord`; `type --ref --text`;
+`select --ref --values`. `click` and `hover` need `--ref`, `--text`, or
+both `--x` and `--y` (`--text` with `--x`/`--y` is refused); `fill` needs
+`--ref` or `--control`, and `--text` or `--file`; `get` needs `--ref` or
+`--control`; `scroll` needs a non-zero `--dx` or `--dy`.
+
+`--tab` is an id, or a substring of one tab's URL or title (any case).
+More than one match fails with `<n> tabs match …; pass an id`. Without
+it, page methods use the focused tab, except `click`, `hover`, `type`,
+`fill`, `get`, and `select`, which use the tab of the last page call.
+`tab.open` opens the page in its own window behind the shown one in the
+focused zone, and does **not** focus it unless you pass `--select`;
+`goto` does not focus either. `tab.focus` and `--select` show the page's
+window and focus it. Closing the last tab opens a blank page
+(`about:blank`) in its place, so one page is always open.
+
+`tabs` replies `{"tabs", "active"}`; each tab has `id`, `url`, `title`,
+`active`, `loading`, and `profile`. `tab.open` replies
+`{"id", "selected"}`, `tab.focus` `{"id"}`, and `tab.close`
+`{"ok": true}`.
 
 Deadlines: `snapshot`, `goto`, `click`, `hover`, `key`, `scroll`, `type`,
 `fill`, `get`, `links`, `select`, and `screenshot` 15 s; `wait` 32 s, or
@@ -686,15 +805,20 @@ raise it.
 ### Snapshots and refs
 
 Page verbs use a pruned accessibility snapshot in YAML, with opaque refs
-(`e12`, or `f1e3` inside a frame). The snapshot starts with an `actions:`
-list (role, name, ref); click those. `--interactive` keeps controls only,
-`--ref` returns one subtree of the last snapshot, and `--json` returns
-debug JSON instead of YAML. `click --text "Pay now"` uses the last
-snapshot and fails with the candidate refs when more than one control
-matches. A stale ref fails (the node is gone); take a new snapshot.
+(`e12`, or `f1e3` inside a frame; a leading `@` is ignored). `snapshot`
+replies `{"tab", "snapshot"}`: the text opens with `url:` and `title:`
+lines (and `focused:` or `dialog: open` when they apply), then an
+`actions:` list (role, name, ref); click those. `--interactive` keeps
+controls only, `--ref` returns one subtree of the last snapshot, and
+`--json` returns debug JSON instead of YAML. `click --text "Pay now"`
+uses the last snapshot and fails with the candidate refs when more than
+one control matches. A stale ref fails (the node is gone); take a new
+snapshot.
 
-`find` searches the last snapshot, not the page. `find.page` is ⌘F
-(`--back` searches backwards).
+`find` searches the last snapshot, not the page, and replies
+`{"tab", "hits"}`; with no snapshot of that tab it fails and says to take
+one.
+`find.page` is ⌘F (`--back` searches backwards).
 
 ### Input
 
@@ -705,15 +829,23 @@ compositor seat.
 `fill` and `type` write a contenteditable or ProseMirror editor with one
 `paste` of the whole string (newlines kept); they do not assign
 `textContent`. `type` appends; `fill` replaces, and takes the control by
-`--ref` or by its actions-list name with `--control`. `fill --file PATH`
-reads the string from disk (exclusive with `--text`). The reply includes
-`value` and `matched: true`, or an error if the field did not keep the
-text. `type --submit` presses Enter after.
+`--ref` or by its actions-list name with `--control` (from the DOM
+aria-label when the last snapshot has no such name). `fill --file PATH`
+reads the string from disk (exclusive with `--text`; at most 100,000
+bytes). The reply includes `value` and `matched: true`, or an error if the
+field did not keep the text. `type --submit` presses Enter after.
 
-`key --chord` (for example `Return`, `Escape`, `Control+Enter`) inserts
-once: one `char` event, not keyDown-with-text plus char. `scroll --dx --dy`
-(CSS pixels) go to the same tab, from a wheel origin at `--x` `--y`
-(default 100, 100).
+`key --chord` (for example `Return`, `Escape`, `Control+Enter`) goes to
+that tab, not the seat, and inserts once: one `char` event, not
+keyDown-with-text plus char. A chord is `MODIFIER+…+KEY` in any case.
+Modifiers: `Meta` (or `Super`, `Win`, `Cmd`, `Command`), `Alt` (or
+`Option`), `Ctrl` (or `Control`), `Shift`. Keys: `Enter` or `Return`,
+`Escape` or `Esc`, `Tab`, `Backspace` or `BS`, `Space`, `Delete` or
+`Del`, `ArrowUp`/`Up`, `ArrowDown`/`Down`, `ArrowLeft`/`Left`,
+`ArrowRight`/`Right`, `Home`, `End`, `PageUp` or `PgUp`, `PageDown` or
+`PgDn`, and a single letter or digit. With `Ctrl`, `Meta`, or `Alt` held,
+no character is typed. `scroll --dx --dy` (whole CSS pixels) go to the
+same tab, from a wheel origin at `--x` `--y` (default 100, 100).
 
 `select --values` takes comma-separated option labels or values.
 
@@ -740,9 +872,9 @@ missing control; it does not succeed just because CEF fired load.
 
 ### Troubleshooting
 
-If `tabs` or `tab.open` time out while the Browser window is still up, the
-call plane is wedged. Close the window (× or the flower menu) and launch it
-again. Do not kill the process from a bot.
+If `tabs` or `tab.open` time out while the Browser's windows are still
+up, the Browser is not answering its calls. Quit it (**Browser → Quit
+Browser**, ⌘Q) and launch it again. Do not kill the process from a bot.
 
 Vault fill and confirm gates are not on this plane. Which methods need a
 human confirm is an open question
@@ -796,6 +928,10 @@ Required arguments: `--path` on `project.add`, `project.remove`, and
 `open`; `canvas.new --name`; `canvas.close --canvas`. Deadlines: `wait`
 and `reload` 32 s, or their `--timeout` (default 15) plus 2 s;
 `screenshot`, `pdf`, and `inspect` 15 s; the rest 8 s.
+
+`share` and `share.rotate` reply `{"url", "tunnel"}`: the link, and
+whether a tunnel token is set ([Design § Share](sola-design.md#share)).
+With sharing off they fail with `sharing is off (see the Design log)`.
 
 ### Canvases are files
 
@@ -909,7 +1045,7 @@ MCP. How it maps methods to tools is in
 ```text
 solactl mcp                      # every live owner
 solactl mcp --owner design       # only Design (repeat --owner for more; owner or app id)
-claude mcp add sola -- /opt/sola/bin/solactl mcp
+claude mcp add sola -- solactl mcp
 ```
 
 - Every method a running app advertises is a tool named
@@ -920,7 +1056,9 @@ claude mcp add sola -- /opt/sola/bin/solactl mcp
 - Each tool takes the same arguments as the `solactl <owner> <method>`
   flags, by their names, with JSON types (`integer`, `number`, `boolean`,
   `string`, `object`); values are passed as sent. Path arguments may be
-  relative to the agent's working directory.
+  relative to the agent's working directory; that includes the
+  compositor's screenshot `output`, which
+  `solactl compositor screenshot -o` sends as given.
 - A reply with a `path` to a PNG or JPEG (screenshots) also returns the
   image inline, up to 3,700,000 bytes; larger ones return the path and a
   note.
@@ -929,6 +1067,8 @@ claude mcp add sola -- /opt/sola/bin/solactl mcp
   goes to the canvas this server last opened or made.
 - The compositor's bot refusals are part of `solactl compositor`, not of
   the methods, so with `SOLA_BOT=1` the compositor tools still work.
+  `compositor_input_key` wants `chord` as an object (see
+  [Methods with no compiled flags](#methods-with-no-compiled-flags)).
 - The server exits when its input closes.
 
 It is an adapter over the same methods, not a second protocol: what a tool
@@ -947,10 +1087,14 @@ calls (`solactl compositor`), not bus topics.
 solactl logs [APP] [-f]
 ```
 
-Prints `/opt/sola/log/<APP>.log` and exits. `APP` defaults to `sola`, the
-log every Sola process writes to. `river` is River's own output, and
+Prints `<APP>.log` from Sola's log directory and exits: on Oath
+`~/.local/state/sola/` (`$XDG_STATE_HOME/sola/` when that is set and
+absolute), elsewhere `/opt/sola/log/`; `SOLA_LOG_DIR` overrides both.
+`APP` defaults to `sola`, the log every Sola process writes to.
 `app-<app_id>` is the output of an application the session launched
-(`app-sola-browser`). `-f`, `--follow` keeps printing what is appended,
+(`app-sola-browser`). `river` is River's own output where the process
+manager `sola` starts River; on Oath, PID 1 runs River and Sola writes no
+`river.log`. `-f`, `--follow` keeps printing what is appended,
 checked every 200 ms, until interrupted; a file that shrinks is read again
 from the start. A missing file fails with `cannot open <path>` (status 3).
 
@@ -961,13 +1105,15 @@ solactl emit KIND PAYLOAD
 solactl emit OpenUrl '{"url":"https://example.com","activate":true}'
 ```
 
-Emits one bus topic ([The bus](bus.md)). `KIND` is the topic's name as
-Monitor shows it (`Theme`, `OpenUrl`, `LaunchApp`, …); `PAYLOAD` is its
-JSON in the same shape, so a topic seen in Monitor can be emitted again by
-copying it. On success it prints `emitted KIND` (status 0). An unknown
-kind prints the list of kinds; invalid JSON, a payload that does not match
-the topic, or no bus connection fails with status 3. This is a developer
-escape hatch: any topic can be faked.
+Emits one bus topic ([The bus](bus.md)) as `solactl`. `KIND` is the
+topic's name as Monitor shows it (`Theme`, `OpenUrl`, `LaunchApp`, …),
+spelt exactly; `PAYLOAD` is its JSON in the same shape, so a topic seen in
+Monitor can be emitted again by copying it. A topic that carries no
+payload still needs valid JSON (`{}`); its content is ignored. On success
+it prints `emitted KIND` (status 0). An unknown kind prints the list of
+kinds; invalid JSON, a payload that does not match the topic, or no bus
+connection fails with status 3. This is a developer escape hatch: any
+topic can be faked.
 
 ### open
 
@@ -979,23 +1125,25 @@ Opens a URL or file in the Browser, an image in Paint, or an iCalendar
 file in Calendar. It does not go through MIME.
 
 - A path or `file://` URL whose extension is a raster image (`png`, `jpg`,
-  `jpeg`, `jpe`, `gif`, `webp`, `bmp`, `tif`, `tiff`, `tga`) starts
-  `sola-paint` with it (`$SOLA_PAINT`, else `/opt/sola/bin/sola-paint`).
-- A path or `file://` URL ending in `.ics`, `.ical`, or `.icalendar`
-  starts `sola-calendar` with it. A running Calendar keeps its window: the
-  new process hands the path over (`$XDG_RUNTIME_DIR/sola/calendar.sock`)
-  and exits. Calendar opens the event as a new draft.
-- Anything else goes to the Browser. An absolute path becomes a
-  `file://` URL; a relative path does too when the file exists or it
-  starts with `./` or `../`. A running Browser gets the URL through its
-  `chrome.sock`; otherwise `sola-browser` is started with it
-  (`$SOLA_BROWSER`, else `/opt/sola/bin/sola-browser`).
+  `jpeg`, `jpe`, `gif`, `webp`, `bmp`, `tif`, `tiff`, `tga`; any case)
+  starts `sola-paint` with it (`$SOLA_PAINT`, else `sola-paint` in Sola's
+  bin directory: `/bin` on Oath, `/opt/sola/bin` elsewhere).
+- A path or `file://` URL ending in `.ics`, `.ical`, or `.icalendar` (any
+  case) starts `sola-calendar` from Sola's bin directory with it. A
+  running Calendar keeps its window: the new process hands the path over
+  (`$XDG_RUNTIME_DIR/sola/calendar.sock`) and exits. Calendar opens the
+  event as a new draft.
+- Anything else goes to the Browser, web URLs to images or `.ics` files
+  included. An absolute path becomes a `file://` URL; a relative path
+  does too when the file exists or it starts with `./` or `../`. A running
+  Browser gets the URL through its `chrome.sock`; otherwise
+  `sola-browser` is started with it (`$SOLA_BROWSER`, else `sola-browser`
+  in Sola's bin directory).
 
 `open` returns once the handoff or start is done (status 0); a missing
-binary or a failed start is status 3. There is no fallback to another
-browser. In a Sola terminal, `open` is an alias for `xdg-open`; that path
-uses `sola-browser.desktop` (http(s), HTML, XHTML, PDF, `about:`, unknown
-schemes), so for those both paths land in the Browser.
+binary or a failed start is status 3, with
+`open failed: <program> not found at <path>` or the spawn error. There is
+no fallback to another browser or image viewer.
 
 ### background
 

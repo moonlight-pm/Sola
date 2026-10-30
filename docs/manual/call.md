@@ -4,8 +4,9 @@
 live registry of methods. A process that offers methods (an **owner**)
 connects and advertises them; a **caller** sends a request to one owner and
 gets exactly one reply or an error; an **observer** watches the registry and
-every call. `solactl` and its MCP server are callers, as are the Shell
-(screenshots) and Scope (pixel samples). Monitor is the observer.
+every call. `solactl` and its MCP server are callers, as is the shell (for
+screenshots, and for the launcher's Projects chooser). Monitor is an
+observer.
 
 The command reference for `solactl` is [solactl](solactl.md). This chapter
 explains the plane it talks to.
@@ -30,11 +31,12 @@ The bus, the call plane, and Wayland are the three planes of a session
 
 ## The host
 
-`sola-call` is started by the process manager after `sola-bus` and is
-restarted if it exits ([Process manager](process-manager.md)).
+On Oath, PID 1 runs `sola-call` as a service and starts it again when it
+exits with an error ([Architecture](architecture.md)).
 
-- **Socket.** `$SOLA_CALL_PATH` if set, else `$XDG_RUNTIME_DIR/sola-call`
-  (`/tmp/sola-call` when `XDG_RUNTIME_DIR` is unset). At start the host
+- **Socket.** `$SOLA_CALL_PATH` if set, else `$XDG_RUNTIME_DIR/sola-call`.
+  When `XDG_RUNTIME_DIR` is unset, the runtime directory is
+  `/run/user/<uid>` if that exists, else `/tmp`. At start the host
   removes any old socket file, creates the parent directory, binds, and
   sets mode `0600`. Any process of the same user can connect; there is no
   other access control.
@@ -206,10 +208,10 @@ invoke's `params` and every reply's `data`.
 | `unregister` | An owner leaves | `owner` |
 
 `caller` is the `app_id` from the caller's hello. Limit: the library's
-one-shot `invoke` always says hello as `solactl`, so calls from the Shell,
-Scope, and the MCP server also trace as `solactl`.
+one-shot `invoke` always says hello as `solactl`, so calls from the shell
+and the MCP server also trace as `solactl`.
 
-[Monitor](sola-monitor.md) is the observer in a session: its **Call** view
+[Monitor](sola-monitor.md) is the observer Sola has: its **Call** view
 lists invokes with owner, method, caller, status, and duration, and its
 right rail is the live catalog.
 
@@ -217,17 +219,18 @@ right rail is the live catalog.
 
 | Owner | Process | Present | Methods |
 |---|---|---|---|
-| `compositor` | `sola-river` | Whole session | `screenshot`, `sample`, `cursor`, `windows`, `input.click`, `input.move`, `input.scroll`, `input.key` |
+| `compositor` | `sola-river` | Whole session | `screenshot`, `sample`, `cursor`, `windows`, `input.click`, `input.press`, `input.release`, `input.move`, `input.scroll`, `input.key` |
 | `session` | `sola-session` | Whole session | `launch`, `close` |
-| `bots` | `sola-botsd` | Whole session | `list`, `poll`, `new`, `send`, `transcript`, `rm`, `cancel` |
-| `projects` | `sola-projects` | While **Projects** is open | `ps`, `project.list`, `project.open`, `project.close`, `project.startup`, `tab.list`, `tab.spawn`, `tab.rm`, `tab.select`, `tab.set`, `tab.exec`, `pane.list`, `pane.send`, `pane.read`, `pane.wait`, `whoami` |
-| `browser` | `sola-browser` | While the **Browser** is open | `tabs`, `tab.open`, `tab.close`, `tab.focus`, `goto`, `back`, `forward`, `reload`, `stop`, `find.page`, `snapshot`, `find`, `click`, `hover`, `key`, `scroll`, `type`, `fill`, `get`, `links`, `select`, `wait`, `screenshot` |
-| `design` | `sola-design` | While **Design** is open | `project.list`, `project.add`, `project.remove`, `open`, `canvas.new`, `canvas.close`, `status`, `share`, `share.rotate`, `selection`, `view`, `wait`, `reload`, `screenshot`, `pdf`, `inspect` |
+| `bots` | `sola-botsd` | While `sola-botsd` runs | `list`, `poll`, `new`, `setup`, `send`, `transcript`, `rm`, `cancel` |
+| `projects` | `sola-projects` | While **Projects** runs; it quits when its last project window closes | `ps`, `project.list`, `project.open`, `project.close`, `project.startup`, `tab.list`, `tab.spawn`, `tab.rm`, `tab.select`, `tab.set`, `tab.exec`, `pane.list`, `pane.send`, `pane.read`, `pane.wait`, `whoami` |
+| `browser` | `sola-browser` | While the **Browser** runs | `tabs`, `tab.open`, `tab.close`, `tab.focus`, `goto`, `back`, `forward`, `reload`, `stop`, `find.page`, `snapshot`, `find`, `click`, `hover`, `key`, `scroll`, `type`, `fill`, `get`, `links`, `select`, `wait`, `screenshot` |
+| `design` | `sola-design` | While **Design** runs | `project.list`, `project.add`, `project.remove`, `open`, `canvas.new`, `canvas.close`, `status`, `share`, `share.rotate`, `selection`, `view`, `wait`, `reload`, `screenshot`, `pdf`, `inspect` |
 
-The compositor, session, and bots owners belong to processes the process
-manager keeps running. The other three exist only while their application
-is open; the plane does not open it for you. Every method and flag is in
-[solactl](solactl.md).
+The compositor and session owners belong to services PID 1 keeps running.
+`sola-botsd` ships with Sola, but Oath runs no service for it, so `bots`
+is present only while you run it. The other three exist only while their
+application runs; the plane does not start it for you. Every method and
+flag is in [solactl](solactl.md).
 
 ## solactl on the call plane
 
@@ -292,18 +295,21 @@ the same methods, not a second protocol: what a tool may do is what
   for `null`). When the reply has a `path` ending in `.png`, `.jpg`, or
   `.jpeg` and the file is at most 3,700,000 bytes, the image is attached
   as a second, base64 item; a larger file gets a text note with its size
-  instead. An error is a text item with `isError: true`.
+  instead. An error is a text item with `isError: true`; a call whose
+  deadline passes says `timeout waiting for <owner>.<method>`, with a note
+  that an application still on screen has a wedged call channel and should
+  be closed from its window and launched again.
 - **Changes.** The server rereads the catalog every 2 s and sends
   `notifications/tools/list_changed` when the set of tool names changes,
   once the client has sent `notifications/initialized`. When `sola-call`
   is down, `tools/list` is empty; calling a tool whose owner is gone
-  returns `no live tool "<name>" — is that app running? (tools follow the
-  apps that are up)` as an error.
+  returns this error:
+  `no live tool "<name>" — is that app running? (tools follow the apps that are up)`.
 
 Limit: the compositor's `SOLA_BOT=1` refusals belong to the compiled
 `solactl compositor` command, so a bot's MCP server still offers the
 compositor tools. Register the server with an agent as a stdio command,
-for example `claude mcp add sola -- /opt/sola/bin/solactl mcp`.
+for example `claude mcp add sola -- /bin/solactl mcp`.
 
 ## Offering methods from an application
 

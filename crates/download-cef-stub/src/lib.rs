@@ -262,6 +262,11 @@ fn write_api_versions_header(cef_dir: &Path) -> Result<()> {
         .filter(|m| m.parse::<u32>().is_ok())
         .ok_or_else(|| Error::new(format!("cef-version: no major in {CEF_VERSION:?}")))?;
     let include = cef_dir.join("include");
+    // An earlier stub linked the cache's own `include/` here; never write
+    // through that into CEF's headers.
+    if include.is_symlink() {
+        std::fs::remove_file(&include)?;
+    }
     std::fs::create_dir_all(&include)?;
     std::fs::write(
         include.join("cef_api_versions.h"),
