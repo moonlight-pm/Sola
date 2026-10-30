@@ -76,7 +76,7 @@ every shortcut: the Shell's (groups Shell, Workspaces, Capture and
 Window), then the focused app's menu items (in groups named after its
 menus). Type to filter by name, group or chord; ↑ and ↓ move, Enter or a
 click runs the item. Escape or Super+K closes it, and so does a click on
-the pad around the card. **Quit**, **Restart Computer** and **Shut Down**
+the pad around the card. **Exit Sola**, **Restart Computer** and **Shut Down**
 are left out, so a filter and Enter cannot end the session.
 
 ## The top row
@@ -105,8 +105,7 @@ Click it again, press Escape, or click a window to close the panel.
 |------|--------------|
 | Launch Application… | Opens the launcher |
 | Keyboard Shortcuts | Opens the shortcuts overlay (Super+K) |
-| Restart Shell | The Shell exits and is started again |
-| Quit Sola | Ends the desktop session (`Shutdown` on the bus) |
+| Exit Sola | Ends the desktop session (`Shutdown` on the bus) |
 | Restart Computer | Restarts the machine |
 | Shut Down | Powers the machine off |
 

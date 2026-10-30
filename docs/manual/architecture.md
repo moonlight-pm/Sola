@@ -179,21 +179,21 @@ Call owners connect to `sola-call` whenever it answers, retrying every
 ## When a part stops
 
 PID 1 starts a service again when it exits with an error. A service that
-exits cleanly stays down; that is how **Quit Sola** ends the session.
+exits cleanly stays down; that is how **Exit Sola** ends the session.
 
 | What stops | What happens |
 |---|---|
 | `sola-bus` | Sticky values held only in memory are lost; persistent ones are reloaded from disk. Every client reconnects, subscribes again, and publishes its own sticky values again, so menus, chords, tabs, and window lists return. |
 | `sola-call` | Calls in flight fail. Owners reconnect every 400 ms and advertise their methods again. |
 | `sola-river` | The compositor and every window keep running. The new `sola-river` binds the window-management protocol again and reports outputs and windows. |
-| `sola-shell` | The top row, the bar, and the overlays go until the new shell maps them; windows stay. The new shell takes the saved layout and pairs the open windows with their tabs again. **Restart Shell** in the flower menu does this on purpose. |
+| `sola-shell` | The top row, the bar, and the overlays go until the new shell maps them; windows stay. The new shell takes the saved layout and pairs the open windows with their tabs again. |
 | `sola-session` | The new one launches saved applications that have no window. It does not track the applications the previous one started: their exits are not reported, `solactl session close` does not find them, and they leave the saved set at its next change. |
 | An application | `sola-session` publishes its exit (`UserAppExited`) and drops it from the saved set. Nothing restarts it. Its windows' places in the bar wait 30 seconds, so a copy started again within that time gets them back. |
 | The compositor | Every Wayland client loses its connection. `sola-river` and the shell exit with an error, PID 1 starts them again, and they wait for a live Wayland socket. |
 
 ### Ending the session
 
-**Quit Sola** in the flower menu publishes `Shutdown`, and the shell exits
+**Exit Sola** in the flower menu publishes `Shutdown`, and the shell exits
 cleanly. `sola-session` stops every application it launched (SIGTERM, then
 SIGKILL to any still running after 6 seconds) and exits; `sola-river`
 exits. None of the three is started again. `sola-bus`, `sola-call`, and

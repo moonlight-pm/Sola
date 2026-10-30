@@ -211,7 +211,42 @@ protocol). It syncs only when the pointer enters the peer (server to peer,
 The default cap is 8 MiB (`max_bytes`). Turn sync off with
 `[clipboard] enable = false`.
 
-## Pair with a Linux peer
+## Pairing
+
+**Unpaired, the peer takes input and clipboard from anyone on the network.**
+`sola-kvm listen` (and the Mac agent) inject any packet that reaches port
+4242, and the clipboard connection has no check either: on a network you do
+not trust, anyone there can type into the peer and read its clipboard. Both
+sides log `not paired` at start.
+
+Pairing closes that. On the server, once, with ssh to the peer working:
+
+```bash
+sola-kvm pair <peer-host>                            # a Linux peer (home@<host> for Oath)
+sola-kvm pair <mac-host> --remote-bin sola-kvm-mac   # a Mac peer
+```
+
+It makes a key, installs it on the peer over ssh (`pair --accept` there),
+then keeps it here, at `~/.config/sola-kvm/pair.key` (readable by you only)
+on both. Without a peer, it uses `peer.host` from the config. If the peer
+cannot take the key, neither side changes. Then restart sola-kvm on both
+machines (on Oath, `pkill -x sola-kvm`; PID 1 starts it again); each logs
+`paired` at start.
+
+Paired, every input packet and clipboard message is sealed with the key
+(XChaCha20-Poly1305): the peer drops anything that does not open with it,
+that it has already seen, or whose clock is more than 30 s from its own (so
+keep both machines' clocks synced). Dropped input is logged at most every
+10 s, with the sender's address. The key is the only secret: a key file that
+cannot be read stops sola-kvm from starting rather than running open.
+
+`sola-kvm pair --forget` (`sola-kvm-mac pair --forget`) removes the key:
+that side is unpaired again, and a paired other side no longer reaches it.
+Pair both sides from the same version; a side without pairing support
+cannot read a paired one. [Security](security.md) lists the desk's other
+ways in.
+
+## Set up a Linux peer
 
 On the peer, in a running River or Sola session (`WAYLAND_DISPLAY` set):
 
@@ -237,7 +272,7 @@ sola-kvm send-test --to <peer-ip>:4242
 # then the full path: the server as it runs in the session (see Autostart)
 ```
 
-## Pair with a Mac peer
+## Set up a Mac peer
 
 1. On the Mac, `apps/sola-kvm-mac/scripts/install.sh` builds the agent,
    signs it as `/Applications/SolaKvmMac.app`, and installs the

@@ -670,7 +670,7 @@ works.
 | `sola-bus` | `sola-river` reconnects at its next read, subscribes again, and publishes `OutputGeometry`, `Windows`, every `WindowGeometry`, and the floating windows it knows, because the bus lost them. |
 | `sola-shell` | The old shell's surfaces are pruned once its process is gone; the stack keeps its order (see [Stacking and visibility](#stacking-and-visibility)). |
 
-On `Shutdown` (Quit Sola), `sola-river` exits with status 0.
+On `Shutdown` (Exit Sola), `sola-river` exits with status 0.
 
 ## Logs
 

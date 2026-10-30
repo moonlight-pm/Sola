@@ -11,6 +11,7 @@ two lists the same).
 | Chapter | Contents |
 |---------|----------|
 | [Introduction](introduction.md) | What Sola is, requirements, the Oath packages, building from source, starting a session, updating and rolling back, fonts, paths |
+| [Security](security.md) | Each way into a running desk, what it lets through by default, and how to close it: KVM pairing, Oath's password and console, what stays open |
 | [Architecture](architecture.md) | How a session is put together: the processes, the three planes, sockets, start-up, restarts |
 | [Process manager](process-manager.md) | Oath's PID 1 and Sola's services: what runs, in what order, restarts, updates, logs, ending the session |
 | [The bus](bus.md) | `sola-bus`: socket, wire format, every topic, sticky and persisted state, reconnects |

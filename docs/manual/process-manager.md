@@ -34,7 +34,7 @@ catalog can differ from the profile; `oath get` shows what it runs.
 | `svc:sola-tmux` | `tmux -L sola -f /home/.config/sola/tmux.conf -D`, the tmux server that holds Terminal's shells | none | always |
 | `svc:sola-tmux-ws` | The same on socket `sola-ws`, for Projects' tabs | none | always |
 | `svc:sola-session` | `sola-session`, the [session manager](session.md) | `svc:sola-bus`, `svc:sola-call`, `svc:sola-tmux`, `svc:sola-tmux-ws` | on-failure |
-| `svc:sola-kvm` | `sola-kvm listen --bind 0.0.0.0:4242`, which takes another machine's keyboard and mouse ([KVM](sola-kvm-operator.md)) | `svc:sola-river` | always |
+| `svc:sola-kvm` | `sola-kvm listen --bind 0.0.0.0:4242`, which takes another machine's keyboard and mouse ([KVM](sola-kvm-operator.md)); from any machine on the network until it is paired ([Security](security.md#pairing-the-kvm)) | `svc:sola-river` | always |
 
 Each Sola service runs its program from `/bin`, where `pkg:sola` links
 it. The two tmux servers are services of their own so that shells
@@ -153,18 +153,19 @@ applications it launches from its own; see [Session manager](session.md).
 |---|---|
 | **Restart Computer** or **Shut Down** in the flower menu | The shell runs `sudo oath set host:local power=reboot` (`power=halt` for Shut Down), then `sudo oath apply --confirm host:local`. PID 1 stops every service (SIGTERM, up to 5 seconds, then SIGKILL) and reboots or powers off. If either command fails, the shell shows **Could not restart the computer** or **Could not shut down**. |
 | `sudo reboot` or `sudo poweroff`, over SSH | The same shutdown by PID 1. |
-| **Quit Sola** in the flower menu | The shell publishes `Shutdown` on the bus and exits with status 0. The session manager sends SIGTERM to every application, sends SIGKILL to any still running after 6 seconds, and exits with status 0. `sola-river` exits with status 0. |
-| **Restart Shell** in the flower menu | The shell exits with status 1, and PID 1 starts it again. |
-| `solactl emit Shutdown null` | As **Quit Sola**, except that the shell keeps running: it does not act on a `Shutdown` it did not send. |
+| **Exit Sola** in the flower menu | The shell publishes `Shutdown` on the bus and exits with status 0. The session manager sends SIGTERM to every application, sends SIGKILL to any still running after 6 seconds, and exits with status 0. `sola-river` exits with status 0. |
+| `solactl emit Shutdown null` | As **Exit Sola**, except that the shell keeps running: it does not act on a `Shutdown` it did not send. |
 
-After **Quit Sola**, the shell and the session manager stay stopped,
+After **Exit Sola**, the shell and the session manager stay stopped,
 since their policy is `on-failure` and they exited cleanly. `sola-river`
 is started again at once, and the bus, the call host, `sola-kvm`, rivulet,
 and the tmux servers keep running, so the screen has no desktop until
-PID 1 starts the two again ([Restarts](#restarts)). Restarting the
-machine is the plain way back.
+PID 1 starts the two again ([Restarts](#restarts)). Exit Sola does not
+tell Oath that the desk ended, so no console takes the screen
+([Security](security.md#the-password)). Restarting the machine is the
+plain way back.
 
-Neither **Quit Sola** nor a shutdown clears the saved set of open
+Neither **Exit Sola** nor a shutdown clears the saved set of open
 applications, so the session manager reopens them when it next starts.
 
 ## Logs
@@ -247,7 +248,7 @@ Sola takes Oath's paths when `/oath/INDEX.md` is a file.
 |---|---|
 | `oath get svc:<name> --actual` shows `failed` | It exited within 10 seconds of starting five times in a row. `oath logs svc:<name>` says why; it stays down until its spec or its package changes. |
 | `restarting`, with `restarts` climbing | It fails at start. See its `oath logs` and `ERROR` or `panicked` lines with its tag in `sola.log`. |
-| `stopped` for `svc:sola-shell` and `svc:sola-session` | **Quit Sola** ended them cleanly. See [Ending the session](#ending-the-session). |
+| `stopped` for `svc:sola-shell` and `svc:sola-session` | **Exit Sola** ended them cleanly. See [Ending the session](#ending-the-session). |
 | `wayland socket never appeared` from `[river]` | Rivulet opened no socket in `/run/user/1` in time. See `oath logs svc:rivulet`. |
 | `bus connect failed, retrying` from `[session]` | `sola-bus` is not running. See `oath get svc:sola-bus --actual`. |
 | A new build does not run | It was not applied. `oath get pkg:sola` shows the live hash; `cargo make install` writes `/opt/sola/bin`, which nothing on Oath runs. |

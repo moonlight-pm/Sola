@@ -94,9 +94,10 @@ and the engine comes from `pkg:cef`.
 
 There is nothing to start by hand. At boot, PID 1 starts seatd, rivulet,
 and Sola's services as `home`, and the screen shows Sola once rivulet and
-the shell are up. The desk profile turns off Oath's login on the screen,
-so the desktop comes up with no login, and Sola has no lock screen. Reach
-the machine otherwise over SSH as `home`. [Process manager](process-manager.md)
+the shell are up. The desktop comes up signed in, with no password, and
+Sola has no lock screen. Reach the machine otherwise over SSH as `home`,
+with a key. [Security](security.md) lists every way into a running desk
+and how to close each one, and [Process manager](process-manager.md)
 lists the services and how PID 1 runs them.
 
 Applications open from the launcher (Super+Space) or with
@@ -104,7 +105,7 @@ Applications open from the launcher (Super+Space) or with
 that were open when the session last ended.
 
 To end the session, choose **Restart Computer** or **Shut Down** from the
-flower menu. **Quit Sola** stops the shell and the session manager but
+flower menu. **Exit Sola** stops the shell and the session manager but
 leaves the machine running without a desktop until PID 1 starts them
 again ([Ending the session](process-manager.md#ending-the-session)).
 
@@ -165,5 +166,5 @@ covers the log filter.
 | A new build does not run | `cargo make install` copied it into `/opt/sola/bin`, which nothing on Oath runs. Use `cargo make oath apply`. |
 | Monitor, Kit, Preview, Arcade, Scope, or Spotify starts nothing | The launcher lists them, but their programs are not in Sola's Oath packages. |
 | Bots and `solactl bots` cannot reach the bots daemon | The desk profile runs no service for `sola-botsd`. |
-| No desktop after **Quit Sola** | The shell and the session manager stay stopped after a clean exit. Restart the machine. |
+| No desktop after **Exit Sola** | The shell and the session manager stay stopped after a clean exit. Restart the machine. |
 | `~/.local/state/sola/sola.log` keeps growing | Only `sola` rotates it, and `sola` does not run on Oath. |

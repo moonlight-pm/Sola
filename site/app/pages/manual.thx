@@ -11,6 +11,7 @@ import { warn } from "std/logging"
 ## Chapter files, in page order. docs/manual/README.md lists the same.
 export let names = [
     "introduction",
+    "security",
     "architecture",
     "process-manager",
     "bus",
@@ -39,9 +40,9 @@ export fn page(request!: Request) -> Response {
                         <h1>The Sola Manual</h1>
                         <p>
                             How Sola is put together and how to run it, as it works today:
-                            setting it up, the processes of a session, the bus and the call
-                            plane, the compositor, the shell, the theme, and the command
-                            line. Built from <a href={"{repository}/tree/master/docs/manual"}>docs/manual</a>
+                            setting it up, what is open and how to close it, the processes of
+                            a session, the bus and the call plane, the compositor, the shell,
+                            the theme, and the command line. Built from <a href={"{repository}/tree/master/docs/manual"}>docs/manual</a>
                             in the repository; a change in behaviour changes these pages in
                             the same commit.
                         </p>

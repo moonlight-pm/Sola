@@ -48,8 +48,9 @@ and mono text is Iosevka Term Slab.
 ## Adding a family
 
 Put the family's `.ttf` or `.otf` files in `~/.local/share/fonts/`, run
-`fc-cache -f`, and start the applications that should use it again. The
-shell restarts with **Restart Shell** in the flower menu. Confirm that
+`fc-cache -f`, and start the applications that should use it again. To
+restart the shell, kill it (`pkill -x sola-shell`); PID 1 starts it again
+([Restarts](process-manager.md#restarts)). Confirm that
 fontconfig sees a family with:
 
 ```bash

@@ -33,7 +33,7 @@ incomplete. Applications that offer methods on the
 | Settings | `sola-settings` | `pkg:sola` | Applications in the launcher; Appearance (light or dark for web pages, the theme's colors, from the background picture or your own, the background picture, the desk's opacity, the idle fade); Mail accounts and rules; Calendar accounts | — |
 | Bots | `sola-bots`, `sola-botsd` | `pkg:sola` | Named assistant sessions, each a directory in `~/Bots` on the AI it was made with (Grok, Claude, or Gab AI); the daemon `sola-botsd` serves them on a Unix socket. On Oath nothing starts the daemon, so the Bots window has nothing to talk to there. Call owner `bots`. | [solactl](solactl.md#bots-solactl-bots) |
 | Oath | `sola-oath` | `pkg:sola` | Oath's packages: turn one on or off and **Apply** (`oath set`, `oath apply`), or **Undo** the last change. Listed only on Oath. | — |
-| KVM | `sola-kvm` | `pkg:sola` | One keyboard and mouse across two machines, with a shared clipboard. A service, not in the launcher. | [notes](sola-kvm-operator.md) |
+| KVM | `sola-kvm` | `pkg:sola` | One keyboard and mouse across two machines, with a shared clipboard; once paired, each machine drops input it did not seal ([Security](security.md#pairing-the-kvm)). A service, not in the launcher. | [notes](sola-kvm-operator.md) |
 
 There is no separate Wrapper application: a wrapped website is a
 [web app](web-apps.md) that Browser hosts.

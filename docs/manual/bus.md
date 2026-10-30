@@ -250,7 +250,7 @@ The bar is described in [Shell § The bar](sola-shell.md#the-bar), its zones in 
 | `Application` | A launcher entry: `app_id`, `label`, `command`, `icon`, `kind`, `url`, `profile` | Settings; Browser (web apps); Arcade (a running game's label, retracted when it stops) | Shell, Settings, Browser | Persistent by `app_id` |
 | `SetAppMenu` | `app_id` and its menus: labels and items (action id, label, shortcut, disabled, checked) or dividers | Each app with a menu, at start; Arcade (a running game's, retracted when it stops) | Shell (registers the focused app's Super shortcuts; an app with no menu gets the compositor's rim) | Sticky by `app_id` |
 | `MenuAction` | `app_id`, `action_id` of a chosen item or shortcut | Shell (a Super shortcut of the focused app's menu); a kit app's titlebar Window menu; a second launch of Terminal or Projects, to the running one | The app named by `app_id`; the Shell for Window-menu actions, which it applies to the focused window | Ephemeral |
-| `Shutdown` | None | Shell (Quit Sola, then the shell exits) | `sola-session` (stops the apps it started, then exits), `sola-river` (exits) | Ephemeral |
+| `Shutdown` | None | Shell (Exit Sola, then the shell exits) | `sola-session` (stops the apps it started, then exits), `sola-river` (exits) | Ephemeral |
 
 Launching and closing are described in [Session manager](session.md) and
 [Applications](applications.md). App menus appear in each window's

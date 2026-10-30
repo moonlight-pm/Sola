@@ -213,10 +213,10 @@ first.
 
 ## Ending the session
 
-On `Shutdown` (**Quit Sola** in the flower menu), `sola-session` sends
+On `Shutdown` (**Exit Sola** in the flower menu), `sola-session` sends
 SIGTERM to every application it is tracking, waits up to 6 s for them to
 exit, sends SIGKILL to any that remain, then exits. It does not change the
-saved set, so the applications open at **Quit Sola** are the ones
+saved set, so the applications open at **Exit Sola** are the ones
 restored.
 
 ## Restoring the last session
