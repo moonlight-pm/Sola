@@ -109,7 +109,6 @@ crates/
   sola-paint/          # Default image viewer/editor (MIME; screenshots stay on preview)
   sola-design/         # HTML artboards on a canvas, edited by agents (CEF board tabs)
   sola-scope/          # Pixel loupe (magnified grid under the pointer)
-  sola-spotify/        # Kit-native Spotify client (librespot + Web API)
   sola-install/        # Kit installer wizard (image media)
   solactl/             # CLI helpers
 nix/                   # NixOS module (Shape 1) + image/ISO profiles

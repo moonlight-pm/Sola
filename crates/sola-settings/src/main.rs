@@ -162,7 +162,7 @@ impl App {
     }
 
     fn title(&self) -> String {
-        "Sola Settings".into()
+        "Settings".into()
     }
 
     fn theme(&self) -> Theme {
@@ -213,6 +213,10 @@ impl App {
                     Some(Topic::Background(b)) => {
                         // Persistent: sticky=false is the retract.
                         self.appearance.picture = message.sticky.then_some(b);
+                        // A new picture joins the kept ones.
+                        if self.panel == Panel::Appearance {
+                            return appearance::refresh(&mut self.appearance).map(Msg::Appearance);
+                        }
                     }
                     Some(Topic::Appearance(a)) => {
                         self.appearance.look = if message.sticky { a } else { Default::default() };
@@ -232,6 +236,9 @@ impl App {
                 if p == Panel::Login {
                     return login::update(LoginMsg::Refresh, &mut self.login_ui).map(Msg::Login);
                 }
+                if p == Panel::Appearance {
+                    return appearance::refresh(&mut self.appearance).map(Msg::Appearance);
+                }
             }
             Msg::Login(m) => return login::update(m, &mut self.login_ui).map(Msg::Login),
             Msg::Apps(m) => {
@@ -245,7 +252,9 @@ impl App {
                 return calendar::update(m, &mut self.calendar, &mut self.calendar_ui)
                     .map(Msg::Calendar);
             }
-            Msg::Appearance(m) => appearance::update(m, &mut self.appearance),
+            Msg::Appearance(m) => {
+                return appearance::update(m, &mut self.appearance).map(Msg::Appearance);
+            }
             Msg::WindowReady(id) => self.window_id = id,
             Msg::TitleDrag => return sola_kit::drag(self.window_id),
             Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),

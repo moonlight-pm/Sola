@@ -108,6 +108,7 @@ focused) is the session menu:
 | Item | What it does |
 |------|----------------|
 | Launch Application… | Super+Space launcher |
+| Settings… | Brings Settings forward, or starts it |
 | Keyboard Shortcuts | Super+K overlay |
 | Lock Screen | Super+L: locks the screen ([Security](security.md#locking)) |
 | Exit Sola | Ends the desktop session (`Topic::Shutdown`); on Oath the console then has the seat, and `oath desk` brings the desk back |

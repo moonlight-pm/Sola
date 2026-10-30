@@ -28,6 +28,7 @@ squares.
 | B2 | It is set from **Paint**: File → **Set as Background** on the focused image. |
 | B3 | Sola **keeps its own copy** under `~/.config/sola/background/`, so the picture stays when the original moves or goes. |
 | B4 | The first one: a James Webb image (the Cosmic Cliffs in Carina, NASA, ESA, CSA, STScI; public domain), 1920 px wide for canto's 1920 × 1080. |
+| B5 | *(2026-10-30: "When we set a new desktop background, we should remember it. On the appearance page we should be able to select from our remembered backgrounds. If we select one, we should also remember and restore the theme we had used.")* Every picture set is **kept**; Settings → Appearance lists them to set one again, and each picture brings back the **look** worn with it. |
 
 ## The picture
 
@@ -37,10 +38,20 @@ squares.
   orientation.
 - **No picture:** the plain black ground, as before (`solactl background
   clear`).
-- **Where it lives:** `~/.config/sola/background/<file name>` — the one
-  picture there; setting another removes the previous copy. Paint copies
+- **Where it lives:** `~/.config/sola/background/<file name>`, beside
+  every picture set before it (B5; until 2026-10-30 setting another
+  removed the previous copy). A different file of a kept name is kept as
+  `<name>-2.<ext>`; the same bytes again use the copy. Paint copies
   the file as it is on disk; an image edited in Paint and not saved is
   written as `<name>.png` from what is on screen.
+- **Kept pictures (B5):** Settings → Appearance → Background picture shows
+  them, newest first, the one set ringed; a press sets one again, × on
+  hover deletes the copy. Each picture keeps the look it was worn with —
+  adapting, strength, scheme, your colors and looks — in
+  `Appearance.pictures` (by path). When the picture changes while the
+  shell runs, the shell keeps the outgoing picture's look and wears the
+  incoming one's; a picture never worn keeps the look in use. Light or
+  dark, the desk's opacity and the idle settings are not part of a look.
 - **Also:** `solactl background set <image>` / `solactl background clear`
   (scripts, agents).
 
@@ -340,7 +351,7 @@ background."
 
 From the browser: a picture's `srcset`, CSS backgrounds, a page's own
 full-size viewer (Flickr, Unsplash) — only the link, Wikimedia, and the
-picture are tried. A picture picker in Settings (recent pictures), a picture per
+picture are tried. A picture per
 workspace or per output (Sola frames one output), slideshows, dimming or
 blurring the picture under the windows, a default picture shipped with
 Sola, rounding floating foreign windows (still needs rivulet to clip).

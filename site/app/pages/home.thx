@@ -131,7 +131,6 @@ fn appList() -> Array<Entry> {
         Entry(name: "Calendar", detail: "Month, week, and day views of local, Google, and iCloud calendars, with reminders."),
         Entry(name: "Settings", detail: "Applications in the launcher, website wrappers, and mail and calendar accounts."),
         Entry(name: "Arcade", detail: "The Steam library in a window. Each game runs in a nested session sized to it."),
-        Entry(name: "Spotify", detail: "Playback through librespot, playlists, the library, and Spotify Connect."),
         Entry(name: "Paint", detail: "The default image viewer and editor."),
         Entry(name: "Preview", detail: "A quick viewer for screenshots and images."),
         Entry(name: "Design", detail: "HTML artboards on a canvas, written and edited by AI agents."),

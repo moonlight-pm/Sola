@@ -10,6 +10,9 @@
 use sola_bus::topics::Application;
 use sola_core::{env, paths};
 
+/// Settings' app id (the flower menu opens it).
+pub const SETTINGS: &str = "sola-settings";
+
 fn kit_command(name: &str) -> String {
     paths::bin_path(name).display().to_string()
 }
@@ -17,9 +20,9 @@ fn kit_command(name: &str) -> String {
 pub fn builtin_apps() -> Vec<Application> {
     let mut apps = vec![
         Application {
-            app_id: "sola-settings".into(),
+            app_id: SETTINGS.into(),
             label: "Settings".into(),
-            command: kit_command("sola-settings"),
+            command: kit_command(SETTINGS),
             icon: "lucide/settings".into(),
             ..Default::default()
         },
@@ -121,13 +124,6 @@ pub fn builtin_apps() -> Vec<Application> {
             // `frame` — artboards. Distinct from Paint (`brush`) and Kit
             // (`palette`).
             icon: "lucide/frame".into(),
-            ..Default::default()
-        },
-        Application {
-            app_id: "sola-spotify".into(),
-            label: "Spotify".into(),
-            command: kit_command("sola-spotify"),
-            icon: "lucide/disc".into(),
             ..Default::default()
         },
     ];

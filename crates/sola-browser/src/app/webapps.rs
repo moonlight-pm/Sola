@@ -197,6 +197,17 @@ impl<E: Engine> App<E> {
                     tracing::info!(app = %app.app_id, label = %app.label, "web app");
                     self.webapps.published.remove(&app.app_id);
                     let id = app.app_id.clone();
+                    // Renamed (Settings → Applications): its open windows'
+                    // menus take the new name now.
+                    let renamed = self
+                        .webapps
+                        .apps
+                        .get(&id)
+                        .is_some_and(|old| old.label != app.label);
+                    if renamed && !self.webapps.tabs_of(&id).is_empty() {
+                        sola_kit::menu::publish_for(app_menu(&app));
+                        self.webapps.published.insert(id.clone());
+                    }
                     self.webapps.apps.insert(id.clone(), app);
                     if self.webapps.launch.as_deref() == Some(id.as_str()) {
                         self.open_app(&id);

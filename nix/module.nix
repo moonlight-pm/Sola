@@ -66,7 +66,7 @@ in
       gst_all_1.gst-plugins-ugly
       gst_all_1.gst-libav
 
-      # sola-spotify local playback (librespot rodio/cpal + Pulse/PipeWire).
+      # The browser's sound: libcef links ALSA and opens libpulse.
       alsa-lib
       libpulseaudio
     ] ++ lib.optional cfg.installRelease cfg.package;

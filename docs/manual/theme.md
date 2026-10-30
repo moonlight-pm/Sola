@@ -241,8 +241,23 @@ applications' windows get the same rims from the compositor.
 
 Turning it off, or clearing the picture, puts the default greys back on
 those colors. While it is on, a color edited in Kit is replaced by the
-picture's. Settings → Appearance also shows the picture's file name and
-**Clear**s it.
+picture's.
+
+### Kept pictures
+
+Every picture you set stays in `~/.config/sola/background/`, and
+**Settings → Appearance → Background picture** shows them all, newest
+first: the picture set has the accent ring, and its file name with
+**Clear** (the black ground) is above them. Click another to set it
+again. Hover one for **×**, which deletes Sola's copy and what it kept.
+
+Each picture keeps the look you wore with it: adapting on or off, the
+strength, the scheme, your colors and your looks
+(`Appearance.pictures`). When the picture changes, from Settings, Paint,
+Browser or `solactl background`, the Shell keeps the outgoing picture's
+look and puts the incoming one's back. A picture never set before keeps
+the look already in use. Light or dark, the desk's opacity and the idle
+settings are the same for every picture.
 
 ## Editing the theme
 

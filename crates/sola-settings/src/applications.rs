@@ -12,15 +12,16 @@
 //!
 //! Builtin apps (defined in sola-shell) never appear here — they
 //! are seeded by the shell directly and are not part of the
-//! `Topic::Application` stream. Nor do web apps: the browser makes them
-//! (Wrap This Page…) and each removes itself from its own menu.
+//! `Topic::Application` stream. Web apps have a section of their own:
+//! the browser makes them (Wrap This Page…); here one can be renamed or
+//! removed.
 
 use iced::widget::{column, row};
 use iced::{Element, Length, Task};
 use sola_kit::components::text_input::text_input;
 
 use sola_bus::topics::{AppKind, Application, ApplicationsConfig, Topic, Window as BusWindow};
-use sola_kit::app::bus;
+use sola_kit::app::try_bus;
 use sola_kit::components::style::{SPACE_LG, SPACE_MD};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::{Tone, badge, button as kit_btn, field, text_input as kit_input};
@@ -105,10 +106,10 @@ pub fn sort_key(app: &Application) -> String {
     display_title(app).to_ascii_lowercase()
 }
 
-/// Configured command apps (not web apps) sorted by [`sort_key`], then
-/// `app_id`.
-pub fn sorted_apps(apps: &ApplicationsConfig) -> Vec<&Application> {
-    let mut v: Vec<&Application> = apps.apps.iter().filter(|a| !a.is_web()).collect();
+/// Configured apps of one kind, web apps or command apps, sorted by
+/// [`sort_key`], then `app_id`.
+pub fn sorted_apps(apps: &ApplicationsConfig, web: bool) -> Vec<&Application> {
+    let mut v: Vec<&Application> = apps.apps.iter().filter(|a| a.is_web() == web).collect();
     v.sort_by(|a, b| {
         sort_key(a)
             .cmp(&sort_key(b))
@@ -239,11 +240,21 @@ pub fn update(msg: AppsMsg, apps: &mut ApplicationsConfig, ui: &mut AppsState) -
             Detail::Edit { orig, buffer } => {
                 let orig = orig.clone();
                 let buf = buffer.clone();
-                if let Some(err) = required_error(&buf) {
+                // A web app keeps all but its name: the browser made the rest.
+                let web = apps.get(&orig).filter(|a| a.is_web()).cloned();
+                let error = match &web {
+                    Some(_) if buf.label.trim().is_empty() => Some("A name is required".into()),
+                    Some(_) => None,
+                    None => required_error(&buf),
+                };
+                if let Some(err) = error {
                     ui.error = Some(err);
                     return Task::none();
                 }
-                let new_app = buf.to_application();
+                let new_app = match web {
+                    Some(app) => renamed(app, &buf.label),
+                    None => buf.to_application(),
+                };
                 let id_changed = new_app.app_id != orig;
                 let prev = apps.get(&orig).cloned();
                 match apps.update(&orig, new_app.clone()) {
@@ -334,7 +345,7 @@ pub fn view<'a>(
     running: &'a [BusWindow],
     ui: &'a AppsState,
 ) -> Element<'a, AppsMsg> {
-    let mut sections = vec![catalog(apps, ui)];
+    let mut sections = vec![catalog(apps, ui), web_apps(apps, ui)];
     let candidates = collect_candidates(apps, running);
     if !candidates.is_empty() {
         sections.push(candidates_section(candidates));
@@ -358,7 +369,7 @@ fn catalog<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, A
         );
         rows.push(page::editor(draft_editor(buffer, ui)));
     }
-    for app in sorted_apps(apps) {
+    for app in sorted_apps(apps, false) {
         let open = matches!(&ui.detail, Detail::Edit { orig, .. } if orig == &app.app_id);
         let mut row = page::item(display_title(app))
             .subtitle(format!("{} · {}", app.app_id, app.command))
@@ -390,6 +401,89 @@ fn catalog<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, A
                 .into(),
         ),
     )
+}
+
+/// The web apps Browser made, A→Z, the open one with its editor under it.
+fn web_apps<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, AppsMsg> {
+    let mut rows: Vec<Element<'a, AppsMsg>> = Vec::new();
+    for app in sorted_apps(apps, true) {
+        let open = matches!(&ui.detail, Detail::Edit { orig, .. } if orig == &app.app_id);
+        rows.push(
+            page::item(display_title(app))
+                .subtitle(app.url.as_deref().map_or("", site).to_string())
+                .leading(app_icon(app))
+                .open(open)
+                .on_press(if open {
+                    AppsMsg::CloseDetail
+                } else {
+                    AppsMsg::Select(app.app_id.clone())
+                })
+                .into(),
+        );
+        if let (true, Detail::Edit { orig, buffer }) = (open, &ui.detail) {
+            rows.push(page::editor(web_editor(app, ui, orig, buffer)));
+        }
+    }
+    if rows.is_empty() {
+        rows.push(page::empty("None yet."));
+    }
+    page::section(
+        "Web apps",
+        None,
+        page::group(rows),
+        Some(
+            "Sites Browser runs as apps of their own: Browser → Wrap This Page… \
+             makes one. Removing one closes its windows; its sign-in stays in \
+             Browser."
+                .into(),
+        ),
+    )
+}
+
+/// A web app's editor: its name, where it starts, Remove.
+fn web_editor<'a>(
+    app: &'a Application,
+    ui: &'a AppsState,
+    orig: &'a str,
+    buffer: &'a EditBuffer,
+) -> Element<'a, AppsMsg> {
+    let mut left: Vec<Element<'a, AppsMsg>> = Vec::new();
+    if buffer.label != app.label {
+        left.push(page::action("Save", kit_btn::primary, AppsMsg::Save));
+        left.push(page::action("Discard", kit_btn::ghost, AppsMsg::Discard));
+    }
+    let right = vec![
+        kit_btn::labeled_sm("Remove", kit_btn::danger_outline)
+            .on_press(AppsMsg::Remove(orig.to_string()))
+            .into(),
+    ];
+    let start = kit_text::body(app.url.as_deref().unwrap_or("")).style(kit_text::muted);
+    let mut col = column![
+        field_input("Name", &buffer.label, "", AppField::Label),
+        field("Starts at", start, None, None),
+    ]
+    .spacing(SPACE_MD);
+    if let Some(err) = ui.error.as_deref() {
+        col = col.push(kit_text::caption(err).style(kit_text::danger));
+    }
+    column![col, page::footer(left, right)]
+        .spacing(SPACE_LG)
+        .into()
+}
+
+/// `app` under the name `label`.
+fn renamed(app: Application, label: &str) -> Application {
+    Application {
+        label: label.trim().to_string(),
+        ..app
+    }
+}
+
+/// The host of `url`, without `www.`.
+fn site(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    host.strip_prefix("www.").unwrap_or(host)
 }
 
 /// The app's own icon, or a plain window mark.
@@ -625,14 +719,18 @@ fn set_field(f: AppField, value: String, buf: &mut EditBuffer) {
 }
 
 fn emit(topic: Topic) {
-    if let Err(e) = bus().lock().unwrap().emit(topic) {
-        tracing::warn!("bus emit failed: {e}");
+    match try_bus().map(|b| b.lock().unwrap().emit(topic)) {
+        Some(Ok(())) => {}
+        Some(Err(e)) => tracing::warn!("bus emit failed: {e}"),
+        None => tracing::warn!("bus emit failed: no bus"),
     }
 }
 
 fn retract(topic: Topic) {
-    if let Err(e) = bus().lock().unwrap().retract(topic) {
-        tracing::warn!("bus retract failed: {e}");
+    match try_bus().map(|b| b.lock().unwrap().retract(topic)) {
+        Some(Ok(())) => {}
+        Some(Err(e)) => tracing::warn!("bus retract failed: {e}"),
+        None => tracing::warn!("bus retract failed: no bus"),
     }
 }
 
@@ -682,7 +780,7 @@ mod tests {
             app("a", "Bitwarden"),
             app("m", "Signal"),
         ];
-        let ids: Vec<&str> = sorted_apps(&cfg)
+        let ids: Vec<&str> = sorted_apps(&cfg, false)
             .iter()
             .map(|a| a.app_id.as_str())
             .collect();
@@ -840,7 +938,7 @@ mod tests {
     }
 
     #[test]
-    fn web_apps_are_not_listed() {
+    fn web_apps_are_listed_apart() {
         let mut cfg = ApplicationsConfig::default();
         cfg.apps = vec![
             app("firefox", "Firefox"),
@@ -849,7 +947,39 @@ mod tests {
                 ..app("web-1", "Slack")
             },
         ];
-        let ids: Vec<&str> = sorted_apps(&cfg).iter().map(|a| a.app_id.as_str()).collect();
+        let ids: Vec<&str> = sorted_apps(&cfg, false).iter().map(|a| a.app_id.as_str()).collect();
         assert_eq!(ids, ["firefox"]);
+        let web: Vec<&str> = sorted_apps(&cfg, true).iter().map(|a| a.app_id.as_str()).collect();
+        assert_eq!(web, ["web-1"]);
+    }
+
+    #[test]
+    fn saving_a_web_app_changes_only_its_name() {
+        let slack = Application {
+            kind: AppKind::Web,
+            url: Some("https://app.slack.com/client".into()),
+            profile: Some("p1".into()),
+            ..app("web-1", "Slack")
+        };
+        let mut cfg = ApplicationsConfig::default();
+        cfg.apps = vec![slack.clone()];
+        let mut ui = AppsState::default();
+        let _ = update(AppsMsg::Select("web-1".into()), &mut cfg, &mut ui);
+        let _ = update(
+            AppsMsg::Field {
+                field: AppField::Label,
+                value: " Work chat ".into(),
+            },
+            &mut cfg,
+            &mut ui,
+        );
+        let _ = update(AppsMsg::Save, &mut cfg, &mut ui);
+        let saved = cfg.get("web-1").unwrap();
+        assert_eq!(saved.label, "Work chat");
+        assert_eq!(saved.kind, AppKind::Web);
+        assert_eq!(saved.url, slack.url);
+        assert_eq!(saved.profile, slack.profile);
+        assert_eq!(saved.command, slack.command);
+        assert_eq!(site("https://www.example.com/a?b"), "example.com");
     }
 }

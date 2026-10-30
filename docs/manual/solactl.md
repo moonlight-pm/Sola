@@ -1004,8 +1004,9 @@ solactl background set IMAGE
 solactl background clear
 ```
 
-`set` copies `IMAGE` into `~/.config/sola/background/` (the one picture
-kept there; the previous copy is removed), makes it the picture behind
+`set` copies `IMAGE` into `~/.config/sola/background/` (with the pictures
+set before it, which Settings → Appearance lists; a different file of the
+same name is kept as `name-2.ext`; the same file again uses its copy), makes it the picture behind
 the windows (`Topic::Background`, which survives a restart), and prints the
 copy's path. The original can then move or go. `sola-river` draws it
 filling the output, centre-cropped. `clear` goes back to the plain black

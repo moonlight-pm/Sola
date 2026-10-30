@@ -130,8 +130,9 @@ forward it whole; forward a Projects-only proxy (only owner `projects`).
 
 ### D9 — Unpackaged apps in the launcher on Oath (P1)
 
-**Context:** Kit, Monitor, Preview, Arcade, Scope and Spotify are launcher
-built-ins (`crates/sola-shell/src/builtins.rs`), but no Oath package carries
+**Context:** Kit, Monitor, Preview, Arcade and Scope are launcher
+built-ins (Spotify was one; `sola-spotify` is retired on `next` since
+2026-10-30) (`crates/sola-shell/src/builtins.rs`), but no Oath package carries
 them (`crates/sola-make/src/oath/packages.rs`). On Oath, choosing one fails
 with a launch error. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
 

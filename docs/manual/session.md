@@ -143,8 +143,8 @@ ignoring case. Each entry has:
 ### Built-in entries
 
 The shell defines these in code: Settings, Monitor, Terminal, Projects,
-Browser, Kit, Preview, Paint, Mail, Calendar, Bots, Arcade, Scope, Design,
-and Spotify. Each app id is `sola-` and the name in lower case
+Browser, Kit, Preview, Paint, Mail, Calendar, Bots, Arcade, Scope and
+Design. Each app id is `sola-` and the name in lower case
 (`sola-settings`, `sola-browser`), and each runs `/opt/sola/bin/<app_id>`.
 They are not stored, they do not appear in Settings, and they cannot be
 edited there.
@@ -177,7 +177,8 @@ never appear in the launcher.
 
 An entry of kind `web` runs `/opt/sola/bin/sola-browser --app <app_id>`.
 Browser writes these entries when you wrap a page and retracts them when
-you remove the app; Settings does not list them. See [Web apps](web-apps.md).
+you remove the app. Settings lists them under Applications → Web apps,
+where one can be renamed or removed. See [Web apps](web-apps.md).
 
 ### Desktop files
 
@@ -347,7 +348,6 @@ which this needs.
 |---|---|---|
 | `sola-browser.desktop` | `/opt/sola/bin/sola-browser %u` | `http`, `https`, `about:`, and unknown URL schemes; HTML, XHTML, PDF |
 | `sola-paint.desktop` | `/opt/sola/bin/sola-paint %F` | PNG, JPEG, GIF, WebP, BMP, TIFF, TGA |
-| `sola-spotify.desktop` | `/opt/sola/bin/sola-spotify` | Nothing; it names Spotify for media controls |
 
 So `xdg-open` from a terminal, or a link clicked in another program,
 reaches the Browser or Paint in the same way: a new process that hands the

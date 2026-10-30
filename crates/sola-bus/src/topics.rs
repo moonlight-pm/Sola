@@ -436,6 +436,26 @@ pub struct Appearance {
     /// Oath's login service).
     #[serde(default)]
     pub lock_idle: bool,
+    /// The look each kept background picture (`sola_core::background`)
+    /// was last worn with, by its path. When the picture changes, the shell
+    /// keeps the outgoing one's here and puts the incoming one's back.
+    #[serde(default)]
+    pub pictures: std::collections::BTreeMap<String, PictureLook>,
+}
+
+/// What makes the theme's colors with a picture: the parts of
+/// [`Appearance`] a picture keeps (`Appearance.pictures`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PictureLook {
+    pub adapt_theme: bool,
+    pub strength: u8,
+    pub variation: u8,
+    #[serde(default)]
+    pub colors: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub customs: Vec<CustomLook>,
+    #[serde(default)]
+    pub custom: Option<u8>,
 }
 
 /// A look you made: your colors (`Appearance.colors`' keys) over one of the
@@ -512,7 +532,32 @@ impl Default for Appearance {
             custom: None,
             light: false,
             lock_idle: false,
+            pictures: Default::default(),
         }
+    }
+}
+
+impl Appearance {
+    /// The look worn now.
+    pub fn picture_look(&self) -> PictureLook {
+        PictureLook {
+            adapt_theme: self.adapt_theme,
+            strength: self.strength,
+            variation: self.variation,
+            colors: self.colors.clone(),
+            customs: self.customs.clone(),
+            custom: self.custom,
+        }
+    }
+
+    /// Wear `look`: the theme's colors as they were with its picture.
+    pub fn wear(&mut self, look: &PictureLook) {
+        self.adapt_theme = look.adapt_theme;
+        self.strength = look.strength;
+        self.variation = look.variation;
+        self.colors = look.colors.clone();
+        self.customs = look.customs.clone();
+        self.custom = look.custom;
     }
 }
 

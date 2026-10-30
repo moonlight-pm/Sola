@@ -47,7 +47,8 @@ rows for feature-level progress.
 **Status: partial**
 
 - Terminal iced, browser CEF, mail kit, preview, kvm,
-  paint (first pass), scope (first pass), spotify (first pass, on master),
+  paint (first pass), scope (first pass), spotify (first pass, on master;
+  retired on `next` 2026-10-30 — Spotify is a web app),
   calendar (first pass, on master; reminders smoked 2026-10-12)  
 - `sola-call` + `sola-projects` (Projects, named Workspaces until 2026-10-21) persist/spawn/call methods on master
 - `crates/sola-agent` ACP GUI **retired** 2026-08-28 (Projects is the coding agent product)
@@ -55,7 +56,7 @@ rows for feature-level progress.
 
 **Remaining:** Projects dogfood + project recolor (rail rename / reorder **installed**, unsmoked); browser chrome
 completeness; browser agent control (`solactl browser` — [frozen](specs/2026-09-11-sola-browser-agent-control-design.md), desk-smoked on Tertius); mail polish; calendar Settings accounts desk smoke; kvm input ACL permanence; preview
-zoom; paint clipboard; spotify polish (podcasts, tray, playlist reorder/delete).
+zoom; paint clipboard.
 
 ---
 

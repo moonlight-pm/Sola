@@ -376,6 +376,8 @@ pub struct Shell {
     pub agents: crate::agents::AgentIslands,
     /// The theme's colors following the background picture.
     pub adapt: crate::adapt::Adapt,
+    /// The look each background picture keeps (`Appearance.pictures`).
+    pub pictures: crate::pictures::Pictures,
     /// Last on-screen state sent for each tab window (`TabWindow.shown`).
     tab_shown_sent: HashMap<u32, bool>,
     /// The idle fade is full (`IdleFade.out`): every window is out of
@@ -557,6 +559,7 @@ impl Shell {
             tab_activity: HashMap::new(),
             agents: Default::default(),
             adapt: Default::default(),
+            pictures: Default::default(),
             tab_shown_sent: HashMap::new(),
             desk_out: false,
             lock_idle: false,
@@ -2507,6 +2510,13 @@ impl Shell {
                     self.emit_registered_chords();
                     return iced::Task::done(Msg::OpenLauncher);
                 }
+                // Flower menu: Settings comes forward, or starts.
+                if app_id == Self::APP_ID && action_id == crate::menu::state::ACTION_SETTINGS {
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
+                    self.launcher.prior_focus = self.focused_window_id;
+                    return self.launch_from_launcher(Some(crate::builtins::SETTINGS));
+                }
                 if app_id == Self::APP_ID && action_id == "shortcuts" {
                     let _ = self.dismiss_open_menu();
                     self.emit_overlay_frames();
@@ -3160,6 +3170,7 @@ mod pending_launch_tests {
             tab_activity: HashMap::new(),
             agents: Default::default(),
             adapt: Default::default(),
+            pictures: Default::default(),
             tab_shown_sent: HashMap::new(),
             desk_out: false,
             lock_idle: false,
@@ -3291,6 +3302,7 @@ mod hide_tests {
             tab_activity: HashMap::new(),
             agents: Default::default(),
             adapt: Default::default(),
+            pictures: Default::default(),
             tab_shown_sent: HashMap::new(),
             desk_out: false,
             lock_idle: false,

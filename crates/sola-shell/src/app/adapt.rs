@@ -9,15 +9,32 @@ use super::{Msg, Shell, with_bus};
 use crate::adapt::{Step, sample};
 
 impl Shell {
-    /// `Topic::Background` (`None`: retracted).
+    /// `Topic::Background` (`None`: retracted). A picture set again wears
+    /// the look it kept ([`crate::pictures`]).
     pub(crate) fn adapt_picture(&mut self, picture: Option<Background>) -> iced::Task<Msg> {
+        let worn = self
+            .pictures
+            .changed(self.adapt.picture.as_ref(), picture.as_ref());
         self.adapt.picture = picture;
-        self.adapt_step()
+        let Some(look) = worn else {
+            return self.adapt_step();
+        };
+        tracing::info!(
+            picture = ?self.adapt.picture.as_ref().map(|p| &p.path),
+            variation = look.variation,
+            adapt = look.adapt_theme,
+            "adapt: the picture's look"
+        );
+        with_bus(|bus| {
+            let _ = bus.emit(Topic::Appearance(look.clone()));
+        });
+        self.adapt_appearance(Some(look))
     }
 
     /// `Topic::Appearance` (`None`: retracted, the defaults).
     pub(crate) fn adapt_appearance(&mut self, look: Option<Appearance>) -> iced::Task<Msg> {
         let look = look.unwrap_or_default();
+        self.pictures.look = Some(look.clone());
         let strength = look.strength.min(100) as f32 / 100.0;
         let restrength = strength != self.adapt.strength;
         self.adapt.on = look.adapt_theme;

@@ -39,8 +39,8 @@ bus, a call host, and multi-process **Iced** apps sharing `sola-kit`.
          │                   │  Unix sockets (sola-bus, sola-call)
          │              ┌────┴────────────────────────┐
          │              │  shell · settings · terminal │
-         │              │  projects · browser          │
-         │              │  mail · calendar · bots · scope · spotify │
+         │              │  projects · browser · mail   │
+         │              │  calendar · bots · scope     │
          │              └─────────────────────────────┘
          └──── Wayland (surfaces / input) ─────────────┘
 ```
@@ -78,7 +78,6 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | `crates/sola-preview` | Argv / launcher image viewer (shell hotkeys copy screenshots to the clipboard) |
 | `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; on `next` a window per image, kit `TabWindows` keyed by path; open images in sticky `PaintSession`; ships in `pkg:sola` on Oath) |
 | `crates/sola-scope` | Pixel loupe: magnified grid around the pointer (`compositor.sample`) |
-| `crates/sola-spotify` | Kit Spotify client: Web API + librespot Connect, MPRIS. Catalogue reads (playlists, rootlist, albums, artist top tracks) prefer the librespot session (`session_reads.rs`; no per-app quota) and fall back to the shared Web API app, whose traffic is budgeted (`api/client.rs` cooldown/probe/background slots; `worker.rs` page freshness, single-flight library, incremental liked sync, slow remote poll nudged by Connect cluster pushes). Disk writes from the UI go through one writer thread (`cache.rs`). Tokens + `skipped.json` + `liked.json` + `profile.json` (last profile, so sign-in skips `/me`) under `~/.local/state/sola/spotify/`; settings (last page + last track + last playlist + Back/Forward stack, max 20 back) `~/.config/sola/spotify/settings.json`; page/audio/art cache `~/.cache/sola/spotify/`. |
 | `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |
 | `crates/solactl` | Operator CLI (`compositor`, `session`, `projects`, `browser`, `bots`, `design`, emit, logs, …). `Path` args resolve against the caller's cwd before the call. `solactl mcp`: stdio MCP server — live owners' methods as `<owner>_<method>` tools (schema from `ArgSpec`), `tools/list_changed` on a 2 s catalog rescan, calls on their own thread, a reply `path` to a PNG / JPEG returned as image content. |
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |
@@ -117,7 +116,6 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | Arcade library cache | `~/.config/sola/arcade-library.json` (scan snapshot; bg rescan on open; `steamapps/` watch) |
 | Arcade nest settings | `~/.config/sola/arcade-nest.json` (per-title Fit vs locked resolution; default 1080p) |
 | Arcade singleton | `$XDG_RUNTIME_DIR/sola/arcade.lock.sock` (second spawn raises) |
-| Spotify state | settings `~/.config/sola/spotify/settings.json` (last page + last track + last playlist + nav history, max 20 back); tokens + skipped + liked URIs + last profile `~/.local/state/sola/spotify/`; page/audio/art cache `~/.cache/sola/spotify/` |
 | Projects catalog | `~/.config/sola/projects/catalog.json` (projects / tabs / selected; migrated once from `~/.config/sola/workspaces/`, before that `agent-terminal/`; a `workspaces` key still loads). Hook scripts (`grok-hook.sh`, `codex-hook.sh`, `claude-hook.sh`) live in the same dir |
 | Projects on another computer | Recent hosts `~/.config/sola/shell/remote-hosts.json` (the launcher's chooser; eight, latest first). Shared ssh connections `$XDG_RUNTIME_DIR/sola-ssh/%C` (`ControlMaster`, 10 min). Per-host hook socket here `$XDG_RUNTIME_DIR/sola-ws-hooks-<host>.sock`. On the host: tmux socket `sola-ws-remote`, sessions `sws-<pane>`, config `~/.config/sola/sola-ws-remote.tmux.conf`; the link's hook socket `~/.config/sola/remote/hooks-<this computer>.sock` and hook scripts `~/.config/sola/remote/{claude,codex,grok}-hook.sh` |
 | Projects last-status | `~/.config/sola/projects/last-status.json` (per-pane status / agent / Grok or Claude `session_id`; a new tmux after reboot execs `grok -r` or `claude --resume`) |
@@ -155,7 +153,6 @@ open — [T3](open-questions.md#t3--d-bus-replacement-on-sola-bus-p2).
 |-------|-----|-----|-----|
 | `sola-shell` Bluetooth chip (`bluetooth/`) | system | `org.bluez` — adapters, devices, pairing agent | `zbus` in process |
 | `solactl media` (shell media keys) | session | finds the Playing MPRIS player | `zbus` in process |
-| `sola-spotify` (`mpris.rs`) | session | registers `org.mpris.MediaPlayer2.sola-spotify` | `mpris-server` |
 | `sola-shell` flower Restart / Shut Down (`power.rs`) | system | logind reboot / power-off | `loginctl` / `systemctl` |
 | `sola-session` app launch / stop | user systemd | `systemd-run --user --scope`, `systemctl --user stop` | CLI |
 | CEF (`sola-browser`, `sola-design`) | — | Chromium links `libdbus-1` (nix-ld list in `nix/module.nix`) | third-party |
@@ -278,8 +275,9 @@ handed back to the app's own bus stream), 12 px corners, a lit rim. Tiles
 and floats alike clear their corners (`theme_for(chrome)`: a clear fill
 unless Cinema), so the ground shows there. The ground is the background
 picture when one is set (persistent `Topic::Background`, Sola's copy under
-`~/.config/sola/background/` via `sola_core::background`; set by Paint or
-`solactl background`): sola-river draws it as a River shell surface at the
+`~/.config/sola/background/` via `sola_core::background`, which keeps every
+picture set — `kept` / `forget`, Settings → Appearance's gallery sets one
+again; set by Paint, Browser or `solactl background`): sola-river draws it as a River shell surface at the
 bottom of the render list (`client/background.rs`, decoded and scaled off
 the loop), else the compositor's black. With Settings → Appearance's
 *Adapt colors to the background* on (persistent `Topic::Appearance`), the
@@ -290,7 +288,8 @@ narrow OKLCH cells scored as Material Color Utilities' `Score`; `unadapt`
 when off; a scheme per color, `Appearance.variation` picks, the shell
 publishes the choices as sticky `Topic::ThemeVariations` for Settings;
 your colors over it, `Appearance.colors`, kept as looks in
-`Appearance.customs`);
+`Appearance.customs`; each kept picture's look in `Appearance.pictures`,
+which the shell (`pictures.rs`) updates and wears on a picture change);
 the kit's chrome surface follows the theme (`style::chrome_surface`,
 `theme::install_atoms`). The desk's opacity and the idle fade are
 sola-river's (`client/fade.rs`): a shell surface at the top of the render

@@ -43,7 +43,7 @@ ask the human.
 | [`specs/`](specs/) | Target freezes (dated) | **Target** |
 | [`plans/`](plans/) | Implementation checklists (active + historical) | Build |
 | [`ideas/`](ideas/) | Parked thoughts | Idea |
-| [`manual/`](manual/) | Operator truth, published at sola.moonlight.pm/manual — chapter order and Markdown rules in [`manual/README.md`](manual/README.md) (introduction, architecture, process manager, bus, call plane, compositor, session, **shell**, theme, **solactl**, applications; application notes: browser, mail, calendar, spotify, arcade, paint, preview, wrapper, design, monitor, scope, kvm, fonts; developer notes: design language, cursor theme, layer shell) | **Product** (shipped only) |
+| [`manual/`](manual/) | Operator truth, published at sola.moonlight.pm/manual — chapter order and Markdown rules in [`manual/README.md`](manual/README.md) (introduction, architecture, process manager, bus, call plane, compositor, session, **shell**, theme, **solactl**, applications; application notes: browser, mail, calendar, arcade, paint, preview, wrapper, design, monitor, scope, kvm, fonts; developer notes: design language, cursor theme, layer shell) | **Product** (shipped only) |
 | [`specs/2026-08-05-distribution-image-design.md`](specs/2026-08-05-distribution-image-design.md) | Dist installer freeze | **Target** |
 | [`vault/`](vault/) | Early Obsidian notes — reference only | History |
 | [`notes/`](notes/) | One-off investigations — not living handoff | History |

@@ -24,6 +24,7 @@ pub mod menubar;
 pub mod mouse;
 pub mod notify;
 pub mod pairing;
+mod pictures;
 mod power;
 mod screenshot;
 pub mod selection;

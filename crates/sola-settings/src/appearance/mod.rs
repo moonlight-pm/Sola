@@ -1,16 +1,18 @@
-//! Appearance: light or dark (for web pages), the background picture,
-//! whether the theme's colors follow it (and which of its schemes), the
-//! looks you make with your own colors, how opaque the desk is over the
-//! picture, and the idle fade and dim. The picture is set from Paint (File
-//! → Set as Background) or `solactl background`; here it can be cleared.
+//! Appearance: light or dark (for web pages), the background picture and
+//! the ones kept before ([`pictures`]), whether the theme's colors follow
+//! it (and which of its schemes), the looks you make with your own colors,
+//! how opaque the desk is over the picture, and the idle fade and dim. A
+//! new picture is set from Paint (File → Set as Background) or `solactl
+//! background`; here a kept one is set again, forgotten, or cleared.
 //! The settings are `Topic::Appearance`: the shell acts on the colors,
 //! sola-river on the opacity and the fade, the browser on light or dark.
 //! The schemes come from the shell (`Topic::ThemeVariations`).
 
 mod looks;
+mod pictures;
 
 use iced::widget::{container, row, slider, text, toggler};
-use iced::{Alignment, Element, Length};
+use iced::{Alignment, Element, Length, Task};
 use sola_bus::topics::{Appearance, Background, ThemeVariations, Topic};
 use sola_kit::app::bus;
 use sola_kit::components::button as kit_btn;
@@ -22,6 +24,7 @@ use sola_kit::components::text as kit_text;
 use crate::page;
 
 pub use looks::settle;
+pub use pictures::refresh;
 
 #[derive(Debug, Clone)]
 pub enum AppearanceMsg {
@@ -60,6 +63,12 @@ pub enum AppearanceMsg {
     FadeDone,
     /// Back to the plain ground.
     ClearPicture,
+    /// Set a kept picture again.
+    Use(std::path::PathBuf),
+    /// Forget a kept picture.
+    Forget(std::path::PathBuf),
+    /// A kept picture's thumbnail is made (`None`: it would not decode).
+    Thumb(std::path::PathBuf, Option<iced::widget::image::Handle>),
     /// Open the picker for a custom color (`CUSTOM_COLORS` key); again
     /// closes it.
     Pick(&'static str),
@@ -84,6 +93,8 @@ pub struct AppearanceState {
     picking: Option<(&'static str, ColorPicker)>,
     /// When a strength or opacity drag last sent the settings.
     drag_sent: Option<std::time::Instant>,
+    /// The kept pictures, with thumbnails.
+    gallery: pictures::Gallery,
 }
 
 /// While the strength or opacity slider moves, the settings go out at
@@ -91,7 +102,7 @@ pub struct AppearanceState {
 /// last value.
 const LIVE_EVERY: std::time::Duration = std::time::Duration::from_millis(40);
 
-pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) {
+pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) -> Task<AppearanceMsg> {
     let look = &mut state.look;
     match msg {
         AppearanceMsg::Light(on) => look.light = on,
@@ -103,7 +114,7 @@ pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) {
             }
             let now = std::time::Instant::now();
             if state.drag_sent.is_some_and(|at| now - at < LIVE_EVERY) {
-                return;
+                return Task::none();
             }
             state.drag_sent = Some(now);
         }
@@ -123,42 +134,48 @@ pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) {
         AppearanceMsg::Fade(on) => look.fade_idle = on,
         AppearanceMsg::FadeAfter(m) => {
             look.fade_after_min = m;
-            return;
+            return Task::none();
         }
         AppearanceMsg::FadeOver(m) => {
             look.fade_over_min = m;
-            return;
+            return Task::none();
         }
         AppearanceMsg::Dim(on) => look.dim_idle = on,
         AppearanceMsg::LockIdle(on) => look.lock_idle = on,
         AppearanceMsg::DimAfter(m) => {
             look.dim_after_min = m;
-            return;
+            return Task::none();
         }
         AppearanceMsg::DimOver(m) => {
             look.dim_over_min = m;
-            return;
+            return Task::none();
         }
+        AppearanceMsg::Use(path) => {
+            pictures::wear(&path);
+            return Task::none();
+        }
+        AppearanceMsg::Forget(path) => return pictures::forget(state, &path),
+        AppearanceMsg::Thumb(path, thumb) => return pictures::made(state, path, thumb),
         AppearanceMsg::ClearPicture => {
             if let Some(picture) = state.picture.clone() {
                 send(|b| b.retract(Topic::Background(picture)));
             }
-            return;
+            return Task::none();
         }
         AppearanceMsg::Pick(key) => {
             let open = state.picking.as_ref().is_some_and(|(k, _)| *k == key);
             state.picking = (!open).then(|| (key, ColorPicker::new(looks::current(state, key))));
-            return;
+            return Task::none();
         }
         AppearanceMsg::Picker(m) => {
             if let Some((_, picker)) = &mut state.picking {
                 picker.update(m);
             }
-            return;
+            return Task::none();
         }
         AppearanceMsg::UsePicked => {
             let Some((key, picker)) = state.picking.take() else {
-                return;
+                return Task::none();
             };
             let c = picker.color();
             let hex = sola_kit::theme::color_to_hex(iced::Color { a: 1.0, ..c });
@@ -171,6 +188,7 @@ pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) {
     }
     let topic = Topic::Appearance(state.look.clone());
     send(|b| b.emit(topic));
+    Task::none()
 }
 
 fn send(write: impl FnOnce(&mut sola_bus::BusClient) -> std::io::Result<()>) {
@@ -186,7 +204,7 @@ fn send(write: impl FnOnce(&mut sola_bus::BusClient) -> std::io::Result<()>) {
 pub fn view(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
     page::page(vec![
         mode(state),
-        picture(state),
+        pictures::section(state),
         looks::colors(state),
         looks::yours(state),
         desk(state),
@@ -236,22 +254,6 @@ fn desk(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
              background. The idle fade starts from here."
                 .into(),
         ),
-    )
-}
-
-fn picture(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
-    let line = match &state.picture {
-        Some(p) => page::setting(
-            file_name(&p.path),
-            kit_btn::labeled_sm("Clear", kit_btn::secondary).on_press(AppearanceMsg::ClearPicture),
-        ),
-        None => page::empty("None — the black ground."),
-    };
-    page::section(
-        "Background picture",
-        None,
-        page::group(vec![line]),
-        Some("Set one from Paint: File → Set as Background.".into()),
     )
 }
 
@@ -340,10 +342,4 @@ fn slider_with<'a>(
     .spacing(SPACE_SM)
     .align_y(Alignment::Center)
     .into()
-}
-
-fn file_name(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
-        .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
 }

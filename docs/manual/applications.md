@@ -20,7 +20,6 @@ do and what it lacks. Applications that offer methods on the
 | Calendar | `sola-calendar` | Month, week, and day views of local, Google, iCloud, CalDAV, and ICS calendars, with reminders | [notes](sola-calendar.md) |
 | Settings | `sola-settings` | Applications in the launcher, and mail and calendar accounts | — |
 | Arcade | `sola-arcade` | The Steam library in a window; each game runs in a nested gamescope session sized to it | [notes](sola-arcade.md) |
-| Spotify | `sola-spotify` | Playback through librespot, playlists, the library, and Spotify Connect | [notes](sola-spotify.md) |
 | Paint | `sola-paint` | The default image viewer and editor | [notes](sola-paint.md) |
 | Preview | `sola-preview` | A quick viewer for screenshots and images | [notes](sola-preview.md) |
 | Design | `sola-design` | HTML artboards on a canvas, written and edited by AI agents. Call owner `design`. | [notes](sola-design.md) |
