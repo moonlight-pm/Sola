@@ -10,6 +10,7 @@ pub mod encrypted;
 pub mod env;
 pub mod keys;
 pub mod log;
+pub mod login;
 pub mod omnibox;
 pub mod open_calendar;
 pub mod open_image;

@@ -24,6 +24,7 @@ impl Shell {
         self.adapt.strength = strength;
         self.adapt.variation = look.variation as usize;
         self.adapt.colors = look.colors;
+        self.lock_idle = look.lock_idle;
         if restrength {
             self.publish_variations();
         }

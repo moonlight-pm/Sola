@@ -381,6 +381,8 @@ pub struct Shell {
     /// The idle fade is full (`IdleFade.out`): every window is out of
     /// sight, so no tab window counts as on screen.
     pub desk_out: bool,
+    /// Lock when the idle fade is complete (`Appearance.lock_idle`).
+    pub lock_idle: bool,
     pub tabbar: crate::tabbar::TabBarState,
     /// Each window's last published `Topic::WindowChrome`.
     pub window_chrome: crate::chrome::ChromeState,
@@ -557,6 +559,7 @@ impl Shell {
             adapt: Default::default(),
             tab_shown_sent: HashMap::new(),
             desk_out: false,
+            lock_idle: false,
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
             workspace: workspaces::WorkspaceState::default(),
@@ -1111,6 +1114,22 @@ impl Shell {
     /// Flower-menu Restart Computer / Shut Down. Dismisses the menu, then
     /// asks logind. Toast on failure; success means the machine is going
     /// down (systemd SIGTERM is the same graceful path as Exit Sola).
+    /// Lock the screen (`sola-lock`); a toast says why not.
+    pub(crate) fn lock_screen(&mut self, why: &'static str) -> iced::Task<Msg> {
+        let _ = self.dismiss_open_menu();
+        self.emit_overlay_frames();
+        self.emit_composition();
+        self.emit_registered_chords();
+        if let Err(msg) = crate::lock::lock(why) {
+            self.menubar.push_toast(msg);
+            let toast_gen = self.menubar.toast_generation;
+            return iced::Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+                Msg::ToastExpire(toast_gen)
+            });
+        }
+        iced::Task::none()
+    }
+
     fn request_machine_power(&mut self, kind: crate::power::Kind) -> iced::Task<Msg> {
         let _ = self.dismiss_open_menu();
         self.emit_overlay_frames();
@@ -2471,6 +2490,9 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::MenuAction { app_id, action_id } => {
+                if app_id == Self::APP_ID && action_id == crate::lock::ACTION_LOCK {
+                    return self.lock_screen("key");
+                }
                 if app_id == Self::APP_ID && action_id == crate::power::ACTION_RESTART_COMPUTER {
                     return self.request_machine_power(crate::power::Kind::Reboot);
                 }
@@ -3140,6 +3162,7 @@ mod pending_launch_tests {
             adapt: Default::default(),
             tab_shown_sent: HashMap::new(),
             desk_out: false,
+            lock_idle: false,
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
             workspace: workspaces::WorkspaceState::default(),
@@ -3270,6 +3293,7 @@ mod hide_tests {
             adapt: Default::default(),
             tab_shown_sent: HashMap::new(),
             desk_out: false,
+            lock_idle: false,
             tabbar: crate::tabbar::TabBarState::default(),
             window_chrome: crate::chrome::ChromeState::default(),
             workspace: workspaces::WorkspaceState::default(),
@@ -3375,6 +3399,26 @@ mod hide_tests {
                 .any(|c| c.keycode == KeyCode::H && c.meta && !c.shift && !c.ctrl && !c.alt),
             "Super+H must be a registered shell chord"
         );
+    }
+
+    #[test]
+    fn shell_key_chords_include_super_l_to_lock() {
+        let mut shell = desktop();
+        // The shell's own menu comes back to it over the bus at start.
+        shell.menus.set_menu(sola_bus::topics::AppMenuPayload {
+            app_id: Shell::APP_ID.into(),
+            menus: vec![crate::menu::state::system_menu()],
+        });
+        assert!(
+            shell
+                .shell_key_chords()
+                .iter()
+                .any(|c| c.keycode == KeyCode::L && c.meta && !c.shift && !c.ctrl && !c.alt),
+            "Super+L (the flower menu's Lock Screen) must be a registered shell chord"
+        );
+        let chord = KeyCode::L.meta();
+        let action = shell.menus.lookup_shortcut(&chord, Shell::APP_ID);
+        assert_eq!(action.map(|a| a.action_id), Some(crate::lock::ACTION_LOCK.to_string()));
     }
 
     #[test]

@@ -30,6 +30,7 @@ mod appearance;
 mod calendar;
 mod calendar_oauth;
 mod edit;
+mod login;
 mod mail;
 mod mail_discover;
 mod mail_from_api;
@@ -37,6 +38,7 @@ mod page;
 mod procfs;
 
 use appearance::{AppearanceMsg, AppearanceState};
+use login::{LoginMsg, LoginState};
 use applications::{AppsMsg, AppsState};
 use calendar::{CalMsg, CalendarState};
 use mail::{MailMsg, MailState};
@@ -73,6 +75,7 @@ fn main() -> iced::Result {
 enum Panel {
     Applications,
     Appearance,
+    Login,
     Mail,
     Calendar,
 }
@@ -98,6 +101,8 @@ struct App {
     apps_ui: AppsState,
     mail_ui: MailState,
     calendar_ui: CalendarState,
+    /// The desk's password and auto-login (Oath's login service).
+    login_ui: LoginState,
     /// The background picture and the appearance settings.
     appearance: AppearanceState,
     /// Float tracker + iced window id for CSD while floating.
@@ -117,6 +122,7 @@ impl Default for App {
             apps_ui: AppsState::default(),
             mail_ui: MailState::default(),
             calendar_ui: CalendarState::default(),
+            login_ui: LoginState::default(),
             appearance: AppearanceState::default(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
@@ -132,6 +138,7 @@ enum Msg {
     Mail(MailMsg),
     Calendar(CalMsg),
     Appearance(AppearanceMsg),
+    Login(LoginMsg),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -220,7 +227,13 @@ impl App {
                     _ => {}
                 }
             }
-            Msg::SelectPanel(p) => self.panel = p,
+            Msg::SelectPanel(p) => {
+                self.panel = p;
+                if p == Panel::Login {
+                    return login::update(LoginMsg::Refresh, &mut self.login_ui).map(Msg::Login);
+                }
+            }
+            Msg::Login(m) => return login::update(m, &mut self.login_ui).map(Msg::Login),
             Msg::Apps(m) => {
                 return applications::update(m, &mut self.applications, &mut self.apps_ui)
                     .map(Msg::Apps);
@@ -313,6 +326,8 @@ impl App {
                     .active(self.panel == Panel::Applications),
                 SidebarItem::new("Appearance", Msg::SelectPanel(Panel::Appearance))
                     .active(self.panel == Panel::Appearance),
+                SidebarItem::new("Login", Msg::SelectPanel(Panel::Login))
+                    .active(self.panel == Panel::Login),
                 SidebarItem::new("Mail", Msg::SelectPanel(Panel::Mail))
                     .active(self.panel == Panel::Mail),
                 SidebarItem::new("Calendar", Msg::SelectPanel(Panel::Calendar))
@@ -323,6 +338,7 @@ impl App {
         let title_text = match self.panel {
             Panel::Applications => "Applications",
             Panel::Appearance => "Appearance",
+            Panel::Login => "Login",
             Panel::Mail => "Mail",
             Panel::Calendar => "Calendar",
         };
@@ -342,6 +358,14 @@ impl App {
             Panel::Appearance => column![
                 kit_text::heading(title_text),
                 appearance::view(&self.appearance).map(Msg::Appearance),
+            ]
+            .spacing(page_pad)
+            .padding(Padding::new(page_pad))
+            .height(Length::Fill)
+            .into(),
+            Panel::Login => column![
+                kit_text::heading(title_text),
+                login::view(&self.login_ui).map(Msg::Login),
             ]
             .spacing(page_pad)
             .padding(Padding::new(page_pad))

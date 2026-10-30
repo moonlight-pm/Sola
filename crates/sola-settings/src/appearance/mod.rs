@@ -51,6 +51,8 @@ pub enum AppearanceMsg {
     FadeOver(u16),
     /// Dim the background once the fade is full on / off.
     Dim(bool),
+    /// Lock the screen once the fade is full on / off.
+    LockIdle(bool),
     /// The dim's delay and length sliders moved (shown, not yet sent).
     DimAfter(u16),
     DimOver(u16),
@@ -128,6 +130,7 @@ pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) {
             return;
         }
         AppearanceMsg::Dim(on) => look.dim_idle = on,
+        AppearanceMsg::LockIdle(on) => look.lock_idle = on,
         AppearanceMsg::DimAfter(m) => {
             look.dim_after_min = m;
             return;
@@ -281,6 +284,12 @@ fn idle(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
                 ),
             ),
             page::setting(
+                "Lock when the windows have faded",
+                toggler(look.lock_idle)
+                    .on_toggle(AppearanceMsg::LockIdle)
+                    .style(toggle_style),
+            ),
+            page::setting(
                 "Then dim the background",
                 toggler(look.dim_idle)
                     .on_toggle(AppearanceMsg::Dim)
@@ -308,7 +317,8 @@ fn idle(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
              background over the second. Once only the background shows, it \
              dims after the third, over the fourth, to a tenth of its light. \
              Any input brings them back. Not while a window is fullscreen or an \
-             app keeps the screen awake (a video)."
+             app keeps the screen awake (a video). Locking needs a password \
+             (Settings → Login)."
                 .into(),
         ),
     )

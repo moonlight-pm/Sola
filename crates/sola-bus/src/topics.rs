@@ -432,6 +432,10 @@ pub struct Appearance {
     /// (`prefers-color-scheme`); off, dark. Sola's own windows stay dark.
     #[serde(default)]
     pub light: bool,
+    /// Lock the screen when the idle fade is complete (needs a password,
+    /// Oath's login service).
+    #[serde(default)]
+    pub lock_idle: bool,
 }
 
 /// A look you made: your colors (`Appearance.colors`' keys) over one of the
@@ -507,6 +511,7 @@ impl Default for Appearance {
             customs: Vec::new(),
             custom: None,
             light: false,
+            lock_idle: false,
         }
     }
 }

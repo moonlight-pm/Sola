@@ -141,6 +141,11 @@ impl Shell {
                 if out != self.desk_out {
                     self.desk_out = out;
                     self.sync_tab_shown();
+                    if out && self.lock_idle {
+                        if let Err(why) = crate::lock::lock("idle") {
+                            tracing::info!(why, "idle: not locking");
+                        }
+                    }
                 }
                 Task::none()
             }

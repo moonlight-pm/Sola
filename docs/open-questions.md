@@ -175,7 +175,16 @@ console, is hidden on Oath, or something else?
 
 ---
 
-### D12 — The public manual says the desk has no login and no lock screen (P1)
+### D12 — The public manual says the desk has no login and no lock screen (P1) — **answered (2026-10-29)**
+
+**Answer (Joshua, 2026-10-29):** make it true that a secure setup exists, and
+say so — "I'd like to resolve these so that our docs can honestly describe a
+secure setup, that exists" (network and physical access are trusted for him,
+so it stays optional). Built: the [secure access
+spec](specs/2026-10-29-secure-access-design.md); `next`'s manual has a
+Security chapter. Master's Introduction ("Starting a session") still says no
+login and no lock screen: reword it at the merge to "by default", with a link
+to Security.
 
 **Context:** The manual's Introduction ("Starting a session"), published at
 sola.moonlight.pm/manual, says the desk starts at boot with no login and no

@@ -23,6 +23,7 @@ pub fn system_menu() -> MenuDefinition {
             action("launch", "Launch Application…", None),
             action("shortcuts", "Keyboard Shortcuts", Some(KeyCode::K.meta())),
             MenuItem::Divider,
+            action(crate::lock::ACTION_LOCK, "Lock Screen", Some(KeyCode::L.meta())),
             action("quit", "Exit Sola", None),
             MenuItem::Divider,
             action(
@@ -180,6 +181,7 @@ mod tests {
                 "Launch Application…",
                 "Keyboard Shortcuts",
                 "---",
+                "Lock Screen",
                 "Exit Sola",
                 "---",
                 "Restart Computer",
@@ -200,6 +202,7 @@ mod tests {
             [
                 "launch",
                 "shortcuts",
+                crate::lock::ACTION_LOCK,
                 "quit",
                 crate::power::ACTION_RESTART_COMPUTER,
                 crate::power::ACTION_SHUT_DOWN,

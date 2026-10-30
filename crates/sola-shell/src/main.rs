@@ -17,6 +17,7 @@ pub mod chrome;
 pub mod components;
 pub mod keys;
 pub mod launcher;
+mod lock;
 pub mod media;
 pub mod menu;
 pub mod menubar;
@@ -36,6 +37,8 @@ const APP_ID: &str = "sola-shell";
 
 fn main() -> iced::Result {
     startup(APP_ID);
+    // A password and no auto-login: the desk starts locked.
+    lock::at_start();
 
     // Flower / system menu (and the shell's own app menu when focused).
     // "Exit Sola" shuts the whole session down via `Topic::Shutdown`. "Restart Computer" / "Shut Down"
@@ -55,7 +58,10 @@ fn main() -> iced::Result {
         .theme(app::Shell::theme)
         .default_font(INTER);
     match iced_daemon.run() {
-        Ok(()) if app::clean_shutdown() => Ok(()),
+        Ok(()) if app::clean_shutdown() => {
+            lock::desk_down_after_session();
+            Ok(())
+        }
         Ok(()) => {
             // The compositor went away. Exit 1 so
             // `restart=on-failure` brings the menubar back. Exit Sola

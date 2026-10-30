@@ -79,6 +79,7 @@ pub const PACKAGES: &[Package] = &[
             "solactl",
             "sola-oath",
             "sola-kvm",
+            "sola-lock",
         ],
         build: &["rust", "pkgconf", "libxkbcommon"],
         needs: &[

@@ -1,6 +1,6 @@
 # Secure access to the desk — design
 
-**Status:** proposed 2026-10-29 (Joshua: "I'd like to resolve these so that our docs can
+**Status:** 2026-10-29 — part 1 built and paired (novus ↔ canto); Oath's parts 2 and 4 built (Oath R42, contract in Oath's `docs/specs/login.md`); Sola's parts 3 and 4 built on `next`, not live until `svc:login` is on canto. Proposed 2026-10-29 (Joshua: "I'd like to resolve these so that our docs can
 honestly describe a secure setup, that exists"). Answers [D11](../open-questions.md#d11--what-quit-sola-means-on-oath-p1--answered-2026-10-29)
 and [D12](../open-questions.md#d12--the-public-manual-says-the-desk-has-no-login-and-no-lock-screen-p1).
 
@@ -47,7 +47,21 @@ describes both the open default and the closed setup, and what each leaves open.
   the peer on canto (`next`), and the Mac agent is its own crate. All get the
   change before anyone pairs; an unpaired machine keeps working meanwhile.
 
-## 2. The password (Oath)
+## 2. The password (Oath) — built (Oath R42)
+
+As built (Oath's `docs/specs/login.md`): `svc:login` (root), socket
+`/oath/run/login.sock`, one JSON object per line each way, answering only the
+desk user and root (`SO_PEERCRED`). Calls: `status` → `password`, `autologin`,
+`seat`; `check` → `right` (a wrong one answered after 1 s, doubling to 30 s,
+across all callers); `set` (`old`, `new`; empty `new` removes); `autologin`
+(`on`, `password`); `desk` (`up: false`: the desk ended on purpose). A refusal
+is `{"ok":false,"error":"…"}`. Auto-login is `host:local.autologin`, on by
+default. The desk's services (rivulet, sola-river, sola-shell, sola-session,
+sola-kvm) carry `seat: "desk"`: held while the console has the seat, started
+again by `oath desk`.
+
+The original ask, for the record:
+
 
 Oath owns the password of the desk's user, not Sola:
 
@@ -64,7 +78,7 @@ Oath owns the password of the desk's user, not Sola:
 The exact socket path, wire format and service name are Oath's to choose; Sola
 needs only the four calls.
 
-## 3. The lock screen (Sola: new `sola-lock`)
+## 3. The lock screen (Sola: new `sola-lock`) — built on `next`
 
 - A Wayland client on `ext-session-lock-v1` (rivulet has it): while locked,
   the compositor shows and sends input only to the lock surfaces, and stays
@@ -83,7 +97,10 @@ needs only the four calls.
   Super+L.
 - Typing the password through a paired KVM works like the local keyboard.
 
-## 4. Exit Sola drops to a console (Oath, with a small Sola part)
+## 4. Exit Sola drops to a console (Oath, with a small Sola part) — both built
+
+Sola's part: after Exit Sola, once sola-session has closed the apps and exited, the shell sends `{"call":"desk","up":false}` (`sola-shell/src/lock.rs`). A reboot or power-off does not (only Exit Sola marks the shell's clean shutdown).
+
 
 - **Exit Sola** ends the desk as today. Oath then starts a console login on the
   desk's VT: with auto-login on it opens a shell as the desk's user; with it

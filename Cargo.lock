@@ -9301,6 +9301,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-lock"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "cosmic-text",
+ "image",
+ "rustix 1.1.4",
+ "serde_yaml_ng",
+ "smithay-client-toolkit 0.19.2",
+ "sola-core",
+ "tiny-skia",
+ "tracing",
+ "wayland-client",
+ "xkbcommon",
+]
+
+[[package]]
 name = "sola-mail"
 version = "0.1.0"
 dependencies = [

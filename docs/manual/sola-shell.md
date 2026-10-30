@@ -13,6 +13,7 @@ bar, the launcher, zoning, and the keyboard shortcuts overlay.
 | Super+H | Hide the focused app |
 | Super+Q | Close the focused app |
 | Super+K | Keyboard shortcuts overlay (same chord as Omarchy) |
+| Super+L | Lock the screen (needs a password: [Security](security.md)) |
 | Super+Shift+3 / 4 / 5 | Screenshot: full output / selection (freeze then marquee) / focused window buffer |
 | Super+Numpad | Zone snap (NumLock on or off) |
 
@@ -108,7 +109,8 @@ focused) is the session menu:
 |------|----------------|
 | Launch Application… | Super+Space launcher |
 | Keyboard Shortcuts | Super+K overlay |
-| Exit Sola | Ends the desktop session (`Topic::Shutdown`) |
+| Lock Screen | Super+L: locks the screen ([Security](security.md#locking)) |
+| Exit Sola | Ends the desktop session (`Topic::Shutdown`); on Oath the console then has the seat, and `oath desk` brings the desk back |
 | Restart Computer | Reboots the machine (logind) |
 | Shut Down | Powers off the machine (logind) |
 

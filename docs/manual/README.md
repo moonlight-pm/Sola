@@ -16,6 +16,7 @@ two lists the same).
 | [Compositor](compositor.md) | River and `sola-river`: window management, focus, zones, outputs, screenshots, input |
 | [Session manager](session.md) | `sola-session`: launching, tracking, and closing applications; opening URLs and files |
 | [Shell](sola-shell.md) | `sola-shell`: menubar, tab bar, launcher, zones, keyboard shortcuts |
+| [Security](security.md) | The password, auto-login, the lock screen, Exit Sola's console, KVM pairing: each way in, and how to close it |
 | [Theme and toolkit](theme.md) | `sola-kit` and the theme protocol: palette tokens, font roles, live updates |
 | [solactl](solactl.md) | The command line: every command, method, and flag |
 | [Applications](applications.md) | The applications, one line each, with links to their notes |
