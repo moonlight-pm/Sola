@@ -167,6 +167,8 @@ impl WaylandInjector {
         }
         let keymap_fd = write_memfd("kvm-keymap", text.as_bytes())?;
         keyboard.keymap(1, keymap_fd.as_fd(), text.len() as u32);
+        let xkb = numlock_on(&keymap);
+        keyboard.modifiers(0, 0, xkb.serialize_mods(xkb::STATE_MODS_LOCKED), 0);
 
         event_queue
             .roundtrip(&mut state)
@@ -196,7 +198,7 @@ impl WaylandInjector {
             pointer,
             keyboard,
             _keymap_fd: keymap_fd,
-            xkb: xkb::State::new(&keymap),
+            xkb,
             extent_w,
             extent_h,
             pressed_keys: Vec::new(),
@@ -328,6 +330,18 @@ impl WaylandInjector {
             self.button(b, false);
         }
     }
+}
+
+/// The keyboard's state with NumLock on, as sola-river turns it on for each
+/// real keyboard: the number pad types digits (a Mac's pad has no NumLock).
+/// The peer's NumLock key (a Mac's Clear) still toggles it.
+fn numlock_on(keymap: &xkb::Keymap) -> xkb::State {
+    let mut state = xkb::State::new(keymap);
+    let num = keymap.mod_get_index(xkb::MOD_NAME_NUM);
+    if num != xkb::MOD_INVALID {
+        state.update_mask(0, 0, 1 << num, 0, 0, 0);
+    }
+    state
 }
 
 /// Map a KVM1 key `pressed` byte to inject down/up.
@@ -551,7 +565,27 @@ impl Dispatch<ZwpVirtualKeyboardV1, ()> for InjectState {
 
 #[cfg(test)]
 mod tests {
-    use super::{linux_button, wire_key_press};
+    use super::{KeyDirection, linux_button, numlock_on, wire_key_press, xkb, xkb_keycode};
+
+    #[test]
+    fn the_pad_types_digits_until_numlock() {
+        super::ensure_xkb_root();
+        let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let Some(keymap) =
+            xkb::Keymap::new_from_names(&ctx, "", "", "us", "", None, xkb::KEYMAP_COMPILE_NO_FLAGS)
+        else {
+            eprintln!("no xkeyboard-config here; skipped");
+            return;
+        };
+        let mut state = numlock_on(&keymap);
+        const KP_1: u32 = 79;
+        const NUMLOCK: u32 = 69;
+        let sym = |s: &xkb::State| xkb::keysym_get_name(s.key_get_one_sym(xkb_keycode(KP_1)));
+        assert_eq!(sym(&state), "KP_1");
+        state.update_key(xkb_keycode(NUMLOCK), KeyDirection::Down);
+        state.update_key(xkb_keycode(NUMLOCK), KeyDirection::Up);
+        assert_eq!(sym(&state), "KP_End");
+    }
 
     #[test]
     fn buttons_are_linux_evdev() {
