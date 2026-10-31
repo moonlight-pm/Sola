@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bitwarden_api_api::models::CipherRequestModel;
@@ -17,6 +18,7 @@ use bitwarden_vault::{Cipher, CipherView, DecryptCipherResult, EncryptionContext
 use sola_vault_proto::{ErrorCode, Server, TwoFactorKind};
 use tracing::{info, warn};
 
+use super::cache::{self, CacheSyncHandler};
 use super::client::{self, Built};
 use super::errors::{Result, api, err, internal, sdk};
 use super::identity::{self, IdentityLogin, LoginStep, RefreshError};
@@ -75,6 +77,7 @@ impl VaultService {
         match step {
             LoginStep::Authenticated(session) => {
                 session::save(dir, &session);
+                keep_syncs(&built, dir, &session);
                 Ok(Login::Unlocked(Box::new(Self {
                     built,
                     session,
@@ -113,6 +116,7 @@ impl VaultService {
             .tokens
             .set(session.access_token.clone(), session.refresh_token.clone());
         identity::init_crypto(&built.pm.0, &session, user_key).await?;
+        keep_syncs(&built, dir, &session);
         info!("vault: unlocked");
         Ok(Self {
             built,
@@ -247,6 +251,23 @@ impl VaultService {
         })
     }
 
+    /// Fill the stores from the last sync on disk (an unlock shows the
+    /// items before Bitwarden answers, or without it). Its time, when
+    /// there was one.
+    pub async fn load_cache(&self) -> Option<u64> {
+        let cached = cache::load(&self.dir, &self.session.user_id)?;
+        match cache::replay(&self.built.replay, &cached.sync).await {
+            Ok(()) => {
+                info!(at = cached.at, "vault: last sync loaded");
+                Some(cached.at)
+            }
+            Err(e) => {
+                warn!(error = %e, "vault: last sync could not be loaded");
+                None
+            }
+        }
+    }
+
     /// Every item, decrypted, and those that would not decrypt.
     pub async fn all(&self) -> Result<DecryptCipherResult> {
         self.pm()
@@ -319,6 +340,14 @@ impl Drop for VaultService {
         self.built.pm.0.internal.get_key_store().clear();
         self.built.tokens.clear();
     }
+}
+
+/// Cache every sync that works from now on, for this account.
+fn keep_syncs(built: &Built, dir: &Path, session: &Session) {
+    built.sync.register_sync_handler(Arc::new(CacheSyncHandler {
+        dir: dir.to_path_buf(),
+        user_id: session.user_id.clone(),
+    }));
 }
 
 async fn revisions(repo: &dyn Repository<Cipher>) -> HashMap<String, i64> {

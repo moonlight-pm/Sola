@@ -17,8 +17,6 @@ use crate::desk_menu::{self, DeskMenu, DeskMsg, Key, Outcome, Target, VaultView,
 /// elsewhere.
 const OPENING_CLICK: Duration = Duration::from_millis(400);
 
-/// Vault's app id: Sign in and Unlock bring it forward.
-const VAULT_APP: &str = "sola-vault";
 
 impl Shell {
     /// An app asks for the desk menu at a right-click.
@@ -162,7 +160,13 @@ impl Shell {
                     send(&desk.target(), DeskPick::Dismissed);
                 }
                 self.launcher.prior_focus = self.focused_window_id;
-                self.launch_from_launcher(Some(VAULT_APP))
+                self.launch_from_launcher(Some(vault::VAULT_APP))
+            }
+            Outcome::OpenItem(id) => {
+                if let Some(desk) = self.desk_close() {
+                    send(&desk.target(), DeskPick::Dismissed);
+                }
+                Task::perform(vault::off_thread(move || vault::open_item(id)), |_| Msg::Noop)
             }
             Outcome::Search => {
                 self.desk_relayout();

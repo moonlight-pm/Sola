@@ -81,6 +81,8 @@ pub enum Outcome {
     Deliver { item: String, field: DeliverField },
     /// Done: Vault comes forward (sign in, unlock).
     OpenVault,
+    /// Done: Vault comes forward on this item (a re-prompt item).
+    OpenItem(String),
     /// The Vault column became the search: it needs the list and the
     /// keyboard.
     Search,
@@ -245,6 +247,7 @@ impl DeskMenu {
                 field: field.clone(),
             },
             Does::OpenVault => Outcome::OpenVault,
+            Does::OpenItem(id) => Outcome::OpenItem(id.clone()),
             Does::Search => {
                 self.search = Some(Search::default());
                 self.open_rows.truncate(level);
@@ -465,6 +468,22 @@ mod tests {
             field: DeliverField::Password
         });
         assert_eq!(m.press(2, 0), Outcome::Pick(DeskPick::VaultFill { item: "a".into() }));
+    }
+
+    #[test]
+    fn a_re_prompt_login_keys_to_open_in_vault() {
+        let mut m = menu(Some("https://a.example"));
+        let mut item = login("a", false);
+        item.reprompt = true;
+        m.vault = VaultView::Unlocked { logins: vec![item] };
+        m.hover(0, VAULT_ROW);
+        m.hover(1, 0);
+        m.key(Key::Right);
+        // Fill — Username Password — the note, Open in Vault…
+        assert_eq!(m.press(2, 0), Outcome::Nothing, "Fill is dimmed");
+        assert_eq!(m.press(2, 3), Outcome::Nothing, "Password is dimmed");
+        assert_eq!(m.hot(2), Some(6), "Open in Vault… is the first live row");
+        assert_eq!(m.key(Key::Enter), Outcome::OpenItem("a".into()));
     }
 
     #[test]

@@ -29,9 +29,11 @@ impl<E: Engine> App<E> {
         .button(self.more_button(None));
 
         let mut col = column![].spacing(8).width(Length::Fill);
-        if let Some(err) = v.status.as_ref().and_then(|s| s.sync_error.as_ref()) {
+        if let Some(s) = v.status.as_ref()
+            && let Some(err) = s.sync_error.as_deref()
+        {
             col = col.push(parts::notice(
-                format!("Couldn't reach Bitwarden ({err}). These are the items from the last sync."),
+                sync_notice(err, s.synced_at.is_some()),
                 Some(("Retry", VaultMsg::SyncNow)),
                 true,
             ));
@@ -249,5 +251,29 @@ fn kind_style(t: &Theme, status: button::Status, on: bool) -> button::Style {
             ..Border::default()
         },
         ..button::Style::default()
+    }
+}
+
+/// A failed sync, and what the list holds: the last sync's items, or none
+/// (the vault never synced on this unlock and none were kept).
+fn sync_notice(err: &str, has_items: bool) -> String {
+    if has_items {
+        format!("Couldn't reach Bitwarden ({err}). These are the items from the last sync.")
+    } else {
+        format!("Couldn't reach Bitwarden ({err}) — no items until it syncs.")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sync_notice;
+
+    #[test]
+    fn a_failed_sync_never_promises_items_it_lacks() {
+        assert!(sync_notice("offline", true).ends_with("These are the items from the last sync."));
+        assert_eq!(
+            sync_notice("offline", false),
+            "Couldn't reach Bitwarden (offline) — no items until it syncs."
+        );
     }
 }

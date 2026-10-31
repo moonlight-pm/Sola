@@ -500,7 +500,7 @@ impl<E: Engine> App<E> {
 
     /// The sheet just opened: ask what it needs and put the caret where
     /// the first key belongs.
-    fn vault_opened(&mut self) -> Task<Msg> {
+    pub(super) fn vault_opened(&mut self) -> Task<Msg> {
         let v = &mut self.vault;
         if v.screen != Screen::Edit {
             v.error = None;
@@ -755,8 +755,9 @@ impl<E: Engine> App<E> {
             v.error = Some("Enter your email and master password.".into());
             return;
         }
-        if v.forms.server == ServerPick::SelfHosted && v.forms.server_url.trim().is_empty() {
-            v.error = Some("Enter your server's address.".into());
+        // Under the server's field: the service refuses all but https.
+        if let Some(why) = v.forms.server().address_problem() {
+            v.error = Some(why.into());
             return;
         }
         v.busy = true;

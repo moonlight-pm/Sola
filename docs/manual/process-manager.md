@@ -275,7 +275,8 @@ Sola takes Oath's paths when `/oath/INDEX.md` is a file.
 ## The sola program
 
 Sola's source also builds `sola`, a process manager that starts the
-compositor and Sola's processes itself, for a session started by hand
-from a text console. It is not in `pkg:sola`. On Oath it prints
+compositor and Sola's processes itself (`sola-bus`, `sola-call`,
+`sola-vaultd`, `sola-botsd`, `sola-river`, `sola-shell`, `sola-session`,
+and `sola-kvm`), for a session started by hand from a text console. It is not in `pkg:sola`. On Oath it prints
 `sola: not on Oath; PID 1 runs Sola's services (oath ls --kind svc)` and
 exits with status 1 before it starts anything.

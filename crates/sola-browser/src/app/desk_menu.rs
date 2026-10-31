@@ -12,7 +12,7 @@ use sola_kit::desk_menu::{self, DeskEdit, DeskMenuPick, DeskPick, Secret, VaultE
 
 use super::{App, Msg, webapps};
 use crate::engine::{Cmd, EditCmd, Engine, PageContext, TabId};
-use crate::page_menu::{self, PageMenuKind};
+use crate::page_menu::{self, MenuWindow, PageMenuKind};
 
 /// The menu up now: its token, and the page and click it was for.
 pub(crate) struct OpenMenu {
@@ -35,7 +35,15 @@ impl<E: Engine> App<E> {
             .find(|t| t.id == tab)
             .map(|t| t.url.clone())
             .unwrap_or_default();
-        let wrappable = !self.webapps.tabs.contains_key(&tab) && webapps::can_wrap(&url);
+        // A web app's window draws no developer tools and is wrapped
+        // already.
+        let window = if self.webapps.tabs.contains_key(&tab) {
+            MenuWindow::WebApp
+        } else {
+            MenuWindow::Browser {
+                wrappable: webapps::can_wrap(&url),
+            }
+        };
         let token = desk_menu::next_token();
         // Where the kit's frame saw the right press; CEF reports the menu
         // after a round trip, so fall back to the last pointer position.
@@ -53,7 +61,7 @@ impl<E: Engine> App<E> {
             at.x,
             at.y,
             page_menu::desk_context(&ctx, ctx.secret, page_menu::menu_site(&url)),
-            page_menu::desk_items(&ctx, wrappable),
+            page_menu::desk_items(&ctx, window),
             page_menu::desk_edit(&ctx),
         );
         self.desk_menu = Some(OpenMenu { token, tab, ctx });
@@ -156,8 +164,10 @@ impl<E: Engine> App<E> {
         }
         match kind {
             PageMenuKind::OpenLink => {
+                // Behind, as the page menu always opened it: the page
+                // you clicked on stays in front.
                 if let Some(url) = ctx.link_url.filter(|u| !u.is_empty()) {
-                    self.open_tab(url, true);
+                    self.open_tab(url, false);
                 }
                 Task::none()
             }

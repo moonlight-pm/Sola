@@ -75,6 +75,7 @@ impl App {
             }
             (Ask::Unlock, _) => self.on_unlocked(Ok(())),
             (Ask::Verify(id), Reply::Checked(ok)) => self.on_verified(id, ok),
+            (Ask::ExportVerify, Reply::Checked(ok)) => self.on_export_verified(ok),
             (Ask::Create | Ask::Update, Reply::Saved { id }) => self.on_saved(id),
             (Ask::Trash(id), _) => {
                 self.toast_list_change("Moved to the trash");
@@ -195,6 +196,13 @@ impl App {
             }
             Ask::Generate => {
                 self.on_generated(Err(e));
+                Task::none()
+            }
+            Ask::ExportVerify => {
+                if let Some(sheets::Sheet::Export(x)) = self.sheet.as_mut() {
+                    x.busy = false;
+                    x.master_error = Some(e.message);
+                }
                 Task::none()
             }
             Ask::Export(_) => {

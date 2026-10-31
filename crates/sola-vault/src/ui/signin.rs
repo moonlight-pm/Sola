@@ -135,12 +135,8 @@ impl App {
             Some((Under::Email, "Enter your email address."))
         } else if s.password.is_empty() {
             Some((Under::Password, "Enter your master password."))
-        } else if s.server == ServerChoice::SelfHosted
-            && !(s.url.trim().starts_with("https://") || s.url.trim().starts_with("http://"))
-        {
-            Some((Under::Server, "Enter the server's address, like https://vault.example.com."))
         } else {
-            None
+            s.server().address_problem().map(|why| (Under::Server, why))
         };
         if let Some((under, message)) = problem {
             s.error = Some((under, message.into()));

@@ -41,6 +41,8 @@ pub enum Ask {
     RenameFolder,
     DeleteFolder(String),
     Generate,
+    /// The master password, before an export.
+    ExportVerify,
     Export(PathBuf),
 }
 
@@ -55,6 +57,7 @@ impl Ask {
                 | Ask::SendCode
                 | Ask::Unlock
                 | Ask::Verify(_)
+                | Ask::ExportVerify
                 | Ask::Sync
                 | Ask::Logout
                 | Ask::Export(_)
