@@ -21,11 +21,11 @@ use std::time::{Duration, Instant};
 use iced::{Point, Task};
 use sola_bus::Message;
 use sola_bus::topics::{DeskMenuOpen, Topic};
-use sola_vault_proto::{Reply, Request, VaultError};
+use sola_vault_proto::{Reply, Request};
 use zeroize::Zeroizing;
 
 pub use sola_bus::topics::{DeskEdit, DeskMenuContext, DeskMenuItem, DeskMenuPick, DeskPick};
-pub use sola_vault_proto::ErrorCode as VaultErrorCode;
+pub use sola_vault_proto::{ErrorCode as VaultErrorCode, VaultError};
 
 /// The shell's app id: it draws the menu, so its own fields ask for none
 /// (the bus never hands an app its own event back).
@@ -160,6 +160,34 @@ pub fn redeem_task(ticket: String) -> Task<Result<Secret, VaultError>> {
             })
         },
         |r| r,
+    )
+}
+
+/// Copy for a desk menu's row: from the compositor's side, since the pick
+/// can come before the window has the keyboard back; the window's own
+/// clipboard if that fails.
+pub fn copy<T>(text: String) -> Task<T> {
+    match crate::clipboard::write_text(text.clone()) {
+        Ok(()) => Task::none(),
+        Err(e) => {
+            tracing::debug!(%e, "desk menu: data-control copy failed; using the window's clipboard");
+            iced::clipboard::write(text)
+        }
+    }
+}
+
+/// The clipboard's text for a desk menu's Paste, read from the
+/// compositor's side on a thread of its own.
+pub fn paste_task() -> Task<Option<String>> {
+    Task::perform(
+        async {
+            let (tx, rx) = iced::futures::channel::oneshot::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(crate::clipboard::read_string());
+            });
+            rx.await.ok().flatten()
+        },
+        |text| text,
     )
 }
 
