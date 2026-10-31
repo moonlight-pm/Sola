@@ -1,7 +1,7 @@
 # Keybindings — every key editable, none in conflict (Settings → Keybindings)
 
 **Date:** 2026-10-30  
-**Status:** **Agreed in shape** 2026-10-30 (Joshua: "keybinding shape looks great"); slices below.  
+**Status:** **Agreed in shape** 2026-10-30 (Joshua: "keybinding shape looks great"); slices 1 and 2 built 2026-10-31 on branch `zone-layout` (not merged), applied on novus; slice 3 not started.  
 **Related:** [zone layout](2026-10-30-zone-layout-design.md) (Z4, Z14: zone keys are bindings here); [Window menu and shortcuts](2026-08-31-window-menu-and-shortcuts-design.md); capabilities `shell-zoning`, `settings`
 
 | | |

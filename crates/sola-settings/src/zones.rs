@@ -431,6 +431,7 @@ pub fn view<'a>(state: &'a ZonesState, keys: &'a KeysState) -> Element<'a, Zones
         highlight,
         labels,
         choosing: state.choosing(),
+        doomed: state.shrink.as_ref().map_or(Vec::new(), |s| s.ids.clone()),
         editing: match state.mode {
             Mode::Choosing { editing, .. } => editing,
             _ => None,
@@ -653,6 +654,8 @@ struct Drawing {
     highlight: Option<Zone>,
     labels: Vec<(u32, String)>,
     choosing: bool,
+    /// The zones − would delete, marked while it asks.
+    doomed: Vec<u32>,
     editing: Option<u32>,
 }
 
@@ -713,6 +716,7 @@ impl canvas::Program<ZonesMsg> for Drawing {
     ) -> Vec<Geometry> {
         let p = theme.extended_palette();
         let accent = p.primary.base.color;
+        let danger = p.danger.base.color;
         let ink = p.background.base.text;
         let mut f = Frame::new(renderer, bounds.size());
         let (screen, content, s) = placed(bounds.size(), self.output);
@@ -751,14 +755,16 @@ impl canvas::Program<ZonesMsg> for Drawing {
             }
             let rect = cell_rect(content, s, &self.layout, (z.row, z.column, z.rows, z.columns));
             let lit = self.highlight == Some(Zone::Grid(z.id));
-            if lit {
-                f.fill(&rounded(rect, 4.0), Color { a: 0.28, ..accent });
+            let doomed = self.doomed.contains(&z.id);
+            let edge = if doomed { danger } else { accent };
+            if lit || doomed {
+                f.fill(&rounded(rect, 4.0), Color { a: 0.28, ..edge });
             }
             f.stroke(
                 &rounded(rect, 4.0),
                 Stroke::default()
-                    .with_color(Color { a: if lit { 0.95 } else { 0.55 }, ..accent })
-                    .with_width(if lit { 2.0 } else { 1.5 }),
+                    .with_color(Color { a: if lit || doomed { 0.95 } else { 0.55 }, ..edge })
+                    .with_width(if lit || doomed { 2.0 } else { 1.5 }),
             );
             let label = self
                 .labels

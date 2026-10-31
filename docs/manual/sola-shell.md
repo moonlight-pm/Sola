@@ -21,6 +21,12 @@ corners is the ground: the background picture, or black without one
 
 ## Keyboard
 
+These are the default keys. Every one of them can be changed in
+**Settings → Keybindings**, which lists each action with its key; a key
+that another action holds is offered to move, never shared. A system key
+always includes Super. The zone keys are set in **Settings → Zones**
+([Zones](#zones)).
+
 | Chord | Action |
 |-------|--------|
 | Super+Space | Open the launcher |
@@ -33,10 +39,10 @@ corners is the ground: the background picture, or black without one
 | Super+Ctrl+1 … Super+Ctrl+9 | Send the focused window to workspace 1 to 9 |
 | Super+Tab | Next workspace (Super+Shift+Tab: the previous) |
 | Super+Keypad 0 | Move the focused window to Full |
-| Super+Keypad 4 | Move the focused window to the left half |
-| Super+Keypad 6 | Move the focused window to the right half |
+| Super+Keypad 4 | Move the focused window to the left column (the default layout's) |
+| Super+Keypad 6 | Move the focused window to the right column (the default layout's) |
 | Super+Keypad Multiply | Float the focused window |
-| Super+Keypad Enter | Cinema on or off for the focused window |
+| Super+Keypad Enter | Move the focused window to Cinema |
 | Super+Shift+3 | Screenshot of the whole output, to the clipboard |
 | Super+Shift+4 | Screenshot of a selection, to the clipboard |
 | Super+Shift+5 | Screenshot of the focused window, to the clipboard |
@@ -317,40 +323,68 @@ workspace's profile. A web app keeps its own profile wherever it is
 
 ## Zones
 
-A window is in one of four zones:
+The area right of the bar is a grid of equal cells, one row and two
+columns by default. A zone is a rectangle of those cells; besides the
+grid's zones there are always three more:
 
 | Zone | Where it is |
 |------|-------------|
-| Full | The whole area right of the bar |
-| Left, Right | Each half of that area |
+| Full | The whole area right of the bar: every cell |
+| A grid zone | Its cells of that area |
+| Cinema | The whole screen, over the top row and the bar |
 | Floating | Its own rectangle, above the tiles |
 
-A tiled zone shows one window at a time; the others in it wait off
-screen until you show them. Full and the halves take turns: showing a
-window in Full puts Full on screen and takes the halves away, and showing
-one in a half brings both halves back. A half keeps its half of the area
-when the other one is empty. Every floating window on the workspace shows,
-the last one raised on top.
+A tiled zone (Full, a grid zone, Cinema) shows one window at a time; the
+others in it wait off screen until you show them. Zones that cover the
+same cells take turns: showing a window in a zone takes away every zone
+that overlaps it, and a zone taken away comes back once nothing covers
+its cells. So showing a window in Full takes the columns away, and
+showing one in a column brings the columns back. A zone keeps its size
+when its neighbours are empty. Every floating window on the workspace
+shows, the last one raised on top.
 
-A new window joins the zone in front: Full while Full is on screen (or
-when neither half has a window), otherwise the half that last had focus.
-Scope, Preview and gamescope float from the start, and
-so does an app whose window you floated, until you tile it again.
+A new window comes up in the zone you were last looking at. The first
+window of a workspace goes to Full, and so does one opened while Cinema
+is up. Scope, Preview and gamescope float from the start, and so does an
+app whose window you floated, until you tile it again.
 
-- **Super+Keypad 0, 4 and 6** move the focused window to Full, Left or
-  Right. It shows there and keeps the keyboard; its row stays where it is.
+- **A zone's key** (Super with the key you gave it; Keypad 0, 4 and 6 by
+  default) moves the focused window there. It shows there and keeps the
+  keyboard; its row stays where it is. Nothing toggles: to change a
+  window's size, send it to another zone.
 - **Super+Keypad Multiply** floats it, shrunk 50 px in on each side from
   its tile. Its app's windows then come back floating at that rectangle,
   and a float you move or resize is remembered for its app. Moving a
   window out of Floating forgets the rectangle.
-- **Super+Keypad Enter** toggles Cinema: the window covers the whole
-  output, over the top row and the bar, as a fullscreen window. Press it
-  again to leave; a float goes back to its rectangle.
+- **Super+Keypad Enter** moves it to **Cinema**: the whole screen, drawn
+  alone. Nothing of the desk shows over it or through it: no top row,
+  bar or floating windows, and black instead of the background picture.
+  The launcher and Super+K still come up. An app that asks for
+  fullscreen (a game, a video, F11) goes to Cinema, and back to its zone
+  when it leaves fullscreen.
 
 Closing the window a zone shows brings back the one it showed before, so
 closing a page you just opened returns to the page it came from. When the
 focused window closes, the keyboard goes to the window now showing in its
 zone, else to the window in front.
+
+### Settings → Zones
+
+The page draws the screen at its shape, with the top row and the bar,
+and the grid's cells and zones on it.
+
+- **Rows** and **Columns**: − and + take away the bottom row or the right
+  column, or add one. Adding keeps every zone on its cells (so they get
+  smaller); taking away a row or column with zones on it marks them and
+  asks before deleting them.
+- **Add Zone**: drag across the cells it should cover (or click one),
+  then press its key; Super is added. Esc leaves it without one.
+- A zone's row opens **Change Key**, **Clear Key**, **Edit Cells** (choose
+  its cells again; its key stays) and **Delete**. Full, Cinema and
+  Floating cannot be deleted; their keys can be changed or cleared.
+
+Each zone shows as its key and a little drawing of it; in lists without
+a drawing it is named by its place ("Column 1", "Row 2").
 
 ## Titlebars
 
@@ -369,8 +403,9 @@ shortcuts work on them as on any window.
 
 An app's last menu is the **Window** menu (an app can replace it). It
 holds **Hide** (Super+H), **Cycle Windows** (Super+Backtick),
-**Float**, **Left**, **Right**, **Full** and **Cinema**, so each of those
-chords also has a mouse path. The Shell acts on the focused window.
+**Float**, **Full** and **Cinema**, so each of those keys also has a
+mouse path; the grid's zones are reached by their keys (Super+K lists
+them). The Shell acts on the focused window.
 
 ## Launcher
 

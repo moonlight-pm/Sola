@@ -334,7 +334,7 @@ pub const KEYS: &[Key] = &[
     kp(KeyCode::KP_8, 0xFFB8, 0xFF97, "KP8"), // KP_Up
     kp(KeyCode::KP_9, 0xFFB9, 0xFF9A, "KP9"), // KP_Prior
     kp(KeyCode::KP_DECIMAL, 0xFFAE, 0xFF9F, "KP."), // KP_Delete
-    key(KeyCode::KP_ENTER, 0xFF8D, "KP\u{21A9}"),
+    key(KeyCode::KP_ENTER, 0xFF8D, "KPEnter"),
     key(KeyCode::KP_MULTIPLY, 0xFFAA, "KP*"),
     key(KeyCode::KP_ADD, 0xFFAB, "KP+"),
     key(KeyCode::KP_SUBTRACT, 0xFFAD, "KP-"),

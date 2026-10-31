@@ -229,11 +229,37 @@ remembers the tab by its key. An app marks a tab's row with sticky
 `TabWindows::set_activity`): the bar draws the mark in the row's icon slot.
 Projects sends each project window's roll-up (a tab waiting on a decision
 beats a tab working). `Topic::Zones` is no
-longer read or written on `next`. Zones are Full (`Zone::Fullscreen`, the
-content area) · Left · Right · Floating; each desk remembers whether Full or
-the halves were picked last (`TabLayout.full`) and composes only that side.
-Super+KP_0 / KP_4 / KP_6 move a tab to Full / Left / Right; KP_Enter shows it
-in Cinema (output).
+longer read or written on `next`.
+
+**Zones (branch `zone-layout`, 2026-10-31):** the content area is a grid of
+equal cells from the persistent `Topic::ZoneLayout` (Settings → Zones →
+shell; `sola_bus::topics::ZoneLayout`, which also knows overlaps, cell
+fractions and place names). A zone is `Zone::Grid(id)` (a rectangle of
+cells), Full (`Zone::Fullscreen`, every cell), Cinema (the output) or
+Floating; the old named zones are gone (saved Left / Right deserialize as
+zones 1 / 2). Each desk keeps its zones' pick order (`TabLayout.picks`;
+an older file's `full` reads as `[Full]`); `Desk::on_screen` walks it and
+takes each zone with a tab unless one taken overlaps it. `zoning::tile_frame`
+cuts the cells with one gap between neighbours. A Cinema tab on screen is
+the whole composition (`Shell::push_desk` is skipped), the only tab framed
+fullscreen (`Shell::cinema_shown`), and sola-river drops the background
+surface while a fullscreen window is composed (`background::sync_on_render`).
+sola-river grants an app's own fullscreen request at once and emits
+`Topic::FullscreenRequest`; the shell moves the tab to Cinema and back
+(`app/zones.rs`, `Stacks::cinema_return`).
+
+**Keys (branch `zone-layout`, 2026-10-31):** `sola_core::keys::KEYS` is the
+one key table (keycode, keysym, NumLock-off keysym, name). The shell's system
+actions are one table (`sola-shell/src/bindings.rs`: id, group, label,
+default; zone actions built from the layout): `shell_key_chords` registers
+from it, `on_chord` → `run_act` dispatches by it after the modal gates,
+Super+K, the Workspaces menu and the Window menus the shell draws read it.
+The shell publishes its actions as persistent `Topic::KeyActions` (owner
+`system`); Settings writes your overrides as persistent `Topic::Keybindings`;
+`sola_kit::keys::resolve` puts them together (your choice over a default, the
+system over an app, two apps may share). While Settings waits for a key it
+holds sticky `Topic::KeyCapture` and the shell registers no chords (20 s
+timeout of its own).
 
 **On `next`, workspaces (slice 5):** the shell keeps a desk of zones per
 desktop workspace (`stacks/`; readers without a window answer for the
