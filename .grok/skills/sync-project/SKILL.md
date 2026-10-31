@@ -129,8 +129,8 @@ git -C .worktrees/SLUG merge master
   `git -C .worktrees/next reset --hard master`. Otherwise merge master into
   it (`git -C .worktrees/next merge master`) and report what is still
   unmerged there.
-- What runs on this machine: `jq . ~/.local/state/oath-dev/pins.json` and
-  `oath get pkg:sola` (the `oath-packages` skill). After a sync, master
+- What runs on this machine: `oath diff` (each overlay with its source)
+  and `oath get pkg:sola` (the `oath-packages` skill). After a sync, master
   holds everyone's work: say so, and offer an apply from master — only with
   the user's word (it may restart the desk).
 

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Vault / Today</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="vault.css">
+<script src="vault.js"></script>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__num">01</span><span class="head__title">The panel today</span></div>
+  <div class="head__lead">
+    As built on master (2026-10-31), drawn from <code>app.rs</code>
+    <code>view_vault_panel</code>: a 400 px modal card under the key
+    button. Each state lays itself out — its own width (300, 340, 400),
+    its own list height (220, 360, 400, 420), its own text alphas. The
+    numbered notes are what the new look answers.
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Five states</div>
+  <div class="states">
+
+    <!-- Unlock -->
+    <div class="state">
+      <div class="state__cap">Unlock <span>300 wide</span></div>
+      <div class="old old__w300" id="old-unlock">
+        <div class="t">Unlock vault</div>
+        <div class="soft">Bitwarden</div>
+        <div class="gap"></div>
+        <div class="fld"><span class="v">ana@example.com</span></div>
+        <div class="fld is-focus" id="old-unlock-pass"><span class="v ph">Master password</span></div>
+        <div class="row">
+          <span class="btn btn--primary">Unlock</span>
+          <span class="btn btn--ghost">Cancel</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Browse -->
+    <div class="state">
+      <div class="state__cap">Browse, on github.com/login <span>400 wide</span></div>
+      <div class="old" id="old-browse">
+        <div class="row">
+          <div class="fld" style="flex:1"><span class="v ph">Search vault</span></div>
+          <span class="ib"><i data-i="plus" data-s="16"></i></span>
+        </div>
+        <div class="chips" id="old-chips">
+          <span class="chip is-on">All</span><span class="chip">Logins</span><span class="chip">Cards</span><span class="chip">Identities</span><span class="chip">Notes</span>
+        </div>
+        <div class="soft" id="old-hint">For github.com</div>
+        <div class="softsm">Autofill</div>
+        <div class="row" id="old-suggest">
+          <div class="li"><div class="li__t"><i data-i="key"></i>GitHub <span class="badge badge--acc">passkey</span><span class="badge badge--neu">code</span></div><div class="li__s">ana.k</div></div>
+          <span class="btn btn--sm btn--primary">Fill</span>
+        </div>
+        <div class="row">
+          <div class="li"><div class="li__t"><i data-i="key"></i>GitHub — work <span class="badge badge--neu">code</span></div><div class="li__s">ana@acme.dev</div></div>
+          <span class="btn btn--sm btn--primary">Fill</span>
+        </div>
+        <div class="list" id="old-list">
+          <div class="softsm">All items</div>
+          <div class="li"><div class="li__t"><i data-i="key"></i>Amazon</div><div class="li__s">ana@example.com</div></div>
+          <div class="li"><div class="li__t"><i data-i="key"></i>Apple ID</div><div class="li__s">ana@example.com</div></div>
+          <div class="li"><div class="li__t"><i data-i="card"></i>Bank of Example</div><div class="li__s">Visa, *4242</div></div>
+          <div class="li"><div class="li__t"><i data-i="key"></i>Cloudflare <span class="badge badge--neu">code</span></div><div class="li__s">ana@example.com</div></div>
+          <div class="scrollbar"></div>
+        </div>
+        <div class="row" id="old-account"><span class="softsm" style="flex:1">ana@example.com</span><span class="btn btn--sm btn--ghost">Log out</span></div>
+        <div class="row" id="old-foot"><span class="btn btn--sm btn--ghost">Refresh</span><span class="btn btn--secondary">Close</span></div>
+      </div>
+    </div>
+
+    <!-- Item -->
+    <div class="state">
+      <div class="state__cap">An item <span>400 wide</span></div>
+      <div class="old" id="old-item">
+        <div class="row" id="old-item-head">
+          <span class="ib"><i data-i="chevL" data-s="16"></i></span>
+          <span class="t" style="flex:1">GitHub</span>
+          <span class="btn btn--sm btn--ghost">Edit</span>
+          <span class="btn btn--sm btn--primary">Fill</span>
+        </div>
+        <div class="softsm">Login</div>
+        <div class="fieldv"><span class="lbl">Username</span><span class="val">ana.k</span></div>
+        <div class="fieldv"><span class="lbl">Password</span><span class="val">••••••••••••</span></div>
+        <div class="fieldv"><span class="lbl">Website</span><span class="val">https://github.com</span></div>
+        <div class="row" id="old-totp">
+          <div class="fieldv" style="flex:1"><span class="lbl">Authenticator</span><span class="mono">482 913  ·  18s</span></div>
+          <span class="ib"><i data-i="copy"></i></span>
+          <span class="btn btn--sm btn--ghost">Fill</span>
+        </div>
+        <span class="badge badge--acc" style="align-self:flex-start" id="old-pk">passkey</span>
+        <div class="fieldv"><span class="lbl">Notes</span><span class="val">Recovery codes are in the custom fields.</span></div>
+      </div>
+    </div>
+
+    <!-- Passkey -->
+    <div class="state">
+      <div class="state__cap">A site asks for a passkey <span>340 wide</span></div>
+      <div class="old old__w340" id="old-pick">
+        <div class="t">Choose a passkey</div>
+        <div class="soft">Sign in to For github.com</div>
+        <div class="boxed"><span class="val" style="font-weight:500">GitHub</span><span class="lbl">ana.k</span></div>
+        <div class="boxed"><span class="val" style="font-weight:500">GitHub — work</span><span class="lbl">ana@acme.dev</span></div>
+        <div style="height:120px"></div>
+        <span class="btn btn--ghost" style="align-self:flex-start">Cancel</span>
+      </div>
+    </div>
+
+    <!-- New login -->
+    <div class="state">
+      <div class="state__cap">New login <span>340 wide</span></div>
+      <div class="old old__w340" id="old-new">
+        <div class="t">New login</div>
+        <div class="fieldv"><span class="lbl">Username</span><div class="fld"><span class="v ph">Username</span></div></div>
+        <div class="fieldv"><span class="lbl">Password</span><div class="fld"><span class="v mono" style="font-size:13px">q7#Lm2v!RbX9pT4s</span></div></div>
+        <span class="btn btn--sm btn--ghost" style="align-self:flex-start">Regenerate</span>
+        <div class="fieldv"><span class="lbl">URL</span><div class="fld"><span class="v">github.com</span></div></div>
+        <div class="row"><span class="btn btn--primary">Create</span><span class="btn btn--ghost">Cancel</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">What is wrong with it</div>
+  <div class="states" style="gap:20px 56px">
+    <div class="note" style="max-width:380px"><b>No frame of its own.</b> A modal card (14 px, the deep shadow) dropped
+      over the page, not a sheet hanging from the key button. Every state picks its own width, so the panel
+      jumps when you go from the list to an item or a form.</div>
+    <div class="note" style="max-width:380px"><b>Everything shouts at once.</b> Search, five chips, a host line,
+      "Autofill", two filled Fill buttons, "All items", an account row, Log out, Refresh, Close. The thing you came
+      for — fill this site — is one of a dozen.</div>
+    <div class="note" style="max-width:380px"><b>Cyan everywhere.</b> Every suggestion carries a filled primary, and
+      the passkey badge is cyan too. Graphite keeps the accent to field focus and the one primary.</div>
+    <div class="note" style="max-width:380px"><b>Words where shapes would do.</b> "passkey" and "code" badges, the
+      code's seconds as "· 18s" text, "For github.com" under the search, "Sign in to For github.com".</div>
+    <div class="note" style="max-width:380px"><b>The record is a stack of labels.</b> Label over value, no rows,
+      no copy on each field, the password with no reveal, the passkey a lone badge, Fill twice (head and
+      authenticator).</div>
+    <div class="note" style="max-width:380px"><b>Lists in fixed boxes.</b> 220, 360, 400, 420 px, with the empty space
+      left over (the passkey pick) or the list clipped under the footer.</div>
+    <div class="note" style="max-width:380px"><b>Housekeeping in the way.</b> Account, Log out, Refresh and Close
+      sit at the foot of the list every time; Escape and a click away already close it.</div>
+    <div class="note" style="max-width:380px"><b>No keyboard path.</b> Opening the panel does not put you anywhere: no
+      selected row, no Enter to fill, no arrows.</div>
+  </div>
+</div>
+
+</body>
+</html>

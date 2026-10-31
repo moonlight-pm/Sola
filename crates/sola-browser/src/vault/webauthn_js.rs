@@ -1,18 +1,30 @@
 //! Injected WebAuthn intercept + response helper for Bitwarden passkeys.
 
 /// Install navigator.credentials.get/create intercept that posts requests to
-/// the host via `console.log("__sola_webauthn__"+JSON)` (and a same-id iframe
-/// beacon). Injected from the renderer at V8 context creation so the page
-/// cannot snapshot native `get` before the hook lands.
+/// the host through `window.__solaVaultPost(json)`, a native function the
+/// renderer installs first: it reaches the helper as a message from this
+/// frame, so the helper takes the origin from CEF, not from this JSON.
+/// Injected at V8 context creation so the page cannot snapshot native `get`
+/// before the hook lands.
 ///
-/// ArrayBuffers are base64url-encoded for the wire. The host answers with
-/// `window.__solaWebAuthnResolve(id, ok, payloadJsonOrError)`.
+/// Each request has a random `nonce`. ArrayBuffers are base64url-encoded
+/// for the wire. The host answers in the requesting frame only, with
+/// `window.__solaWebAuthnResolve(nonce, ok, payloadJsonOrError)`. When the
+/// page stops waiting it posts `{action:'cancel', nonce}`.
 pub fn inject_webauthn_intercept_script() -> &'static str {
     r#"(function(){
   if (window.__solaWebAuthnInstalled) return;
   window.__solaWebAuthnInstalled = true;
+  var nativePost = window.__solaVaultPost;
+  if (typeof nativePost !== 'function') return;
   var pending = Object.create(null);
-  var seq = 0;
+  function nonce(){
+    var b = new Uint8Array(16);
+    crypto.getRandomValues(b);
+    var s = '';
+    for (var i=0;i<b.length;i++) s += (b[i] < 16 ? '0' : '') + b[i].toString(16);
+    return s;
+  }
   function b64url(buf){
     var bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf)
       : (buf && buf.buffer instanceof ArrayBuffer) ? new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
@@ -161,24 +173,11 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
       toJSON: toJSON
     };
     try { Object.setPrototypeOf(cred, PublicKeyCredential.prototype); } catch (e) {}
-    // Debug breadcrumb for dogfood (host may collect via console handler).
-    try {
-      var cd = new TextDecoder().decode(clientDataJSON);
-      console.debug('__sola_webauthn_cred__', JSON.stringify({
-        idLen: id.length,
-        rawIdLen: rawIdBuf.byteLength,
-        clientData: cd,
-        kind: isCreate ? 'create' : 'get'
-      }));
-    } catch (e) {}
     return cred;
   }
   window.__solaWebAuthnResolve = function(id, ok, payload){
     var p = pending[id];
-    if (!p) {
-      console.debug('__sola_webauthn_orphan_resolve__', id, ok);
-      return;
-    }
+    if (!p) return;
     delete pending[id];
     if (ok) {
       try {
@@ -193,21 +192,25 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
     }
   };
   function post(req){
-    // Gemini stubs debug; Google account scripts sometimes replace
-    // console.log. Same-id duplicates are dropped in the helper.
-    var s = '__sola_webauthn__' + JSON.stringify(req);
-    try { console.log(s); } catch (e) {}
-    try { console.info(s); } catch (e) {}
-    try {
-      var f = document.createElement('iframe');
-      f.width = 0; f.height = 0;
-      f.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
-      f.src = 'https://sola.invalid/__sola_webauthn__?' + encodeURIComponent(JSON.stringify(req));
-      (document.documentElement || document.body || document).appendChild(f);
-      setTimeout(function(){ try { f.remove(); } catch (e2) {} }, 2000);
-    } catch (e) {}
+    try { nativePost(JSON.stringify(req)); } catch (e) {}
   }
-  try { console.info('__sola_webauthn_installed__' + (location && location.origin || '')); } catch (e) {}
+  // Hold the page's promise until chrome answers; on the page's own
+  // timeout, reject and tell chrome to drop the request.
+  function ask(action, rpId, publicKey){
+    return new Promise(function(resolve, reject){
+      var id = nonce();
+      pending[id] = { resolve: resolve, reject: reject };
+      post({ v: 2, nonce: id, action: action, rpId: rpId, publicKey: serializePk(publicKey) });
+      var ms = Math.min(Math.max(Number(publicKey.timeout) || 120000, 30000), 600000);
+      setTimeout(function(){
+        if (pending[id]) {
+          delete pending[id];
+          post({ v: 2, nonce: id, action: 'cancel' });
+          reject(new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError'));
+        }
+      }, ms);
+    });
+  }
   if (!navigator.credentials) return;
   var proto = null;
   try { proto = CredentialsContainer.prototype; } catch (e) {}
@@ -222,50 +225,15 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
     // would otherwise hang on "Verifying it's you" (Google). Ignore
     // AbortSignal — Google aborts immediate get when the native UI
     // finds no platform credential.
-    return new Promise(function(resolve, reject){
-      var id = ++seq;
-      pending[id] = { resolve: resolve, reject: reject };
-      var pk = serializePk(options.publicKey);
-      post({
-        v: 1,
-        id: id,
-        action: 'get',
-        origin: location.origin,
-        rpId: (options.publicKey.rpId) || location.hostname,
-        publicKey: pk
-      });
-      setTimeout(function(){
-        if (pending[id]) {
-          delete pending[id];
-          reject(new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError'));
-        }
-      }, 120000);
-    });
+    return ask('get', options.publicKey.rpId || location.hostname, options.publicKey);
   }
   function hookedCreate(options){
     if (!options || !options.publicKey) {
       return origCreate ? origCreate.call(navigator.credentials, options)
         : Promise.reject(new DOMException('NotSupportedError', 'NotSupportedError'));
     }
-    return new Promise(function(resolve, reject){
-      var id = ++seq;
-      pending[id] = { resolve: resolve, reject: reject };
-      var pk = serializePk(options.publicKey);
-      post({
-        v: 1,
-        id: id,
-        action: 'create',
-        origin: location.origin,
-        rpId: (options.publicKey.rp && options.publicKey.rp.id) || location.hostname,
-        publicKey: pk
-      });
-      setTimeout(function(){
-        if (pending[id]) {
-          delete pending[id];
-          reject(new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError'));
-        }
-      }, 120000);
-    });
+    var rp = options.publicKey.rp;
+    return ask('create', (rp && rp.id) || location.hostname, options.publicKey);
   }
   function installMethod(obj, name, fn){
     // Getter lock: assignment like `credentials.get = nativeGet` is
@@ -289,12 +257,6 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
   installMethod(navigator.credentials, 'create', hookedCreate);
   try {
     if (window.PublicKeyCredential) {
-      if (typeof PublicKeyCredential.get === 'function') {
-        PublicKeyCredential.get = function(options){ return hookedGet(options); };
-      }
-      if (typeof PublicKeyCredential.create === 'function') {
-        PublicKeyCredential.create = function(options){ return hookedCreate(options); };
-      }
       // Steer Google off native/hybrid sheets (OSR cannot show them).
       PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable = function(){
         return Promise.resolve(true);
@@ -322,21 +284,15 @@ pub fn inject_webauthn_intercept_script() -> &'static str {
 })();"#
 }
 
-/// JS that resolves a pending WebAuthn promise (payload is JSON string).
-pub fn resolve_webauthn_script(id: u64, ok: bool, payload_json: &str) -> String {
-    resolve_webauthn_scripts(&[id], ok, payload_json)
-}
-
-/// Resolve every in-flight page id for one ceremony (duplicates / retries).
-pub fn resolve_webauthn_scripts(ids: &[u64], ok: bool, payload_json: &str) -> String {
+/// JS that settles the page's request `nonce` (payload is a JSON string on
+/// success, an error message otherwise). Evaluate it in the requesting
+/// frame only.
+pub fn resolve_webauthn_script(nonce: &str, ok: bool, payload_json: &str) -> String {
+    let nonce = serde_json::to_string(nonce).unwrap_or_else(|_| "\"\"".into());
     let payload = serde_json::to_string(payload_json).unwrap_or_else(|_| "\"\"".into());
     let ok_js = if ok { "true" } else { "false" };
-    let calls: String = ids
-        .iter()
-        .map(|id| format!("window.__solaWebAuthnResolve({id}, {ok_js}, {payload});"))
-        .collect();
     format!(
-        "(function(){{ try {{ if (window.__solaWebAuthnResolve) {{ {calls} }} }} catch(e) {{ console.error('sola webauthn resolve', e); }} }})();"
+        "(function(){{ try {{ if (window.__solaWebAuthnResolve) {{ window.__solaWebAuthnResolve({nonce}, {ok_js}, {payload}); }} }} catch(e) {{ console.error('__sola_webauthn_resolve_err__' + e); }} }})();"
     )
 }
 
@@ -350,33 +306,17 @@ mod tests {
         let create = s
             .split("function hookedCreate")
             .nth(1)
+            .and_then(|c| c.split("function installMethod").next())
             .expect("create hook");
         assert!(
-            create.contains("action: 'create'"),
-            "publicKey create() must post to chrome"
-        );
-        assert!(
-            create.contains("publicKey: pk"),
-            "create() must send serialized publicKey (user.id / challenge)"
-        );
-        assert!(
-            !create.contains("Passkey registration is not supported"),
-            "create() must hold the page promise, not reject immediately"
+            create.contains("ask('create'"),
+            "publicKey create() must post to chrome and hold the promise"
         );
         // origCreate.call is only the non-publicKey fallback.
-        assert_eq!(
-            create.matches("origCreate.call(").count(),
-            1,
-            "origCreate only for non-publicKey options"
-        );
-        let pk_path = create
-            .split("return new Promise")
-            .nth(1)
-            .expect("create() holds a promise");
-        assert!(
-            !pk_path.contains("origCreate.call("),
-            "publicKey create() must not fall through to Chromium"
-        );
+        assert_eq!(create.matches("origCreate.call(").count(), 1);
+        let ask = s.split("function ask(").nth(1).expect("ask()");
+        assert!(ask.contains("publicKey: serializePk(publicKey)"));
+        assert!(ask.contains("return new Promise"));
     }
 
     #[test]
@@ -408,29 +348,19 @@ mod tests {
     }
 
     #[test]
-    fn post_uses_console_and_beacon() {
+    fn requests_go_through_the_native_post_only() {
         let s = inject_webauthn_intercept_script();
         let post = s.split("function post(req)").nth(1).expect("post()");
-        let body = post
-            .split("try { console.info('__sola_webauthn_installed__'")
-            .next()
-            .unwrap_or(post);
+        let post = post.split("function ask(").next().unwrap();
+        assert!(post.contains("nativePost(JSON.stringify(req))"));
+        assert!(!s.contains("console.log(s)"), "no console transport");
+        assert!(!s.contains("sola.invalid"), "no iframe beacon");
         assert!(
-            body.contains("console.log(s)"),
-            "post() must use console.log (Gemini stubs debug)"
+            !s.contains("origin: location.origin"),
+            "the helper takes the origin from the frame"
         );
-        assert!(
-            body.contains("console.info(s)"),
-            "Google account scripts sometimes replace console.log"
-        );
-        assert!(
-            !body.contains("console.warn(s)"),
-            "do not also post via console.warn"
-        );
-        assert!(
-            body.contains("sola.invalid") && body.contains("createElement('iframe')"),
-            "iframe beacon when the page stubs console"
-        );
+        assert!(s.contains("crypto.getRandomValues"), "random nonce per request");
+        assert!(s.contains("action: 'cancel'"), "tell chrome when the page gives up");
     }
 
     #[test]
@@ -456,9 +386,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_scripts_fans_out_ids() {
-        let js = resolve_webauthn_scripts(&[1, 2], false, "Superseded");
-        assert!(js.contains("__solaWebAuthnResolve(1, false"));
-        assert!(js.contains("__solaWebAuthnResolve(2, false"));
+    fn resolve_script_escapes_the_nonce_and_payload() {
+        let js = resolve_webauthn_script("ab\"c", false, "No'pe");
+        assert!(js.contains(r#"__solaWebAuthnResolve("ab\"c", false, "No'pe")"#), "{js}");
     }
 }

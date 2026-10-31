@@ -5,6 +5,8 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+use super::provenance::Source;
+
 /// True on an Oath machine (its catalog's INDEX is at `/oath/INDEX.md`).
 pub fn on_oath() -> bool {
     Path::new("/oath/INDEX.md").is_file()
@@ -76,16 +78,11 @@ pub fn store(id: &str, dir: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("oath store {id}: no hash in output"))
 }
 
-/// Pin `id` to `hash` with `needs` (`(id, hash)` pairs).
-pub fn set(id: &str, hash: &str, needs: &[(String, String)]) -> Result<(), String> {
-    run(Command::new("sudo").args([
-        "oath",
-        "set",
-        id,
-        &format!("hash={hash}"),
-        &format!("needs={}", needs_json(needs)),
-    ]))
-    .map(drop)
+/// Pin `id` to `hash` with `needs` (`(id, hash)` pairs) and where the tree
+/// came from (`pkg.source`, Oath R47).
+pub fn set(id: &str, hash: &str, needs: &[(String, String)], source: &Source) -> Result<(), String> {
+    let pin = pin_json(hash, needs, source);
+    run(Command::new("sudo").args(["oath", "set", id, "--from-json", &pin])).map(drop)
 }
 
 /// The catalog has `id` (a `pkg` this machine knows, present or not).
@@ -96,16 +93,10 @@ pub fn exists(id: &str) -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-/// Make `pkg:<name>` pinned to `hash` with `needs` (it runs at apply).
-pub fn create(id: &str, hash: &str, needs: &[(String, String)]) -> Result<(), String> {
-    run(Command::new("sudo").args([
-        "oath",
-        "new",
-        id,
-        &format!("hash={hash}"),
-        &format!("needs={}", needs_json(needs)),
-    ]))
-    .map(drop)
+/// Make `pkg:<name>` pinned as [`set`] does (it runs at apply).
+pub fn create(id: &str, hash: &str, needs: &[(String, String)], source: &Source) -> Result<(), String> {
+    let pin = pin_json(hash, needs, source);
+    run(Command::new("sudo").args(["oath", "new", id, "--from-json", &pin])).map(drop)
 }
 
 /// `oath apply` these ids together.
@@ -113,15 +104,20 @@ pub fn apply(ids: &[String]) -> Result<(), String> {
     run(Command::new("sudo").args(["oath", "apply"]).args(ids)).map(drop)
 }
 
+/// `{"hash", "needs", "source"}` for `--from-json`.
+fn pin_json(hash: &str, needs: &[(String, String)], source: &Source) -> String {
+    serde_json::json!({ "hash": hash, "needs": needs_json(needs), "source": source }).to_string()
+}
+
 /// `[{"id":…,"hash":…}]`, sorted by id as Oath stores needs.
-fn needs_json(needs: &[(String, String)]) -> String {
+fn needs_json(needs: &[(String, String)]) -> serde_json::Value {
     let mut sorted = needs.to_vec();
     sorted.sort();
     let list: Vec<serde_json::Value> = sorted
         .into_iter()
         .map(|(id, hash)| serde_json::json!({ "id": id, "hash": hash }))
         .collect();
-    serde_json::Value::Array(list).to_string()
+    serde_json::Value::Array(list)
 }
 
 fn run(cmd: &mut Command) -> Result<Output, String> {
@@ -147,9 +143,24 @@ mod tests {
             ("pkg:wayland".to_string(), "sha256-b".to_string()),
             ("pkg:cef".to_string(), "sha256-a".to_string()),
         ];
-        let v: serde_json::Value = serde_json::from_str(&needs_json(&needs)).unwrap();
+        let v = needs_json(&needs);
         assert_eq!(v[0]["id"], "pkg:cef");
         assert_eq!(v[0]["hash"], "sha256-a");
         assert_eq!(v[1]["id"], "pkg:wayland");
+    }
+
+    #[test]
+    fn a_pin_carries_its_source() {
+        let source = Source {
+            repo: "https://github.com/moonlight-pm/Sola".into(),
+            commit: "92815a651e523b28162f60b4daadd57ed00cb441".into(),
+            branch: "master".into(),
+            ..Source::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&pin_json("sha256-h", &[], &source)).unwrap();
+        assert_eq!(v["hash"], "sha256-h");
+        assert_eq!(v["needs"], serde_json::json!([]));
+        assert_eq!(v["source"]["commit"], "92815a651e523b28162f60b4daadd57ed00cb441");
+        assert_eq!(v["source"]["dirty"], false);
     }
 }

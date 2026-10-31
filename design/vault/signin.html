@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Vault / Sign-in and passkeys</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="vault.css">
+<script src="vault.js"></script>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__num">04</span><span class="head__title">Unlocking, and when a site asks</span></div>
+  <div class="head__lead">
+    The same sheet, the same head. Unlocking asks for one thing at a time
+    and keeps the account you used. A site that asks for a passkey opens the
+    sheet on its own, names the site in the head and lists the accounts; it
+    waits as long as the site does, then closes.
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Unlocking</div>
+  <div class="states">
+
+    <div class="state">
+      <div class="state__cap">Unlock <span>the account is remembered</span></div>
+      <div class="vp" id="unlock">
+        <div class="vp__head">
+          <span class="plate plate--sm plate--kind"><i data-i="lock" data-s="12"></i></span>
+          <div class="vp__who"><span class="vp__title">Bitwarden</span><span class="vp__sub">ana@example.com</span></div>
+        </div>
+        <div class="vp__body vp__body--pad">
+          <div class="fld is-focus"><span class="v ph" style="color:var(--ink-3)"><span class="caret" style="margin:0 6px 0 0"></span>Master password</span><span class="ib"><i data-i="eye"></i></span></div>
+          <span class="btn btn--primary">Unlock</span>
+          <span class="link center">Not you? <b>Use another account</b></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">Wrong password <span>the error under its field</span></div>
+      <div class="vp">
+        <div class="vp__head">
+          <span class="plate plate--sm plate--kind"><i data-i="lock" data-s="12"></i></span>
+          <div class="vp__who"><span class="vp__title">Bitwarden</span><span class="vp__sub">ana@example.com</span></div>
+        </div>
+        <div class="vp__body vp__body--pad">
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <div class="fld is-error"><span class="v" style="letter-spacing:2px">•••••••••••</span><span class="ib"><i data-i="eye"></i></span></div>
+            <span class="ef__err">That password didn't unlock this account.</span>
+          </div>
+          <span class="btn btn--primary">Unlock</span>
+          <span class="link center">Not you? <b>Use another account</b></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">Two-step login <span>an authenticator</span></div>
+      <div class="vp" id="twostep">
+        <div class="vp__head vp__head--back">
+          <span class="ib"><i data-i="chevL" data-s="16"></i></span>
+          <div class="vp__who"><span class="vp__title">Two-step login</span><span class="vp__sub">ana@example.com</span></div>
+        </div>
+        <div class="vp__body vp__body--pad">
+          <span class="lead">Enter the 6-digit code from your authenticator app.</span>
+          <div class="otp"><span>4</span><span>8</span><span class="is-focus"></span><span></span><span></span><span></span></div>
+          <span class="btn btn--primary">Verify</span>
+          <span class="link center">No app with you? <b>Email a code instead</b></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">A new device <span>Bitwarden emails a code</span></div>
+      <div class="vp">
+        <div class="vp__head vp__head--back">
+          <span class="ib"><i data-i="chevL" data-s="16"></i></span>
+          <div class="vp__who"><span class="vp__title">Check your email</span><span class="vp__sub">ana@example.com</span></div>
+        </div>
+        <div class="vp__body vp__body--pad">
+          <span class="lead">This browser is new to Bitwarden. It sent a code to <b>a•••@example.com</b>.</span>
+          <div class="fld is-focus"><span class="v mono" style="letter-spacing:3px">5K2-<span class="caret"></span></span></div>
+          <span class="btn btn--primary">Verify</span>
+          <span class="link center">Nothing came? <b>Send it again</b></span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">A site asks</div>
+  <div class="states">
+
+    <div class="state">
+      <div class="state__cap">Sign in with a passkey <span>the site called WebAuthn</span></div>
+      <div class="vp" id="pk-get">
+        <div class="vp__head">
+          <span class="plate plate--sm" style="background:#1f2328;color:#fff">G</span>
+          <div class="vp__who"><span class="vp__title">Sign in to github.com</span><span class="vp__sub">with a passkey</span></div>
+          <span class="ib"><i data-i="x" data-s="15"></i></span>
+        </div>
+        <div class="vp__body">
+          <div class="it is-on"><span class="plate plate--kind"><i data-i="passkey" data-s="15"></i></span><div class="it__text"><div class="it__name"><span>ana.k</span></div><div class="it__sub">GitHub</div></div><span class="it__hint">Sign in <span class="kbd">↵</span></span></div>
+          <div class="it"><span class="plate plate--kind"><i data-i="passkey" data-s="15"></i></span><div class="it__text"><div class="it__name"><span>ana@acme.dev</span></div><div class="it__sub">GitHub — work</div></div></div>
+        </div>
+        <div class="vp__foot"><span class="grow">The site waits 4 more minutes</span><span>Esc cancels</span></div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">Save a passkey <span>the site called create</span></div>
+      <div class="vp" id="pk-create">
+        <div class="vp__head">
+          <span class="plate plate--sm" style="background:#1f2328;color:#fff">G</span>
+          <div class="vp__who"><span class="vp__title">Save a passkey for github.com</span><span class="vp__sub">for ana.k</span></div>
+          <span class="ib"><i data-i="x" data-s="15"></i></span>
+        </div>
+        <div class="vp__body">
+          <div class="caps">Add it to a login here</div>
+          <div class="it is-on"><span class="plate e-ink">G</span><div class="it__text"><div class="it__name"><span>GitHub</span></div><div class="it__sub">ana.k</div></div><span class="it__hint">Add <span class="kbd">↵</span></span></div>
+          <div class="it"><span class="plate e-ink">G</span><div class="it__text"><div class="it__name"><span>GitHub — work</span><span class="it__marks"><i data-i="passkey" data-s="12"></i></span></div><div class="it__sub">ana@acme.dev · has one</div></div></div>
+        </div>
+        <div class="vp__actions vp__actions--split">
+          <span class="btn btn--ghost">Cancel</span>
+          <span class="btn btn--secondary"><i data-i="plus"></i>Save as a new login</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">No passkey here <span>the site keeps its own way in</span></div>
+      <div class="vp">
+        <div class="vp__head">
+          <span class="plate plate--sm" style="background:#4285f4;color:#fff">G</span>
+          <div class="vp__who"><span class="vp__title">Sign in to accounts.google.com</span><span class="vp__sub">with a passkey</span></div>
+          <span class="ib"><i data-i="x" data-s="15"></i></span>
+        </div>
+        <div class="vp__body">
+          <div class="empty">
+            <i data-i="passkey" data-s="20"></i>
+            <div class="empty__t">No passkey saved for this site</div>
+            <div class="empty__s">Cancel and the site offers its other ways to sign in.</div>
+            <span class="btn btn--sm btn--secondary" style="margin-top:6px">Cancel</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Master password re-prompt</div>
+  <div class="states">
+
+    <div class="state">
+      <div class="state__cap">An item that asks again <span>open, fill or sign in</span></div>
+      <div class="vp" id="reprompt">
+        <div class="vp__head vp__head--back">
+          <span class="ib"><i data-i="chevL" data-s="16"></i></span>
+          <span class="plate plate--sm e-brass">B</span>
+          <div class="vp__who"><span class="vp__title">Brokerage</span><span class="vp__sub">asks for your master password</span></div>
+        </div>
+        <div class="vp__body vp__body--pad">
+          <div class="empty" style="padding:12px 8px 4px">
+            <i data-i="shield" data-s="22"></i>
+            <div class="empty__s">You set this item to ask for your master password before it opens or fills.</div>
+          </div>
+          <div class="fld is-focus"><span class="v ph"><span class="caret" style="margin:0 6px 0 0"></span>Master password</span><span class="ib"><i data-i="eye"></i></span></div>
+          <div style="display:flex;gap:8px"><span class="btn btn--ghost">Cancel</span><span class="btn btn--primary btn--wide" style="flex:1">Continue</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="state" style="max-width:380px; padding-top:28px">
+      <div class="note"><b>Unlock asks for one thing.</b> The remembered account is the head, so the form is just
+        the master password. Email shows only for another account.</div>
+      <div class="note" style="margin-top:18px"><b>Codes in boxes.</b> Six boxes for an authenticator code
+        (paste fills them all); one field for the emailed code, which has letters.</div>
+      <div class="note" style="margin-top:18px"><b>The site is the head.</b> A passkey request names the site with
+        its mark and the action; rows are the accounts. <span class="kbd">↵</span> signs in, <span class="kbd">Esc</span>
+        cancels and hands the page its error, so it can offer another way.</div>
+      <div class="note" style="margin-top:18px"><b>Save adds first.</b> When this site already has a login without a
+        passkey, adding to it is the chosen row; a new login is the secondary choice.</div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>

@@ -45,9 +45,10 @@ release tools.
    built_at}`. It is metadata, not content: never part of the hash (or
    every commit would move every package), never a reason to move or
    restart anything. Oath carries it on the `pkg` object (`source`,
-   shown by `oath get`); until a machine's `oath` has the field, the tool
-   keeps it in `~/.local/state/oath-dev/pins.json` (per machine, keyed by
-   `pkg:<name>` with the hash it describes).
+   shown by `oath get`); `cargo make oath apply` sets it with each pin
+   (`oath set --from-json`, Release A's `oath`). Pins made before are in
+   `~/.local/state/oath-dev/pins.json` (per machine, keyed by
+   `pkg:<name>` with the hash it describes), read and no longer written.
 2. **An overlay keeps what is live.** Before pinning, the tool reads the
    live pin's source. Same repo and its commit not in `HEAD`'s history →
    refuse, naming it (`pkg:sola runs bdbc8d5a from zone-layout; this tree
@@ -69,7 +70,9 @@ release tools.
    app per package; protocols between packages stay additive (a new topic
    or method, never a changed one). An overlay pins only the packages
    whose tree changed (reproducible builds: an untouched app builds to the
-   same hash and does not move).
+   same hash and does not move — so a tree's `components.json` says the
+   crate's version, never `+g<rev>`, which moved every package on every
+   commit until 92815a65).
 6. **Overlays are visible, and a release replaces them.** `oath get`,
    `oath diff` and `oath update` name packages whose pin is not the
    release's ("`pkg:sola` is `sessions-anywhere@0d99e340`; update replaces
@@ -145,10 +148,27 @@ from master or `next`, with the guard; a desk restart is asked for.
    publish only from a pushed master. Skills (`oath-packages`, `checkpoint`,
    `cleanup` — on novus, canto and buccina), Sola's `AGENTS.md`,
    `sync-project`, `sola-progress-docs`, memories — done.
-3. The split in `sola-make` — done (`pkg:sola` core + 10 app packages,
-   staged); an overlay makes the new packages (`oath new`). Not yet applied
-   anywhere; the manual's package column changes when it ships.
-4. Oath: `pkg.source`, overlays shown, the update changes, its publish
-   guard → Release A. Then Sola publishes the split from master, Oath pins
-   it and enables `svc:sola-sessions` → Release B (`oath update --confirm
-   --reboot`). Then `sola-make` sets `source=` with each pin.
+3. The split in `sola-make` — done (`pkg:sola` core + 10 app packages);
+   an overlay makes the new packages (`oath new`). Overlaid on canto from
+   master@92815a65 (2026-10-31, generation 431): the desk restarted once,
+   every `/bin` name points at its own package, Paint ran from
+   `pkg:sola-paint`. Not overlaid on novus: Release B moves it, one desk
+   restart instead of two. The manual's package column changes when it
+   ships.
+4. Oath Release A — published (desk output 940c5d970175, 2026-10-31):
+   `pkg.source`, overlays shown, the update changes, its publish guard.
+   buccina, novus (generation 23) and canto (generation 430) run it; the
+   update kept each machine's Sola pins. `svc:sola-sessions` is in A's
+   profile, so a machine that took A without it treats it as removed by
+   its owner: it takes one `oath new` per machine (Release B will not
+   make it); the `pkg:sola-<app>` packages Release B does make.
+5. Sola published the split from master@92815a65 (2026-10-31, from
+   novus; `pkg:sola` 7a03048c5a39 and 12 more, entries with their
+   source handed to Oath) → Oath pinned it (c8bb350) → **Release B**
+   (desk output dd0f847aa9c9), published 2026-10-31: canto updated and
+   rebooted into it, novus updated. `svc:sola-sessions` made by hand on
+   each. Found on novus: the publish's `oath build` had left the ten new
+   names `present: false`, which the update would not flip — `oath rm`
+   of the never-applied objects let it make them new.
+6. `sola-make` sets `source` with each pin (`oath set --from-json`) —
+   done 2026-10-31, once Release A's `oath` was on every machine.

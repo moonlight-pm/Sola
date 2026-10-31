@@ -3,13 +3,17 @@ use sola_core::KeyCode;
 
 use crate::APP_ID;
 
-/// Menu action id prefix for Project → Open: `open-project:<folder>`.
-pub const OPEN_PREFIX: &str = "open-project:";
-
-/// The app menu. `folders` lists `(path, name)` of each folder of
-/// `~/Projects` not open, under Project → Open.
-pub fn app_menu(folders: &[(String, String)]) -> AppMenuPayload {
-    let mut project = vec![
+/// The app menu. Open Project… and New Project… open a navigator
+/// ([`crate::navigator`]).
+pub fn app_menu() -> AppMenuPayload {
+    let project = vec![
+        MenuItem::Action {
+            id: "open-project".into(),
+            label: "Open Project…".into(),
+            shortcut: Some(KeyCode::O.meta()),
+            disabled: false,
+            checked: false,
+        },
         MenuItem::Action {
             id: "add-project".into(),
             label: "New Project…".into(),
@@ -36,18 +40,6 @@ pub fn app_menu(folders: &[(String, String)]) -> AppMenuPayload {
             checked: false,
         },
     ];
-    if !folders.is_empty() {
-        project.push(MenuItem::Divider);
-        for (path, name) in folders {
-            project.push(MenuItem::Action {
-                id: format!("{OPEN_PREFIX}{path}"),
-                label: format!("Open {name}"),
-                shortcut: None,
-                disabled: false,
-                checked: false,
-            });
-        }
-    }
     AppMenuPayload {
         app_id: APP_ID.into(),
         menus: vec![

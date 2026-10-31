@@ -80,12 +80,22 @@ delivering while the call host restarts.
 
 ### Packages
 
-Sola ships on Oath as three packages. Their programs appear in `/bin`, and
-Sola's icons and cursors are in `/oath/store/pkg/sola/share`.
+Sola ships on Oath as the desk's core and a package per application.
+Their programs appear in `/bin`, and Sola's icons and cursors are in
+`/oath/store/pkg/sola/share`. Changing an application moves only its own
+package, so only that application restarts; changing the core restarts
+the desk.
 
 | Package | Programs |
 |---|---|
-| `pkg:sola` | `sola-bus`, `sola-call`, `sola-river`, `sola-shell`, `sola-session`, `sola-lock`, `sola-kvm`, `sola-botsd`, `solactl`, and Terminal, Projects, Paint, Preview, Scope, Monitor, Calendar, Mail, Settings, Bots, and Oath |
+| `pkg:sola` | `sola-bus`, `sola-call`, `sola-river`, `sola-shell`, `sola-session`, `sola-lock`, `sola-kvm`, `solactl`, and Oath (`sola-oath`) |
+| `pkg:sola-terminal` | Terminal |
+| `pkg:sola-projects` | Projects |
+| `pkg:sola-paint`, `pkg:sola-preview`, `pkg:sola-scope` | Paint, Preview, Scope |
+| `pkg:sola-monitor` | Monitor |
+| `pkg:sola-calendar`, `pkg:sola-mail` | Calendar, Mail |
+| `pkg:sola-settings` | Settings |
+| `pkg:sola-bots` | Bots (`sola-bots`, `sola-botsd`) |
 | `pkg:sola-browser` | Browser, which also hosts the web apps |
 | `pkg:sola-design` | Design |
 

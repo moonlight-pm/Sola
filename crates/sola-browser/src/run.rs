@@ -294,9 +294,6 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
         "browser chrome (one window; CEF in helpers)"
     );
 
-    #[cfg(feature = "bitwarden")]
-    crate::vault::passkey_bridge::install();
-
     // Every profile a workspace runs opens its saved pages (Next slice 5).
     let (boot_tabs, boot_active, boot_closed) = crate::app::boot_pages(argv, DEFAULT_URL);
     tracing::info!(

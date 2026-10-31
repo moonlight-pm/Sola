@@ -30,7 +30,15 @@ not a trip to bitwarden.com.
 - Chrome phase `ItemEdit` holds an `ItemDraft` (plain strings).
 - `VaultCmd::UpdateItem` → `VaultService::update_item`: load `CipherView`, `apply_draft`, encrypt, `PUT /ciphers/{id}`, sync.
 - Apply is in-place so passkeys, attachments, collections, and linked fields survive.
-- URI match type is kept per existing website; new URIs default to domain match.
+- Apply writes only what changed since **Edit** opened (the draft keeps a
+  snapshot). A field the form never showed — an authenticator key we cannot
+  make codes from, a custom field with no value — and a field changed
+  elsewhere since are left as the freshly synced cipher has them
+  (2026-10-31; before, any Save wrote every field from the draft).
+- URI match type is kept per existing website (by its place in the cipher's
+  list, not the form's); new URIs default to domain match.
+- Notes are a multi-line editor. The Edit menu (⌘V / ⌘C / ⌘X / ⌘A) acts on
+  the focused field at its caret. Closing the panel keeps an unsaved edit.
 
 ## Gaps
 

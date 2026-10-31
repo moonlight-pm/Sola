@@ -5,8 +5,8 @@ live registry of methods. A process that offers methods (an **owner**)
 connects and advertises them; a **caller** sends a request to one owner and
 gets exactly one reply or an error; an **observer** watches the registry and
 every call. `solactl` and its MCP server are callers, as is the shell (for
-screenshots, and for the launcher's Projects chooser). Monitor is an
-observer.
+screenshots, and for the launcher's Projects row: `window.navigate`).
+Monitor is an observer.
 
 The command reference for `solactl` is [solactl](solactl.md). This chapter
 explains the plane it talks to.
@@ -222,7 +222,7 @@ right rail is the live catalog.
 | `compositor` | `sola-river` | Whole session | `screenshot`, `sample`, `cursor`, `windows`, `input.click`, `input.press`, `input.release`, `input.move`, `input.scroll`, `input.key` |
 | `session` | `sola-session` | Whole session | `launch`, `close` |
 | `bots` | `sola-botsd` | While `sola-botsd` runs | `list`, `poll`, `new`, `setup`, `send`, `transcript`, `rm`, `cancel` |
-| `projects` | `sola-projects` | While **Projects** runs; it quits when its last project window closes | `ps`, `project.list`, `project.open`, `project.close`, `project.startup`, `tab.list`, `tab.spawn`, `tab.rm`, `tab.select`, `tab.set`, `tab.exec`, `pane.list`, `pane.send`, `pane.read`, `pane.wait`, `whoami` |
+| `projects` | `sola-projects` | While **Projects** runs; it quits when its last project window closes | `ps`, `project.list`, `window.navigate`, `project.open`, `project.close`, `tab.list`, `tab.spawn`, `tab.rm`, `tab.select`, `tab.set`, `tab.exec`, `pane.list`, `pane.send`, `pane.read`, `pane.wait`, `whoami` |
 | `browser` | `sola-browser` | While the **Browser** runs | `tabs`, `tab.open`, `tab.close`, `tab.focus`, `goto`, `back`, `forward`, `reload`, `stop`, `find.page`, `snapshot`, `find`, `click`, `hover`, `key`, `scroll`, `type`, `fill`, `get`, `links`, `select`, `wait`, `screenshot` |
 | `design` | `sola-design` | While **Design** runs | `project.list`, `project.add`, `project.remove`, `open`, `canvas.new`, `canvas.close`, `status`, `share`, `share.rotate`, `selection`, `view`, `wait`, `reload`, `screenshot`, `pdf`, `inspect` |
 

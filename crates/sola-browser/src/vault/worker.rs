@@ -3,12 +3,13 @@
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use zeroize::Zeroize;
 
 use super::client::{
-    CardSummary, LoginOutcome, MatchSummary, TotpSummary, TwoFactorKind, VaultError, VaultService,
+    LoginOutcome, MatchSummary, TwoFactorKind, VaultError, VaultService,
     VaultStatus,
 };
 use super::edit::ItemDraft;
@@ -27,7 +28,6 @@ pub enum VaultCmd {
         password: String,
         token: String,
         kind: TwoFactorKind,
-        remember: bool,
     },
     /// Re-send new-device / email 2FA code.
     ResendEmailCode {
@@ -42,16 +42,10 @@ pub enum VaultCmd {
     Fill {
         id: String,
     },
-    /// List logins that have a TOTP secret (page URL ranks matches first).
-    ListTotp {
-        url: String,
-    },
     /// Decrypt + generate the current authenticator code.
     FillTotp {
         id: String,
     },
-    /// List every card cipher (no URI filter).
-    ListCards,
     /// Decrypt a card for page fill.
     FillCard {
         id: String,
@@ -83,6 +77,8 @@ pub enum VaultCmd {
     PasskeyList {
         req_id: u64,
         rp_id: String,
+        /// The request's options (allowCredentials narrows the list).
+        public_key_json: String,
     },
     /// WebAuthn get() — sign with a vault passkey the user selected.
     PasskeyAssert {
@@ -102,7 +98,10 @@ pub enum VaultCmd {
         /// Existing login to attach to. `None` creates a new personal login.
         cipher_id: Option<String>,
     },
-    Status,
+    /// Master-password re-prompt check (nothing leaves the machine).
+    VerifyMasterPassword {
+        password: String,
+    },
     /// Wipe tokens, keys, and the on-disk session.
     Logout,
     Quit,
@@ -120,6 +119,8 @@ pub enum VaultEvent {
         email: String,
     },
     LoggedOut,
+    /// Re-prompt answer: `Err` when it could not be checked.
+    MasterPasswordChecked(Result<bool, String>),
     /// Email OTP (new device) or authenticator TOTP required.
     LoginNeedsTwoFactor {
         email: String,
@@ -143,9 +144,11 @@ pub enum VaultEvent {
         message: String,
     },
     Matches(Vec<MatchSummary>),
-    Cards(Vec<CardSummary>),
-    Totp(Vec<TotpSummary>),
-    Items(Vec<ItemSummary>),
+    Items {
+        list: Vec<ItemSummary>,
+        /// Ciphers that failed to decrypt (an org key that did not load).
+        unreadable: usize,
+    },
     ItemReady(ItemRecord),
     /// Cipher saved after an edit.
     ItemUpdated(ItemRecord),
@@ -156,6 +159,8 @@ pub enum VaultEvent {
     FillReady {
         username: Option<String>,
         password: Option<String>,
+        /// The login's websites: iframes they match may be filled too.
+        uris: Vec<crate::engine::SiteUri>,
     },
     CardFillReady {
         cardholder_name: Option<String>,
@@ -190,13 +195,13 @@ pub enum VaultEvent {
 
 /// Handle held by `App` for the vault worker.
 pub struct VaultHandle {
-    cmd_tx: Sender<VaultCmd>,
+    cmd_tx: UnboundedSender<VaultCmd>,
     event_rx: Arc<Mutex<Receiver<VaultEvent>>>,
 }
 
 impl VaultHandle {
     pub fn spawn() -> Self {
-        let (cmd_tx, cmd_rx) = mpsc::channel::<VaultCmd>();
+        let (cmd_tx, cmd_rx) = unbounded_channel::<VaultCmd>();
         let (event_tx, event_rx) = mpsc::channel::<VaultEvent>();
 
         thread::Builder::new()
@@ -312,7 +317,7 @@ async fn handle_login_outcome(
     }
 }
 
-async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
+async fn worker_loop(mut cmd_rx: UnboundedReceiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
     let mut svc = VaultService::new();
     match svc.try_restore().await {
         Ok(true) => {
@@ -338,359 +343,410 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
             emit(&event_tx, VaultEvent::Status(svc.status()));
         }
     }
+    end_refused_session(&mut svc, &event_tx);
 
-    loop {
-        let cmd = match cmd_rx.try_recv() {
-            Ok(c) => c,
-            Err(TryRecvError::Empty) => {
-                tokio::time::sleep(Duration::from_millis(16)).await;
-                continue;
-            }
-            Err(TryRecvError::Disconnected) => break,
-        };
+    // Sleeps until chrome sends something (no polling).
+    while let Some(cmd) = cmd_rx.recv().await {
+        let quit = matches!(cmd, VaultCmd::Quit);
+        handle_cmd(&mut svc, &event_tx, cmd).await;
+        if quit {
+            break;
+        }
+        end_refused_session(&mut svc, &event_tx);
+    }
+}
 
-        match cmd {
-            VaultCmd::Quit => break,
-            VaultCmd::Logout => {
-                svc.logout();
-                emit(&event_tx, VaultEvent::LoggedOut);
-                emit(&event_tx, VaultEvent::Status(svc.status()));
+/// Bitwarden refused the refresh token: log out and say so, instead of
+/// showing an unlocked vault whose every call fails.
+fn end_refused_session(svc: &mut VaultService, event_tx: &Sender<VaultEvent>) {
+    if !svc.take_session_ended() {
+        return;
+    }
+    svc.logout();
+    emit(event_tx, VaultEvent::LoggedOut);
+    emit(event_tx, VaultEvent::Status(svc.status()));
+    emit(
+        event_tx,
+        VaultEvent::Error {
+            message: VaultError::SessionEnded.to_string(),
+        },
+    );
+}
+
+async fn handle_cmd(svc: &mut VaultService, event_tx: &Sender<VaultEvent>, cmd: VaultCmd) {
+    match cmd {
+        VaultCmd::Quit => {}
+        VaultCmd::VerifyMasterPassword { mut password } => {
+            let res = svc
+                .verify_master_password(&password)
+                .map_err(|e| e.to_string());
+            password.zeroize();
+            emit(event_tx, VaultEvent::MasterPasswordChecked(res));
+        }
+        VaultCmd::Logout => {
+            svc.logout();
+            emit(event_tx, VaultEvent::LoggedOut);
+            emit(event_tx, VaultEvent::Status(svc.status()));
+        }
+        VaultCmd::Login {
+            email,
+            mut password,
+        } => match svc.login(email.clone(), password.clone()).await {
+            Ok(outcome) => {
+                password.zeroize();
+                handle_login_outcome(svc, event_tx, email, outcome).await;
             }
-            VaultCmd::Status => {
-                emit(&event_tx, VaultEvent::Status(svc.status()));
+            Err(e) => {
+                password.zeroize();
+                let message = e.to_string();
+                tracing::warn!(%message, "vault: login failed");
+                emit(event_tx, VaultEvent::LoginFailed { message });
+                emit(event_tx, VaultEvent::Status(svc.status()));
             }
-            VaultCmd::Login {
-                email,
-                mut password,
-            } => match svc.login(email.clone(), password.clone()).await {
+        },
+        VaultCmd::LoginTwoFactor {
+            email,
+            mut password,
+            token,
+            kind,
+        } => {
+            match svc
+                .login_with_two_factor(email.clone(), password.clone(), token, kind)
+                .await
+            {
                 Ok(outcome) => {
                     password.zeroize();
-                    handle_login_outcome(&mut svc, &event_tx, email, outcome).await;
+                    handle_login_outcome(svc, event_tx, email, outcome).await;
                 }
                 Err(e) => {
                     password.zeroize();
-                    let message = match e {
-                        VaultError::LoginFailed => "Login failed.".into(),
-                        other => other.to_string(),
-                    };
-                    tracing::warn!(%message, "vault: login failed");
-                    emit(&event_tx, VaultEvent::LoginFailed { message });
-                    emit(&event_tx, VaultEvent::Status(svc.status()));
-                }
-            },
-            VaultCmd::LoginTwoFactor {
-                email,
-                mut password,
-                token,
-                kind,
-                remember,
-            } => {
-                match svc
-                    .login_with_two_factor(email.clone(), password.clone(), token, kind, remember)
-                    .await
-                {
-                    Ok(outcome) => {
-                        password.zeroize();
-                        handle_login_outcome(&mut svc, &event_tx, email, outcome).await;
-                    }
-                    Err(e) => {
-                        password.zeroize();
-                        tracing::warn!(error = %e, "vault: 2FA login failed");
-                        emit(
-                            &event_tx,
-                            VaultEvent::LoginFailed {
-                                message: e.to_string(),
-                            },
-                        );
-                        emit(&event_tx, VaultEvent::Status(svc.status()));
-                    }
+                    tracing::warn!(error = %e, "vault: 2FA login failed");
+                    emit(
+                        event_tx,
+                        VaultEvent::LoginFailed {
+                            message: e.to_string(),
+                        },
+                    );
+                    emit(event_tx, VaultEvent::Status(svc.status()));
                 }
             }
-            VaultCmd::ResendEmailCode {
-                email,
-                mut password,
-                kind,
-            } => match svc.resend_otp(email, password.clone(), kind).await {
-                Ok(()) => {
-                    password.zeroize();
-                    tracing::info!(?kind, "vault: OTP resend ok");
-                    emit(&event_tx, VaultEvent::EmailCodeSent);
-                }
-                Err(e) => {
-                    password.zeroize();
-                    tracing::warn!(?kind, error = %e, "vault: OTP resend failed");
-                    emit(
-                        &event_tx,
-                        VaultEvent::EmailCodeFailed {
-                            message: e.to_string(),
-                        },
-                    );
-                }
-            },
-            VaultCmd::Sync => match svc.sync().await {
-                Ok(full) => {
-                    emit(&event_tx, VaultEvent::SyncOk { full });
-                    emit(&event_tx, VaultEvent::Status(svc.status()));
-                }
-                Err(e) => {
-                    emit(
-                        &event_tx,
-                        VaultEvent::SyncFailed {
-                            message: e.to_string(),
-                        },
-                    );
-                }
-            },
-            VaultCmd::Matches { url } => match svc.matches_for_url(&url).await {
-                Ok(m) => {
-                    emit(&event_tx, VaultEvent::Matches(m));
-                }
-                Err(e) => {
-                    emit(
-                        &event_tx,
-                        VaultEvent::Error {
-                            message: e.to_string(),
-                        },
-                    );
-                }
-            },
-            VaultCmd::CreateLogin {
-                name,
-                username,
-                mut password,
-                uri,
-            } => {
-                let user = if username.trim().is_empty() {
-                    None
-                } else {
-                    Some(username)
-                };
-                let pass = if password.trim().is_empty() {
-                    None
-                } else {
-                    Some(password.clone())
-                };
-                match svc
-                    .create_login(name, user, pass, Some(uri).filter(|s| !s.trim().is_empty()))
-                    .await
-                {
-                    Ok((id, mut material)) => {
-                        if let Some(ref id) = id {
-                            crate::vault::VaultPrefs::touch_cipher(id);
-                        }
-                        if let Some(ref u) = material.username {
-                            crate::vault::VaultPrefs::save_last_username(u);
-                        }
-                        let username = material.username.take();
-                        let password = material.password.take();
-                        tracing::info!(id = id.as_deref(), "vault: created login");
-                        emit(
-                            &event_tx,
-                            VaultEvent::Created {
-                                id,
-                                username,
-                                password,
-                            },
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "vault: create login failed");
-                        emit(
-                            &event_tx,
-                            VaultEvent::Error {
-                                message: e.to_string(),
-                            },
-                        );
-                    }
-                }
+        }
+        VaultCmd::ResendEmailCode {
+            email,
+            mut password,
+            kind,
+        } => match svc.resend_otp(email, password.clone(), kind).await {
+            Ok(()) => {
                 password.zeroize();
+                tracing::info!(?kind, "vault: OTP resend ok");
+                emit(event_tx, VaultEvent::EmailCodeSent);
             }
-            VaultCmd::ListTotp { url } => match svc.list_totp(&url).await {
-                Ok(m) => {
-                    emit(&event_tx, VaultEvent::Totp(m));
-                }
-                Err(e) => {
-                    emit(
-                        &event_tx,
-                        VaultEvent::Error {
-                            message: e.to_string(),
-                        },
-                    );
-                }
-            },
-            VaultCmd::FillTotp { id } => match svc.fill_totp(&id).await {
-                Ok(code) => {
-                    crate::vault::VaultPrefs::touch_cipher(&id);
-                    emit(&event_tx, VaultEvent::TotpFillReady { code });
-                }
-                Err(e) => {
-                    emit(
-                        &event_tx,
-                        VaultEvent::Error {
-                            message: e.to_string(),
-                        },
-                    );
-                }
-            },
-            VaultCmd::ListCards => match svc.list_cards().await {
-                Ok(m) => {
-                    emit(&event_tx, VaultEvent::Cards(m));
-                }
-                Err(e) => {
-                    emit(
-                        &event_tx,
-                        VaultEvent::Error {
-                            message: e.to_string(),
-                        },
-                    );
-                }
-            },
-            VaultCmd::FillCard { id } => match svc.fill_card(&id).await {
-                Ok(mut material) => {
-                    crate::vault::VaultPrefs::touch_cipher(&id);
-                    let cardholder_name = material.cardholder_name.take();
-                    let number = material.number.take();
-                    let exp_month = material.exp_month.take();
-                    let exp_year = material.exp_year.take();
-                    let code = material.code.take();
-                    let brand = material.brand.take();
-                    emit(
-                        &event_tx,
-                        VaultEvent::CardFillReady {
-                            cardholder_name,
-                            number,
-                            exp_month,
-                            exp_year,
-                            code,
-                            brand,
-                        },
-                    );
-                }
-                Err(e) => {
-                    emit(
-                        &event_tx,
-                        VaultEvent::Error {
-                            message: e.to_string(),
-                        },
-                    );
-                }
-            },
-            VaultCmd::ListItems { url } => match svc.list_items(&url).await {
-                Ok(m) => emit(&event_tx, VaultEvent::Items(m)),
-                Err(e) => emit(
-                    &event_tx,
-                    VaultEvent::Error {
+            Err(e) => {
+                password.zeroize();
+                tracing::warn!(?kind, error = %e, "vault: OTP resend failed");
+                emit(
+                    event_tx,
+                    VaultEvent::EmailCodeFailed {
                         message: e.to_string(),
                     },
-                ),
-            },
-            VaultCmd::GetItem { id } => match svc.get_item(&id).await {
-                Ok(item) => emit(&event_tx, VaultEvent::ItemReady(item)),
-                Err(e) => emit(
-                    &event_tx,
-                    VaultEvent::Error {
-                        message: e.to_string(),
-                    },
-                ),
-            },
-            VaultCmd::UpdateItem { draft } => {
-                let id = draft.id.clone();
-                match svc.update_item(draft).await {
-                    Ok(item) => {
-                        crate::vault::VaultPrefs::touch_cipher(&id);
-                        tracing::info!(%id, "vault: item updated");
-                        emit(&event_tx, VaultEvent::ItemUpdated(item));
-                    }
-                    Err(e) => {
-                        tracing::warn!(%id, error = %e, "vault: update item failed");
-                        emit(
-                            &event_tx,
-                            VaultEvent::Error {
-                                message: e.to_string(),
-                            },
-                        );
-                    }
-                }
+                );
             }
-            VaultCmd::FillIdentity { id } => match svc.fill_identity(&id).await {
-                Ok(material) => {
-                    crate::vault::VaultPrefs::touch_cipher(&id);
-                    emit(&event_tx, VaultEvent::IdentityFillReady(material));
-                }
-                Err(e) => emit(
-                    &event_tx,
+        },
+        VaultCmd::Sync => match svc.sync().await {
+            Ok(full) => {
+                emit(event_tx, VaultEvent::SyncOk { full });
+                emit(event_tx, VaultEvent::Status(svc.status()));
+            }
+            Err(e) => {
+                emit(
+                    event_tx,
+                    VaultEvent::SyncFailed {
+                        message: e.to_string(),
+                    },
+                );
+            }
+        },
+        VaultCmd::Matches { url } => match svc.matches_for_url(&url).await {
+            Ok(m) => {
+                emit(event_tx, VaultEvent::Matches(m));
+            }
+            Err(e) => {
+                emit(
+                    event_tx,
                     VaultEvent::Error {
                         message: e.to_string(),
                     },
-                ),
-            },
-            VaultCmd::Fill { id } => match svc.fill_fields(&id).await {
-                Ok(mut material) => {
-                    crate::vault::VaultPrefs::touch_cipher(&id);
+                );
+            }
+        },
+        VaultCmd::CreateLogin {
+            name,
+            username,
+            mut password,
+            uri,
+        } => {
+            let user = if username.trim().is_empty() {
+                None
+            } else {
+                Some(username)
+            };
+            let pass = if password.trim().is_empty() {
+                None
+            } else {
+                Some(password.clone())
+            };
+            match svc
+                .create_login(name, user, pass, Some(uri).filter(|s| !s.trim().is_empty()))
+                .await
+            {
+                Ok((id, mut material)) => {
+                    if let Some(ref id) = id {
+                        crate::vault::VaultPrefs::touch_cipher(id);
+                    }
                     if let Some(ref u) = material.username {
                         crate::vault::VaultPrefs::save_last_username(u);
                     }
                     let username = material.username.take();
                     let password = material.password.take();
-                    emit(&event_tx, VaultEvent::FillReady { username, password });
+                    tracing::info!(id = id.as_deref(), "vault: created login");
+                    emit(
+                        event_tx,
+                        VaultEvent::Created {
+                            id,
+                            username,
+                            password,
+                        },
+                    );
                 }
                 Err(e) => {
+                    tracing::warn!(error = %e, "vault: create login failed");
                     emit(
-                        &event_tx,
+                        event_tx,
                         VaultEvent::Error {
                             message: e.to_string(),
                         },
                     );
                 }
-            },
-            VaultCmd::PasskeyList { req_id, rp_id } => {
-                match super::passkey::list_candidates(&svc, &rp_id).await {
-                    Ok(candidates) => {
-                        tracing::info!(
-                            req_id,
-                            %rp_id,
-                            n = candidates.len(),
-                            "vault: passkey candidates"
-                        );
-                        emit(
-                            &event_tx,
-                            VaultEvent::PasskeyCandidates { req_id, candidates },
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(req_id, error = %e, "vault: passkey list failed");
-                        emit(
-                            &event_tx,
-                            VaultEvent::PasskeyReady {
-                                req_id,
-                                ok: false,
-                                payload: e.to_string(),
-                            },
-                        );
-                    }
+            }
+            password.zeroize();
+        }
+        VaultCmd::FillTotp { id } => match svc.fill_totp(&id).await {
+            Ok(code) => {
+                crate::vault::VaultPrefs::touch_cipher(&id);
+                emit(event_tx, VaultEvent::TotpFillReady { code });
+            }
+            Err(e) => {
+                emit(
+                    event_tx,
+                    VaultEvent::Error {
+                        message: e.to_string(),
+                    },
+                );
+            }
+        },
+        VaultCmd::FillCard { id } => match svc.fill_card(&id).await {
+            Ok(mut material) => {
+                crate::vault::VaultPrefs::touch_cipher(&id);
+                let cardholder_name = material.cardholder_name.take();
+                let number = material.number.take();
+                let exp_month = material.exp_month.take();
+                let exp_year = material.exp_year.take();
+                let code = material.code.take();
+                let brand = material.brand.take();
+                emit(
+                    event_tx,
+                    VaultEvent::CardFillReady {
+                        cardholder_name,
+                        number,
+                        exp_month,
+                        exp_year,
+                        code,
+                        brand,
+                    },
+                );
+            }
+            Err(e) => {
+                emit(
+                    event_tx,
+                    VaultEvent::Error {
+                        message: e.to_string(),
+                    },
+                );
+            }
+        },
+        VaultCmd::ListItems { url } => match svc.list_items(&url).await {
+            Ok((list, unreadable)) => emit(event_tx, VaultEvent::Items { list, unreadable }),
+            Err(e) => emit(
+                event_tx,
+                VaultEvent::Error {
+                    message: e.to_string(),
+                },
+            ),
+        },
+        VaultCmd::GetItem { id } => match svc.get_item(&id).await {
+            Ok(item) => emit(event_tx, VaultEvent::ItemReady(item)),
+            Err(e) => emit(
+                event_tx,
+                VaultEvent::Error {
+                    message: e.to_string(),
+                },
+            ),
+        },
+        VaultCmd::UpdateItem { draft } => {
+            let id = draft.id.clone();
+            match svc.update_item(draft).await {
+                Ok(item) => {
+                    crate::vault::VaultPrefs::touch_cipher(&id);
+                    tracing::info!(%id, "vault: item updated");
+                    emit(event_tx, VaultEvent::ItemUpdated(item));
+                }
+                Err(e) => {
+                    tracing::warn!(%id, error = %e, "vault: update item failed");
+                    emit(
+                        event_tx,
+                        VaultEvent::Error {
+                            message: e.to_string(),
+                        },
+                    );
                 }
             }
-            VaultCmd::PasskeyAssert {
-                req_id,
-                origin,
-                public_key_json,
-                cipher_id,
-            } => {
-                match super::passkey::authenticate(
-                    &svc,
-                    &origin,
-                    &public_key_json,
-                    Some(cipher_id.clone()),
-                )
+        }
+        VaultCmd::FillIdentity { id } => match svc.fill_identity(&id).await {
+            Ok(material) => {
+                crate::vault::VaultPrefs::touch_cipher(&id);
+                emit(event_tx, VaultEvent::IdentityFillReady(material));
+            }
+            Err(e) => emit(
+                event_tx,
+                VaultEvent::Error {
+                    message: e.to_string(),
+                },
+            ),
+        },
+        VaultCmd::Fill { id } => match svc.fill_fields(&id).await {
+            Ok(mut material) => {
+                crate::vault::VaultPrefs::touch_cipher(&id);
+                if let Some(ref u) = material.username {
+                    crate::vault::VaultPrefs::save_last_username(u);
+                }
+                let username = material.username.take();
+                let password = material.password.take();
+                let uris = std::mem::take(&mut material.uris);
+                emit(
+                    event_tx,
+                    VaultEvent::FillReady {
+                        username,
+                        password,
+                        uris,
+                    },
+                );
+            }
+            Err(e) => {
+                emit(
+                    event_tx,
+                    VaultEvent::Error {
+                        message: e.to_string(),
+                    },
+                );
+            }
+        },
+        VaultCmd::PasskeyList {
+            req_id,
+            rp_id,
+            public_key_json,
+        } => {
+            match super::passkey::list_candidates(svc, &rp_id, &public_key_json).await {
+                Ok(candidates) => {
+                    tracing::info!(
+                        req_id,
+                        %rp_id,
+                        n = candidates.len(),
+                        "vault: passkey candidates"
+                    );
+                    emit(
+                        event_tx,
+                        VaultEvent::PasskeyCandidates { req_id, candidates },
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(req_id, error = %e, "vault: passkey list failed");
+                    emit(
+                        event_tx,
+                        VaultEvent::PasskeyReady {
+                            req_id,
+                            ok: false,
+                            payload: e.to_string(),
+                        },
+                    );
+                }
+            }
+        }
+        VaultCmd::PasskeyAssert {
+            req_id,
+            origin,
+            public_key_json,
+            cipher_id,
+        } => {
+            match super::passkey::authenticate(
+                &svc,
+                &origin,
+                &public_key_json,
+                Some(cipher_id.clone()),
+            )
+            .await
+            {
+                Ok(assertion) => {
+                    crate::vault::VaultPrefs::touch_cipher(&cipher_id);
+                    let payload = serde_json::to_string(&assertion)
+                        .unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
+                    tracing::info!(req_id, %origin, %cipher_id, "vault: passkey assertion ok");
+                    emit(
+                        event_tx,
+                        VaultEvent::PasskeyReady {
+                            req_id,
+                            ok: true,
+                            payload,
+                        },
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(req_id, error = %e, "vault: passkey assertion failed");
+                    emit(
+                        event_tx,
+                        VaultEvent::PasskeyReady {
+                            req_id,
+                            ok: false,
+                            payload: e.to_string(),
+                        },
+                    );
+                }
+            }
+        }
+        VaultCmd::PasskeyRegister {
+            req_id,
+            origin,
+            public_key_json,
+            cipher_id,
+        } => {
+            match super::passkey::register(svc, &origin, &public_key_json, cipher_id.clone())
                 .await
-                {
-                    Ok(assertion) => {
-                        crate::vault::VaultPrefs::touch_cipher(&cipher_id);
-                        let payload = serde_json::to_string(&assertion)
+            {
+                Ok((attestation, ctx)) => match svc.persist_encryption_context(ctx).await {
+                    Ok(id) => {
+                        if let Some(ref id) = id {
+                            crate::vault::VaultPrefs::touch_cipher(id);
+                        }
+                        let payload = serde_json::to_string(&attestation)
                             .unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
-                        tracing::info!(req_id, %origin, %cipher_id, "vault: passkey assertion ok");
+                        tracing::info!(
+                            req_id,
+                            %origin,
+                            cipher_id = id.as_deref().unwrap_or("-"),
+                            attached = cipher_id.is_some(),
+                            "vault: passkey register ok"
+                        );
                         emit(
-                            &event_tx,
+                            event_tx,
                             VaultEvent::PasskeyReady {
                                 req_id,
                                 ok: true,
@@ -699,79 +755,33 @@ async fn worker_loop(cmd_rx: Receiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
                         );
                     }
                     Err(e) => {
-                        tracing::warn!(req_id, error = %e, "vault: passkey assertion failed");
+                        tracing::warn!(
+                            req_id,
+                            error = %e,
+                            "vault: passkey register persist failed"
+                        );
                         emit(
-                            &event_tx,
+                            event_tx,
                             VaultEvent::PasskeyReady {
                                 req_id,
                                 ok: false,
-                                payload: e.to_string(),
+                                payload: format!(
+                                    "Could not save the passkey to Bitwarden: {e}"
+                                ),
                             },
                         );
                     }
-                }
-            }
-            VaultCmd::PasskeyRegister {
-                req_id,
-                origin,
-                public_key_json,
-                cipher_id,
-            } => {
-                match super::passkey::register(&svc, &origin, &public_key_json, cipher_id.clone())
-                    .await
-                {
-                    Ok((attestation, ctx)) => match svc.persist_encryption_context(ctx).await {
-                        Ok(id) => {
-                            if let Some(ref id) = id {
-                                crate::vault::VaultPrefs::touch_cipher(id);
-                            }
-                            let payload = serde_json::to_string(&attestation)
-                                .unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
-                            tracing::info!(
-                                req_id,
-                                %origin,
-                                cipher_id = id.as_deref().unwrap_or("-"),
-                                attached = cipher_id.is_some(),
-                                "vault: passkey register ok"
-                            );
-                            emit(
-                                &event_tx,
-                                VaultEvent::PasskeyReady {
-                                    req_id,
-                                    ok: true,
-                                    payload,
-                                },
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                req_id,
-                                error = %e,
-                                "vault: passkey register persist failed"
-                            );
-                            emit(
-                                &event_tx,
-                                VaultEvent::PasskeyReady {
-                                    req_id,
-                                    ok: false,
-                                    payload: format!(
-                                        "Could not save the passkey to Bitwarden: {e}"
-                                    ),
-                                },
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        tracing::warn!(req_id, error = %e, "vault: passkey register failed");
-                        emit(
-                            &event_tx,
-                            VaultEvent::PasskeyReady {
-                                req_id,
-                                ok: false,
-                                payload: e.to_string(),
-                            },
-                        );
-                    }
+                },
+                Err(e) => {
+                    tracing::warn!(req_id, error = %e, "vault: passkey register failed");
+                    emit(
+                        event_tx,
+                        VaultEvent::PasskeyReady {
+                            req_id,
+                            ok: false,
+                            payload: e.to_string(),
+                        },
+                    );
                 }
             }
         }

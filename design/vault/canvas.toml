@@ -1,0 +1,123 @@
+title = "Vault"
+
+# The browser's Bitwarden panel: as built (01) and a new look (02–05).
+# Tokens from ../tokens.css; the panel's parts in vault.css / vault.js.
+# Boards run left to right so their heights never collide.
+
+[[artboard]]
+id = "cover"
+src = "cover.html"
+x = 0
+y = 0
+width = 1440
+height = "auto"
+title = "Vault / Cover"
+
+[[artboard]]
+id = "today"
+src = "today.html"
+x = 1640
+y = 0
+width = 2360
+height = "auto"
+title = "Vault / 01 Today"
+
+[[artboard]]
+id = "browse"
+src = "browse.html"
+x = 4200
+y = 0
+width = 1440
+height = "auto"
+title = "Vault / 02 Open on a page"
+
+[[artboard]]
+id = "item"
+src = "item.html"
+x = 5840
+y = 0
+width = 1440
+height = "auto"
+title = "Vault / 03 A record"
+
+[[artboard]]
+id = "signin"
+src = "signin.html"
+x = 7480
+y = 0
+width = 1880
+height = "auto"
+title = "Vault / 04 Unlocking"
+
+[[artboard]]
+id = "window"
+src = "window.html"
+x = 9560
+y = 0
+width = 1440
+height = "auto"
+title = "Vault / 05 In the window"
+
+[[section]]
+title = "Today"
+boards = ["today"]
+note = "As built on master, 2026-10-31."
+
+[[section]]
+title = "A new look"
+boards = ["browse", "item", "signin", "window"]
+note = "One sheet, 360 wide; opens on the page; one primary."
+
+[[note]]
+board = "today"
+at = "#old-suggest"
+text = "Every suggestion carries a filled primary Fill, and the passkey badge is cyan too."
+
+[[note]]
+board = "today"
+at = "#old-hint"
+text = "The site is a line of grey text under the chips, and \"Autofill\" another under that."
+
+[[note]]
+board = "today"
+at = "#old-foot"
+text = "Account, Log out, Refresh and Close at the foot of every list."
+
+[[note]]
+board = "today"
+at = "#old-item-head"
+text = "Fill twice on one record: here and on the authenticator."
+
+[[note]]
+board = "today"
+at = "#old-pick"
+text = "\"Sign in to For github.com\": the host hint is reused as is."
+
+[[note]]
+board = "browse"
+at = "#site-first"
+text = "Chosen on open. Enter fills; arrows move; typing searches the vault."
+
+[[note]]
+board = "browse"
+at = "#menu"
+text = "Sync, New login, Log out: what used to sit at the foot."
+
+[[note]]
+board = "item"
+at = "#rec-code"
+text = "The code is the biggest thing on the sheet; the ring is its 30 s, warning in the last five."
+
+[[note]]
+board = "item"
+at = "#rec-fill"
+text = "One Fill. With a code, it fills both (and may copy the code: your call)."
+
+[[note]]
+board = "signin"
+at = "#pk-get"
+text = "Opens by itself when the site asks; Esc gives the page its error so it can offer another way."
+
+[[link]]
+from = "cover"
+to = "today"

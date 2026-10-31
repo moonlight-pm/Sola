@@ -104,11 +104,10 @@ shows the session as tmux draws it (padded or cut) until you type in it.
   `WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`, `DISPLAY` (a resumed agent keeps
   its environment: Claude pastes images through Wayland). At Projects start
   the same, without waiting. Tried on novus.
-- [~] At boot on Oath: `svc:sola-sessions` in the desk profile (Oath
-  `17e3f6c`…`eab6194`, pushed, `enabled: false` until the publish that
-  moves the `pkg:sola` pin; a 30 s server wait in its exec, droppable once
-  this `--restore` ships). Existing machines need `oath new` once (an
-  update does not make new objects).
+- [x] At boot on Oath: `svc:sola-sessions` in the desk profile — Release B
+  (dd0f847aa9c9, 2026-10-31) turns it on, its exec just `sola-projects
+  --restore`. Machines that took Release A first need `oath new` once
+  (done on novus and canto); both rebooted and their sessions came back.
 - Not done: `session.start` as its own verb (opening a project on a
   computer, or linking it, brings its sessions back).
 

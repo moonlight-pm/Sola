@@ -367,7 +367,8 @@ it.
 
 The shell takes the ⌘ chords of the focused application's menus, so ⌘C
 and ⌘V reach Browser as Edit → Copy and Paste, and Browser hands them to
-the page or the field that has focus. Copy takes the page's selection in
+the page or the field that has focus (the location bar, a vault field).
+⌘Z and ⌘⇧Z undo and redo in the page. Copy takes the page's selection in
 the engine and writes the system clipboard; Paste reads the clipboard and
 inserts **once** into the focused field. A copied picture (`image/png`
 and the like) is pasted as a file, so chat composers that take a
@@ -407,6 +408,7 @@ boards do not. The browser's own chrome stays dark either way.
 | ⌘← / ⌘→ | **Back** / **Forward** |
 | ⌘⌥I | **Developer Tools** (the console) |
 | ⌘Q | **Quit Browser** |
+| ⌘Z / ⌘⇧Z | Edit → **Undo** / **Redo** (in the page) |
 | ⌘X / ⌘C / ⌘V / ⌘A | Edit → **Cut** / **Copy** / **Paste** / **Select All** |
 | ⌘F / ⌘G / ⌘⇧G | Edit → **Find** / **Find Next** / **Find Previous** |
 | Escape | Stop the load |

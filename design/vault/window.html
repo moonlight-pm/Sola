@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Vault / In the window</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="vault.css">
+<script src="vault.js"></script>
+<style>
+  .frame { position: relative; width: 1296px; height: 820px; }
+  .frame .win { position: absolute; inset: 0; }
+  .frame .vp { position: absolute; right: 30px; top: 84px; z-index: 8; }
+</style>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__num">05</span><span class="head__title">In the window</span></div>
+  <div class="head__lead">
+    1:1 in a browser page window. The sheet hangs from the key button, its
+    right edge under the button's, over the page and not dimming it. The
+    key button stays pressed (the selection grey) while it is open; Escape,
+    a click on the page or the button again closes it. It wants a key of its
+    own in the Browser menu (a proposal — today it has none).
+  </div>
+</div>
+
+<div class="section">
+  <div class="frame">
+    <div class="win">
+      <div class="tb">
+        <span class="tb__close"></span>
+        <span class="tb__menu">Browser</span>
+        <span class="tb__menu">Edit</span>
+        <span class="tb__menu">Window</span>
+        <span class="tb__title">Sign in to GitHub · GitHub</span>
+      </div>
+      <div class="bar">
+        <span class="ib"><i data-i="back" data-s="16"></i></span>
+        <span class="ib" style="opacity:.45"><i data-i="fwd" data-s="16"></i></span>
+        <span class="ib"><i data-i="reload" data-s="15"></i></span>
+        <span class="ib"><i data-i="copy" data-s="15"></i></span>
+        <div class="omni"><b>github.com</b>/login</div>
+        <span class="ib is-open" id="keybtn"><i data-i="key" data-s="16"></i></span>
+        <span class="ib"><i data-i="download" data-s="16"></i></span>
+      </div>
+      <div class="site">
+        <div class="site__card">
+          <div class="site__logo"></div>
+          <div class="site__h">Sign in to GitHub</div>
+          <div class="site__box">
+            <span class="site__lbl">Username or email address</span>
+            <div class="site__in is-focus"></div>
+            <span class="site__lbl" style="margin-top:6px">Password</span>
+            <div class="site__in"></div>
+            <div class="site__btn"></div>
+          </div>
+          <div class="site__pk"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="vp" id="panel">
+      <div class="vp__head">
+        <span class="plate plate--sm" style="background:#1f2328;color:#fff">G</span>
+        <div class="vp__who"><span class="vp__title">github.com</span></div>
+        <span class="ib"><i data-i="plus" data-s="16"></i></span>
+        <span class="ib"><i data-i="more" data-s="16"></i></span>
+      </div>
+      <div class="vp__body">
+        <div class="search is-focus"><i data-i="search"></i><span class="caret"></span><span>Search vault</span><span class="key">838 items</span></div>
+        <div class="caps">On this site</div>
+        <div class="it is-on">
+          <span class="plate e-ink">G</span>
+          <div class="it__text">
+            <div class="it__name"><span>GitHub</span><span class="it__marks"><i data-i="passkey" data-s="12"></i><i data-i="clock" data-s="12"></i></span></div>
+            <div class="it__sub">ana.k</div>
+          </div>
+          <span class="it__hint">Fill <span class="kbd">↵</span></span>
+        </div>
+        <div class="it">
+          <span class="plate e-ink">G</span>
+          <div class="it__text">
+            <div class="it__name"><span>GitHub — work</span><span class="it__marks"><i data-i="clock" data-s="12"></i></span></div>
+            <div class="it__sub">ana@acme.dev</div>
+          </div>
+          <span class="it__go"><i data-i="chevR"></i></span>
+        </div>
+      </div>
+      <div class="vp__foot"><i data-i="check" data-s="12"></i><span class="grow">Synced 2 min ago</span><span>ana@example.com</span></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

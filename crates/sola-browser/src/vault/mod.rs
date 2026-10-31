@@ -20,6 +20,7 @@ mod org_crypto;
 mod passkey;
 mod persist;
 mod prefs;
+mod scope;
 mod sync_cipher;
 mod totp;
 mod webauthn_js;
@@ -28,10 +29,10 @@ mod worker;
 pub use bridge as passkey_bridge;
 pub use bridge::PasskeyPageRequest;
 pub use client::{
-    CardFillMaterial, CardSummary, FillMaterial, LoginOutcome, MatchSummary, TotpSummary,
+    CardFillMaterial, FillMaterial, LoginOutcome, MatchSummary,
     TwoFactorKind, VaultError, VaultService, VaultStatus,
 };
-pub use edit::{CustomDraft, DraftRow, ItemDraft, apply_draft};
+pub use edit::{CustomDraft, DraftRow, ItemDraft, UriDraft, apply_draft};
 pub use fill_js::{
     fill_card_script, fill_credentials_script, fill_credentials_script_ex, fill_identity_script,
     fill_totp_script,
@@ -40,11 +41,12 @@ pub use generate::password as generate_password;
 pub use item::{
     IdentityFillMaterial, ItemFilter, ItemKind, ItemRecord, ItemSummary, RecordField, filter_items,
 };
-pub use match_uri::{apex_domain, uri_matches};
+pub use match_uri::{apex_domain, log_host, uri_matches};
 pub use passkey::{PasskeyCandidate, create_account_hint};
 pub use prefs::VaultPrefs;
+pub use scope::{frame_in_site, origin_of, rp_id_allowed, site_uri};
 pub use totp::remaining_secs as totp_remaining_secs;
 pub use webauthn_js::{
-    inject_webauthn_intercept_script, resolve_webauthn_script, resolve_webauthn_scripts,
+    inject_webauthn_intercept_script, resolve_webauthn_script,
 };
 pub use worker::{VaultCmd, VaultEvent, VaultHandle};

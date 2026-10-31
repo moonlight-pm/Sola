@@ -1,185 +1,192 @@
-//! Bitwarden-style URI matching for autofill candidate selection.
+//! Bitwarden URI matching for autofill candidate selection.
 //!
-//! Defaults to domain match when the cipher URI has no explicit match type.
-//! Includes a small built-in equivalent-domain set (Google family) so a
-//! `google.com` login also matches `youtube.com` / `accounts.google.com`
-//! the way official clients do. Full sync-driven global domains can come later.
+//! Follows the official clients' `LoginUriView.matchesUri`; a stored URI
+//! with no match type uses Domain. Domain compares registrable domains by
+//! the public suffix list, private domains included (so `a.github.io` and
+//! `b.github.io` differ), widened by four of Bitwarden's global
+//! equivalent-domain groups. Sync-driven equivalent domains can come later.
 
 use bitwarden_vault::UriMatchType;
-use url::Url;
+use public_suffix::{DEFAULT_PROVIDER, EffectiveTLDProvider};
+use regex::RegexBuilder;
+use url::{Host, Url};
 
-/// Built-in equivalent domain groups (subset of Bitwarden global defaults).
-/// Each inner list is one equivalence class.
+/// Bitwarden's global equivalent-domain groups for Google, Apple, Microsoft
+/// and Amazon, minus entries that are not a registrable domain (they could
+/// never match). Each inner list is one equivalence class.
 const EQUIVALENT_DOMAIN_GROUPS: &[&[&str]] = &[
+    &["youtube.com", "google.com", "gmail.com"],
+    &["apple.com", "icloud.com"],
     &[
-        "google.com",
-        "googleapis.com",
-        "gstatic.com",
-        "youtube.com",
-        "youtu.be",
-        "ytimg.com",
-        "googlemail.com",
-        "gmail.com",
-        "google.co.uk",
-        "google.de",
-        "google.fr",
-        "google.ca",
-        "google.com.au",
-        "android.com",
-        "chrome.com",
-        "chromium.org",
-    ],
-    &[
-        "apple.com",
-        "icloud.com",
-        "icloud.com.cn",
-        "me.com",
-        "mzstatic.com",
-    ],
-    &[
-        "microsoft.com",
+        "bing.com",
+        "hotmail.com",
         "live.com",
-        "outlook.com",
+        "microsoft.com",
+        "msn.com",
+        "passport.net",
+        "windows.com",
+        "microsoftonline.com",
         "office.com",
         "office365.com",
-        "microsoftonline.com",
+        "microsoftstore.com",
         "xbox.com",
-        "skype.com",
+        "azure.com",
+        "windowsazure.com",
+        "cloud.microsoft",
     ],
     &[
         "amazon.com",
-        "amazon.co.uk",
-        "amazon.de",
-        "amazon.fr",
+        "amazon.ae",
         "amazon.ca",
+        "amazon.co.uk",
         "amazon.com.au",
-        "aws.amazon.com",
+        "amazon.com.br",
+        "amazon.com.mx",
+        "amazon.com.tr",
+        "amazon.de",
+        "amazon.es",
+        "amazon.fr",
+        "amazon.in",
+        "amazon.it",
+        "amazon.nl",
+        "amazon.pl",
+        "amazon.sa",
+        "amazon.se",
+        "amazon.sg",
     ],
 ];
 
+/// Bitwarden's `DomainMatchBlacklist`: page hosts that never Domain-match a
+/// login saved on that domain (`script.google.com` serves anyone's pages).
+const DOMAIN_MATCH_BLACKLIST: &[(&str, &[&str])] = &[("google.com", &["script.google.com"])];
+
+/// Compiled-size cap for a stored regular expression (vault data).
+const REGEX_SIZE_LIMIT: usize = 1 << 20;
+
 /// Returns true when `page_url` should be considered a match for a stored
-/// login URI under the given match type (`None` → Domain).
+/// login URI under the given match type (`None` → Domain). StartsWith and
+/// Exact compare the raw strings; Host compares host plus explicit port;
+/// RegularExpression tests the whole page URL, ignoring case.
 pub fn uri_matches(page_url: &str, login_uri: &str, match_type: Option<UriMatchType>) -> bool {
-    let Some(page) = parse_url(page_url) else {
+    let stored = login_uri.trim();
+    if page_url.is_empty() || stored.is_empty() {
         return false;
-    };
-    let Some(stored) = parse_url(login_uri).or_else(|| {
-        // Bitwarden also stores bare hostnames; try as https://host
-        parse_url(&format!("https://{login_uri}"))
-    }) else {
-        return false;
-    };
-    match_with_urls(&page, &stored, match_type)
-}
-
-fn parse_url(s: &str) -> Option<Url> {
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return None;
     }
-    Url::parse(trimmed)
-        .ok()
-        .or_else(|| Url::parse(&format!("https://{trimmed}")).ok())
-}
-
-fn match_with_urls(page: &Url, stored: &Url, match_type: Option<UriMatchType>) -> bool {
     match match_type.unwrap_or(UriMatchType::Domain) {
+        UriMatchType::Domain => domain_matches(page_url, stored),
+        UriMatchType::Host => url_host(page_url).is_some_and(|h| url_host(stored) == Some(h)),
+        UriMatchType::StartsWith => page_url.starts_with(stored),
+        UriMatchType::Exact => page_url == stored,
+        UriMatchType::RegularExpression => RegexBuilder::new(stored)
+            .case_insensitive(true)
+            .size_limit(REGEX_SIZE_LIMIT)
+            .build()
+            .is_ok_and(|re| re.is_match(page_url)),
         UriMatchType::Never => false,
-        UriMatchType::Exact => {
-            page.as_str().trim_end_matches('/') == stored.as_str().trim_end_matches('/')
-        }
-        UriMatchType::StartsWith => {
-            let page_s = page.as_str();
-            let stored_s = stored.as_str().trim_end_matches('/');
-            page_s.starts_with(stored_s)
-        }
-        UriMatchType::Host => hosts_equal(page, stored) && ports_compatible(page, stored),
-        UriMatchType::Domain => base_domains_equal(page, stored),
-        UriMatchType::RegularExpression => {
-            // Spike: treat as exact host match rather than compiling untrusted regex
-            // from vault data without a safe engine bound yet.
-            hosts_equal(page, stored)
-        }
     }
 }
 
-fn hosts_equal(a: &Url, b: &Url) -> bool {
-    match (a.host_str(), b.host_str()) {
-        (Some(ha), Some(hb)) => ha.eq_ignore_ascii_case(hb),
-        _ => false,
+fn domain_matches(page_url: &str, stored: &str) -> bool {
+    let (Some(page), Some(saved)) = (url_domain(page_url), url_domain(stored)) else {
+        return false;
+    };
+    if page != saved && !equivalent_domains(&page, &saved) {
+        return false;
     }
-}
-
-fn ports_compatible(a: &Url, b: &Url) -> bool {
-    a.port_or_known_default() == b.port_or_known_default()
-}
-
-/// Rough registrable-domain equality: last two labels of the host (good enough
-/// for dogfood; not PSL-complete), plus equivalent-domain groups.
-fn base_domains_equal(a: &Url, b: &Url) -> bool {
-    match (a.host_str(), b.host_str()) {
-        (Some(ha), Some(hb)) => {
-            let da = base_domain(ha);
-            let db = base_domain(hb);
-            da.eq_ignore_ascii_case(&db) || equivalent_domains(&da, &db)
-        }
-        _ => false,
-    }
+    let host = url_host(page_url);
+    !DOMAIN_MATCH_BLACKLIST.iter().any(|(domain, hosts)| {
+        *domain == saved && host.as_deref().is_some_and(|h| hosts.contains(&h))
+    })
 }
 
 fn equivalent_domains(a: &str, b: &str) -> bool {
-    let a = a.to_ascii_lowercase();
-    let b = b.to_ascii_lowercase();
-    if a == b {
-        return true;
-    }
-    // Inputs are already base domains (e.g. google.com, youtube.com).
-    for group in EQUIVALENT_DOMAIN_GROUPS {
-        if group.iter().any(|d| a == *d) && group.iter().any(|d| b == *d) {
-            return true;
-        }
-    }
-    false
+    EQUIVALENT_DOMAIN_GROUPS
+        .iter()
+        .any(|group| group.contains(&a) && group.contains(&b))
 }
 
-/// Registrable domain of `page_url` (bare host, no scheme). Empty when the
-/// URL is blank / unparseable.
+/// Bitwarden's `Utils.getUrl`: without `://`, a string with a dot (a bare
+/// `example.com`) is read as `http://…`; anything else is no URL.
+fn parse_url(s: &str) -> Option<Url> {
+    let s = s.trim();
+    if s.contains("://") {
+        Url::parse(s).ok()
+    } else if s.contains('.') {
+        Url::parse(&format!("http://{s}")).ok()
+    } else {
+        None
+    }
+}
+
+/// Bitwarden's `Utils.getHost` (the URL's `host`): hostname plus the port
+/// when it is not the scheme's default.
+fn url_host(s: &str) -> Option<String> {
+    let url = parse_url(s)?;
+    let host = url.host_str().filter(|h| !h.is_empty())?;
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    })
+}
+
+fn url_domain(s: &str) -> Option<String> {
+    registrable_domain(parse_url(s)?.host_str()?)
+}
+
+/// Registrable domain (eTLD+1) of `host` by the public suffix list, private
+/// domains included: `www.bbc.co.uk` → `bbc.co.uk`, `a.b.github.io` →
+/// `b.github.io`. An IP address or a single-label host (`localhost`) is its
+/// own domain. `None` for a public suffix itself (`github.io`, `co.uk`) or
+/// a malformed host.
+pub fn registrable_domain(host: &str) -> Option<String> {
+    match Host::parse(host.trim_end_matches('.')).ok()? {
+        Host::Domain(d) if d.contains('.') => DEFAULT_PROVIDER
+            .effective_tld_plus_one(&d)
+            .ok()
+            .map(str::to_owned),
+        h => Some(h.to_string()),
+    }
+}
+
+/// Registrable domain of `page_url` (bare host, no scheme), to prefill a new
+/// login. Empty when the URL is blank, has no host, or its host is a public
+/// suffix.
 pub fn apex_domain(page_url: &str) -> String {
-    let trimmed = page_url.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    parse_url(trimmed)
-        .and_then(|u| u.host_str().map(base_domain))
-        .unwrap_or_default()
+    url_domain(page_url).unwrap_or_default()
 }
 
-pub(crate) fn base_domain(host: &str) -> String {
-    let host = host.trim_end_matches('.').to_ascii_lowercase();
-    // IPv4 / IPv6: require exact host match path — here return whole host.
-    if host.parse::<std::net::IpAddr>().is_ok() || host.starts_with('[') {
-        return host;
-    }
-    let parts: Vec<&str> = host.split('.').collect();
-    if parts.len() <= 2 {
-        return host;
-    }
-    // Handle common multi-part TLD-ish endings poorly but predictably:
-    // foo.co.uk → co.uk only when middle is short; keep simple 2-label default.
-    if parts.len() >= 3 {
-        let tld = parts[parts.len() - 1];
-        let sld = parts[parts.len() - 2];
-        // e.g. co.uk, com.au
-        if tld.len() == 2 && sld.len() <= 3 && parts.len() >= 3 {
-            return parts[parts.len() - 3..].join(".");
-        }
-    }
-    parts[parts.len() - 2..].join(".")
+/// A page URL as the log may carry it: the host only. Queries hold OAuth
+/// codes and other one-time secrets.
+pub fn log_host(url: &str) -> String {
+    Url::parse(url.trim())
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn domain(page: &str, stored: &str) -> bool {
+        uri_matches(page, stored, None)
+    }
+
+    fn host(page: &str, stored: &str) -> bool {
+        uri_matches(page, stored, Some(UriMatchType::Host))
+    }
+
+    fn starts(page: &str, stored: &str) -> bool {
+        uri_matches(page, stored, Some(UriMatchType::StartsWith))
+    }
+
+    fn exact(page: &str, stored: &str) -> bool {
+        uri_matches(page, stored, Some(UriMatchType::Exact))
+    }
+
+    fn regex(page: &str, stored: &str) -> bool {
+        uri_matches(page, stored, Some(UriMatchType::RegularExpression))
+    }
 
     #[test]
     fn domain_match_subdomains() {
@@ -188,11 +195,41 @@ mod tests {
             "https://google.com",
             Some(UriMatchType::Domain),
         ));
-        assert!(uri_matches(
-            "https://github.com/login",
-            "https://www.github.com/",
-            None,
-        ));
+        assert!(domain("https://github.com/login", "www.github.com"));
+    }
+
+    #[test]
+    fn domain_match_uses_private_suffixes() {
+        assert!(!domain("https://evil.github.io/", "victim.github.io"));
+        assert!(!domain("https://a.herokuapp.com/", "b.herokuapp.com"));
+        assert!(domain("https://x.me.github.io/", "me.github.io"));
+    }
+
+    #[test]
+    fn domain_match_uses_icann_suffixes() {
+        assert!(domain("https://www.gmx.de/", "https://gmx.de"));
+        assert!(domain("https://banking.ing.de/", "ing.de"));
+        assert!(domain("https://www.bbc.co.uk/", "bbc.co.uk"));
+        assert!(!domain("https://evil.co.uk/", "bbc.co.uk"));
+    }
+
+    #[test]
+    fn domain_match_ip_and_single_label() {
+        assert!(domain("http://localhost:3000/", "http://localhost"));
+        assert!(domain("http://10.0.0.1/a", "http://10.0.0.1:8443"));
+        assert!(!domain("http://10.0.0.1/", "http://20.0.0.1/"));
+    }
+
+    #[test]
+    fn domain_match_blacklist() {
+        assert!(!domain("https://script.google.com/", "google.com"));
+        assert!(domain("https://docs.google.com/", "google.com"));
+    }
+
+    #[test]
+    fn scheme_less_stored_uri() {
+        assert!(domain("https://www.example.com/x", "example.com"));
+        assert!(host("https://example.com/x", "example.com"));
     }
 
     #[test]
@@ -210,17 +247,25 @@ mod tests {
     }
 
     #[test]
+    fn host_match_ignores_scheme_not_explicit_port() {
+        assert!(host("http://a.com/", "https://a.com"));
+        assert!(host("https://a.com:443/", "https://a.com"));
+        assert!(!host("https://a.com:8443/", "https://a.com"));
+        assert!(host("https://a.com:8443/x", "a.com:8443"));
+    }
+
+    #[test]
+    fn starts_with_compares_raw_strings() {
+        assert!(!starts("https://a.com.evil.net/", "https://a.com/"));
+        assert!(starts("https://a.com/x/y", " https://a.com/x "));
+        assert!(!starts("https://a.com/", "https://a.com/x"));
+    }
+
+    #[test]
     fn exact_and_never() {
-        assert!(uri_matches(
-            "https://example.com/a",
-            "https://example.com/a",
-            Some(UriMatchType::Exact),
-        ));
-        assert!(!uri_matches(
-            "https://example.com/a",
-            "https://example.com/b",
-            Some(UriMatchType::Exact),
-        ));
+        assert!(exact("https://example.com/a", "https://example.com/a"));
+        assert!(!exact("https://example.com/a", "https://example.com/b"));
+        assert!(!exact("https://example.com/", "https://example.com"));
         assert!(!uri_matches(
             "https://example.com",
             "https://example.com",
@@ -229,9 +274,12 @@ mod tests {
     }
 
     #[test]
-    fn base_domain_co_uk() {
-        assert_eq!(base_domain("www.bbc.co.uk"), "bbc.co.uk");
-        assert_eq!(base_domain("github.com"), "github.com");
+    fn regular_expression_tests_full_url() {
+        let login = r"^https://a\.com/login";
+        assert!(regex("https://A.com/login?x=1", login));
+        assert!(!regex("https://a.com/other", login));
+        assert!(!regex("https://a.com/", "(unclosed"));
+        assert!(!regex("https://a.com/", "a{100000}{100000}"));
     }
 
     #[test]
@@ -241,11 +289,30 @@ mod tests {
             "https://accounts.google.com/",
             Some(UriMatchType::Domain),
         ));
-        assert!(uri_matches(
-            "https://accounts.google.com/v3/signin",
-            "https://google.com",
-            None,
-        ));
+        assert!(domain("https://accounts.google.com/", "google.com"));
+    }
+
+    #[test]
+    fn equivalent_groups_do_not_over_match() {
+        assert!(!domain("https://storage.googleapis.com/", "google.com"));
+        for group in EQUIVALENT_DOMAIN_GROUPS {
+            for d in *group {
+                assert_eq!(registrable_domain(d).as_deref(), Some(*d));
+            }
+        }
+    }
+
+    #[test]
+    fn registrable_domains() {
+        let rd = |host| registrable_domain(host);
+        assert_eq!(rd("www.bbc.co.uk").as_deref(), Some("bbc.co.uk"));
+        assert_eq!(rd("a.b.github.io").as_deref(), Some("b.github.io"));
+        assert_eq!(rd("Example.COM.").as_deref(), Some("example.com"));
+        assert_eq!(rd("localhost").as_deref(), Some("localhost"));
+        assert_eq!(rd("[::1]").as_deref(), Some("[::1]"));
+        assert_eq!(rd("github.io"), None);
+        assert_eq!(rd("co.uk"), None);
+        assert_eq!(rd(""), None);
     }
 
     #[test]
@@ -255,6 +322,7 @@ mod tests {
             "google.com"
         );
         assert_eq!(apex_domain("github.com/login"), "github.com");
+        assert_eq!(apex_domain("https://me.github.io/"), "me.github.io");
         assert_eq!(apex_domain(""), "");
         assert_eq!(apex_domain("about:blank"), "");
     }

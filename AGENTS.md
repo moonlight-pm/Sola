@@ -179,7 +179,7 @@ docs/
     `target/oath/`; no catalog change, no asking.
   - `cargo make oath apply` — the overlay: stores the trees, pins the
     packages whose tree or needs changed, `oath apply`s them, and records
-    where they came from (`~/.local/state/oath-dev/pins.json`). It refuses
+    where each came from as its `source` (`oath get pkg:X`). It refuses
     when a live package was applied from this repo at a commit this tree
     lacks (another session's work): merge it, or apply from `next`;
     `--force` only when the user says to drop it. With other sessions

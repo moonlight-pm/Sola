@@ -17,6 +17,11 @@ pub fn methods() -> Vec<MethodSpec> {
     vec![
         method("ps", "Project → session → state table (the sessions open here)", &[]),
         method("project.list", "List projects", &[]),
+        method(
+            "window.navigate",
+            "Open a Projects window to pick a project in (the launcher's Projects); Esc closes it",
+            &[],
+        ),
         method_ms(
             "project.open",
             "Open a project's sessions here, each in its own window: those running on its computer (whichever computer started them), else a new main session; a folder that is not a project yet is added first. \
@@ -225,6 +230,7 @@ mod tests {
             "ps",
             "project.list",
             "project.open",
+            "window.navigate",
             "project.close",
             "tab.list",
             "tab.spawn",

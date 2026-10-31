@@ -6,12 +6,17 @@
 
 use std::sync::{Arc, Mutex};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use bitwarden_core::key_management::KeySlotIds;
+use bitwarden_crypto::KeyStore;
 use bitwarden_fido::{
     CheckUserOptions, CheckUserResult, ClientData, ClientFido2Ext, Fido2CallbackError,
-    Fido2CredentialStore, Fido2UserInterface, Origin, UiHint,
+    Fido2CredentialStore, Fido2UserInterface, Origin, UiHint, string_to_guid_bytes,
 };
 use bitwarden_vault::{
     CipherListView, CipherType, CipherView, EncryptionContext, Fido2CredentialNewView,
+    Fido2CredentialView,
 };
 use serde::Serialize;
 
@@ -26,6 +31,8 @@ pub struct PasskeyCandidate {
     pub username: Option<String>,
     pub rp_id: String,
     pub user_display_name: Option<String>,
+    /// Bitwarden "master password re-prompt" on this login.
+    pub reprompt: bool,
 }
 
 struct AutoUserInterface {
@@ -104,36 +111,27 @@ impl Fido2UserInterface for AutoUserInterface {
 
 struct VaultCredentialStore {
     ciphers: Arc<Vec<CipherView>>,
+    keys: KeyStore<KeySlotIds>,
     saved: Mutex<Option<EncryptionContext>>,
 }
 
 #[async_trait::async_trait]
 impl Fido2CredentialStore for VaultCredentialStore {
+    /// passkey-rs leaves filtering to the store: get() passes its
+    /// allowCredentials, create() its excludeCredentials (any match there
+    /// refuses the create).
     async fn find_credentials(
         &self,
-        _ids: Option<Vec<Vec<u8>>>,
-        _rip_id: String,
+        ids: Option<Vec<Vec<u8>>>,
+        rp_id: String,
         _user_handle: Option<Vec<u8>>,
     ) -> Result<Vec<CipherView>, Fido2CallbackError> {
-        let mut out = Vec::new();
-        for cipher in self.ciphers.iter() {
-            if cipher.r#type != CipherType::Login || cipher.deleted_date.is_some() {
-                continue;
-            }
-            let Some(login) = cipher.login.as_ref() else {
-                continue;
-            };
-            if login
-                .fido2_credentials
-                .as_ref()
-                .map(|c| c.is_empty())
-                .unwrap_or(true)
-            {
-                continue;
-            }
-            out.push(cipher.clone());
-        }
-        Ok(out)
+        Ok(self
+            .ciphers
+            .iter()
+            .filter(|c| matching_passkey(&self.keys, c, &rp_id, ids.as_deref()).is_some())
+            .cloned()
+            .collect())
     }
 
     async fn all_credentials(&self) -> Result<Vec<CipherListView>, Fido2CallbackError> {
@@ -144,6 +142,63 @@ impl Fido2CredentialStore for VaultCredentialStore {
         *self.saved.lock().unwrap() = Some(cred);
         Ok(())
     }
+}
+
+/// A login in use (not trashed or archived) that carries a passkey.
+fn holds_passkey(cipher: &CipherView) -> bool {
+    cipher.r#type == CipherType::Login
+        && cipher.deleted_date.is_none()
+        && cipher.archived_date.is_none()
+        && cipher
+            .login
+            .as_ref()
+            .and_then(|l| l.fido2_credentials.as_ref())
+            .is_some_and(|c| !c.is_empty())
+}
+
+/// The passkey `cipher` signs with (the SDK uses its first) when it is
+/// bound to exactly `rp_id` and, given `ids`, is one of them.
+fn matching_passkey(
+    keys: &KeyStore<KeySlotIds>,
+    cipher: &CipherView,
+    rp_id: &str,
+    ids: Option<&[Vec<u8>]>,
+) -> Option<Fido2CredentialView> {
+    if !holds_passkey(cipher) {
+        return None;
+    }
+    let cred = match cipher.decrypt_fido2_credentials(&mut keys.context()) {
+        Ok(creds) => creds.into_iter().next()?,
+        Err(e) => {
+            tracing::debug!(error = %e, cipher_id = ?cipher.id, "passkey: decrypt skip");
+            return None;
+        }
+    };
+    if cred.rp_id != rp_id {
+        return None;
+    }
+    if let Some(ids) = ids {
+        let id = string_to_guid_bytes(&cred.credential_id).ok()?;
+        if !ids.contains(&id) {
+            return None;
+        }
+    }
+    Some(cred)
+}
+
+/// Credential ids in a get()'s `allowCredentials`; `None` when absent or
+/// empty (any credential for the RP may answer).
+fn allow_credential_ids(pk: &serde_json::Value) -> Option<Vec<Vec<u8>>> {
+    let list = pk.get("allowCredentials")?.as_array()?;
+    if list.is_empty() {
+        return None;
+    }
+    Some(
+        list.iter()
+            .filter_map(|c| c.get("id")?.as_str())
+            .filter_map(b64url_decode)
+            .collect(),
+    )
 }
 
 /// Wire form returned to the page polyfill (base64url fields).
@@ -223,41 +278,32 @@ fn create_rp_name(public_key_json: &str) -> Option<String> {
 }
 
 fn b64url(data: &[u8]) -> String {
-    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
-    let mut i = 0;
-    while i + 3 <= data.len() {
-        let n = ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8) | (data[i + 2] as u32);
-        out.push(T[((n >> 18) & 63) as usize] as char);
-        out.push(T[((n >> 12) & 63) as usize] as char);
-        out.push(T[((n >> 6) & 63) as usize] as char);
-        out.push(T[(n & 63) as usize] as char);
-        i += 3;
-    }
-    if i < data.len() {
-        let rem = data.len() - i;
-        let n = if rem == 1 {
-            (data[i] as u32) << 16
-        } else {
-            ((data[i] as u32) << 16) | ((data[i + 1] as u32) << 8)
-        };
-        out.push(T[((n >> 18) & 63) as usize] as char);
-        out.push(T[((n >> 12) & 63) as usize] as char);
-        if rem == 2 {
-            out.push(T[((n >> 6) & 63) as usize] as char);
-        }
-    }
-    out
+    URL_SAFE_NO_PAD.encode(data)
+}
+
+/// Decode a byte string from WebAuthn JSON: base64url, tolerating `=`
+/// padding and standard base64 (`+/`), both of which passkey-rs accepts.
+fn b64url_decode(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim_end_matches('=').replace('+', "-").replace('/', "_");
+    URL_SAFE_NO_PAD.decode(s).ok()
 }
 
 /// List passkeys that can answer a WebAuthn get() for `rp_id`.
+///
+/// Same filter as the credential store `authenticate` signs from: exact
+/// `rp_id`, and the options' `allowCredentials` when it is non-empty.
 pub async fn list_candidates(
     svc: &VaultService,
     rp_id: &str,
+    public_key_json: &str,
 ) -> Result<Vec<PasskeyCandidate>, VaultError> {
     if !svc.is_ready_for_passkey() {
         return Err(VaultError::Locked);
     }
+
+    let pk: serde_json::Value = serde_json::from_str(public_key_json)
+        .map_err(|e| VaultError::Other(format!("publicKey JSON: {e}")))?;
+    let allow = allow_credential_ids(&pk);
 
     let listed = svc
         .client
@@ -267,55 +313,32 @@ pub async fn list_candidates(
         .await
         .map_err(|e| VaultError::Other(e.to_string()))?;
 
-    let fido = svc.client.0.fido2();
+    let keys = svc.client.0.internal.get_key_store();
     let mut out = Vec::new();
-    let rp_lower = rp_id.to_ascii_lowercase();
 
     for cipher in listed.successes {
-        if cipher.r#type != CipherType::Login || cipher.deleted_date.is_some() {
-            continue;
-        }
-        let Some(login) = cipher.login.as_ref() else {
+        let Some(cred) = matching_passkey(keys, &cipher, rp_id, allow.as_deref()) else {
             continue;
         };
-        if login
-            .fido2_credentials
-            .as_ref()
-            .map(|c| c.is_empty())
-            .unwrap_or(true)
-        {
+        let Some(cipher_id) = cipher.id.map(|id| id.to_string()) else {
             continue;
-        }
-        let cipher_id = match cipher.id {
-            Some(id) => id.to_string(),
-            None => continue,
         };
-        let views = match fido.decrypt_fido2_autofill_credentials(cipher.clone()) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::debug!(error = %e, cipher_id = %cipher_id, "passkey: decrypt autofill skip");
-                continue;
-            }
-        };
-        for v in views {
-            let cand_rp = v.rp_id.to_ascii_lowercase();
-            // Exact or suffix match (rp_id "google.com" vs "accounts.google.com").
-            let rp_ok = cand_rp == rp_lower
-                || rp_lower.ends_with(&format!(".{cand_rp}"))
-                || cand_rp.ends_with(&format!(".{rp_lower}"));
-            if !rp_ok && !rp_id.is_empty() {
-                continue;
-            }
-            out.push(PasskeyCandidate {
-                cipher_id: cipher_id.clone(),
-                name: cipher.name.clone(),
-                username: login.username.clone().or(v.user_name_for_ui.clone()),
-                rp_id: v.rp_id.clone(),
-                user_display_name: v.user_name_for_ui.clone(),
-            });
-            // One row per cipher is enough for the picker.
-            break;
-        }
+        let user = [cred.user_name, cred.user_display_name]
+            .into_iter()
+            .flatten()
+            .find(|s| !s.trim().is_empty());
+        out.push(PasskeyCandidate {
+            cipher_id,
+            username: cipher
+                .login
+                .as_ref()
+                .and_then(|l| l.username.clone())
+                .or(user.clone()),
+            user_display_name: user,
+            rp_id: cred.rp_id,
+            reprompt: cipher.reprompt == bitwarden_vault::CipherRepromptType::Password,
+            name: cipher.name,
+        });
     }
 
     // Stable sort by name.
@@ -348,6 +371,7 @@ pub async fn authenticate(
     let ciphers: Arc<Vec<CipherView>> = Arc::new(listed.successes);
     let store = VaultCredentialStore {
         ciphers: ciphers.clone(),
+        keys: svc.client.0.internal.get_key_store().clone(),
         saved: Mutex::new(None),
     };
     let ui = AutoUserInterface {
@@ -455,6 +479,7 @@ pub async fn register(
     };
     let store = VaultCredentialStore {
         ciphers: ciphers.clone(),
+        keys: svc.client.0.internal.get_key_store().clone(),
         saved: Mutex::new(None),
     };
     let ui = AutoUserInterface {
@@ -538,14 +563,29 @@ fn new_login_for_passkey(origin: &str, public_key_json: &str) -> CipherView {
 }
 
 /// Build `ClientData::DefaultWithCustomHash` matching clean web clientDataJSON.
-///
-/// Mirrors passkey-client's CollectedClientData serialization:
-/// `{"type":"webauthn.get|create","challenge":…,"origin":…,"crossOrigin":false}`
 fn web_client_data(
     origin: &str,
     public_key_json: &str,
     ty: &str,
 ) -> Result<ClientData, VaultError> {
+    let client_data_json = web_client_data_json(origin, public_key_json, ty)?;
+    let hash = {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(client_data_json.as_bytes()).to_vec()
+    };
+    tracing::debug!(%client_data_json, "vault: passkey expected clientDataJSON");
+    Ok(ClientData::DefaultWithCustomHash { hash })
+}
+
+/// The clientDataJSON passkey-client emits for a web origin.
+///
+/// Mirrors its CollectedClientData serialization:
+/// `{"type":"webauthn.get|create","challenge":…,"origin":…,"crossOrigin":false}`
+fn web_client_data_json(
+    origin: &str,
+    public_key_json: &str,
+    ty: &str,
+) -> Result<String, VaultError> {
     let pk: serde_json::Value = serde_json::from_str(public_key_json)
         .map_err(|e| VaultError::Other(format!("publicKey JSON: {e}")))?;
     let challenge_b64 = pk
@@ -563,15 +603,16 @@ fn web_client_data(
 
     // Field order must match CollectedClientData Serialize (type, challenge,
     // origin, crossOrigin). truthiness() always emits crossOrigin as bool.
-    let client_data_json = format!(
-        r#"{{"type":"{ty}","challenge":"{challenge_canon}","origin":"{origin_clean}","crossOrigin":false}}"#
-    );
-    let hash = {
-        use sha2::{Digest, Sha256};
-        Sha256::digest(client_data_json.as_bytes()).to_vec()
+    // Values go through serde_json, as there, so escaping matches too.
+    let quote = |s: &str| {
+        serde_json::to_string(s).map_err(|e| VaultError::Other(format!("clientDataJSON: {e}")))
     };
-    tracing::debug!(%client_data_json, "vault: passkey expected clientDataJSON");
-    Ok(ClientData::DefaultWithCustomHash { hash })
+    Ok(format!(
+        r#"{{"type":{},"challenge":{},"origin":{},"crossOrigin":false}}"#,
+        quote(ty)?,
+        quote(&challenge_canon)?,
+        quote(origin_clean)?,
+    ))
 }
 
 #[cfg(test)]
@@ -597,41 +638,187 @@ mod tests {
             _ => panic!("expected DefaultWithCustomHash"),
         }
     }
-}
 
-fn b64url_decode(s: &str) -> Option<Vec<u8>> {
-    let mut s = s.replace('-', "+").replace('_', "/");
-    while s.len() % 4 != 0 {
-        s.push('=');
+    #[test]
+    fn web_client_data_json_keeps_order_and_escapes() {
+        let pk = r#"{"challenge":"YQ=="}"#;
+        let json = web_client_data_json("https://docs.example.com/", pk, "webauthn.get").unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"webauthn.get","challenge":"YQ","origin":"https://docs.example.com","crossOrigin":false}"#
+        );
+
+        let json = web_client_data_json(r#"https://a"b\c.example"#, pk, "webauthn.get").unwrap();
+        assert!(json.contains(r#""origin":"https://a\"b\\c.example","#));
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["origin"], r#"https://a"b\c.example"#);
     }
-    fn val(c: u8) -> Option<u8> {
-        match c {
-            b'A'..=b'Z' => Some(c - b'A'),
-            b'a'..=b'z' => Some(c - b'a' + 26),
-            b'0'..=b'9' => Some(c - b'0' + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            b'=' => Some(0),
-            _ => None,
+
+    #[test]
+    fn b64url_round_trips_without_padding() {
+        assert_eq!(b64url(&[0xfb, 0xff]), "-_8");
+        assert_eq!(b64url(b"a"), "YQ");
+        assert_eq!(b64url_decode("-_8").as_deref(), Some(&[0xfb, 0xff][..]));
+    }
+
+    #[test]
+    fn b64url_decode_tolerates_padding_and_standard_alphabet() {
+        assert_eq!(b64url_decode("YQ==").as_deref(), Some(&b"a"[..]));
+        assert_eq!(b64url_decode("+/8=").as_deref(), Some(&[0xfb, 0xff][..]));
+        assert_eq!(b64url_decode("").as_deref(), Some(&[][..]));
+    }
+
+    #[test]
+    fn b64url_decode_rejects_inner_padding_and_junk() {
+        assert_eq!(b64url_decode("YQ==YQ"), None);
+        assert_eq!(b64url_decode("Y=Q"), None);
+        assert_eq!(b64url_decode("Y!Q"), None);
+    }
+
+    #[test]
+    fn allow_credential_ids_reads_non_empty_list() {
+        let pk = serde_json::json!({
+            "challenge": "YQ",
+            "allowCredentials": [
+                {"type": "public-key", "id": "-_8"},
+                {"type": "public-key", "id": "+/8="},
+                {"type": "public-key", "id": null},
+            ],
+        });
+        assert_eq!(
+            allow_credential_ids(&pk),
+            Some(vec![vec![0xfb, 0xff], vec![0xfb, 0xff]])
+        );
+        assert_eq!(
+            allow_credential_ids(&serde_json::json!({"allowCredentials": []})),
+            None
+        );
+        assert_eq!(
+            allow_credential_ids(&serde_json::json!({"challenge": "YQ"})),
+            None
+        );
+    }
+
+    mod store {
+        use bitwarden_core::key_management::SymmetricKeySlotId;
+        use bitwarden_crypto::PrimitiveEncryptable;
+        use bitwarden_vault::Fido2Credential;
+
+        use super::*;
+
+        const ID_A: &str = "a36f3d35-5dae-4d07-8b24-f89e11082090";
+        const ID_B: &str = "0b5d6c1e-2f3a-4b7c-8d9e-0f1a2b3c4d5e";
+        const ID_C: &str = "c0ffee00-1234-4abc-9def-0123456789ab";
+        const ID_UNKNOWN: &str = "deadbeef-0000-4000-8000-000000000000";
+
+        /// A key store holding a fresh user key, as after unlock.
+        fn unlocked_keys() -> KeyStore<KeySlotIds> {
+            let keys = KeyStore::default();
+            {
+                let mut ctx = keys.context_mut();
+                let local = ctx.generate_symmetric_key();
+                ctx.persist_symmetric_key(local, SymmetricKeySlotId::User)
+                    .unwrap();
+            }
+            keys
+        }
+
+        /// A personal login holding one passkey, encrypted as the vault does.
+        fn passkey_login(
+            keys: &KeyStore<KeySlotIds>,
+            name: &str,
+            rp_id: &str,
+            credential_id: &str,
+        ) -> CipherView {
+            let mut ctx = keys.context();
+            let mut enc = |s: &str| s.encrypt(&mut ctx, SymmetricKeySlotId::User).unwrap();
+            let cred = Fido2Credential {
+                credential_id: enc(credential_id),
+                key_type: enc("public-key"),
+                key_algorithm: enc("ECDSA"),
+                key_curve: enc("P-256"),
+                key_value: enc("unused"),
+                rp_id: enc(rp_id),
+                user_handle: None,
+                user_name: None,
+                counter: enc("0"),
+                rp_name: None,
+                user_display_name: None,
+                discoverable: enc("true"),
+                creation_date: chrono::Utc::now(),
+            };
+            let mut cipher = new_login_view(name.into(), None, None, None);
+            cipher.login.as_mut().unwrap().fido2_credentials = Some(vec![cred]);
+            cipher
+        }
+
+        fn vault(keys: &KeyStore<KeySlotIds>) -> VaultCredentialStore {
+            let mut trashed = passkey_login(keys, "trashed", "example.com", ID_A);
+            trashed.deleted_date = Some(chrono::Utc::now());
+            let mut archived = passkey_login(keys, "archived", "example.com", ID_A);
+            archived.archived_date = Some(chrono::Utc::now());
+            VaultCredentialStore {
+                ciphers: Arc::new(vec![
+                    passkey_login(keys, "a", "example.com", ID_A),
+                    passkey_login(keys, "b", "other.com", ID_B),
+                    passkey_login(keys, "c", "login.example.com", ID_C),
+                    trashed,
+                    archived,
+                    new_login_view("no passkey".into(), None, None, None),
+                ]),
+                keys: keys.clone(),
+                saved: Mutex::new(None),
+            }
+        }
+
+        fn guid(id: &str) -> Vec<u8> {
+            string_to_guid_bytes(id).unwrap()
+        }
+
+        async fn found(
+            store: &VaultCredentialStore,
+            ids: Option<Vec<Vec<u8>>>,
+            rp_id: &str,
+        ) -> Vec<String> {
+            store
+                .find_credentials(ids, rp_id.into(), Some(b"user".to_vec()))
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|c| c.name)
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn get_matches_rp_id_exactly() {
+            let keys = unlocked_keys();
+            let store = vault(&keys);
+            assert_eq!(found(&store, None, "example.com").await, ["a"]);
+            assert_eq!(found(&store, None, "login.example.com").await, ["c"]);
+            assert!(found(&store, None, "www.example.com").await.is_empty());
+            assert!(found(&store, None, "com").await.is_empty());
+        }
+
+        #[tokio::test]
+        async fn get_honours_allow_credentials() {
+            let keys = unlocked_keys();
+            let store = vault(&keys);
+            let allow = Some(vec![guid(ID_UNKNOWN), guid(ID_A)]);
+            assert_eq!(found(&store, allow, "example.com").await, ["a"]);
+            // A listed id bound to another RP does not answer.
+            let allow = Some(vec![guid(ID_B)]);
+            assert!(found(&store, allow, "example.com").await.is_empty());
+        }
+
+        #[tokio::test]
+        async fn exclude_trips_only_on_same_rp_and_listed_id() {
+            let keys = unlocked_keys();
+            let store = vault(&keys);
+            // A passkey saved for another site must not block this create().
+            let exclude = Some(vec![guid(ID_B), guid(ID_C), guid(ID_UNKNOWN)]);
+            assert!(found(&store, exclude, "example.com").await.is_empty());
+            let exclude = Some(vec![guid(ID_UNKNOWN), guid(ID_A)]);
+            assert_eq!(found(&store, exclude, "example.com").await, ["a"]);
         }
     }
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    let mut i = 0;
-    while i + 4 <= bytes.len() {
-        let a = val(bytes[i])?;
-        let b = val(bytes[i + 1])?;
-        let c = val(bytes[i + 2])?;
-        let d = val(bytes[i + 3])?;
-        let n = ((a as u32) << 18) | ((b as u32) << 12) | ((c as u32) << 6) | (d as u32);
-        out.push(((n >> 16) & 0xff) as u8);
-        if bytes[i + 2] != b'=' {
-            out.push(((n >> 8) & 0xff) as u8);
-        }
-        if bytes[i + 3] != b'=' {
-            out.push((n & 0xff) as u8);
-        }
-        i += 4;
-    }
-    Some(out)
 }

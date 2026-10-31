@@ -29,6 +29,10 @@ pub struct PersistedSession {
     pub kdf: Kdf,
     pub salt: String,
     pub user_id: String,
+    /// The user key as the master key wraps it (an EncString). Lets the
+    /// master-password re-prompt check a password without storing a hash.
+    #[serde(default)]
+    pub wrapped_user_key: Option<String>,
 }
 
 impl Drop for PersistedSession {

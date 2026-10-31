@@ -220,6 +220,30 @@ pub enum NavCmd {
 /// [`crate::util::editing_command_name`].
 ///
 /// Paste of system-clipboard text/images into page content uses
+/// Which frames of a page a [`Cmd::EvaluateJsIn`] script runs in.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FrameScope {
+    /// One frame, by CEF identifier: a passkey answer goes back to the
+    /// frame that asked, and nowhere else.
+    Frame(String),
+    /// A vault fill. Runs only while the page's main frame is still on
+    /// `origin`, in its frames of that origin and in frames whose URL
+    /// matches one of the login's websites (a login form in an iframe of
+    /// the same site). Other sites' iframes get nothing.
+    Site { origin: String, uris: Vec<SiteUri> },
+    /// A card fill: every frame (payment fields live in the processor's
+    /// iframes), still only while the main frame is on `origin`.
+    Page { origin: String },
+}
+
+/// A login website for [`FrameScope::Site`]: the stored URI and its
+/// Bitwarden match type (`UriMatchType` as its number; `None` = default).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SiteUri {
+    pub uri: String,
+    pub match_type: Option<u8>,
+}
+
 /// [`Cmd::PasteText`] / [`Cmd::PasteImage`] — windowless CEF has no
 /// Wayland seat clipboard, so chrome reads the compositor and injects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -281,10 +305,17 @@ pub enum Cmd<E: Engine> {
         filename: String,
         bytes: Vec<u8>,
     },
-    /// Run JavaScript in the active tab (password fill inject, etc.).
-    /// Script is sourced from chrome; do not put untrusted page content here
-    /// without escaping — vault fill embeds secrets via JSON string literals.
+    /// Run JavaScript in every frame of the active tab (copy selection,
+    /// notification answers). Script is sourced from chrome; do not put
+    /// untrusted page content here without escaping.
     EvaluateJs(String),
+    /// Run JavaScript only in the frames `scope` names (vault fills carry
+    /// secrets; passkey answers belong to one frame). Wrap in
+    /// [`Cmd::Target`] to address a page other than the active one.
+    EvaluateJsIn {
+        scope: FrameScope,
+        script: String,
+    },
     /// Run `cmd` on `profile`'s helper (started if needed). An `OpenTab`
     /// inside opens the page under that profile; commands that name a page
     /// route by the page without this.
@@ -882,7 +913,7 @@ pub type ImeHandle = Arc<Mutex<ImeCaret>>;
 /// Helper download events waiting for chrome (`profile_id` + payload).
 pub type DownloadsHandle = Arc<Mutex<Vec<(String, crate::cef::ipc::DownloadEvent)>>>;
 /// Helper WebAuthn intercepts waiting for chrome.
-pub type PasskeysHandle = Arc<Mutex<Vec<crate::cef::ipc::WebAuthnEvent>>>;
+pub type PasskeysHandle = Arc<Mutex<Vec<crate::cef::ipc::VaultPageEvent>>>;
 /// Helper → chrome page context-menu requests (right-click on content).
 pub type PageMenusHandle = Arc<Mutex<Vec<PageContext>>>;
 /// Helper → chrome: open this URL as a tab (⌘-click / `target=_blank`).

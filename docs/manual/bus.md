@@ -248,7 +248,7 @@ The bar is described in [Shell § The bar](sola-shell.md#the-bar), its zones in 
 
 | Topic | Payload | Published by | Acted on by | Kept |
 |---|---|---|---|---|
-| `LaunchApp` | `app_id`, `command` | Shell (launcher, the Projects chooser), Browser (`--app` when no browser is running) | `sola-session` | Ephemeral |
+| `LaunchApp` | `app_id`, `command` | Shell (launcher), Browser (`--app` when no browser is running) | `sola-session` | Ephemeral |
 | `LaunchResult` | `app_id`, `command`, `ok`, `error` | `sola-session` | Shell | Ephemeral |
 | `UserAppExited` | `app_id`, `command`, exit `code` or `signal` | `sola-session` | Shell | Ephemeral |
 | `CloseApp` | An `app_id` | Shell (Super+Q); kit apps closing themselves (a single-window app's close button, the Browser's last page) | `sola-session` (stops it), `sola-river` (asks its windows to close), the named app (quits), Browser (closes a web app's windows) | Ephemeral |
