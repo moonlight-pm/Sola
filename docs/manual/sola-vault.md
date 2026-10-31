@@ -122,9 +122,9 @@ The vault's key is kept in the service's memory only, never on disk.
   the fade off, the time counts from the last time Vault, Browser, or the
   right-click menu used the vault. **Never** leaves locking to the screen
   lock and to restarts.
-- **Lock when the screen locks** (on by default) locks it within a few
-  seconds of the lock screen coming up
-  ([Security](security.md#locking)).
+- **Lock when the screen locks** (on by default) locks it as the lock
+  screen comes up: `sola-lock` says so on the bus (`ScreenLock`), and the
+  service locks on it ([Security](security.md#locking)).
 - **Vault → Lock** (⌘⇧L), the lock in Vault's foot, and
   `solactl vault lock` lock it at once.
 

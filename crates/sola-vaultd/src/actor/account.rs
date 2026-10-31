@@ -109,7 +109,6 @@ impl Vault {
                 self.prefs.remember_email(&self.dir, &email);
                 self.pending = None;
                 self.account = Account::Unlocked(svc);
-                self.next_screen_poll = Instant::now();
                 if let Err(e) = self.sync_now().await {
                     tracing::warn!(error = %e, "vault: first sync failed");
                 }
@@ -153,7 +152,6 @@ impl Vault {
         self.sync.at = svc.load_cache().await;
         self.sync.error = None;
         self.account = Account::Unlocked(Box::new(svc));
-        self.next_screen_poll = Instant::now();
         self.idle.used(Instant::now());
         self.recount().await;
         if let Err(e) = self.sync_now().await {

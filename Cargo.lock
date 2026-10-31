@@ -8540,6 +8540,7 @@ dependencies = [
  "rustix 1.1.4",
  "serde_yaml_ng",
  "smithay-client-toolkit 0.19.2",
+ "sola-bus",
  "sola-core",
  "tiny-skia",
  "tracing",

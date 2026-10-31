@@ -24,7 +24,6 @@ mod migrate;
 mod paths;
 mod peer;
 mod prefs;
-mod screen_lock;
 mod server;
 mod settings;
 mod tickets;
