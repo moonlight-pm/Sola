@@ -82,8 +82,10 @@ from master or `next`, with the guard; a desk restart is asked for.
 ## Who does what
 
 **Oath (its session, on buccina):**
-- `pkg.source` (optional object: `repo`, `commit`, `branch`, `dirty`,
-  `built_by`, `built_at`), desired-side metadata: `oath set pkg:X
+- `pkg.source` (optional, closed object, all six keys: `repo` as
+  `https://host/owner/name` without `.git`, `commit` the full SHA,
+  `branch` (`""` detached), `dirty`, `built_by` as `user@host`, `built_at`
+  RFC 3339 UTC), desired-side metadata: `oath set pkg:X
   source=…` takes it; it is not part of the hash and never moves a
   package; `oath get` shows it.
 - Pattern 6 in `oath get` / `oath diff` / `oath update`.
@@ -98,10 +100,22 @@ from master or `next`, with the guard; a desk restart is asked for.
 - `sola-make`: provenance on apply (the sidecar now, `source=` once
   `oath` takes it), the guard, only changed packages pinned, publish from
   master only, `cargo make run <app>`.
-- The split: `pkg:sola-desk` (bus, call, river, shell, session, kvm,
-  lock, solactl, the Oath catalog app) and a package per app (terminal,
-  projects, paint, preview, scope, monitor, calendar, mail, settings,
-  bots); `sola-browser` and `sola-design` as now.
+- The split (the Oath session's plan, 2026-10-31): the core **keeps the
+  name `pkg:sola`** (bus, call, river, shell, session, kvm, lock, solactl,
+  the Oath catalog app, and `share/`: icons, cursors — `SOLA_SHARE_DIR` and
+  `XCURSOR_PATH` name `/oath/store/pkg/sola/share`, and an update can
+  neither rename nor remove a package); a `pkg:sola-<app>` per app
+  (terminal, projects, paint, preview, scope, monitor, calendar, mail,
+  settings, bots); `sola-browser` and `sola-design` as now. In one apply
+  each `/bin` name passes from the core to its app package. Apps need only
+  what they load (fonts, tmux, cef), not the core — a need pins an exact
+  hash, so every core overlay would rewrite every app's needs; the same for
+  `sola-browser` and `sola-design` today.
+- Rollout: Oath Release A (`source`, overlays shown, `oath update` makes
+  objects new to the profile and checks `/bin` names before it moves
+  anything) → Sola publishes the split from master → one Oath commit pins
+  the set and enables `svc:sola-sessions` → Release B (`oath update
+  --confirm --reboot`).
 - Docs and skills (below).
 
 ## Skills and docs

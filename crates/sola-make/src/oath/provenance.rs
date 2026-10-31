@@ -14,16 +14,39 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-/// Where a build came from.
+/// Where a build came from: the shape of Oath's `pkg.source` (all six
+/// keys; Oath decision with the Oath session, 2026-10-31).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Source {
-    /// `origin`'s URL, else the checkout's path.
+    /// `https://host/owner/name`, no `.git` ([`plain_repo`]); else the
+    /// checkout's path.
     pub repo: String,
+    /// The full SHA.
     pub commit: String,
+    /// `""` when detached.
     pub branch: String,
+    /// Anything in the tree uncommitted.
     pub dirty: bool,
+    /// `user@host`.
     pub built_by: String,
+    /// RFC 3339, UTC.
     pub built_at: String,
+}
+
+/// A remote URL in the plain form: `git@github.com:o/n.git` and
+/// `https://github.com/o/n.git` are both `https://github.com/o/n`.
+pub fn plain_repo(url: &str) -> String {
+    let url = url.trim().trim_end_matches('/');
+    let url = url.strip_suffix(".git").unwrap_or(url);
+    if let Some(rest) = url.strip_prefix("git@") {
+        if let Some((host, path)) = rest.split_once(':') {
+            return format!("https://{host}/{path}");
+        }
+    }
+    if let Some(rest) = url.strip_prefix("ssh://git@") {
+        return format!("https://{rest}");
+    }
+    url.to_string()
 }
 
 /// One pin and where it came from.
@@ -45,13 +68,16 @@ fn git(args: &[&str]) -> Option<String> {
 pub fn here() -> Result<Source, String> {
     let commit = git(&["rev-parse", "HEAD"]).ok_or("not in a git checkout")?;
     let repo = git(&["remote", "get-url", "origin"])
+        .map(|u| plain_repo(&u))
         .or_else(|| git(&["rev-parse", "--show-toplevel"]))
         .unwrap_or_default();
     let branch = git(&["branch", "--show-current"]).unwrap_or_default();
     let dirty = git(&["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
-    let built_by = std::fs::read_to_string("/proc/sys/kernel/hostname")
+    let host = std::fs::read_to_string("/proc/sys/kernel/hostname")
         .map(|h| h.trim().to_string())
         .unwrap_or_default();
+    let user = std::env::var("USER").unwrap_or_else(|_| "home".into());
+    let built_by = format!("{user}@{host}");
     let built_at = Command::new("date")
         .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
         .output()
@@ -126,23 +152,21 @@ pub fn has_commit(commit: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Same repository: equal, or the same one by another URL form.
+/// Same repository (both in, or brought to, the plain form).
 pub fn same_repo(a: &str, b: &str) -> bool {
-    let norm = |s: &str| {
-        s.trim_end_matches('/')
-            .trim_end_matches(".git")
-            .rsplit(['/', ':'])
-            .take(2)
-            .collect::<Vec<_>>()
-            .join("/")
-            .to_lowercase()
-    };
-    !a.is_empty() && norm(a) == norm(b)
+    !a.is_empty() && plain_repo(a).eq_ignore_ascii_case(&plain_repo(b))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repos_in_the_plain_form() {
+        assert_eq!(plain_repo("git@github.com:moonlight-pm/Sola.git"), "https://github.com/moonlight-pm/Sola");
+        assert_eq!(plain_repo("https://github.com/moonlight-pm/Sola.git"), "https://github.com/moonlight-pm/Sola");
+        assert_eq!(plain_repo("https://github.com/moonlight-pm/Sola/"), "https://github.com/moonlight-pm/Sola");
+    }
 
     #[test]
     fn one_repo_by_any_url() {
