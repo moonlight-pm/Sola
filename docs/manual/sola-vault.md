@@ -328,12 +328,14 @@ row is Browser's ([Filling a page](sola-browser.md#filling-a-page)).
 
 **File → Export…**, while the vault is unlocked, writes the vault in
 Bitwarden's formats: **JSON, encrypted** (the default; with a file
-password of its own, typed twice), **JSON**, or **CSV**. **Export…** then
-opens the file panel's Save in `~/Downloads`, with the name
-`bitwarden_export_YYYYMMDD.json` (or `.csv`). The file holds your own
-items and folders, not organizations' items or the trash, and no
-attachments. Only you can read it (mode `0600`). Vault does not ask for
-the master password first, and a **JSON** or **CSV** export is every
+password of its own, typed twice), **JSON**, or **CSV**. It asks for
+your master password, as Bitwarden's own apps do: **Export…** checks it
+(nothing is written while it is wrong, "That isn't your master
+password.") and then opens the file panel's Save in `~/Downloads`, with
+the name `bitwarden_export_YYYYMMDD.json` (or `.csv`); cancelling the
+panel asks for it again next time. The file holds your own items and
+folders, not organizations' items or the trash, and no attachments. Only
+you can read it (mode `0600`). A **JSON** or **CSV** export is every
 password in plain text.
 
 ## Opening Vault on an item

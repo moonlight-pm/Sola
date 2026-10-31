@@ -1,6 +1,7 @@
 //! Export: Bitwarden JSON (plain, or encrypted with a password of its
-//! own) or CSV. The file is named first in the kit's Save panel; then the
-//! daemon writes the export and Vault saves it, readable by you alone.
+//! own) or CSV. Your master password first, as Bitwarden's own clients
+//! ask it; then the file is named in the kit's Save panel; then the daemon
+//! writes the export and Vault saves it, readable by you alone.
 
 use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -55,15 +56,37 @@ pub struct ExportSheet {
     pub password: Text,
     pub confirm: Text,
     pub error: Option<String>,
+    /// Your master password: checked before anything is written.
+    pub master: Text,
+    pub master_error: Option<String>,
     pub busy: bool,
     pub reveal: bool,
+}
+
+impl ExportSheet {
+    /// What stops an export, and the field it goes under: the file's
+    /// password (encrypted JSON), then the master password.
+    fn problem(&self) -> Option<(Field, &'static str)> {
+        if self.format == Format::EncryptedJson {
+            if self.password.is_empty() {
+                return Some((Field::ExportPassword, "Choose a password for the file."));
+            }
+            if *self.password != *self.confirm {
+                return Some((Field::ExportConfirm, "The two passwords differ."));
+            }
+        }
+        if self.master.is_empty() {
+            return Some((Field::ExportMaster, "Enter your master password to export."));
+        }
+        None
+    }
 }
 
 #[derive(Debug, Clone)]
 pub enum ExportMsg {
     Format(Format),
     Reveal,
-    /// Name the file, then export.
+    /// Check the master password, name the file, then export.
     Go,
 }
 
@@ -96,31 +119,47 @@ impl App {
                 if x.busy {
                     return Task::none();
                 }
-                if x.format == Format::EncryptedJson {
-                    if x.password.is_empty() {
-                        x.error = Some("Choose a password for the file.".into());
-                        return Field::ExportPassword.focus();
+                if let Some((field, message)) = x.problem() {
+                    if field == Field::ExportMaster {
+                        x.master_error = Some(message.into());
+                    } else {
+                        x.error = Some(message.into());
                     }
-                    if *x.password != *x.confirm {
-                        x.error = Some("The two passwords differ.".into());
-                        return Field::ExportConfirm.focus();
-                    }
+                    return field.focus();
                 }
-                let name = format!(
-                    "bitwarden_export_{}.{}",
-                    when::today().format("%Y%m%d"),
-                    x.format.extension()
-                );
-                self.picker = Some(
-                    FilePicker::save()
-                        .title("Export the vault")
-                        .action("Export")
-                        .start_dir(start_dir())
-                        .suggested_name(name),
-                );
-                Task::none()
+                x.busy = true;
+                x.error = None;
+                x.master_error = None;
+                let password = x.master.to_string();
+                self.ask(Ask::ExportVerify, Request::VerifyMasterPassword { password })
             }
         }
+    }
+
+    /// The master password checked: on, to name the file; or say so.
+    pub(in crate::ui) fn on_export_verified(&mut self, ok: bool) -> Task<Msg> {
+        let Some(Sheet::Export(x)) = self.sheet.as_mut() else {
+            return Task::none();
+        };
+        x.busy = false;
+        x.master = Text::default();
+        if !ok {
+            x.master_error = Some("That isn't your master password.".into());
+            return Field::ExportMaster.focus();
+        }
+        let name = format!(
+            "bitwarden_export_{}.{}",
+            when::today().format("%Y%m%d"),
+            x.format.extension()
+        );
+        self.picker = Some(
+            FilePicker::save()
+                .title("Export the vault")
+                .action("Export")
+                .start_dir(start_dir())
+                .suggested_name(name),
+        );
+        Task::none()
     }
 
     pub(in crate::ui) fn on_picker(&mut self, m: PickerMsg) -> Task<Msg> {
@@ -236,6 +275,17 @@ impl App {
                 body = body.push(crate::ui::signin::error_caption(e));
             }
         }
+        body = body.push(lead_text("Enter your master password to export.".into())).push(labeled_input(
+            secret_input(
+                Field::ExportMaster,
+                "Master password",
+                &x.master,
+                x.reveal,
+                x.master_error.is_some(),
+                Msg::Export(ExportMsg::Reveal),
+            ),
+            x.master_error.as_deref(),
+        ));
         body = body.push(
             row![
                 Space::new().width(Length::Fill),
@@ -283,6 +333,28 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_master_password_comes_before_any_file() {
+        let text = |s: &str| Text::new(s.to_string());
+        let mut x = ExportSheet::default();
+        assert_eq!(x.problem().map(|p| p.0), Some(Field::ExportPassword));
+        x.password = text("file");
+        x.confirm = text("other");
+        assert_eq!(x.problem().map(|p| p.0), Some(Field::ExportConfirm));
+        x.confirm = text("file");
+        assert_eq!(x.problem().map(|p| p.0), Some(Field::ExportMaster));
+        x.master = text("master");
+        assert_eq!(x.problem(), None);
+        // A plain export needs no file password, but still the master one.
+        let mut plain = ExportSheet {
+            format: Format::Csv,
+            ..ExportSheet::default()
+        };
+        assert_eq!(plain.problem().map(|p| p.0), Some(Field::ExportMaster));
+        plain.master = text("master");
+        assert_eq!(plain.problem(), None);
+    }
 
     #[test]
     fn the_export_is_yours_alone() {

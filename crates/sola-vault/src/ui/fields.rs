@@ -32,6 +32,7 @@ pub enum Field {
     FolderName,
     ExportPassword,
     ExportConfirm,
+    ExportMaster,
 }
 
 impl Field {
@@ -53,6 +54,7 @@ impl Field {
             Field::FolderName => "vault:folder-name".into(),
             Field::ExportPassword => "vault:export-password".into(),
             Field::ExportConfirm => "vault:export-confirm".into(),
+            Field::ExportMaster => "vault:export-master".into(),
         })
     }
 
@@ -76,6 +78,7 @@ impl App {
             Field::FolderName,
             Field::ExportPassword,
             Field::ExportConfirm,
+            Field::ExportMaster,
             Field::Otp,
         ];
         if let Some(e) = &self.edit {
@@ -158,6 +161,12 @@ impl App {
                 if let Some(super::Sheet::Export(x)) = self.sheet.as_mut() {
                     x.confirm = value;
                     x.error = None;
+                }
+            }
+            Field::ExportMaster => {
+                if let Some(super::Sheet::Export(x)) = self.sheet.as_mut() {
+                    x.master = value;
+                    x.master_error = None;
                 }
             }
         }

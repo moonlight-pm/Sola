@@ -75,7 +75,8 @@ impl App {
             Field::Reprompt => self.submit_reprompt(),
             Field::FolderName => self.save_folder(),
             Field::ExportPassword => Field::ExportConfirm.focus(),
-            Field::ExportConfirm => self.update(Msg::Export(super::ExportMsg::Go)),
+            Field::ExportConfirm => Field::ExportMaster.focus(),
+            Field::ExportMaster => self.update(Msg::Export(super::ExportMsg::Go)),
             Field::Search => match self.shown_items().first() {
                 Some(first) => {
                     let id = first.id.clone();
