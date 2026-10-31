@@ -111,16 +111,19 @@ These keys do nothing while you are typing in a field.
 | Menu | Items |
 |---|---|
 | Mail | Get New Mail (⌘⇧N), Quit Mail (⌘Q) |
-| Edit | Cut, Copy, Paste, Select All (⌘X / ⌘C / ⌘V / ⌘A), Copy Message, Search Mail (⌘F) |
+| Edit | Undo, Redo (⌘Z / ⌘⇧Z), Cut, Copy, Paste, Select All (⌘X / ⌘C / ⌘V / ⌘A), Copy Message, Search Mail (⌘F) |
 | Mailbox | Inbox, Sent, Drafts, Archive, Junk, Trash, Erase Junk Mail…, Erase Deleted Items… |
 | Message | New Message (⌘N), Save Draft (⌘S), Attach Files… (⌘⇧A), Reply (⌘R), Reply All (⌘⇧R), Forward (⌘⇧F), Mark as Read / Unread (⌘⇧U), Flag / Unflag (⌘⇧L), Archive, Move to Inbox, Move to Junk, Delete, Undo Move |
 | View | Next Message, Previous Message |
 | Window | The Window menu every Sola application has |
 
 **Edit** works in the field you are typing in (To, Cc, Subject, Search)
-at its caret or selection. With no field focused it works on the draft's
-body, or on the open letter (Copy with nothing selected copies the whole
-letter).
+at its caret or selection; **Undo** and **Redo** step through that
+field's own history ([Text fields](theme.md#text-fields)). With no field
+focused it works on the draft's body, or on the open letter (Copy with
+nothing selected copies the whole letter). With no field focused and no
+draft open, Undo undoes the last move, as **u** does; a draft's body has
+no Undo or Redo.
 
 ### Compose
 

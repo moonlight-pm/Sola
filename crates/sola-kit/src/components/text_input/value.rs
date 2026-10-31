@@ -108,6 +108,19 @@ impl Value {
         let _ = self.graphemes.splice(start..end, std::iter::empty());
     }
 
+    /// Whether the value is `text`, without building a string of it (a
+    /// password field's value too).
+    pub(super) fn eq_str(&self, text: &str) -> bool {
+        let mut rest = text;
+        for grapheme in &self.graphemes {
+            match rest.strip_prefix(grapheme.as_str()) {
+                Some(after) => rest = after,
+                None => return false,
+            }
+        }
+        rest.is_empty()
+    }
+
     /// Returns a new [`Value`] with all its graphemes replaced with the
     /// dot ('•') character.
     pub fn secure(&self) -> Self {

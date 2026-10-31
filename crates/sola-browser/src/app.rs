@@ -26,7 +26,7 @@ use sola_kit::components::card;
 use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 
 use sola_kit::components::style::{chrome_surface, PAD_CONTROL_SM, RADIUS_MD};
-use sola_kit::components::text_input::text_input;
+use sola_kit::components::text_input::{MenuEdit, MenuEdited, edit_focused, text_input};
 use sola_kit::components::toolbar as kit_toolbar;
 use sola_kit::components::{DividerColors, MenuItem, horizontal_divider, menu_at};
 
@@ -157,6 +157,13 @@ pub enum Msg {
     EditRouted {
         cmd: EditCmd,
         url_bar_focused: bool,
+    },
+    /// What Undo / Redo (`cmd`) did in the focused chrome field (the
+    /// field's own history); `None`: no field had focus.
+    EditHistory {
+        cmd: EditCmd,
+        url_bar_focused: bool,
+        done: Option<MenuEdited>,
     },
     /// Result of an `iced::clipboard::read` kicked off by a URL-bar paste.
     UrlPasted(Option<String>),
@@ -1424,6 +1431,20 @@ impl<E: Engine> App<E> {
                 if self.vault.is_open() {
                     return self.vault_edit_action(cmd);
                 }
+                // Undo / Redo: the focused field's own history (the
+                // location bar, the find bar), else the page's.
+                let history = match cmd {
+                    EditCmd::Undo => Some(MenuEdit::Undo),
+                    EditCmd::Redo => Some(MenuEdit::Redo),
+                    _ => None,
+                };
+                if let Some(edit) = history {
+                    return edit_focused(edit).map(move |done| Msg::EditHistory {
+                        cmd,
+                        url_bar_focused,
+                        done,
+                    });
+                }
                 if url_bar_focused {
                     tracing::debug!(?cmd, "edit → URL bar (iced clipboard)");
                     return match cmd {
@@ -1440,11 +1461,37 @@ impl<E: Engine> App<E> {
                         }
                         EditCmd::Paste => iced::clipboard::read().map(Msg::UrlPasted),
                         EditCmd::SelectAll => crate::integration::select_url_bar(),
-                        // The URL bar has no app-level undo/redo stack.
+                        // Taken above, by the field's own history.
                         EditCmd::Undo | EditCmd::Redo => Task::none(),
                     };
                 }
                 return self.edit_page(cmd);
+            }
+            Msg::EditHistory {
+                cmd,
+                url_bar_focused,
+                done,
+            } => {
+                return match done {
+                    Some(MenuEdited {
+                        id: Some(id),
+                        value: Some(value),
+                        ..
+                    }) => {
+                        if id == crate::integration::url_input_id() {
+                            self.update(Msg::UrlInput(value))
+                        } else if id == crate::integration::find_input_id() {
+                            self.update(Msg::FindInput(value))
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    // A field had focus, with nothing to undo or redo.
+                    Some(_) => Task::none(),
+                    // The location bar is up but not yet focused.
+                    None if url_bar_focused => Task::none(),
+                    None => self.edit_page(cmd),
+                };
             }
             Msg::UrlPasted(text) => {
                 let Some(s) = crate::util::usable_clipboard_text(text) else {

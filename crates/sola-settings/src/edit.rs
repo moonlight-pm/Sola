@@ -1,5 +1,7 @@
 //! Edit menu helpers. Super+X/C/V/A are stolen by River + the shell;
-//! they arrive as `Topic::MenuAction` and must be applied here.
+//! they arrive as `Topic::MenuAction` and must be applied here. Super+Z
+//! and Super+Shift+Z (Undo, Redo) go to the focused field's own history
+//! through the kit's `text_input::edit_focused`.
 
 use iced::advanced::widget::operate;
 use iced::advanced::widget::operation::{Operation, Outcome, focusable::Focusable};

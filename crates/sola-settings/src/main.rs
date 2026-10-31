@@ -21,6 +21,7 @@ use sola_kit::app::{
 };
 use sola_kit::components::style::{SPACE_MD, SPACE_XL};
 use sola_kit::components::text as kit_text;
+use sola_kit::components::text_input::{MenuEdit, MenuEdited, edit_focused};
 use sola_kit::components::{SidebarItem, SidebarSection, sidebar};
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
@@ -60,6 +61,8 @@ fn main() -> iced::Result {
         .app_menu(
             "Edit",
             [
+                ("undo", "Undo", KeyCode::Z.meta()),
+                ("redo", "Redo", KeyCode::Z.meta_shift()),
                 ("cut", "Cut", KeyCode::X.meta()),
                 ("copy", "Copy", KeyCode::C.meta()),
                 ("paste", "Paste", KeyCode::V.meta()),
@@ -171,6 +174,8 @@ enum Msg {
         text: String,
     },
     EditSelectAll(Option<iced::widget::Id>),
+    /// Undo or Redo in the focused field, as `edit_focused` did it.
+    EditHistory(Option<MenuEdited>),
 }
 
 impl App {
@@ -347,6 +352,16 @@ impl App {
                     return edit::select_all(id).discard();
                 }
             }
+            Msg::EditHistory(done) => {
+                if let Some(MenuEdited {
+                    id,
+                    value: Some(value),
+                    ..
+                }) = done
+                {
+                    self.set_focused_value(id.as_ref(), value);
+                }
+            }
         }
         Task::none()
     }
@@ -357,6 +372,8 @@ impl App {
             "cut" => edit::find_focused_id().map(Msg::EditCut),
             "paste" => iced::clipboard::read().map(Msg::ClipboardPasted),
             "select_all" => edit::find_focused_id().map(Msg::EditSelectAll),
+            "undo" => edit_focused(MenuEdit::Undo).map(Msg::EditHistory),
+            "redo" => edit_focused(MenuEdit::Redo).map(Msg::EditHistory),
             _ => Task::none(),
         }
     }
