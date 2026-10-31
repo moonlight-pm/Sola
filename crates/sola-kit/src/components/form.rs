@@ -113,50 +113,32 @@ pub fn checkbox_style(theme: &Theme, status: checkbox::Status) -> checkbox::Styl
     style
 }
 
-/// Toggler style: on = accent (sparse); off = raised/hover grey track.
-/// Knob stays high-contrast white-ish on accent, base surface on off.
+/// Toggler style: on = accent track, its text color for the knob; off = a
+/// hairline-grey track with a muted-text knob (lit to the text color on
+/// hover), so an off switch reads on a raised row. Disabled: the same at
+/// part alpha.
 pub fn toggle_style(theme: &Theme, status: toggler::Status) -> toggler::Style {
     let p = theme.extended_palette();
-
-    let background = match status {
-        toggler::Status::Active { is_toggled } | toggler::Status::Hovered { is_toggled } => {
-            if is_toggled {
-                p.primary.base.color
-            } else {
-                // Off track: hover grey, slightly quieter than strong so
-                // the switch doesn't shout next to body labels.
-                p.background.strong.color
-            }
-        }
-        toggler::Status::Disabled { is_toggled } => {
-            if is_toggled {
-                p.background.strong.color
-            } else {
-                p.background.weak.color
-            }
-        }
+    let (is_toggled, hovered, disabled) = match status {
+        toggler::Status::Active { is_toggled } => (is_toggled, false, false),
+        toggler::Status::Hovered { is_toggled } => (is_toggled, true, false),
+        toggler::Status::Disabled { is_toggled } => (is_toggled, false, true),
     };
 
-    let foreground = match status {
-        toggler::Status::Active { is_toggled } => {
-            if is_toggled {
-                p.primary.base.text
-            } else {
-                p.background.base.color
-            }
-        }
-        toggler::Status::Hovered { is_toggled } => {
-            if is_toggled {
-                Color {
-                    a: 0.85,
-                    ..p.primary.base.text
-                }
-            } else {
-                p.background.weaker.color
-            }
-        }
-        toggler::Status::Disabled { .. } => p.background.weakest.color,
+    let (background, foreground) = match (is_toggled, hovered) {
+        (true, false) => (p.primary.base.color, p.primary.base.text),
+        (true, true) => (
+            p.primary.base.color,
+            Color {
+                a: 0.85,
+                ..p.primary.base.text
+            },
+        ),
+        (false, false) => (p.background.stronger.color, p.secondary.base.text),
+        (false, true) => (p.background.stronger.color, p.background.base.text),
     };
+    let faded = |c: Color, a: f32| if disabled { Color { a: c.a * a, ..c } } else { c };
+    let (background, foreground) = (faded(background, 0.4), faded(foreground, 0.5));
 
     toggler::Style {
         background: background.into(),
