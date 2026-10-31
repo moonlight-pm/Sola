@@ -285,7 +285,7 @@ The fade and the dim are described in [Compositor § The idle fade](compositor.m
 | `MailStatus` | `inbox_unread` | Mail; retracted when Mail quits | Shell (the unread count in the top row) | Sticky |
 | `CalendarConfig` | Calendar accounts and the calendar list | Settings, Calendar | Calendar, Settings | Persistent |
 | `CalendarAgenda` | `days`, today through the next week: each a `date` (`YYYY-MM-DD`) and its `events` (`id`, `title`, `color`, `all_day`, `start`, `end` in unix seconds, `location`) | Calendar | Shell (the clock's panel, also while Calendar is closed) | Persistent |
-| `VaultState` | `signed_in`, `unlocked`, `email`, `server` (its web vault's address), `synced_at` (unix seconds of the sync whose items the vault holds), `syncing`, `sync_error`, `items` (the trash not counted; 0 while locked); no item names and no values | `sola-vaultd`, on every change ([Vault](sola-vault.md)) | Nothing yet | Sticky |
+| `VaultState` | `signed_in`, `unlocked`, `email`, `server` (its web vault's address), `synced_at` (unix seconds of the last sync that worked, or of the one kept on disk after an unlock without network), `syncing`, `sync_error`, `items` (the trash not counted; 0 while locked); no item names and no values | `sola-vaultd`, on every change ([Vault](sola-vault.md)) | Nothing yet | Sticky |
 | `TerminalSession` | One Terminal tab: `id`, tmux session, working directory, order, pane layout | Terminal | Terminal | Persistent by `id` |
 | `PaintSession` | The open images' paths and the selected one | Paint | Paint | Persistent |
 | `Zones`, `TerminalConfig`, `MonitorConfig`, `BrowserConfig`, `BrowserHistory`, `BrowserTab` | Declared only | Nothing | Nothing | Persistent (`BrowserTab` by `id`) |
