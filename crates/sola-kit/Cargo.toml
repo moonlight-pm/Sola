@@ -43,6 +43,9 @@ sola-bus = { path = "../sola-bus" }
 sola-call = { path = "../sola-call" }
 sola-core = { path = "../sola-core" }
 sola-assets = { path = "../sola-assets" }
+# The desk menu redeems a vault value for a field (`desk_menu`); no SDK.
+sola-vault-proto = { path = "../sola-vault-proto" }
+zeroize = "1"
 serde_json = "1"
 tracing = "0.1"
 # System font enumeration for the font picker (matches the version

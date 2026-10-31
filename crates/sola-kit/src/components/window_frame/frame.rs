@@ -239,6 +239,13 @@ where
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
+        // The desk menu opens where a right press lands in the window; a
+        // widget in a scrolled list sees the point moved by the scroll.
+        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) = event
+            && let Some(at) = cursor.position()
+        {
+            crate::desk_menu::note_pointer(at);
+        }
         if self.chrome != Chrome::Bare {
             let state = tree.state.downcast_mut::<State>();
             if self.handle(state, event, bounds, cursor, shell) {

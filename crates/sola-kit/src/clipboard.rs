@@ -148,6 +148,24 @@ pub fn write_image(mime: &str, bytes: Vec<u8>) -> Result<(), Error> {
     .map_err(|e| Error::Wayland(e.to_string()))
 }
 
+/// Offer `text` on the regular clipboard, from the compositor's side: no
+/// window focus or input serial needed (the desk menu's Copy lands while
+/// the shell's menu has the keyboard).
+pub fn write_text(text: String) -> Result<(), Error> {
+    copy::Options::new()
+        .copy(Source::Bytes(text.into_bytes().into_boxed_slice()), CopyMime::Text)
+        .map_err(|e| Error::Wayland(e.to_string()))
+}
+
+/// The clipboard's text, read from the compositor's side (no focus
+/// needed). Blocking: the owner serves it through a pipe.
+pub fn read_string() -> Option<String> {
+    match read_text()? {
+        Offer::Text(s) => Some(s),
+        _ => None,
+    }
+}
+
 /// Read a file and offer it as an image. Sniffs magic, then extension.
 pub fn write_image_path(path: &Path) -> Result<(), Error> {
     let bytes = std::fs::read(path)?;
