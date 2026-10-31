@@ -383,6 +383,8 @@ impl App {
             ("SOLA_WS_HOOKS_SOCK", hook_sock.as_str()),
             (catalog::SOLA_WS_PATH, cwd),
         ];
+        let opts = self.session_options(id);
+        let opts: Vec<(&str, &str)> = opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         let backend = match PtyBackend::spawn_remote(
             id,
             &r.host,
@@ -395,6 +397,7 @@ impl App {
             emulator::notify_sender(),
             emulator::exit_sender(),
             &env,
+            &opts,
             exec,
         ) {
             Ok(b) => b,
@@ -405,7 +408,7 @@ impl App {
             }
         };
         tracing::info!(pane = %id, host = %r.host, %cwd, "attaching remote pane");
-        backend.resize(cols, rows);
+        backend.resize_client(cols, rows);
         backend.sigwinch();
         self.runtimes.insert(
             id.to_string(),

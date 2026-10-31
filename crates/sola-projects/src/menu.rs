@@ -17,19 +17,21 @@ pub fn app_menu(folders: &[(String, String)]) -> AppMenuPayload {
             disabled: false,
             checked: false,
         },
-        MenuItem::Action {
-            id: "startup-script".into(),
-            label: "Startup Script…".into(),
-            shortcut: None,
-            disabled: false,
-            checked: false,
-        },
         MenuItem::Divider,
-        // Closes the project: its sessions end, and it is forgotten.
+        // This computer stops watching; the session keeps running.
         MenuItem::Action {
             id: "close-window".into(),
             label: "Close Window".into(),
-            shortcut: Some(KeyCode::W.meta_shift()),
+            shortcut: Some(KeyCode::W.meta()),
+            disabled: false,
+            checked: false,
+        },
+        // Ends it for every computer: no shortcut, and a confirm while
+        // its agent works or waits.
+        MenuItem::Action {
+            id: "end-session".into(),
+            label: "End Session…".into(),
+            shortcut: None,
             disabled: false,
             checked: false,
         },
@@ -54,29 +56,8 @@ pub fn app_menu(folders: &[(String, String)]) -> AppMenuPayload {
                 items: vec![
                     MenuItem::Action {
                         id: "spawn-sibling".into(),
-                        label: "New Tab…".into(),
+                        label: "New Session…".into(),
                         shortcut: Some(KeyCode::T.meta()),
-                        disabled: false,
-                        checked: false,
-                    },
-                    MenuItem::Action {
-                        id: "split-down".into(),
-                        label: "Split Down".into(),
-                        shortcut: Some(KeyCode::DOWN.meta_shift()),
-                        disabled: false,
-                        checked: false,
-                    },
-                    MenuItem::Action {
-                        id: "split-right".into(),
-                        label: "Split Right".into(),
-                        shortcut: Some(KeyCode::RIGHT.meta_shift()),
-                        disabled: false,
-                        checked: false,
-                    },
-                    MenuItem::Action {
-                        id: "close-pane".into(),
-                        label: "Close Pane".into(),
-                        shortcut: Some(KeyCode::W.meta()),
                         disabled: false,
                         checked: false,
                     },

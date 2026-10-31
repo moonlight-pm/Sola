@@ -45,25 +45,31 @@ fn pick_on(socket: &str, legacy: &str, target: &str) -> String {
 }
 
 /// A tab's ssh: attach `session` on `host`, or make it in `dir`, running
-/// `exec` there when given (else the login shell). `env` is stamped on the
-/// session either way, as [`crate::pty::PtyBackend::spawn_or_attach_with_env`]
-/// does here.
+/// `exec` there when given (else the login shell), with `env` in its
+/// environment and `opts` (tmux user options, `@…`) set on it. A session
+/// that is there already is attached as it is: another computer may have
+/// made it, and its environment is its own.
 pub fn attach(
     host: &str,
     session: &str,
     dir: &str,
     env: &[(&str, &str)],
+    opts: &[(&str, &str)],
     exec: &[&str],
 ) -> std::io::Result<Command> {
     let host = ssh::check_host(host).map_err(std::io::Error::other)?;
-    if !is_word(session) || !env.iter().all(|(k, _)| is_word(k)) {
+    let option_name = |k: &str| k.strip_prefix('@').is_some_and(is_word);
+    if !is_word(session)
+        || !env.iter().all(|(k, _)| is_word(k))
+        || !opts.iter().all(|(k, _)| option_name(k))
+    {
         return Err(std::io::Error::other(format!(
             "tmux session {session:?} or its env names are not one word"
         )));
     }
     Ok(ssh::interactive(
         host,
-        &attach_script(&socket(), &legacy_socket(), session, dir, env, &sh_line(exec)),
+        &attach_script(&socket(), &legacy_socket(), session, dir, env, opts, &sh_line(exec)),
     ))
 }
 
@@ -180,15 +186,17 @@ pub fn kill_session(host: &str, session: &str) {
     }
 }
 
-/// The script a tab runs there. The config, the folder and the command
-/// ride in base64, so the script stays one quotable word
-/// ([`ssh::is_quotable`]).
+/// The script a tab runs there. The config, the folder, the command and
+/// every value ride in base64, so the script stays one quotable word
+/// ([`ssh::is_quotable`]). A new session is made detached, its options
+/// set, then attached.
 fn attach_script(
     socket: &str,
     legacy: &str,
     session: &str,
     dir: &str,
     env: &[(&str, &str)],
+    opts: &[(&str, &str)],
     exec: &str,
 ) -> String {
     let b64 = base64::engine::general_purpose::STANDARD;
@@ -196,22 +204,26 @@ fn attach_script(
     let dir = b64.encode(dir);
     let exec = b64.encode(exec);
     let t = "tmux -L \"$L\" -f \"$c\"";
-    // Env values decode into e0, e1, …; then `-e` for a new session,
-    // `set-environment` for one there already.
+    // Env values decode into e0, e1, …, option values into o0, o1, ….
     let decode: String = env
         .iter()
         .enumerate()
         .map(|(i, (_, v))| format!("e{i}=$(echo {} | base64 -d); ", b64.encode(v)))
-        .collect();
-    let stamp: String = env
-        .iter()
-        .enumerate()
-        .map(|(i, (k, _))| format!("{t} set-environment -t ={session} {k} \"$e{i}\"; "))
+        .chain(
+            opts.iter()
+                .enumerate()
+                .map(|(i, (_, v))| format!("o{i}=$(echo {} | base64 -d); ", b64.encode(v))),
+        )
         .collect();
     let flags: String = env
         .iter()
         .enumerate()
         .map(|(i, (k, _))| format!(" -e \"{k}=$e{i}\""))
+        .collect();
+    let stamp: String = opts
+        .iter()
+        .enumerate()
+        .map(|(i, (k, _))| format!("{t} set-option -t ={session} {k} \"$o{i}\"; "))
         .collect();
     let decode = decode.trim_end_matches("; ").to_string();
     [
@@ -226,13 +238,15 @@ fn attach_script(
         pick_on(socket, legacy, &format!("={session}")).trim_end_matches(';').to_string(),
         format!("{t} source-file \"$c\" 2>/dev/null"),
         if decode.is_empty() { "true".to_string() } else { decode },
-        format!(
-            "{t} has-session -t ={session} 2>/dev/null && {{ {stamp}exec {t} attach-session -t ={session}; }}"
-        ),
         format!("d=$(echo {dir} | base64 -d)"),
         format!("x=$(echo {exec} | base64 -d)"),
-        format!("[ -n \"$x\" ] && exec {t} new-session -s {session} -c \"$d\"{flags} \"$x\""),
-        format!("exec {t} new-session -s {session} -c \"$d\"{flags}"),
+        format!(
+            "{t} has-session -t ={session} 2>/dev/null || {{ \
+             if [ -n \"$x\" ]; then {t} new-session -d -s {session} -c \"$d\"{flags} \"$x\"; \
+             else {t} new-session -d -s {session} -c \"$d\"{flags}; fi || exit 1; {stamp}}}"
+        ),
+        format!("{t} set-window-option -u -t ={session}: window-size 2>/dev/null"),
+        format!("exec {t} attach-session -t ={session}"),
     ]
     .join("; ")
 }
@@ -273,12 +287,14 @@ mod tests {
             "sws-ws-novus-sola",
             "/home/j/Projects/It's \"here\"",
             &[("SOLA_PANE_ID", "ws-novus-sola"), ("SOLA_WS_PATH", "/it's")],
+            &[("@sola-project", "/home/j/Projects/It's"), ("@sola-name", "a b")],
             &sh_line(&["claude", "--resume", "a b"]),
         );
         assert!(ssh::is_quotable(&s), "{s}");
-        assert!(s.contains("attach-session -t =sws-ws-novus-sola"));
-        assert!(s.contains("new-session -s sws-ws-novus-sola -c \"$d\" -e \"SOLA_PANE_ID=$e0\" -e \"SOLA_WS_PATH=$e1\""));
-        assert!(s.contains("set-environment -t =sws-ws-novus-sola SOLA_WS_PATH \"$e1\""));
+        assert!(s.contains("exec tmux -L \"$L\" -f \"$c\" attach-session -t =sws-ws-novus-sola"));
+        assert!(s.contains("new-session -d -s sws-ws-novus-sola -c \"$d\" -e \"SOLA_PANE_ID=$e0\" -e \"SOLA_WS_PATH=$e1\""));
+        assert!(s.contains("set-option -t =sws-ws-novus-sola @sola-name \"$o1\""));
+        assert!(!s.contains("set-environment"), "an existing session's env is its own: {s}");
     }
 
     #[test]
@@ -287,12 +303,21 @@ mod tests {
         let home = std::env::temp_dir().join(format!("sola-remote-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
-        let script = attach_script("t", "u", "s", "/a dir/it's", &[("K", "v w")], &sh_line(&["echo", "it's"]))
-            .replace("command -v tmux >/dev/null", "true")
-            .replace("tmux -L t has-session", "false")
-            .replace("tmux -L u has-session", "false")
-            .replace("tmux -L \"$L\" -f \"$c\"", "echo")
-            .replace("exec echo", "echo");
+        let script = attach_script(
+            "t",
+            "u",
+            "s",
+            "/a dir/it's",
+            &[("K", "v w")],
+            &[("@o", "p q")],
+            &sh_line(&["echo", "it's"]),
+        )
+        .replace("command -v tmux >/dev/null", "true")
+        .replace("tmux -L t has-session", "false")
+        .replace("tmux -L u has-session", "false")
+        .replace("tmux -L \"$L\" -f \"$c\" has-session", "false")
+        .replace("tmux -L \"$L\" -f \"$c\"", "echo")
+        .replace("exec echo", "echo");
         let out = Command::new("sh")
             .args(["-c", &script])
             .env("HOME", &home)
@@ -303,7 +328,9 @@ mod tests {
         assert!(said_l(&script), "{script}");
         assert_eq!(conf, TMUX_CONF);
         let said = String::from_utf8_lossy(&out.stdout);
-        assert!(said.contains("new-session -s s -c /a dir/it's -e K=v w echo 'it'\\''s'"), "{said}");
+        assert!(said.contains("new-session -d -s s -c /a dir/it's -e K=v w echo 'it'\\''s'"), "{said}");
+        assert!(said.contains("set-option -t =s @o p q"), "{said}");
+        assert!(said.contains("attach-session -t =s"), "{said}");
         let _ = std::fs::remove_dir_all(&home);
     }
 

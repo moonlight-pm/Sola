@@ -294,9 +294,10 @@ impl PtyBackend {
         notify: mpsc::Sender<String>,
         exit: mpsc::Sender<String>,
         env: &[(&str, &str)],
+        opts: &[(&str, &str)],
         exec: &[&str],
     ) -> std::io::Result<Self> {
-        let cmd = crate::remote::attach(host, tmux_session, cwd, env, exec)?;
+        let cmd = crate::remote::attach(host, tmux_session, cwd, env, opts, exec)?;
         Self::spawn_in_pty(
             tab_id,
             cmd,
@@ -496,6 +497,18 @@ impl PtyBackend {
 
     /// Resize the pty (TIOCSWINSZ) and the tmux window to match.
     pub fn resize(&self, cols: u16, rows: u16) {
+        self.resize_client(cols, rows);
+        // A remote tmux follows its client: ssh carries the new size.
+        if self.host.is_none() {
+            crate::tmux::resize_window(&self.tmux_session, cols, rows);
+        }
+    }
+
+    /// Size this client only (TIOCSWINSZ). Its tmux window follows the
+    /// client that typed last (`window-size latest`) when it is not pinned
+    /// ([`crate::tmux::follow_latest`]): several computers can watch one
+    /// session, and the one in use sets its size.
+    pub fn resize_client(&self, cols: u16, rows: u16) {
         let winsize = libc::winsize {
             ws_row: rows,
             ws_col: cols,
@@ -515,10 +528,6 @@ impl PtyBackend {
                 "ioctl TIOCSWINSZ failed: {}",
                 std::io::Error::last_os_error()
             );
-        }
-        // A remote tmux follows its client: ssh carries the new size.
-        if self.host.is_none() {
-            crate::tmux::resize_window(&self.tmux_session, cols, rows);
         }
     }
 

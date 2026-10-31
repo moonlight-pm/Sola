@@ -111,6 +111,7 @@ set -g prefix None
 unbind -a
 set -g mouse off
 set -g history-limit 10000
+set -g window-size latest
 set -g default-terminal xterm-256color
 set -g escape-time 0
 set -g extended-keys always
@@ -691,6 +692,16 @@ pub fn set_environment(session: &str, key: &str, value: &str) {
             key,
             value,
         ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Unpin `session`'s window (a `resize-window` sets it to manual), so it
+/// follows its clients again: the one that typed last sets its size.
+pub fn follow_latest(session: &str) {
+    let _ = tmux_cmd()
+        .args(["set-window-option", "-u", "-t", &pane_target(session), "window-size"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();

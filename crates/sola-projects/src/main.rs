@@ -43,6 +43,7 @@ mod menu;
 mod paths;
 mod presence;
 mod remote;
+mod sessions;
 mod spawn;
 mod status;
 mod windows;
@@ -252,6 +253,11 @@ enum Msg {
     RemoteTick {
         host: String,
         panes: Vec<(String, status::PaneStatus, status::PaneStatus)>,
+    },
+    /// A host's sessions, listed for opening project `project` there.
+    HostSessions {
+        project: String,
+        found: Result<Vec<sessions::HostSession>, String>,
     },
     /// A resumable remote pane's attach, planned off the UI thread.
     RemoteAttach {
@@ -467,7 +473,7 @@ impl App {
     fn label(&self, window: window::Id) -> Option<WindowLabel> {
         let tab = self.tab_for_pane(self.windows.tab_of(window)?)?;
         let p = catalog::find_project(&self.projects, &tab.project_id)?;
-        let session = (tab.kind != catalog::Kind::Main)
+        let session = (!catalog::is_main(tab))
             .then(|| tab.title.clone().unwrap_or_else(|| tab.name.clone()));
         Some(WindowLabel {
             project: catalog::island_name(p).to_string(),
@@ -744,6 +750,7 @@ impl App {
             Msg::Link(ev) => self.on_link(ev),
             Msg::RemoteTick { host, panes } => self.on_remote_tick(host, panes),
             Msg::RemoteAttach { pane, exec } => self.attach_planned(&pane, exec),
+            Msg::HostSessions { project, found } => self.on_host_sessions(&project, found),
             Msg::RemoteExec {
                 tab,
                 pane,
@@ -1261,6 +1268,7 @@ impl App {
             ("SOLA_WS_HOOKS_SOCK", hook_sock.as_str()),
             (catalog::SOLA_WS_PATH, cwd.as_str()),
         ];
+        let new_session = !tmux::has_session(&tmux_session);
         let backend = match PtyBackend::spawn_or_attach_with_env(
             id,
             &tmux_session,
@@ -1280,7 +1288,13 @@ impl App {
                 return Task::none();
             }
         };
-        backend.resize(cols, rows);
+        if new_session {
+            sessions::stamp(&tmux_session, &self.session_options(id));
+        }
+        // Another computer may watch it too: its size follows whoever
+        // typed last, not this window alone.
+        tmux::follow_latest(&tmux_session);
+        backend.resize_client(cols, rows);
         backend.sigwinch();
         self.runtimes.insert(
             id.to_string(),
@@ -1292,6 +1306,17 @@ impl App {
         );
         self.resize_all_panes();
         Task::none()
+    }
+
+    /// What session `id` says it is, for any computer that lists it
+    /// ([`sessions`]).
+    fn session_options(&self, id: &str) -> Vec<(String, String)> {
+        let Some(tab) = self.tab_for_pane(id) else {
+            return Vec::new();
+        };
+        let root = catalog::find_project(&self.projects, &tab.project_id)
+            .map_or_else(|| tab.path.clone(), |p| p.root.clone());
+        sessions::options(&root, &tab.name, tab.title.as_deref(), cli::kind_str(tab.kind))
     }
 
     /// `grok -r` or `claude --resume` when last-status still names that
@@ -2185,25 +2210,37 @@ impl App {
                     .map(|p| p.id.clone())
             }
         };
-        let (project_id, added) = match (known, host) {
-            (Some(id), _) => (id, None),
-            (None, Some(host)) => {
-                let (id, main_id, task) = self.register_remote_project(host, path)?;
-                (id, Some((main_id, task)))
-            }
-            (None, None) => {
-                let (id, main_id, task) = self.register_project(path)?;
-                (id, Some((main_id, task)))
-            }
+        let project_id = match (known, host) {
+            (Some(id), _) => id,
+            (None, Some(host)) => self.register_remote_project(host, path)?,
+            (None, None) => self.register_project(path)?,
         };
         let was_open = self
             .tabs
             .iter()
             .any(|w| w.project_id == project_id && self.windows.has(&w.id));
-        let mut task = self.show_project(&project_id);
-        if let Some((main_id, more)) = added {
-            task = Task::batch([more, task, self.select_tab(&main_id)]);
-        }
+        // Its sessions on its computer, whichever computer opened them:
+        // listed here at once, or over ssh off the UI thread.
+        let task = match host {
+            None => {
+                let found = sessions::list_local();
+                self.on_host_sessions(&project_id, found)
+            }
+            Some(host) => {
+                let (host, project) = (host.to_string(), project_id.clone());
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || sessions::list_remote(&host))
+                            .await
+                            .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    move |found| Msg::HostSessions {
+                        project: project.clone(),
+                        found,
+                    },
+                )
+            }
+        };
         let project = self
             .projects
             .iter()
@@ -2472,7 +2509,9 @@ impl App {
         }
     }
 
-    fn register_project(&mut self, raw: &str) -> Result<(String, String, Task<Msg>), String> {
+    /// A folder of `~/Projects` here becomes a project in this catalog
+    /// (no session yet: [`Self::on_host_sessions`] finds or makes them).
+    fn register_project(&mut self, raw: &str) -> Result<String, String> {
         let raw = raw.trim();
         if raw.is_empty() {
             return Err("folder path required".into());
@@ -2492,49 +2531,116 @@ impl App {
         );
         let taken_p: HashSet<String> = self.projects.iter().map(|p| p.id.clone()).collect();
         let project_id = catalog::unique_id("proj", &slug, &taken_p);
-        let mut taken_w: HashSet<String> = self.tabs.iter().map(|w| w.id.clone()).collect();
-        let main_id = catalog::main_tab_id(&root, &taken_w);
-        taken_w.insert(main_id.clone());
-        let (project, ws) = catalog::project_from_root(&root, &project_id, &main_id);
+        let (project, _) = catalog::project_from_root(&root, &project_id, "");
         self.projects.push(project);
-        if self.selected.is_empty() {
-            self.selected = ws.id.clone();
-            self.focused = ws.active_pane_id();
-        }
-        let attach_id = ws.id.clone();
-        self.tabs.push(ws);
         self.persist_catalog();
-        Ok((project_id, attach_id, Task::none()))
+        Ok(project_id)
     }
 
     /// [`Self::register_project`] for folder `path` on `host` (checked by
     /// the caller's listing, not here: it is not on this computer).
-    fn register_remote_project(
-        &mut self,
-        host: &str,
-        path: &str,
-    ) -> Result<(String, String, Task<Msg>), String> {
+    fn register_remote_project(&mut self, host: &str, path: &str) -> Result<String, String> {
         let host = sola_core::ssh::check_host(host)?;
         let root = catalog::remote_root(path)?;
         let folder = root.file_name().and_then(|s| s.to_str()).unwrap_or("project");
         let slug = spawn::slug(&format!("{host}-{folder}"));
         let taken_p: HashSet<String> = self.projects.iter().map(|p| p.id.clone()).collect();
         let project_id = catalog::unique_id("proj", &slug, &taken_p);
-        let taken_w: HashSet<String> = self.tabs.iter().map(|w| w.id.clone()).collect();
-        let main_id = catalog::unique_id("ws", &slug, &taken_w);
-        let (project, ws) = catalog::project_from_remote(host, &root, &project_id, &main_id);
+        let (project, _) = catalog::project_from_remote(host, &root, &project_id, "");
         tracing::info!(project = %project_id, %host, root = %root.display(), "remote project");
         self.projects.push(project);
         self.ensure_link(host);
-        if self.selected.is_empty() {
-            self.selected = ws.id.clone();
-            self.focused = ws.active_pane_id();
-        }
-        let attach_id = ws.id.clone();
-        self.tabs.push(ws);
         self.persist_catalog();
-        let task = self.learn_remote_root(&attach_id);
-        Ok((project_id, attach_id, task))
+        Ok(project_id)
+    }
+
+    /// Project `project_id`'s computer listed its sessions: each one of
+    /// this project not open here gets a window; with none anywhere, its
+    /// main session starts (its id free on that computer). Then its
+    /// windows come up, the first in front.
+    fn on_host_sessions(
+        &mut self,
+        project_id: &str,
+        found: Result<Vec<sessions::HostSession>, String>,
+    ) -> Task<Msg> {
+        let Some(project) = self.projects.iter().find(|p| p.id == project_id).cloned() else {
+            return Task::none();
+        };
+        let found = found.unwrap_or_else(|e| {
+            tracing::warn!(project = %project_id, "could not list its sessions: {e}");
+            Vec::new()
+        });
+        let host = project.host.as_deref();
+        for s in found.iter().filter(|s| s.project.as_deref() == Some(project.root.as_path())) {
+            let key = catalog::key_for(&s.id, host);
+            if self.tabs.iter().any(|w| w.id == key) {
+                continue;
+            }
+            let mut name = s.name.clone().unwrap_or_else(|| catalog::name_from_id(&s.id));
+            if catalog::session_name_taken(&self.tabs, project_id, &name) {
+                name = format!("{name} ({})", s.id);
+            }
+            tracing::info!(project = %project_id, session = %key, "a session there; opening it here");
+            self.tabs.push(catalog::Tab {
+                id: key,
+                project_id: project_id.to_string(),
+                name,
+                title: s.title.clone(),
+                path: project.root.clone(),
+                host: project.host.clone(),
+                kind: catalog::kind_from(s.kind.as_deref(), &s.id),
+                parent: None,
+                layout: None,
+                active_pane: None,
+                status: status::AgentStatus::Idle,
+                agent: None,
+            });
+        }
+        let mut learn = Task::none();
+        if self.tabs.iter().all(|w| w.project_id != project_id) {
+            let live: HashSet<String> = found.iter().map(|s| s.id.clone()).collect();
+            let key = self.add_main_tab(&project, &live);
+            if host.is_some() {
+                learn = self.learn_remote_root(&key);
+            }
+        }
+        if self.selected.is_empty() {
+            if let Some(first) = self.tabs.iter().find(|w| w.project_id == project_id) {
+                self.selected = first.id.clone();
+                self.focused = first.id.clone();
+            }
+        }
+        self.persist_catalog();
+        Task::batch([learn, self.show_project(project_id)])
+    }
+
+    /// A new main session for `project`: `ws-main` here when that is free
+    /// (as before), `ws-<folder>` on another computer; never an id `live`
+    /// (that computer's sessions) or this catalog has there.
+    fn add_main_tab(&mut self, project: &catalog::Project, live: &HashSet<String>) -> String {
+        let host = project.host.as_deref();
+        let mut taken: HashSet<String> = self
+            .tabs
+            .iter()
+            .filter(|w| w.host.as_deref() == host)
+            .map(|w| catalog::bare_id(&w.id).to_string())
+            .collect();
+        taken.extend(live.iter().cloned());
+        let (_, mut tab) = match host {
+            None => {
+                let id = catalog::main_tab_id(&project.root, &taken);
+                catalog::project_from_root(&project.root, &project.id, &id)
+            }
+            Some(h) => {
+                let folder = project.root.file_name().and_then(|s| s.to_str()).unwrap_or("project");
+                let id = catalog::unique_id("ws", &spawn::slug(folder), &taken);
+                catalog::project_from_remote(h, &project.root, &project.id, &id)
+            }
+        };
+        tab.id = catalog::key_for(catalog::bare_id(&tab.id), host);
+        let key = tab.id.clone();
+        self.tabs.push(tab);
+        key
     }
 
     /// Stop drawing this pane. Caller must `close()` the result (on the
@@ -2588,7 +2694,7 @@ impl App {
                 continue;
             };
             rt.emulator.resize(cols, rows);
-            rt.backend.resize(cols, rows);
+            rt.backend.resize_client(cols, rows);
             rt.backend.sigwinch();
             rt.cache.clear();
             self.pane_grids.insert(pane_id, (cols, rows));

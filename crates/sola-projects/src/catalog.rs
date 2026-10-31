@@ -643,6 +643,29 @@ pub fn ordered_for_project<'a>(project_id: &str, all: &'a [Tab]) -> Vec<&'a Tab>
     all.iter().filter(|w| w.project_id == project_id).collect()
 }
 
+/// A project's main session (its first; the label names only the
+/// project for it).
+pub fn is_main(tab: &Tab) -> bool {
+    matches!(tab.kind, Kind::Main | Kind::Folder)
+}
+
+/// What a listed session is, from its `@sola-kind` (or, before that
+/// existed, its id: a main session was `ws-main`).
+pub fn kind_from(stamped: Option<&str>, id: &str) -> Kind {
+    match stamped {
+        Some("main") => Kind::Main,
+        Some("folder") => Kind::Folder,
+        Some(_) => Kind::Root,
+        None if id == LIVE_ID || id.starts_with("ws-main-") => Kind::Main,
+        None => Kind::Root,
+    }
+}
+
+/// A name for a session that never had one: its id without `ws-`.
+pub fn name_from_id(id: &str) -> String {
+    id.strip_prefix("ws-").unwrap_or(id).to_string()
+}
+
 /// A session named `name` is open here in project `project_id`.
 pub fn session_name_taken(tabs: &[Tab], project_id: &str, name: &str) -> bool {
     tabs.iter()
