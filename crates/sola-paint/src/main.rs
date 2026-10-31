@@ -25,6 +25,8 @@ use sola_bus::Message;
 #[derive(Debug, Clone)]
 enum Msg {
     Bus(Arc<Message>),
+    /// A call: `open` from Sola's opener.
+    Call(sola_kit::sola_call::Incoming),
     /// A message from a window: that window is the one acted on.
     At(iced::window::Id, Box<Msg>),
     /// A window's focus and close events.

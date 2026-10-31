@@ -2,7 +2,9 @@
 
 `solactl` is the operator command line. Most of its commands are calls on
 the call plane, `sola-call` ([The call plane](call.md)); `emit` and
-`background` write to the bus; `logs`, `open`, and `media` work locally.
+`background` write to the bus; `logs` and `media` work locally; `open`
+finds the app Sola keeps for a link or a file and reaches it over both
+([Opening links and files](session.md#opening-links-and-files)).
 On Oath it comes in the `sola` package as `/bin/solactl`; elsewhere it is
 installed as `/opt/sola/bin/solactl`. Oath is recognised by
 `/oath/INDEX.md`; the same test picks Oath's directories for logs and
@@ -45,7 +47,7 @@ solactl help [COMMAND…]
 | `mcp` | Call plane | `sola-call`; tools appear as owners do |
 | `emit`, `background` | Bus | `sola-bus` (the picture is drawn by `sola-river`) |
 | `logs` | Files in Sola's log directory | nothing |
-| `open` | Hands off to, or starts, the Browser, Paint, or Calendar | their binaries |
+| `open` | Opens a link or a file with the app Sola keeps for it, as `xdg-open` does: its `open` call, or the session starts it first | `sola-call`; the bus to start an app |
 | `media` | Session D-Bus (MPRIS) and `wpctl` | a player, PipeWire |
 
 `solactl` never starts an application to answer a call. There is no

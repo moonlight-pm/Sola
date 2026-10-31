@@ -7,8 +7,9 @@
 //! selection, including when the press begins on a URL.
 //!
 //! Super/⌘ is not used here (plain left-click). Opening uses
-//! [`sola_core::open_url`] (sola-browser) — same path as mail, solactl,
-//! and shell's `Topic::OpenUrl` handler.
+//! [`sola_kit::open`]: the app Sola keeps for the link's scheme (the
+//! Browser for the web, Mail for `mailto:`, Claude Code for
+//! `claude-cli:`) — the same as xdg-open and `solactl open`.
 //!
 //! The scanner is deliberately simple — no regex crate — and matches the
 //! conventions terminals like alacritty use: scheme prefix, then non-space
@@ -31,9 +32,14 @@ pub struct UrlSpan {
     pub end: GridPoint,
 }
 
-/// Open `uri` in sola-browser (shared sola-wide helper).
+/// Open `uri` with the app Sola keeps for it. A bare `www.` link is a web
+/// address.
 pub fn open_url(uri: &str) {
-    sola_core::open_url_logged(uri);
+    if uri.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("www.")) {
+        sola_kit::open(&format!("https://{uri}"));
+    } else {
+        sola_kit::open(uri);
+    }
 }
 
 /// Find a URL under `point`, if any.

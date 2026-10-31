@@ -2,9 +2,9 @@
 
 **Date:** 2026-10-31  
 **Status:** **decided** (Joshua, 2026-10-31: the answers below); slice 1 in progress.  
-**Implementation:** none yet.  
+**Implementation (2026-10-31):** slice 1 built on branch `sola-open` (tests and `cargo make build`; not applied). The Browser opens a link it does not load only on a click. Slice 2 not started.  
 **Branch:** `sola-open`  
-**Related:** [D14](../open-questions.md#d14--what-pkgsola-ships-on-oath-p2) (answered: Sola owns `/bin/xdg-open`), decision log "Link and file handlers", [session manager](../manual/session.md#opening-urls-and-files).
+**Related:** [D14](../open-questions.md#d14--what-pkgsola-ships-on-oath-p2) (answered: Sola owns `/bin/xdg-open`), decision log "Link and file handlers", [session manager](../manual/session.md#opening-links-and-files).
 
 Joshua (2026-10-31): "currently on our oath system i do not believe opening
 links between apps is working"; "Since i run almost only sola apps -- i wonder
@@ -51,25 +51,26 @@ A claim is an app id with the schemes (`mailto`, `http`) and file types
 
   | App | Schemes | Types |
   |---|---|---|
-  | Browser | `http`, `https` | `html`, `htm`, `xhtml`, `pdf`, `svg` |
+  | Browser | `http`, `https` | `html`, `htm`, `xhtml`, `pdf`, `svg`, `txt`, `json`, `xml` |
   | Paint | — | `png`, `jpg`, `jpeg`, `jpe`, `gif`, `webp`, `bmp`, `tif`, `tiff`, `tga` |
   | Calendar | — | `ics`, `ical`, `icalendar` |
   | Mail | `mailto` | — |
 
-- **Any kit app** claims at start: `BusSetup::new(id).opens(claims)`. The
-  kit writes the claim to `~/.config/sola/handlers/<app id>.json`
-  (`{app_id, schemes, types, since}`; one file per app, so apps never write
-  each other's) and keeps `since` from the first time. Sola's own apps pass
-  their built-in claim, so both sources agree.
+- **Any kit app** claims at start: `BusSetup::new(id).opens(claim)`, or
+  `.opens_own()` for one of Sola's own (its built-in claim, so both sources
+  agree). The kit writes the claim to
+  `~/.config/sola/handlers/claims/<app id>.json` (`{app_id, schemes, types,
+  since}`; one file per app, so apps never write each other's) and keeps
+  `since` from the first time.
 
 ### The handler for a scheme or a type
 
 In order, the first that still exists (its program is in Sola's bin
 directory, or its `.desktop` file is there):
 
-1. The one you chose: `defaults` in `~/.config/sola/handlers.yaml`
-   (`mailto: sola-mail`). Written by Settings and by a confirmed request,
-   never by a claim.
+1. The one you chose: `defaults` in `~/.config/sola/handlers/defaults.json`
+   (`"mailto:": "sola-mail"`, `".png": "sola-paint"`). Written by Settings
+   and by a confirmed request, never by a claim.
 2. Sola's own claimant (the table above).
 3. Other claimants, the earliest `since` first. A later claim never moves
    ahead of an earlier one: that is what keeps apps from stomping on each
@@ -115,8 +116,9 @@ used by:
   Mail and a `claude-cli:` reaches Claude Code.
 - The Browser: a navigation to a scheme it does not load (anything but
   `http`, `https`, `file`, `about`, `data`, `blob`, `javascript`,
-  `view-source`, `chrome`, `devtools`) is cancelled and handed to the
-  opener. Its Open on a download and the Oath app's home link use it too,
+  `view-source`, `chrome`, `devtools`, `filesystem`, `ws`, `wss`, `sola`)
+  is cancelled and, when you clicked it, handed to the opener; without a
+  click it is only logged, so a page cannot start apps by itself. Its Open on a download and the Oath app's home link use it too,
   not `xdg-open` by name.
 
 A target is a URL when it starts with a scheme (`[a-z][a-z0-9+.-]*:`), a

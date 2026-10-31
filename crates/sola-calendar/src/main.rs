@@ -80,6 +80,8 @@ fn main() -> iced::Result {
             ],
         })
         .window_menu()
+        // `.ics` files from other apps and xdg-open (Sola's opener).
+        .opens_own()
         .install();
 
     iced::application(App::boot, App::update, App::view)

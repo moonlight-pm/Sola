@@ -2354,6 +2354,18 @@ cef::wrap_request_handler! {
             let Some(req) = request else { return 0 };
             use cef::ImplRequest;
             let url = cef_string_userfree_display(&req.url());
+            // A link the browser does not load (`mailto:`, `claude-cli:`)
+            // goes to the app Sola keeps for it — on a click only: a page
+            // must not start apps by itself.
+            if let Some(scheme) = crate::util::outside_scheme(&url) {
+                if user_gesture != 0 {
+                    tracing::info!(%url, %scheme, "a link the browser does not load: to Sola's opener");
+                    sola_kit::open(&url);
+                } else {
+                    tracing::warn!(%url, %scheme, "a link the browser does not load, without a click: not opened");
+                }
+                return 1;
+            }
             // A web app's window: a link the user follows to another site
             // opens as a browser page. Redirects stay in the window.
             let main = frame.is_some_and(|f| f.is_main() != 0);

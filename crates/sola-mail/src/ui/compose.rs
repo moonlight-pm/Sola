@@ -468,6 +468,17 @@ pub fn blank(from: String) -> Draft {
     }
 }
 
+/// A new letter from a `mailto:` link: its To, Cc, Subject and body.
+/// Mail has no Bcc: a link's Bcc addresses are left out, not moved to Cc.
+pub fn from_mailto(link: &crate::mailto::Mailto, from: String) -> Draft {
+    let mut draft = blank(from);
+    draft.to = link.to.join(", ");
+    draft.cc = link.cc.join(", ");
+    draft.subject = link.subject.clone();
+    draft.body = text_editor::Content::with_text(&link.body);
+    draft
+}
+
 /// Reply (or reply-all) to `body`, quoting it.
 pub fn reply(body: &MessageBody, from: String, all: bool, is_self: &dyn Fn(&str) -> bool) -> Draft {
     let (to, cc) = reply_recipients(body, all, is_self);

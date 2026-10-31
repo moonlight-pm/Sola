@@ -6,7 +6,6 @@ mod catalog;
 mod graph;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use iced::event::{self, Event};
@@ -1066,13 +1065,7 @@ fn open_home(url: &str) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("home is not an http(s) URL".into());
     }
-    Command::new("/bin/xdg-open")
-        .arg(url)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("xdg-open: {e}"))?;
+    sola_kit::open(url);
     Ok(())
 }
 

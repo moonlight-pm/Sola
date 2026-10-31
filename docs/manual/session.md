@@ -320,73 +320,99 @@ Browser is running, `sola-session` starts it. Other ways in
 (`solactl desk launch`, opening a file) still reach the application's
 own single-instance handling.
 
-## Opening URLs and files
+## Opening links and files
 
-Every Sola component that opens a URL, an image, or a calendar file uses
-the same functions in `sola-core`. They hand the target to the running
-application. When it is not running they start `<app> --open <target>`,
-which asks `sola-session` to start the application (as a `LaunchApp` with
-its plain command), waits up to 20 s for it, and hands the target over.
-The application then runs inside the session: it is tracked, and it comes
-back when the desk restarts. With no bus to ask through, or no
-application up within the 20 s, the `--open` process becomes the
-application itself, outside the session.
+Every link or file Sola opens goes to the app Sola keeps for its scheme
+(`mailto:`) or its type (the extension: `.png`): a link clicked in
+Terminal, Projects, Mail or Calendar, a link the Browser does not load
+itself, the Browser's Open on a download, the Oath app's home link,
+`solactl open`, and on Oath `xdg-open` from any program (`gh auth login`,
+`claude /login`, Steam). The library is `sola-open`
+([spec](../specs/2026-10-31-sola-open-design.md)).
 
-### URLs
+### Handlers
 
-`sola_core::open_url`:
+Apps **claim** the schemes and types they open. Sola's own apps ship
+theirs:
 
-1. Turns a local path into a `file://` URL: an absolute path always, a
-   relative path when the file exists or the path starts with `./` or
-   `../`.
-2. If the Browser is running, writes the URL to its socket,
-   `~/.local/share/sola/browser/chrome.sock` (under `$XDG_DATA_HOME` when
-   that is set). The Browser opens it as a new page, in front.
-3. Otherwise starts `/bin/sola-browser --open <url>` in the background, or
-   the binary that `SOLA_BROWSER` names. The session starts the Browser,
-   and the URL goes to it over `chrome.sock`.
+| App | Schemes | Types |
+|---|---|---|
+| Browser | `http`, `https` | `html`, `htm`, `xhtml`, `pdf`, `svg`, `txt`, `json`, `xml` |
+| Paint | — | `png`, `jpg`, `jpeg`, `jpe`, `gif`, `webp`, `bmp`, `tif`, `tiff`, `tga` |
+| Calendar | — | `ics`, `ical`, `icalendar` |
+| Mail | `mailto` | — |
 
-There is no fallback to another browser. If the binary is missing, the
-open fails.
+A kit app claims when it starts (`BusSetup::opens`); the claim is kept in
+`~/.config/sola/handlers/claims/<app id>.json` with the time it first
+claimed. The handler for a scheme or a type is the first that is still
+installed of:
+
+1. The one you chose, in `~/.config/sola/handlers/defaults.json`:
+   `{"defaults": {"mailto:": "sola-mail", ".png": "sola-paint"}}`. A claim
+   never writes it. There is no Settings page for it yet; edit the file.
+2. Sola's own claimant (the table).
+3. Other claimants, the earliest claim first. A later claim never moves
+   ahead of an earlier one, so a new app does not take a scheme or a type
+   from the app that has it.
+4. For a scheme only: `~/.config/mimeapps.list` (`[Default Applications]`,
+   `x-scheme-handler/<scheme>`), then a `.desktop` file whose `MimeType`
+   lists `x-scheme-handler/<scheme>`, in `~/.local/share/applications` and
+   each `$XDG_DATA_DIRS` entry's `applications`. That is how
+   `claude-cli://` reaches Claude Code.
+
+A type nothing claims has no handler; nothing looks inside a file.
+
+### Delivery
+
+A claiming app answers the call-plane method `open` (`{target}`: the link,
+or the file's absolute path) on its call owner: `browser`, `sola-paint`,
+`sola-calendar`, `sola-mail`. When it is running, the opener calls it.
+When it is not, the opener sends `LaunchApp` with the app's plain command,
+so `sola-session` starts it, tracks it, and brings it back after a desk
+restart; it waits up to 20 s for the app's `open`, then calls it. The
+Browser opens the link as a page in front; Paint opens the image in a
+window of its own; Calendar drafts the event; Mail opens a new letter with
+the link's To, Cc, Subject and body (Mail has no Bcc, so a link's Bcc is
+left out).
+
+With no call plane, or an app from before `open`, the opener starts
+`<app> --open <target>`: that process hands the target to the running app
+(the Browser over `chrome.sock`, Calendar over its socket, Paint by
+`OpenImage`), or has the session start the app and then hands it over;
+with no session either, it becomes the app itself. A `.desktop` handler
+runs its `Exec`, with `%u` `%U` `%f` `%F` the target and `%i` `%c` `%k`
+left out.
+
+### The Browser
+
+A link to a scheme the Browser does not load (anything but `http`,
+`https`, `file`, `about`, `data`, `blob`, `javascript`, `view-source`,
+`chrome`, `devtools`, `filesystem`, `ws`, `wss`, `sola`) goes to its handler
+when you clicked it: `mailto:` to Mail. A page that goes there by itself
+(no click) gets nothing; the log says `without a click: not opened`.
 
 Applications that want the shell involved emit `OpenUrl {url, activate}`
 on the bus instead. A running Browser opens the page itself, as the active
-page with `activate`; when the Browser is not running, the shell calls
-`open_url`.
+page with `activate`; when the Browser is not running, the shell starts it
+through `sola_core::open_url`.
 
-### Images
+### xdg-open and solactl open
 
-`sola_core::open_image` treats a path, or a `file://` URL, ending in
-`.png`, `.jpg`, `.jpeg`, `.jpe`, `.gif`, `.webp`, `.bmp`, `.tif`,
-`.tiff`, or `.tga` (any case) as an image. It starts
-`/bin/sola-paint --open <path>`, or the binary that `SOLA_PAINT` names. A
-running Paint receives the path from the new process and opens it in a
-window of its own ([Paint](sola-paint.md)). With none running, the new
-process waits for the session's Paint to show its first window before it
-hands the path over.
-
-### Calendar files
-
-`sola_core::open_calendar` treats a path, or a `file://` URL, ending in
-`.ics`, `.ical`, or `.icalendar` (any case) as a calendar file. It starts
-`/bin/sola-calendar --open <path>`; a running Calendar, or the one the
-session starts, receives the path and drafts the event
-([Calendar](sola-calendar.md)).
-
-### solactl open
-
-`solactl open <target>` sends an image to Paint, a calendar file to
-Calendar, and anything else to `open_url`. It exits with status 3 when the
-open fails.
+On Oath, `pkg:sola` puts Sola's opener at `/bin/xdg-open`, so every
+program that calls xdg-open reaches the same handlers. `xdg-open
+<file|URL>` exits 0 when opened, 1 on a usage error, 2 when the file is
+not there, 3 when nothing opens it, and 4 when its handler failed;
+`--help` and `--version` print and exit 0. `solactl open <target>` does the
+same and exits 3 on any failure.
 
 ```bash
-solactl open https://example.com
-solactl open ~/Pictures/shot.png
-solactl open ~/Downloads/invite.ics
+xdg-open https://example.com
+xdg-open ~/Pictures/shot.png
+solactl open "mailto:someone@example.com?subject=Hello"
 ```
 
-Sola's Oath packages carry no `.desktop` files, so on Oath Sola registers
-no default handlers for `xdg-open`.
+A relative path is taken from the caller's working directory. `$BROWSER`
+is not set on the desk; programs that read it fall back to `xdg-open`.
 
 ## Bus topics and call methods
 

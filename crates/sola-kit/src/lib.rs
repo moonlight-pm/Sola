@@ -61,3 +61,5 @@ pub use iced;
 /// their own dep — convenience only, not load-bearing.
 pub use sola_bus;
 pub use sola_call;
+pub use sola_open;
+pub use opener::open;
