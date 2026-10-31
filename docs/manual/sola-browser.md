@@ -38,7 +38,7 @@ right, the page's title, or its address while it has none.
   current one, right after it in the bar. Several in a row keep the order
   you opened them.
 - **Open Link in New Window** in the right-click menu opens the link in a
-  new page window in front, focused.
+  new page window behind the current one.
 - A `target=_blank` link, or a page's `window.open` (database consoles,
   SSH terminals, a call's popup), opens a page window in front, focused,
   right after the page that opened it. Browser never opens a window of
@@ -204,11 +204,12 @@ Right-click a page for the desk's right-click menu, which the Shell draws
 not show. The page's rows come first:
 
 - on a picture, **Use as Desktop Background**;
-- on a link, **Open Link in New Window** (a page window in front) and
+- on a link, **Open Link in New Window** (a page window behind) and
   **Copy Link**;
 - **Back** (⌘←) and **Forward** (⌘→), dimmed with no page that way, and
   **Reload** (⌘R);
-- **Inspect Element** and **Developer Tools** (⌘⌥I);
+- **Inspect Element** and **Developer Tools** (⌘⌥I), except in a web
+  app's window;
 - on an `http` or `https` page, **Wrap This Page…** (see
   [Web apps](web-apps.md)).
 

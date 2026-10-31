@@ -88,9 +88,19 @@ impl PageMenuKind {
     }
 }
 
+/// The window the page is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuWindow {
+    /// A browser window: it can wrap a page as a web app.
+    Browser { wrappable: bool },
+    /// A web app's window: it draws no developer tools, so the menu has
+    /// no inspector.
+    WebApp,
+}
+
 /// The page's rows: picture, link, then navigation and the inspector.
 /// Cut, Copy and Paste are the shell's Edit rows ([`desk_edit`]).
-pub fn page_menu_kinds(ctx: &PageContext, wrappable: bool) -> Vec<PageMenuKind> {
+pub fn page_menu_kinds(ctx: &PageContext, window: MenuWindow) -> Vec<PageMenuKind> {
     let mut rows = Vec::new();
     if ctx.image && ctx.src_url.as_deref().is_some_and(|u| !u.is_empty()) {
         rows.push(PageMenuKind::UseAsBackground);
@@ -105,19 +115,21 @@ pub fn page_menu_kinds(ctx: &PageContext, wrappable: bool) -> Vec<PageMenuKind> 
     rows.push(PageMenuKind::Back);
     rows.push(PageMenuKind::Forward);
     rows.push(PageMenuKind::Reload);
-    rows.push(PageMenuKind::Separator);
-    rows.push(PageMenuKind::InspectElement);
-    rows.push(PageMenuKind::DevTools);
-    if wrappable {
+    if let MenuWindow::Browser { wrappable } = window {
         rows.push(PageMenuKind::Separator);
-        rows.push(PageMenuKind::Wrap);
+        rows.push(PageMenuKind::InspectElement);
+        rows.push(PageMenuKind::DevTools);
+        if wrappable {
+            rows.push(PageMenuKind::Separator);
+            rows.push(PageMenuKind::Wrap);
+        }
     }
     rows
 }
 
 /// The page's rows as the desk menu carries them.
-pub fn desk_items(ctx: &PageContext, wrappable: bool) -> Vec<DeskMenuItem> {
-    page_menu_kinds(ctx, wrappable)
+pub fn desk_items(ctx: &PageContext, window: MenuWindow) -> Vec<DeskMenuItem> {
+    page_menu_kinds(ctx, window)
         .into_iter()
         .map(|kind| match kind.id_label() {
             None => DeskMenuItem::Separator,
@@ -346,9 +358,24 @@ mod tests {
             .collect()
     }
 
+    const PLAIN: MenuWindow = MenuWindow::Browser { wrappable: false };
+    const WRAPPABLE: MenuWindow = MenuWindow::Browser { wrappable: true };
+
+    #[test]
+    fn a_web_app_has_no_inspector() {
+        let c = PageContext {
+            link_url: Some("https://ex/a".into()),
+            ..ctx()
+        };
+        assert_eq!(
+            kinds(&desk_items(&c, MenuWindow::WebApp)),
+            [ids::OPEN_LINK, ids::COPY_LINK, "-", ids::BACK, ids::FORWARD, ids::RELOAD]
+        );
+    }
+
     #[test]
     fn a_plain_page_has_navigation_and_the_inspector() {
-        let rows = desk_items(&ctx(), false);
+        let rows = desk_items(&ctx(), PLAIN);
         assert_eq!(
             kinds(&rows),
             [ids::BACK, ids::FORWARD, ids::RELOAD, "-", ids::INSPECT, ids::DEVTOOLS]
@@ -366,7 +393,7 @@ mod tests {
             can_go_back: true,
             ..ctx()
         };
-        let rows = desk_items(&c, true);
+        let rows = desk_items(&c, WRAPPABLE);
         assert_eq!(
             kinds(&rows),
             [
@@ -397,11 +424,11 @@ mod tests {
                 link_url: Some("https://ex/big.jpg".into()),
                 ..ctx()
             },
-            false,
+            PLAIN,
         );
         assert_eq!(&rows[..2], &[PageMenuKind::UseAsBackground, PageMenuKind::OpenLink]);
         // No source (a canvas, a blob it cannot name): no row.
-        let rows = page_menu_kinds(&PageContext { image: true, ..ctx() }, false);
+        let rows = page_menu_kinds(&PageContext { image: true, ..ctx() }, PLAIN);
         assert!(!rows.contains(&PageMenuKind::UseAsBackground));
     }
 
@@ -433,7 +460,7 @@ mod tests {
 
     #[test]
     fn rows_come_back_by_id() {
-        for k in page_menu_kinds(&PageContext { image: true, src_url: Some("x".into()), link_url: Some("y".into()), ..ctx() }, true) {
+        for k in page_menu_kinds(&PageContext { image: true, src_url: Some("x".into()), link_url: Some("y".into()), ..ctx() }, WRAPPABLE) {
             if let Some((id, _)) = k.id_label() {
                 assert_eq!(PageMenuKind::from_id(id), Some(k));
             }
