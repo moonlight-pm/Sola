@@ -236,7 +236,11 @@ The picture offers a **scheme** for each colour it is made of: up to four,
 the best first, as far apart in hue as the picture allows. The colours
 are the picture's own (the ones many of its pixels share, preferring vivid
 ones), not averages over it, so a dark picture still gives colourful
-schemes. Each scheme is named by its hue: Rose, Ember, Amber, Gold, Olive,
+schemes. A picture of fewer than three colours is filled out to three with
+**complements**, after its own: the opposite hue of each of its colours,
+then the two hues either side of its main colour's opposite. A complement
+keeps the brightness and colourfulness of the colour it turns, and takes
+the picture's colour as its accent. Each scheme is named by its hue: Rose, Ember, Amber, Gold, Olive,
 Green, Teal, Sky, Blue, Violet or Magenta. A picture with no colour of
 its own offers one scheme, **Grey**: the greys and the amber flower stay,
 and the accent is a cyan close to the default.
