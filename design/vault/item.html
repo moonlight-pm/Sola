@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Vault / A record</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="vault.css">
+<script src="vault.js"></script>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__num">03</span><span class="head__title">A record, and editing it</span></div>
+  <div class="head__lead">
+    The record is Settings' grouped rows: label over value on the left,
+    its tools on the right — copy on every field, reveal on secrets, open on
+    a website. The one-time code is the largest thing on the sheet, with its
+    time left as a ring. Fill is the one primary, at the foot. Edit turns the
+    same groups into fields in place, so nothing moves.
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Reading</div>
+  <div class="states">
+
+    <div class="state">
+      <div class="state__cap">A login <span>→ from the list</span></div>
+      <div class="vp" id="rec">
+        <div class="vp__head vp__head--back">
+          <span class="ib"><i data-i="chevL" data-s="16"></i></span>
+          <span class="plate plate--sm e-ink">G</span>
+          <div class="vp__who"><span class="vp__title">GitHub</span><span class="vp__sub">github.com</span></div>
+          <span class="ib" id="rec-edit"><i data-i="pencil" data-s="15"></i></span>
+          <span class="ib"><i data-i="more" data-s="16"></i></span>
+        </div>
+        <div class="vp__body">
+          <div class="grp">
+            <div class="fr"><div class="fr__text"><span class="fr__label">Username</span><span class="fr__value">ana.k</span></div><div class="fr__tools"><span class="ib"><i data-i="copy"></i></span></div></div>
+            <div class="fr"><div class="fr__text"><span class="fr__label">Password</span><span class="fr__value fr__value--dots">••••••••••••</span></div><div class="fr__tools"><span class="ib"><i data-i="eye"></i></span><span class="ib"><i data-i="copy"></i></span></div></div>
+            <div class="fr" id="rec-code"><div class="fr__text"><span class="fr__label">One-time code</span><span class="fr__value fr__value--code">482 913</span></div><div class="fr__tools"><span class="ring" data-left="18"></span><span class="ib"><i data-i="copy"></i></span></div></div>
+          </div>
+          <div class="grp">
+            <div class="fr"><div class="fr__text"><span class="fr__label">Website</span><span class="fr__value">github.com</span></div><div class="fr__tools"><span class="ib"><i data-i="open"></i></span></div></div>
+            <div class="fr" id="rec-pk"><div class="fr__text"><span class="fr__label">Passkey</span><span class="fr__value">ana.k · saved Oct 3</span></div><div class="fr__tools" style="padding-right:8px"><i data-i="passkey" data-s="16"></i></div></div>
+          </div>
+          <div class="grp">
+            <div class="fr"><div class="fr__text"><span class="fr__label">Recovery codes</span><span class="fr__value fr__value--dots">••••••••••</span></div><div class="fr__tools"><span class="ib"><i data-i="eye"></i></span><span class="ib"><i data-i="copy"></i></span></div></div>
+            <div class="fr"><div class="fr__text"><span class="fr__label">Notes</span><span class="fr__value fr__value--wrap">Org owner. Recovery codes printed and in the safe too.</span></div><div class="fr__tools" style="align-self:flex-start"><span class="ib"><i data-i="copy"></i></span></div></div>
+          </div>
+          <div class="meta">Edited Oct 30 · Used today</div>
+        </div>
+        <div class="vp__actions">
+          <span class="btn btn--primary btn--wide" id="rec-fill">Fill <span class="kbd">↵</span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">Copied <span>the row says so, 1.5 s</span></div>
+      <div class="vp">
+        <div class="vp__head vp__head--back">
+          <span class="ib"><i data-i="chevL" data-s="16"></i></span>
+          <span class="plate plate--sm e-teal">C</span>
+          <div class="vp__who"><span class="vp__title">Cloudflare</span><span class="vp__sub">dash.cloudflare.com</span></div>
+          <span class="ib"><i data-i="pencil" data-s="15"></i></span>
+          <span class="ib"><i data-i="more" data-s="16"></i></span>
+        </div>
+        <div class="vp__body">
+          <div class="grp">
+            <div class="fr"><div class="fr__text"><span class="fr__label">Username</span><span class="fr__value">ana@example.com</span></div><div class="fr__tools"><span class="ib"><i data-i="copy"></i></span></div></div>
+            <div class="fr is-hot"><div class="fr__text"><span class="fr__label">Password</span><span class="fr__value fr__value--mono">Tm4!vQ2r#Ls8wZ0e</span></div><div class="fr__tools"><span class="ib"><i data-i="eye"></i></span><span class="ib"><i data-i="copy"></i></span></div></div>
+            <div class="fr is-copied"><div class="fr__text"><span class="fr__label">One-time code</span><span class="fr__value fr__value--code">907 154</span></div><div class="fr__tools"><span class="copied"><i data-i="check" data-s="12"></i>Copied</span><span class="ring" data-left="4"></span></div></div>
+          </div>
+          <div class="grp">
+            <div class="fr"><div class="fr__text"><span class="fr__label">Website</span><span class="fr__value">dash.cloudflare.com</span></div><div class="fr__tools"><span class="ib"><i data-i="open"></i></span></div></div>
+          </div>
+          <div class="meta">Edited Oct 30 · Used today</div>
+        </div>
+        <div class="vp__actions">
+          <span class="btn btn--primary btn--wide">Fill <span class="kbd">↵</span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">A card <span>fills the payment form</span></div>
+      <div class="vp">
+        <div class="vp__head vp__head--back">
+          <span class="ib"><i data-i="chevL" data-s="16"></i></span>
+          <span class="plate plate--sm plate--kind"><i data-i="card" data-s="12"></i></span>
+          <div class="vp__who"><span class="vp__title">Bank of Example</span><span class="vp__sub">Visa •••• 4242</span></div>
+          <span class="ib"><i data-i="pencil" data-s="15"></i></span>
+          <span class="ib"><i data-i="more" data-s="16"></i></span>
+        </div>
+        <div class="vp__body">
+          <div class="grp">
+            <div class="fr"><div class="fr__text"><span class="fr__label">Name on card</span><span class="fr__value">Ana Kowalski</span></div><div class="fr__tools"><span class="ib"><i data-i="copy"></i></span></div></div>
+            <div class="fr"><div class="fr__text"><span class="fr__label">Number</span><span class="fr__value fr__value--mono">•••• •••• •••• 4242</span></div><div class="fr__tools"><span class="ib"><i data-i="eye"></i></span><span class="ib"><i data-i="copy"></i></span></div></div>
+            <div class="fr"><div class="fr__text"><span class="fr__label">Expires</span><span class="fr__value fr__value--mono">08 / 29</span></div><div class="fr__tools"><span class="ib"><i data-i="copy"></i></span></div></div>
+            <div class="fr"><div class="fr__text"><span class="fr__label">Security code</span><span class="fr__value fr__value--dots">•••</span></div><div class="fr__tools"><span class="ib"><i data-i="eye"></i></span><span class="ib"><i data-i="copy"></i></span></div></div>
+          </div>
+        </div>
+        <div class="vp__actions">
+          <span class="btn btn--primary btn--wide">Fill card <span class="kbd">↵</span></span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Editing</div>
+  <div class="states">
+
+    <div class="state">
+      <div class="state__cap">Edit <span>the same groups, fields in place</span></div>
+      <div class="vp" id="edit">
+        <div class="vp__head">
+          <div class="vp__who"><span class="vp__title">Edit GitHub</span><span class="vp__sub">Saves only what you change</span></div>
+        </div>
+        <div class="vp__body">
+          <div class="grp">
+            <div class="ef"><span class="ef__label">Name</span><div class="fld"><span class="v">GitHub</span></div></div>
+            <div class="ef"><span class="ef__label">Username</span><div class="fld"><span class="v">ana.k</span></div></div>
+            <div class="ef"><span class="ef__label"><span class="changed"></span>Password</span><div class="fld is-focus"><span class="v mono">Tm4!vQ2r#Ls8wZ0e<span class="caret"></span></span><span class="ib"><i data-i="dice"></i></span><span class="ib"><i data-i="eye"></i></span></div><span class="ef__hint">The old one goes to password history.</span></div>
+            <div class="ef"><span class="ef__label">Authenticator key</span><div class="fld"><span class="v mono">otpauth://totp/GitHub:ana.k?secret=JBSW…</span></div></div>
+          </div>
+          <div class="grp">
+            <div class="ef"><span class="ef__label">Websites</span>
+              <div class="ef__pair"><div class="fld"><span class="v">github.com</span></div><div class="sel">Domain<i data-i="chevD" data-s="12"></i></div></div>
+              <div class="ef__pair"><div class="fld"><span class="v">gist.github.com</span></div><div class="sel">Host<i data-i="chevD" data-s="12"></i></div></div>
+              <span class="add"><i data-i="plus" data-s="12"></i>Add website</span>
+            </div>
+          </div>
+          <div class="grp">
+            <div class="ef"><span class="ef__label">Notes</span><div class="fld fld--area"><span class="v" style="white-space:normal">Org owner. Recovery codes printed and in the safe too.</span></div></div>
+          </div>
+        </div>
+        <div class="vp__actions vp__actions--split">
+          <span class="btn btn--ghost">Cancel</span>
+          <span class="btn btn--primary">Save</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">A key Sola can't read <span>kept, said so</span></div>
+      <div class="vp">
+        <div class="vp__head vp__head--back">
+          <span class="ib"><i data-i="chevL" data-s="16"></i></span>
+          <span class="plate plate--sm e-teal">C</span>
+          <div class="vp__who"><span class="vp__title">Cloudflare</span><span class="vp__sub">dash.cloudflare.com</span></div>
+          <span class="ib"><i data-i="pencil" data-s="15"></i></span>
+          <span class="ib"><i data-i="more" data-s="16"></i></span>
+        </div>
+        <div class="vp__body">
+          <div class="grp">
+            <div class="fr"><div class="fr__text"><span class="fr__label">Username</span><span class="fr__value">ana@example.com</span></div><div class="fr__tools"><span class="ib"><i data-i="copy"></i></span></div></div>
+            <div class="fr" id="unreadable"><div class="fr__text"><span class="fr__label">Authenticator key</span><span class="fr__value fr__value--dots">••••••••••</span><span class="ef__hint" style="margin-top:2px">Sola can't make codes from this key. It is kept as it is.</span></div><div class="fr__tools"><span class="ib"><i data-i="eye"></i></span><span class="ib"><i data-i="copy"></i></span></div></div>
+          </div>
+        </div>
+        <div class="vp__actions">
+          <span class="btn btn--primary btn--wide">Fill <span class="kbd">↵</span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">New login <span>+ on a site</span></div>
+      <div class="vp">
+        <div class="vp__head vp__head--back">
+          <span class="ib"><i data-i="chevL" data-s="16"></i></span>
+          <div class="vp__who"><span class="vp__title">New login</span><span class="vp__sub">for news.ycombinator.com</span></div>
+        </div>
+        <div class="vp__body">
+          <div class="grp">
+            <div class="ef"><span class="ef__label">Username</span><div class="fld is-focus"><span class="v">ana_k<span class="caret"></span></span></div></div>
+            <div class="ef"><span class="ef__label">Password</span><div class="fld"><span class="v mono">q7#Lm2v!RbX9pT4s</span><span class="ib"><i data-i="dice"></i></span><span class="ib"><i data-i="copy"></i></span></div><span class="ef__hint">Generated: 16 characters, letters, digits and symbols.</span></div>
+            <div class="ef"><span class="ef__label">Website</span><div class="fld"><span class="v">news.ycombinator.com</span></div></div>
+          </div>
+        </div>
+        <div class="vp__actions vp__actions--split">
+          <span class="btn btn--ghost">Cancel</span>
+          <span class="btn btn--primary">Save and fill</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Notes</div>
+  <div class="states" style="gap:20px 56px">
+    <div class="note"><b>Fill once, at the foot.</b> Today the record has Fill in its head and again on the
+      authenticator. Here Fill fills the login and its code together (the code also goes to the clipboard, as
+      Bitwarden does — a decision for you).</div>
+    <div class="note"><b>Time left is a ring.</b> A 30 s arc in secondary ink that turns warning in its last five
+      seconds, with the number inside. The code is 20 px mono, grouped in threes.</div>
+    <div class="note"><b>Edit keeps its place.</b> The groups do not move; values become fields. A changed field
+      shows a dot by its label, because Save writes only those.</div>
+    <div class="note"><b>Websites show their match.</b> Each address has its match type beside it (Domain, Host,
+      Starts with, Exact, Regular expression, Never), so you can see why a login is offered on a page.</div>
+  </div>
+</div>
+
+</body>
+</html>

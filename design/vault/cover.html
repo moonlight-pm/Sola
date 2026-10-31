@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Vault</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="vault.css">
+<script src="vault.js"></script>
+<style>
+  .hero { display: grid; grid-template-columns: 1fr 360px; gap: 72px; align-items: start; margin-bottom: 72px; }
+  .kicker { font: 500 13px/1 var(--f-spec); color: var(--accent); margin-bottom: 18px; }
+  .big { font: 600 54px/1.02 var(--f-chrome); letter-spacing: -1.4px; margin: 0 0 22px; }
+  .intro { font: 400 16px/26px var(--f-chrome); color: var(--ink-2); max-width: 640px; }
+  .intro b { color: var(--ink); font-weight: 500; }
+  .rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px 40px; }
+  .rule { border-top: 1px solid var(--hairline); padding-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .rule__n { font: 500 11px/1 var(--f-spec); color: var(--ink-3); }
+  .rule__t { font: 500 15px/20px var(--f-chrome); }
+  .rule__s { font: 400 13px/20px var(--f-chrome); color: var(--ink-2); }
+  .map { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+  .map a { text-decoration: none; color: inherit; border-radius: var(--radius-lg); padding: 14px 16px; background: var(--group); box-shadow: inset 0 0 0 1px var(--group-edge); display: flex; flex-direction: column; gap: 6px; }
+  .map a:hover { background: var(--row-hover); }
+  .map b { font: 500 11px/1 var(--f-spec); color: var(--accent); }
+  .map span { font: 500 14px/18px var(--f-chrome); }
+  .map i { font: 400 12px/17px var(--f-chrome); color: var(--ink-2); font-style: normal; }
+  .open { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 40px; }
+  .q { font: 400 13px/20px var(--f-chrome); color: var(--ink-2); padding-left: 16px; position: relative; }
+  .q::before { content: "◆"; position: absolute; left: 0; top: 0; color: var(--warning); font-size: 9px; }
+  .q b { color: var(--ink); font-weight: 500; }
+</style>
+</head>
+<body class="board">
+
+<div class="hero">
+  <div>
+    <div class="kicker">SOLA · BROWSER · 2026-10-31</div>
+    <h1 class="big">The vault panel</h1>
+    <div class="intro">
+      Bitwarden in the browser works — logins fill, codes and passkeys sign
+      in, edits save only what changed — but the panel is a stack of
+      controls. This canvas starts its new look: <b>one sheet that opens on
+      what the page needs</b>, the record as Settings' grouped rows, and a
+      keyboard path from the key button to a filled form.
+    </div>
+  </div>
+  <div class="vp">
+    <div class="vp__head">
+      <span class="plate plate--sm" style="background:#1f2328;color:#fff">G</span>
+      <div class="vp__who"><span class="vp__title">github.com</span></div>
+      <span class="ib"><i data-i="plus" data-s="16"></i></span>
+      <span class="ib"><i data-i="more" data-s="16"></i></span>
+    </div>
+    <div class="vp__body">
+      <div class="search is-focus"><i data-i="search"></i><span class="caret"></span><span>Search vault</span><span class="key">838 items</span></div>
+      <div class="caps">On this site</div>
+      <div class="it is-on"><span class="plate e-ink">G</span><div class="it__text"><div class="it__name"><span>GitHub</span><span class="it__marks"><i data-i="passkey" data-s="12"></i><i data-i="clock" data-s="12"></i></span></div><div class="it__sub">ana.k</div></div><span class="it__hint">Fill <span class="kbd">↵</span></span></div>
+      <div class="it"><span class="plate e-ink">G</span><div class="it__text"><div class="it__name"><span>GitHub — work</span><span class="it__marks"><i data-i="clock" data-s="12"></i></span></div><div class="it__sub">ana@acme.dev</div></div><span class="it__go"><i data-i="chevR"></i></span></div>
+    </div>
+    <div class="vp__foot"><i data-i="check" data-s="12"></i><span class="grow">Synced 2 min ago</span><span>ana@example.com</span></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">Six rules</div>
+  <div class="rules">
+    <div class="rule"><span class="rule__n">1</span><span class="rule__t">One sheet</span><span class="rule__s">360 wide in every state, popover chrome, hanging from the key button. A state changes what is inside, never the frame.</span></div>
+    <div class="rule"><span class="rule__n">2</span><span class="rule__t">Open on the page</span><span class="rule__s">The site's logins first, the first one chosen, the caret in search. Enter fills. The whole vault is a search or an arrow away.</span></div>
+    <div class="rule"><span class="rule__n">3</span><span class="rule__t">One primary</span><span class="rule__s">Cyan for the focused field and one action per sheet: Fill, Unlock, Save. No filled button on a row.</span></div>
+    <div class="rule"><span class="rule__n">4</span><span class="rule__t">Shapes before words</span><span class="rule__s">A fingerprint for a passkey, a clock for a code, a ring for its time, a diamond when sync fails. Plates in enamel name items.</span></div>
+    <div class="rule"><span class="rule__n">5</span><span class="rule__t">The record is rows</span><span class="rule__s">Settings' groups: label and value, tools on the right — copy, reveal, open. Edit turns them into fields in place.</span></div>
+    <div class="rule"><span class="rule__n">6</span><span class="rule__t">Housekeeping out of the way</span><span class="rule__s">Sync, account and Log out live in ··· and a one-line foot. Escape or a click on the page closes it.</span></div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">The boards</div>
+  <div class="map">
+    <a data-design-to="today" href="#"><b>01</b><span>The panel today</span><i>As built, five states, what is wrong.</i></a>
+    <a data-design-to="browse" href="#"><b>02</b><span>Open on a page</span><i>The site's logins, the whole vault, search, sync trouble.</i></a>
+    <a data-design-to="item" href="#"><b>03</b><span>A record</span><i>Login, card, copied, edit, a key Sola can't read, new login.</i></a>
+    <a data-design-to="signin" href="#"><b>04</b><span>Unlocking</span><i>Unlock, two-step, passkey sign-in and save, re-prompt.</i></a>
+    <a data-design-to="window" href="#"><b>05</b><span>In the window</span><i>1:1 under the key button on github.com.</i></a>
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">For you to decide</div>
+  <div class="open">
+    <div class="q"><b>Fill a login with a code: copy the code too?</b> Bitwarden puts the one-time code on the clipboard
+      after it fills, so the next page's code field is a paste away.</div>
+    <div class="q"><b>Enter on a site row fills; a click does too?</b> Proposed: a click on a row of this site fills it,
+      its › opens it. In the whole vault a click opens.</div>
+    <div class="q"><b>A key to open the panel.</b> Today it opens only from the key button (and by itself when a site
+      asks for a passkey).</div>
+    <div class="q"><b>Enamel plates or site icons?</b> Plates are Sola's way of naming things and need no network;
+      favicons are what Bitwarden shows and are recognisable at a glance.</div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Vault / Browse</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="vault.css">
+<script src="vault.js"></script>
+</head>
+<body class="board">
+
+<div class="head">
+  <div class="head__row"><span class="head__num">02</span><span class="head__title">Open on a page</span></div>
+  <div class="head__lead">
+    One sheet, 360 wide in every state, hanging from the key button with
+    popover chrome. It opens on what this page needs: the logins for this
+    site, the first one chosen, the caret in search. <span class="kbd">↵</span>
+    fills, <span class="kbd">↑</span> <span class="kbd">↓</span> choose,
+    <span class="kbd">→</span> opens the record, typing searches the whole vault.
+    Housekeeping moves into ···.
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">On a site</div>
+  <div class="states">
+
+    <div class="state">
+      <div class="state__cap">Logins here <span>github.com/login</span></div>
+      <div class="vp" id="site">
+        <div class="vp__head">
+          <span class="plate plate--sm" style="background:#1f2328;color:#fff">G</span>
+          <div class="vp__who"><span class="vp__title">github.com</span></div>
+          <span class="ib"><i data-i="plus" data-s="16"></i></span>
+          <span class="ib"><i data-i="more" data-s="16"></i></span>
+        </div>
+        <div class="vp__body">
+          <div class="search is-focus"><i data-i="search"></i><span class="caret"></span><span>Search vault</span><span class="key">838 items</span></div>
+          <div class="caps">On this site</div>
+          <div class="it is-on" id="site-first">
+            <span class="plate e-ink">G</span>
+            <div class="it__text">
+              <div class="it__name"><span>GitHub</span><span class="it__marks"><i data-i="passkey" data-s="12"></i><i data-i="clock" data-s="12"></i></span></div>
+              <div class="it__sub">ana.k</div>
+            </div>
+            <span class="it__hint">Fill <span class="kbd">↵</span></span>
+          </div>
+          <div class="it is-hot">
+            <span class="plate e-ink">G</span>
+            <div class="it__text">
+              <div class="it__name"><span>GitHub — work</span><span class="it__marks"><i data-i="clock" data-s="12"></i></span></div>
+              <div class="it__sub">ana@acme.dev</div>
+            </div>
+            <span class="it__go"><i data-i="chevR"></i></span>
+          </div>
+        </div>
+        <div class="vp__foot" id="site-foot"><i data-i="check" data-s="12"></i><span class="grow">Synced 2 min ago</span><span>ana@example.com</span></div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">Nothing saved here <span>news.ycombinator.com</span></div>
+      <div class="vp">
+        <div class="vp__head">
+          <span class="plate plate--sm" style="background:#ff6600;color:#fff">Y</span>
+          <div class="vp__who"><span class="vp__title">news.ycombinator.com</span></div>
+          <span class="ib"><i data-i="plus" data-s="16"></i></span>
+          <span class="ib"><i data-i="more" data-s="16"></i></span>
+        </div>
+        <div class="vp__body">
+          <div class="search is-focus"><i data-i="search"></i><span class="caret"></span><span>Search vault</span><span class="key">838 items</span></div>
+          <div class="empty" id="empty-site">
+            <i data-i="key" data-s="20"></i>
+            <div class="empty__t">No logins for this site</div>
+            <div class="empty__s">Save the one you are about to use, or search for one saved under another address.</div>
+            <span class="btn btn--sm btn--secondary" style="margin-top:6px"><i data-i="plus"></i>New login for this site</span>
+          </div>
+        </div>
+        <div class="vp__foot"><i data-i="check" data-s="12"></i><span class="grow">Synced 2 min ago</span><span>ana@example.com</span></div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">··· <span>what left the foot</span></div>
+      <div style="position:relative; width:var(--panel-w); height:330px">
+        <div class="vp" style="position:absolute; inset:0 auto auto 0">
+          <div class="vp__head">
+            <span class="plate plate--sm" style="background:#1f2328;color:#fff">G</span>
+            <div class="vp__who"><span class="vp__title">github.com</span></div>
+            <span class="ib"><i data-i="plus" data-s="16"></i></span>
+            <span class="ib is-hot"><i data-i="more" data-s="16"></i></span>
+          </div>
+          <div class="vp__body">
+            <div class="search"><i data-i="search"></i><span>Search vault</span><span class="key">838 items</span></div>
+            <div class="caps">On this site</div>
+            <div class="it is-on"><span class="plate e-ink">G</span><div class="it__text"><div class="it__name"><span>GitHub</span></div><div class="it__sub">ana.k</div></div></div>
+            <div class="it"><span class="plate e-ink">G</span><div class="it__text"><div class="it__name"><span>GitHub — work</span></div><div class="it__sub">ana@acme.dev</div></div></div>
+          </div>
+        </div>
+        <div class="menu" style="right:-148px; top:40px" id="menu">
+          <div class="row is-hot"><i data-i="refresh"></i>Sync now<span class="k">⌘R</span></div>
+          <div class="row is-sub">Synced 2 min ago</div>
+          <div class="sep"></div>
+          <div class="row"><i data-i="plus"></i>New login…</div>
+          <div class="row"><i data-i="open"></i>Open Bitwarden</div>
+          <div class="sep"></div>
+          <div class="row"><i data-i="logout"></i>Log out</div>
+          <div class="row is-sub">ana@example.com</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">The whole vault</div>
+  <div class="states">
+
+    <div class="state">
+      <div class="state__cap">All items <span>a page with no logins, or ↓ past the site's</span></div>
+      <div class="vp" id="all">
+        <div class="vp__head">
+          <span class="plate plate--sm plate--kind"><i data-i="key" data-s="12"></i></span>
+          <div class="vp__who"><span class="vp__title">Vault</span></div>
+          <span class="ib"><i data-i="plus" data-s="16"></i></span>
+          <span class="ib"><i data-i="more" data-s="16"></i></span>
+        </div>
+        <div class="vp__body">
+          <div class="search"><i data-i="search"></i><span>Search vault</span><span class="key">⌘F</span></div>
+          <div class="kinds" id="kinds">
+            <span class="kind is-on">All <i>838</i></span><span class="kind">Logins</span><span class="kind">Cards</span><span class="kind">Identities</span><span class="kind">Notes</span>
+          </div>
+          <div class="vp__scroll">
+            <div class="caps">Recently used</div>
+            <div class="it is-on"><span class="plate e-teal">C</span><div class="it__text"><div class="it__name"><span>Cloudflare</span><span class="it__marks"><i data-i="clock" data-s="12"></i></span></div><div class="it__sub">ana@example.com</div></div><span class="it__go"><i data-i="chevR"></i></span></div>
+            <div class="it"><span class="plate e-ink">G</span><div class="it__text"><div class="it__name"><span>GitHub</span><span class="it__marks"><i data-i="passkey" data-s="12"></i><i data-i="clock" data-s="12"></i></span></div><div class="it__sub">ana.k</div></div></div>
+            <div class="caps">A–Z</div>
+            <div class="it"><span class="plate e-brass">A</span><div class="it__text"><div class="it__name"><span>Amazon</span></div><div class="it__sub">ana@example.com</div></div></div>
+            <div class="it"><span class="plate e-iris">A</span><div class="it__text"><div class="it__name"><span>Apple ID</span><span class="it__marks"><i data-i="passkey" data-s="12"></i></span></div><div class="it__sub">ana@example.com</div></div></div>
+            <div class="it"><span class="plate plate--kind"><i data-i="card" data-s="14"></i></span><div class="it__text"><div class="it__name"><span>Bank of Example</span></div><div class="it__sub">Visa •••• 4242</div></div></div>
+            <div class="it"><span class="plate e-sage">F</span><div class="it__text"><div class="it__name"><span>Fastmail</span><span class="it__marks"><i data-i="clock" data-s="12"></i></span></div><div class="it__sub">ana@fastmail.example</div></div></div>
+            <div class="it"><span class="plate e-clay">F</span><div class="it__text"><div class="it__name"><span>Figma</span></div><div class="it__sub">ana@example.com</div></div></div>
+            <div class="it"><span class="plate plate--kind"><i data-i="user" data-s="14"></i></span><div class="it__text"><div class="it__name"><span>Home address</span></div><div class="it__sub">Ana Kowalski</div></div></div>
+          </div>
+        </div>
+        <div class="vp__foot"><i data-i="check" data-s="12"></i><span class="grow">Synced 2 min ago</span><span>ana@example.com</span></div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">Searching <span>"cloud"</span></div>
+      <div class="vp">
+        <div class="vp__head">
+          <span class="plate plate--sm" style="background:#1f2328;color:#fff">G</span>
+          <div class="vp__who"><span class="vp__title">github.com</span></div>
+          <span class="ib"><i data-i="plus" data-s="16"></i></span>
+          <span class="ib"><i data-i="more" data-s="16"></i></span>
+        </div>
+        <div class="vp__body">
+          <div class="search is-focus"><i data-i="search"></i><span class="q">cloud</span><span class="caret" style="margin-left:-6px"></span><span class="key">3 of 838</span></div>
+          <div class="it is-on"><span class="plate e-teal">C</span><div class="it__text"><div class="it__name"><span><b style="font-weight:600">Cloud</b>flare</span><span class="it__marks"><i data-i="clock" data-s="12"></i></span></div><div class="it__sub">ana@example.com</div></div><span class="it__hint">Open <span class="kbd">↵</span></span></div>
+          <div class="it"><span class="plate e-olive">G</span><div class="it__text"><div class="it__name"><span>Google <b style="font-weight:600">Cloud</b></span></div><div class="it__sub">ana@example.com</div></div></div>
+          <div class="it"><span class="plate plate--kind"><i data-i="note" data-s="14"></i></span><div class="it__text"><div class="it__name"><span>i<b style="font-weight:600">Cloud</b> recovery key</span></div><div class="it__sub">Secure note</div></div></div>
+        </div>
+        <div class="vp__foot"><i data-i="check" data-s="12"></i><span class="grow">Synced 2 min ago</span><span>ana@example.com</span></div>
+      </div>
+    </div>
+
+    <div class="state">
+      <div class="state__cap">When sync goes wrong</div>
+      <div class="vp">
+        <div class="vp__head">
+          <span class="plate plate--sm plate--kind"><i data-i="key" data-s="12"></i></span>
+          <div class="vp__who"><span class="vp__title">Vault</span></div>
+          <span class="ib"><i data-i="plus" data-s="16"></i></span>
+          <span class="ib"><i data-i="more" data-s="16"></i></span>
+        </div>
+        <div class="vp__body">
+          <div class="msg msg--warn" id="sync-err"><i data-i="alert"></i><span>Couldn't reach Bitwarden. These are the items from 10:42.</span><span class="act">Retry</span></div>
+          <div class="search"><i data-i="search"></i><span>Search vault</span><span class="key">⌘F</span></div>
+          <div class="it"><span class="plate e-teal">C</span><div class="it__text"><div class="it__name"><span>Cloudflare</span></div><div class="it__sub">ana@example.com</div></div></div>
+          <div class="it"><span class="plate e-ink">G</span><div class="it__text"><div class="it__name"><span>GitHub</span></div><div class="it__sub">ana.k</div></div></div>
+          <div class="msg msg--plain"><span>2 items couldn't be opened — an organization key may not have loaded.</span></div>
+        </div>
+        <div class="vp__foot"><span style="color:var(--warning)">◆</span><span class="grow">Last synced 10:42</span><span>ana@example.com</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="section">
+  <div class="label">The parts</div>
+  <div class="states" style="gap:20px 56px">
+    <div class="note"><b>The head says where you are.</b> The site, with its own mark, while the page has one;
+      "Vault" otherwise; the item inside a record. New (+) and ··· are the only buttons up there.</div>
+    <div class="note"><b>A plate names the item.</b> Its first letter on its enamel, hashed from the name — the way
+      Sola names profiles. Cards, identities and notes take a grey plate with their glyph.</div>
+    <div class="note"><b>Marks, not badges.</b> A fingerprint for a passkey, a clock for a one-time code, in tertiary
+      ink after the name.</div>
+    <div class="note"><b>One way to fill.</b> The chosen row reads <b>Fill ↵</b>; a click on any row of this site
+      fills it, a click on its › opens it. No row carries a filled button.</div>
+    <div class="note"><b>The list grows, then scrolls.</b> The sheet takes its content's height up to 560, and the list
+      scrolls inside with a fade at its foot. No box of fixed height.</div>
+    <div class="note"><b>The foot is a status line.</b> When it last synced and who is signed in. A failed sync turns
+      its mark into the warning diamond and puts a Retry at the top.</div>
+  </div>
+</div>
+
+</body>
+</html>
