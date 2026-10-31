@@ -27,24 +27,6 @@ fan-out for a multi-client ACP *coding* GUI is moot; Bots yolo all tools.
 
 ---
 
-### D2 — sola-kvm permanent input ACL (P1)
-
-**Context:** Input device access currently needs per-boot `setfacl` (or similar).
-Permanent udev/ACL is a host-policy choice with security trade-offs.
-
-**Ask:**
-
-1. Prefer udev rule installed with Sola, documented manual udev, or group
-   membership?  
-2. Acceptable blast radius (all input nodes vs tagged devices)?
-
-**Until decided:** keep documented operator workaround; no silent broad ACL
-install from agent sessions.
-
-**Related:** `kvm` capability; [`manual/sola-kvm-operator.md`](manual/sola-kvm-operator.md).
-
----
-
 ### D3 — Which call-plane methods need a human confirm (P1)
 
 **Context:** `sola-call` is desk-equivalent privilege (local-user `0600` socket, same as the bus). Desk-equivalent methods may want a confirm gate (close app, input, Projects tab spawn).
@@ -223,7 +205,6 @@ anything with the call socket is desk-equivalent (D3)?
 
 - `.desktop` files, so `xdg-open` does not route to Sola apps
   (`sola-browser.desktop` also hardcodes `Exec=/opt/sola/bin/sola-browser`);
-- the KVM udev rule (see [D2](#d2--sola-kvm-permanent-input-acl-p1));
 - `cloudflared` for Design's share links;
 - log rotation: nothing rotates `sola.log` on Oath (only the `sola` process
   manager did).
@@ -316,6 +297,7 @@ runs `cloudflared` while open. Links work only while Design runs.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-10-30 | D2 sola-kvm input ACL | Moot: the server captures through the compositor (layer-shell strip, exclusive keyboard, pointer lock, relative motion, shortcuts inhibitor) and reads no `/dev/input`, so there is no ACL or udev rule to install (Oath R44; Joshua chose "All of it"). Pairing is by public key and neither side starts unpaired | capabilities `kvm`, KVM manual, KVM and secure-access specs |
 | 2026-10-30 | D9 launcher apps on Oath | Arcade and the Kit storybook removed (Kit's `CustomTheme` presets with it: Settings → Appearance supersedes them; the 2026-08-15 storybook-page rule goes too); Monitor, Preview and Scope ship in `pkg:sola`; Bots and Install later | open-questions D9, capabilities, AGENTS |
 | 2026-10-30 | Spotify | `sola-spotify` removed on `next`; Spotify runs as a web app | capabilities `spotify` |
 | 2026-10-28 | Projects are ~/Projects folders | Projects keeps no list of projects (Joshua: "We don't need a 'Drop Project' anymore. Closing the window does that basically. Also we don't need to keep a list of projects. Projects are jut whatever is in the ~/Projects directory"): the catalog holds only open projects; closing a window ends its sessions and forgets it. Asked: a reopened project starts on its root tab only; startup scripts live in a settings file by folder; with nothing open Projects quits. A remote project's tab shows its folder alone, its frame "<folder> on <host>". | capabilities `projects`, manual `solactl.md` |
