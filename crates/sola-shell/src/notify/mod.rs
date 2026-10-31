@@ -15,6 +15,8 @@ use sola_kit::app::window_settings;
 
 /// Resting card height (padding + three type rows). Stack Frame uses this.
 pub const CARD_H: i32 = 76;
+/// An app asking to be a handler: three type rows and the buttons.
+pub const PROMPT_H: i32 = 118;
 pub const CARD_GAP: i32 = 8;
 pub const MAX_LIVE: usize = 3;
 /// Persist cards (calendar reminders) stay on the desk past [`MAX_LIVE`].
@@ -62,6 +64,9 @@ pub struct NotifyState {
     /// App ids whose pile group is expanded in the panel.
     expanded: HashSet<String>,
     generation: u64,
+    /// An app asking to be the handler for a scheme or a type, waiting for
+    /// your answer; above the live cards.
+    pub prompt: Option<crate::handlers::Prompt>,
 }
 
 impl Default for NotifyState {
@@ -72,13 +77,14 @@ impl Default for NotifyState {
             unseen: false,
             expanded: HashSet::new(),
             generation: 0,
+            prompt: None,
         }
     }
 }
 
 impl NotifyState {
     pub fn visible(&self) -> bool {
-        !self.live.is_empty()
+        !self.live.is_empty() || self.prompt.is_some()
     }
 
     pub fn pile_count(&self) -> u32 {
@@ -193,8 +199,12 @@ impl NotifyState {
     }
 
     pub fn stack_height(&self) -> i32 {
-        let n = self.live.len().max(1) as i32;
-        n * CARD_H + (n - 1) * CARD_GAP
+        let cards = self.live.len() as i32;
+        let prompt = i32::from(self.prompt.is_some());
+        if cards + prompt == 0 {
+            return CARD_H;
+        }
+        cards * CARD_H + prompt * PROMPT_H + (cards + prompt - 1) * CARD_GAP
     }
 
     /// 0 at drop start, 1 at rest. Newest live banner drives the window y.

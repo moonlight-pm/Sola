@@ -59,6 +59,10 @@ impl Shell {
                 self.on_fullscreen_request(r);
                 Task::none()
             }
+            Topic::DefaultHandlerRequest(r) => {
+                self.on_handler_request(r);
+                Task::none()
+            }
             Topic::OutputGeometry(g) => {
                 self.on_output_geometry(g);
                 Task::none()

@@ -333,6 +333,8 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
         bus = bus.app_menu_definition(def);
     }
     bus = bus.calls(crate::calls::OWNER, crate::calls::methods());
+    // Links and pages from other apps and xdg-open (Sola's opener).
+    bus = bus.opens_own();
     bus.install();
 
     // `engine` is moved into the App on first call. The iced application

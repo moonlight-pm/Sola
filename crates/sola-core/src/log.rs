@@ -62,6 +62,16 @@ static INITED: AtomicBool = AtomicBool::new(false);
 ///   end up in the log file, not just on stderr.
 /// * Idempotent: a second call (wrapper chrome vs `--engine` helper) is a no-op.
 pub fn init(name: &str) {
+    init_with(name, true);
+}
+
+/// [`init`] without stderr: the log file only. For a command-line tool that
+/// prints its own one-line errors (`xdg-open`).
+pub fn init_quiet(name: &str) {
+    init_with(name, false);
+}
+
+fn init_with(name: &str, to_stderr: bool) {
     let short = name.strip_prefix("sola-").unwrap_or(name);
     PROCESS_NAME.get_or_init(|| short.to_string());
 
@@ -74,7 +84,7 @@ pub fn init(name: &str) {
     // and CEF/kit targets must not vanish then.
     let own_crate = name.replace('-', "_");
     let default_filter = format!(
-        "{own_crate}=info,sola_core=info,sola_bus=info,sola_kit=info,sola_browser=info,sola_call=info,sola_app=info,sola_assets=info"
+        "{own_crate}=info,sola_core=info,sola_bus=info,sola_kit=info,sola_browser=info,sola_call=info,sola_open=info,sola_app=info,sola_assets=info"
     );
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| default_filter.into());
@@ -86,6 +96,7 @@ pub fn init(name: &str) {
         .with_ansi(ansi)
         .event_format(SolaFormat { ansi })
         .with_writer(io::stderr);
+    let stderr_layer = to_stderr.then_some(stderr_layer);
     let file_layer = open_file_layer();
 
     tracing_subscriber::registry()

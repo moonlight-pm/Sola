@@ -1,6 +1,9 @@
-//! An opener's launch (`<app> --open <target>`, see [`sola_core::opener`])
-//! with the app not running: the session starts the app, as itself, and
-//! this process hands it the target once it is ready.
+//! Opening between apps. [`open`]: a link or a file to the handler Sola
+//! keeps for it ([`sola_open`]); [`open_target`]: the `open` call a
+//! claiming app answers. [`start`]: an opener's launch (`<app> --open
+//! <target>`, see [`sola_core::opener`]) with the app not running — the
+//! session starts the app, as itself, and this process hands it the target
+//! once it is ready.
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -47,4 +50,37 @@ pub fn start(app_id: &str, ready: impl Fn(&[Window]) -> bool) -> bool {
 /// A window of `app_id` is up: its bus subscription is in place.
 pub fn has_window(windows: &[Window], app_id: &str) -> bool {
     windows.iter().any(|w| w.app_id == app_id)
+}
+
+/// Open a link or a file with the handler Sola keeps for it
+/// ([`sola_open::open`]), off the UI thread: a link clicked in an app.
+pub fn open(target: &str) {
+    sola_open::open_detached(target);
+}
+
+/// The target of an `open` call (the method [`crate::app::BusSetup::opens`]
+/// adds), or `None` for any other call.
+pub fn open_target(inc: &sola_call::Incoming) -> Option<String> {
+    (inc.method == sola_open::OPEN_METHOD)
+        .then(|| inc.params.get("target")?.as_str().map(str::to_string))
+        .flatten()
+}
+
+/// Ask to be the handler for `kind` (a scheme or a type) where another app
+/// is. The shell asks the user; only their yes changes it, and an app that
+/// already is the handler, or does not claim `kind`, gets no prompt.
+pub fn request_default(app_id: &str, kind: &sola_open::Kind) {
+    use sola_bus::topics::{DefaultHandlerRequest, Topic};
+    let request = Topic::DefaultHandlerRequest(DefaultHandlerRequest {
+        app_id: app_id.into(),
+        kind: kind.key(),
+    });
+    match crate::app::bus().lock() {
+        Ok(mut bus) => {
+            if let Err(e) = bus.emit(request) {
+                tracing::warn!(%app_id, kind = %kind.key(), error = %e, "could not ask to be the handler");
+            }
+        }
+        Err(_) => tracing::warn!(%app_id, "could not ask to be the handler: no bus"),
+    }
 }
