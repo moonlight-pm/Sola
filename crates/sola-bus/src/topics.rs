@@ -295,6 +295,15 @@ pub struct FullscreenRequest {
     pub fullscreen: bool,
 }
 
+/// An app asks to open a link scheme or a file type in place of the app
+/// that does now (app, through the kit → shell). The shell asks you; only
+/// your yes changes it. `kind` is `mailto:` for a scheme, `.png` for a type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DefaultHandlerRequest {
+    pub app_id: String,
+    pub kind: String,
+}
+
 /// One action a key can be bound to (`Topic::KeyActions`). Its id is
 /// stable; the label is what Settings and Super+K show.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2205,6 +2214,10 @@ define_topics! {
     // An app asked to enter or leave fullscreen (sola-river → shell).
     // Appended last.
     FullscreenRequest(FullscreenRequest),
+
+    // An app asks to be the handler for a link scheme or a file type (an
+    // app through the kit → shell, which asks you). Appended last.
+    DefaultHandlerRequest(DefaultHandlerRequest),
 }
 
 #[cfg(test)]

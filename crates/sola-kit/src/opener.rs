@@ -65,3 +65,22 @@ pub fn open_target(inc: &sola_call::Incoming) -> Option<String> {
         .then(|| inc.params.get("target")?.as_str().map(str::to_string))
         .flatten()
 }
+
+/// Ask to be the handler for `kind` (a scheme or a type) where another app
+/// is. The shell asks the user; only their yes changes it, and an app that
+/// already is the handler, or does not claim `kind`, gets no prompt.
+pub fn request_default(app_id: &str, kind: &sola_open::Kind) {
+    use sola_bus::topics::{DefaultHandlerRequest, Topic};
+    let request = Topic::DefaultHandlerRequest(DefaultHandlerRequest {
+        app_id: app_id.into(),
+        kind: kind.key(),
+    });
+    match crate::app::bus().lock() {
+        Ok(mut bus) => {
+            if let Err(e) = bus.emit(request) {
+                tracing::warn!(%app_id, kind = %kind.key(), error = %e, "could not ask to be the handler");
+            }
+        }
+        Err(_) => tracing::warn!(%app_id, "could not ask to be the handler: no bus"),
+    }
+}

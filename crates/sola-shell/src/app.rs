@@ -185,6 +185,8 @@ pub enum Msg {
     NotifyActivate(String),
     /// × without raising.
     NotifyDismiss(String),
+    /// Your answer to an app asking to be a handler: `true` is Use.
+    HandlerAnswer(bool),
     /// Expand / collapse a pile group.
     NotifyToggleGroup(String),
     /// Dismiss every missed item for an app (group ×). Live cards stay.
@@ -1030,6 +1032,26 @@ impl Shell {
         } else {
             iced::Task::none()
         }
+    }
+
+    /// An app asks to be the handler for a scheme or a type: ask you, above
+    /// the desk cards (a newer request replaces one still waiting).
+    pub(crate) fn on_handler_request(&mut self, req: sola_bus::topics::DefaultHandlerRequest) {
+        let applications = &self.applications;
+        let label = |id: &str| {
+            applications
+                .get_for_window(id)
+                .map(|a| a.label.clone())
+                .unwrap_or_else(|| id.to_string())
+        };
+        let sources = sola_kit::sola_open::resolve::Sources::live();
+        let Some(prompt) = crate::handlers::prompt_for(&req, &sources, &label) else {
+            return;
+        };
+        tracing::info!(app_id = %req.app_id, kind = %req.kind, "asking whether this app should be the handler");
+        self.notify.prompt = Some(prompt);
+        self.emit_overlay_frames();
+        self.emit_composition();
     }
 
     fn push_notification(&mut self, n: sola_bus::topics::AppNotification) -> iced::Task<Msg> {
@@ -2668,6 +2690,14 @@ impl Shell {
                 self.notify_followup(now)
             }
             Msg::NotifyActivate(id) => self.activate_notification(&id),
+            Msg::HandlerAnswer(use_it) => {
+                if let Some(prompt) = self.notify.prompt.take() {
+                    crate::handlers::answer(&prompt, use_it);
+                }
+                self.emit_overlay_frames();
+                self.emit_composition();
+                iced::Task::none()
+            }
             Msg::NotifyDismiss(id) => {
                 self.notify.dismiss(&id);
                 if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {

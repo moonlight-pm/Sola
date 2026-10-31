@@ -347,9 +347,10 @@ A kit app claims when it starts (`BusSetup::opens`); the claim is kept in
 claimed. The handler for a scheme or a type is the first that is still
 installed of:
 
-1. The one you chose, in `~/.config/sola/handlers/defaults.json`:
-   `{"defaults": {"mailto:": "sola-mail", ".png": "sola-paint"}}`. A claim
-   never writes it. There is no Settings page for it yet; edit the file.
+1. The one you chose, in **Settings → Default Apps** (kept in
+   `~/.config/sola/handlers/defaults.json`:
+   `{"defaults": {"mailto:": "sola-mail", ".png": "sola-paint"}}`, an app
+   id or a `.desktop` file's name). A claim never writes it.
 2. Sola's own claimant (the table).
 3. Other claimants, the earliest claim first. A later claim never moves
    ahead of an earlier one, so a new app does not take a scheme or a type
@@ -361,6 +362,18 @@ installed of:
    `claude-cli://` reaches Claude Code.
 
 A type nothing claims has no handler; nothing looks inside a file.
+
+**Settings → Default Apps** lists every scheme (**Links**) and type
+(**Files**) something opens, with the app that opens it. Click one for
+everything that could: its claimants and, for a scheme, its `.desktop`
+handlers; the one that opens it is marked. Choosing another writes your
+choice; the next open uses it.
+
+An app may ask to be the handler (`sola_kit::opener::request_default`,
+the bus event `DefaultHandlerRequest {app_id, kind}`, `kind` being
+`mailto:` or `.png`). The shell asks you with a card
+([Shell](sola-shell.md#notifications)); only **Use** writes your choice.
+An app that already opens it, or does not claim it, gets no card.
 
 ### Delivery
 

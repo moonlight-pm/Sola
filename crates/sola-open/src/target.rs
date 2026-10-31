@@ -71,6 +71,17 @@ impl Kind {
             Kind::Type(t) => format!(".{t}"),
         }
     }
+
+    /// The kind a [`Self::key`] names.
+    pub fn from_key(key: &str) -> Option<Kind> {
+        let key = key.trim().to_ascii_lowercase();
+        if let Some(t) = key.strip_prefix('.').filter(|t| !t.is_empty()) {
+            return Some(Kind::Type(t.to_string()));
+        }
+        key.strip_suffix(':')
+            .filter(|s| scheme_of(&format!("{s}:")).is_some())
+            .map(|s| Kind::Scheme(s.to_string()))
+    }
 }
 
 impl std::fmt::Display for Kind {
@@ -161,5 +172,10 @@ mod tests {
     fn keys_read_as_written() {
         assert_eq!(Kind::Scheme("mailto".into()).key(), "mailto:");
         assert_eq!(Kind::Type("png".into()).key(), ".png");
+        for k in [Kind::Scheme("claude-cli".into()), Kind::Type("ics".into())] {
+            assert_eq!(Kind::from_key(&k.key()), Some(k));
+        }
+        assert_eq!(Kind::from_key("mailto"), None);
+        assert_eq!(Kind::from_key("."), None);
     }
 }

@@ -30,6 +30,7 @@ mod appearance;
 mod calendar;
 mod calendar_oauth;
 mod edit;
+mod handlers;
 mod keybindings;
 mod login;
 mod mail;
@@ -44,6 +45,7 @@ use login::{LoginMsg, LoginState};
 use applications::{AppsMsg, AppsState};
 use calendar::{CalMsg, CalendarState};
 use keybindings::{KeysMsg, KeysState};
+use handlers::{HandlersMsg, HandlersState};
 use zones::{ZonesMsg, ZonesState};
 use mail::{MailMsg, MailState};
 
@@ -84,6 +86,7 @@ enum Panel {
     Calendar,
     Zones,
     Keybindings,
+    DefaultApps,
 }
 
 struct App {
@@ -115,6 +118,7 @@ struct App {
     keys: KeysState,
     /// The zone layout (Settings → Zones).
     zones: ZonesState,
+    handlers: HandlersState,
     /// Float tracker + iced window id for CSD while floating.
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
@@ -136,6 +140,7 @@ impl Default for App {
             appearance: AppearanceState::default(),
             keys: KeysState::default(),
             zones: ZonesState::default(),
+            handlers: HandlersState::default(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
         }
@@ -153,6 +158,7 @@ enum Msg {
     Login(LoginMsg),
     Keys(KeysMsg),
     Zones(ZonesMsg),
+    Handlers(HandlersMsg),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -274,6 +280,9 @@ impl App {
                 if p == Panel::Appearance {
                     return appearance::refresh(&mut self.appearance).map(Msg::Appearance);
                 }
+                if p == Panel::DefaultApps {
+                    handlers::refresh(&mut self.handlers);
+                }
             }
             Msg::Login(m) => return login::update(m, &mut self.login_ui).map(Msg::Login),
             Msg::Keys(KeysMsg::OpenZones) => {
@@ -283,6 +292,7 @@ impl App {
             Msg::Zones(m) => {
                 return zones::update(m, &mut self.zones, &mut self.keys).map(Msg::Zones);
             }
+            Msg::Handlers(m) => handlers::update(m, &mut self.handlers),
             Msg::Apps(m) => {
                 return applications::update(m, &mut self.applications, &mut self.apps_ui)
                     .map(Msg::Apps);
@@ -389,6 +399,8 @@ impl App {
                     .active(self.panel == Panel::Zones),
                 SidebarItem::new("Keybindings", Msg::SelectPanel(Panel::Keybindings))
                     .active(self.panel == Panel::Keybindings),
+                SidebarItem::new("Default Apps", Msg::SelectPanel(Panel::DefaultApps))
+                    .active(self.panel == Panel::DefaultApps),
             ],
         )]);
 
@@ -400,6 +412,7 @@ impl App {
             Panel::Calendar => "Calendar",
             Panel::Zones => "Zones",
             Panel::Keybindings => "Keybindings",
+            Panel::DefaultApps => "Default Apps",
         };
 
         // Page pad 24 = SPACE_XL + SPACE_MD (content margin, not control density).
@@ -457,6 +470,14 @@ impl App {
             Panel::Keybindings => column![
                 kit_text::heading(title_text),
                 keybindings::view(&self.keys).map(Msg::Keys),
+            ]
+            .spacing(page_pad)
+            .padding(Padding::new(page_pad))
+            .height(Length::Fill)
+            .into(),
+            Panel::DefaultApps => column![
+                kit_text::heading(title_text),
+                handlers::view(&self.handlers, &self.applications).map(Msg::Handlers),
             ]
             .spacing(page_pad)
             .padding(Padding::new(page_pad))

@@ -5,31 +5,50 @@
 
 use std::path::{Path, PathBuf};
 
-/// A `.desktop` handler: its file name and the command it runs.
+/// A `.desktop` handler: its file name, its name, and the command it runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub id: String,
+    pub name: String,
     pub exec: String,
     mime: Vec<String>,
 }
 
 impl Entry {
     #[cfg(test)]
-    pub(crate) fn new(id: &str, exec: &str) -> Entry {
-        Entry { id: id.into(), exec: exec.into(), mime: Vec::new() }
+    pub(crate) fn new(id: &str, exec: &str, schemes: &[&str]) -> Entry {
+        Entry {
+            id: id.into(),
+            name: id.trim_end_matches(".desktop").into(),
+            exec: exec.into(),
+            mime: schemes.iter().map(|s| format!("x-scheme-handler/{s}")).collect(),
+        }
+    }
+
+    /// The schemes it says it opens.
+    pub fn schemes(&self) -> impl Iterator<Item = &str> {
+        self.mime.iter().filter_map(|m| m.strip_prefix("x-scheme-handler/"))
+    }
+
+    pub fn opens_scheme(&self, scheme: &str) -> bool {
+        self.schemes().any(|s| s.eq_ignore_ascii_case(scheme))
     }
 }
 
 /// The handler for `scheme` among `dirs` (each an `applications` folder),
 /// `mimeapps` (a `mimeapps.list`) naming it first.
 pub fn handler_for_scheme(scheme: &str, dirs: &[PathBuf], mimeapps: &Path) -> Option<Entry> {
+    handler_for_scheme_in(&entries(dirs), scheme, mimeapps)
+}
+
+/// [`handler_for_scheme`] among `entries` already read.
+pub fn handler_for_scheme_in(entries: &[Entry], scheme: &str, mimeapps: &Path) -> Option<Entry> {
     let mime = format!("x-scheme-handler/{scheme}");
-    let entries = entries(dirs);
     let chosen = default_ids(mimeapps, &mime);
     chosen
         .iter()
         .find_map(|id| entries.iter().find(|e| &e.id == id))
-        .or_else(|| entries.iter().find(|e| e.mime.iter().any(|m| m == &mime)))
+        .or_else(|| entries.iter().find(|e| e.opens_scheme(scheme)))
         .cloned()
 }
 
@@ -129,7 +148,7 @@ fn words(exec: &str) -> Vec<String> {
 
 /// Every application `.desktop` file in `dirs`, a file name once (the first
 /// folder wins), by file name within a folder.
-fn entries(dirs: &[PathBuf]) -> Vec<Entry> {
+pub fn entries(dirs: &[PathBuf]) -> Vec<Entry> {
     let mut out: Vec<Entry> = Vec::new();
     for dir in dirs {
         let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
@@ -160,6 +179,7 @@ fn entries(dirs: &[PathBuf]) -> Vec<Entry> {
 fn parse(id: &str, text: &str) -> Option<Entry> {
     let mut in_entry = false;
     let (mut exec, mut mime, mut app, mut hidden) = (None, Vec::new(), false, false);
+    let mut name = None;
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with('[') {
@@ -172,6 +192,7 @@ fn parse(id: &str, text: &str) -> Option<Entry> {
         let Some((k, v)) = line.split_once('=') else { continue };
         match k.trim() {
             "Exec" => exec = Some(v.trim().to_string()),
+            "Name" => name = Some(v.trim().to_string()),
             "MimeType" => mime = v.split(';').map(str::trim).filter(|m| !m.is_empty()).map(String::from).collect(),
             "Type" => app = v.trim() == "Application",
             "Hidden" => hidden = v.trim() == "true",
@@ -179,7 +200,8 @@ fn parse(id: &str, text: &str) -> Option<Entry> {
         }
     }
     (app && !hidden).then_some(())?;
-    Some(Entry { id: id.into(), exec: exec?, mime })
+    let name = name.unwrap_or_else(|| id.trim_end_matches(".desktop").to_string());
+    Some(Entry { id: id.into(), name, exec: exec?, mime })
 }
 
 /// The `.desktop` ids `mimeapps.list` names for `mime` under

@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-31  
 **Status:** **decided** (Joshua, 2026-10-31: the answers below); slice 1 in progress.  
-**Implementation (2026-10-31):** slice 1 built on branch `sola-open` (tests and `cargo make build`; not applied). The Browser opens a link it does not load only on a click. Slice 2 not started.  
+**Implementation (2026-10-31):** slices 1 and 2 built on branch `sola-open` (tests and `cargo make build`; not merged or applied). The Browser opens a link it does not load only on a click. A choice in `defaults.json` may name a `.desktop` file.  
 **Branch:** `sola-open`  
 **Related:** [D14](../open-questions.md#d14--what-pkgsola-ships-on-oath-p2) (answered: Sola owns `/bin/xdg-open`), decision log "Link and file handlers", [session manager](../manual/session.md#opening-links-and-files).
 
@@ -127,17 +127,20 @@ case.
 
 ### Asking to be the handler (slice 2)
 
-`sola_kit::request_default(kind)` (a scheme or a type) emits
-`DefaultHandlerRequest {app_id, kind}`. The shell shows "Open mailto: links
-with *App* instead of *Mail*?" with **Keep Mail** (the default) and **Use
-*App***. Only **Use** writes `defaults`. An app that is already the handler
-gets no prompt.
+`sola_kit::opener::request_default(app_id, kind)` (a scheme or a type)
+emits `DefaultHandlerRequest {app_id, kind}`. The shell shows a card above
+the desk cards, **Default app**: "Open mailto: links with *App* instead of
+*Mail*?" with **Keep Mail** and **Use *App*** (**Not Now** when nothing
+opens it yet); it stays until answered, and a newer request replaces it.
+Only **Use** writes `defaults`. An app that is already the handler, or that
+does not claim the kind, gets no card.
 
 ### Settings (slice 2)
 
-**Settings → Default Apps**: every scheme and type with a claimant, its
-handler, and a menu of its claimants (and `.desktop` handlers for schemes).
-Choosing one writes `defaults`.
+**Settings → Default Apps**: **Links** and **Files**, every scheme and type
+something opens (a claimant, or for a scheme a `.desktop` handler), its
+handler; a row opens to every choice (its claimants, then for a scheme its
+`.desktop` handlers), the handler marked. Choosing one writes `defaults`.
 
 ## Slices
 

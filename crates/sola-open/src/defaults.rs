@@ -37,6 +37,11 @@ impl Defaults {
     }
 }
 
+/// Choose `id` (an app id, or a `.desktop` file's name) for `kind`.
+pub fn set(kind: &Kind, id: &str) -> Result<(), String> {
+    Defaults::set_in(&path(), kind, id)
+}
+
 /// `~/.config/sola/handlers/defaults.json`.
 pub fn path() -> PathBuf {
     crate::claims::root().join("defaults.json")
