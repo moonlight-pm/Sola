@@ -8,8 +8,8 @@
 //! never rides the bus: the daemon delivers it to the app's process and
 //! the pick carries a ticket ([`vault`]).
 //!
-//! This module is the menu's state: its columns (the first, a submenu, a
-//! login's values), the highlighted row in each, and what keys and
+//! This module is the menu's state: its columns (the first, a submenu, an
+//! item's values), the highlighted row in each, and what keys and
 //! pointer do to them. The shell's side is `crate::app::desk`.
 
 pub mod place;
@@ -17,13 +17,14 @@ pub mod rows;
 pub mod vault;
 pub mod view;
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use sola_bus::topics::{DeskMenuOpen, DeskPick};
 use sola_vault_proto::{DeliverField, ItemSummary};
 
 pub use rows::{Does, Row, Sub};
-pub use vault::{Search, Ticket, VaultView};
+pub use vault::{ItemFields, Search, Ticket, VaultView};
 
 /// The search field's widget id.
 pub const SEARCH_INPUT_ID: &str = "desk-menu-search";
@@ -52,6 +53,12 @@ pub enum DeskMsg {
     Listed {
         generation: u64,
         items: Result<Vec<ItemSummary>, String>,
+    },
+    /// An item's values (labels only), for menu `generation`.
+    Fields {
+        generation: u64,
+        item: String,
+        fields: ItemFields,
     },
     Delivered {
         to: Target,
@@ -101,6 +108,10 @@ pub struct DeskMenu {
     pub generation: u64,
     pub vault: VaultView,
     pub search: Option<Search>,
+    /// Search results shown at once (as many as fit the output).
+    pub found_max: usize,
+    /// The values of the items whose columns opened, by item id.
+    pub fields: HashMap<String, ItemFields>,
     /// The first column (fixed for the menu's life).
     main: Vec<Row>,
     /// The row whose submenu is open, in each column from the first.
@@ -130,6 +141,8 @@ impl DeskMenu {
             generation,
             vault: VaultView::Asking,
             search: None,
+            found_max: vault::FOUND_MIN,
+            fields: HashMap::new(),
             main,
             open_rows: Vec::new(),
             hot: vec![None],
@@ -165,7 +178,13 @@ impl DeskMenu {
             let Some(sub) = cols[level].get(row).and_then(Row::sub) else {
                 break;
             };
-            cols.push(rows::sub_rows(&self.open, sub, &self.vault, self.search.as_ref()));
+            cols.push(rows::sub_rows(
+                &self.open,
+                sub,
+                &self.vault,
+                self.search.as_ref(),
+                &self.fields,
+            ));
         }
         cols
     }
@@ -189,6 +208,41 @@ impl DeskMenu {
     /// The row open in column `level`, if a submenu hangs from it.
     pub fn open_row(&self, level: usize) -> Option<usize> {
         self.open_rows.get(level).copied()
+    }
+
+    /// An item whose column is open and whose values the menu has not
+    /// asked for: they are asked for now (marked [`ItemFields::Asking`]).
+    pub fn wanted_fields(&mut self) -> Option<String> {
+        let cols = self.columns();
+        let id = self.open_rows.iter().enumerate().find_map(|(level, &row)| {
+            let sub = cols.get(level)?.get(row)?.sub()?;
+            rows::item_of(sub, &self.vault, self.search.as_ref()).map(|i| i.id.clone())
+        })?;
+        if self.fields.contains_key(&id) {
+            return None;
+        }
+        self.fields.insert(id.clone(), ItemFields::Asking);
+        Some(id)
+    }
+
+    /// An item's values came: when the keys are in its column with
+    /// nothing highlighted (it said it was reading), the first is.
+    pub fn fields_came(&mut self, item: String, fields: ItemFields) {
+        self.fields.insert(item.clone(), fields);
+        self.settle();
+        let level = self.level;
+        if level == 0 || self.hot(level).is_some() {
+            return;
+        }
+        let cols = self.columns();
+        let showing = self
+            .open_row(level - 1)
+            .and_then(|row| cols[level - 1].get(row)?.sub())
+            .and_then(|sub| rows::item_of(sub, &self.vault, self.search.as_ref()))
+            .is_some_and(|i| i.id == item);
+        if showing {
+            self.hot[level] = cols[level].iter().position(Row::is_live);
+        }
     }
 
     /// Keep the highlight and the open rows inside what the columns hold
@@ -249,7 +303,7 @@ impl DeskMenu {
             Does::OpenVault => Outcome::OpenVault,
             Does::OpenItem(id) => Outcome::OpenItem(id.clone()),
             Does::Search => {
-                self.search = Some(Search::default());
+                self.search = Some(Search::new(self.found_max));
                 self.open_rows.truncate(level);
                 self.hot.truncate(level + 1);
                 self.hot[level] = None;
@@ -333,7 +387,7 @@ impl DeskMenu {
             .map(|(level, col)| {
                 let searching = self.searching(level);
                 let h = if searching {
-                    place::search_height()
+                    place::search_height(self.found_max)
                 } else {
                     place::height(col, false)
                 };
@@ -386,7 +440,7 @@ fn step(col: &[Row], from: Option<usize>, down: bool) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::desk_menu::rows::tests::{login, open};
+    use crate::desk_menu::rows::tests::{login, login_values, open};
     use sola_bus::topics::{DeskEdit, DeskMenuContext, DeskMenuItem};
 
     fn menu(site: Option<&str>) -> DeskMenu {
@@ -460,14 +514,39 @@ mod tests {
         };
         m.hover(0, VAULT_ROW);
         m.hover(1, 0);
+        assert_eq!(m.wanted_fields().as_deref(), Some("a"), "its values are asked for");
+        assert_eq!(m.wanted_fields(), None, "once");
+        m.fields_came("a".into(), login_values(true));
         let cols = m.columns();
         assert_eq!(cols.len(), 3);
         // Fill — Username Password Code
         assert_eq!(m.press(2, 3), Outcome::Deliver {
             item: "a".into(),
-            field: DeliverField::Password
+            field: DeliverField::Field { key: "password".into() }
         });
         assert_eq!(m.press(2, 0), Outcome::Pick(DeskPick::VaultFill { item: "a".into() }));
+    }
+
+    #[test]
+    fn values_that_come_while_the_keys_wait_take_the_highlight() {
+        let mut m = menu(None);
+        m.vault = VaultView::Unlocked { logins: vec![] };
+        m.hover(0, VAULT_ROW);
+        m.press(1, 0);
+        m.search.as_mut().unwrap().items = Some(Ok(vec![login("alpha", false)]));
+        m.set_query(String::new());
+        assert_eq!(m.key(Key::Right), Outcome::Moved);
+        assert_eq!(m.level(), 2);
+        assert_eq!(m.hot(2), None, "the column is reading");
+        assert_eq!(m.wanted_fields().as_deref(), Some("alpha"));
+        m.fields_came("other".into(), login_values(false));
+        assert_eq!(m.hot(2), None, "another item's values");
+        m.fields_came("alpha".into(), login_values(false));
+        assert_eq!(m.hot(2), Some(0));
+        assert_eq!(m.key(Key::Enter), Outcome::Deliver {
+            item: "alpha".into(),
+            field: DeliverField::Field { key: "username".into() }
+        });
     }
 
     #[test]
@@ -476,6 +555,7 @@ mod tests {
         let mut item = login("a", false);
         item.reprompt = true;
         m.vault = VaultView::Unlocked { logins: vec![item] };
+        m.fields.insert("a".into(), login_values(false));
         m.hover(0, VAULT_ROW);
         m.hover(1, 0);
         m.key(Key::Right);
@@ -493,7 +573,9 @@ mod tests {
         m.hover(0, VAULT_ROW);
         assert_eq!(m.press(1, 0), Outcome::Search);
         assert!(m.searching(1));
+        assert_eq!(m.search.as_ref().unwrap().max, m.found_max);
         m.search.as_mut().unwrap().items = Some(Ok(vec![login("alpha", false), login("beta", true)]));
+        m.fields.insert("beta".into(), login_values(true));
         m.set_query("bet".into());
         assert_eq!(m.hot(1), Some(0));
         assert_eq!(m.key(Key::Enter), Outcome::Moved);

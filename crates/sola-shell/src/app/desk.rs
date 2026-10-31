@@ -10,7 +10,7 @@ use iced::Task;
 use sola_bus::topics::{DeskMenuOpen, DeskMenuPick, DeskPick, FocusTarget, Topic};
 
 use super::{Msg, Panel, Shell, with_bus};
-use crate::desk_menu::{self, DeskMenu, DeskMsg, Key, Outcome, Target, VaultView, vault};
+use crate::desk_menu::{self, DeskMenu, DeskMsg, ItemFields, Key, Outcome, Target, VaultView, vault};
 
 /// The right press that opened the menu can reach the shell after it
 /// (sola-river and the app race on the bus): that click is not a click
@@ -41,7 +41,11 @@ impl Shell {
             editable,
             "desk menu"
         );
-        self.desk = Some(DeskMenu::new(open, main, window, anchor, generation));
+        let mut desk = DeskMenu::new(open, main, window, anchor, generation);
+        if let Some((_, h)) = self.zoning.output_size {
+            desk.found_max = vault::found_max(h as f32);
+        }
+        self.desk = Some(desk);
         self.menu_open = true;
         self.current_open_index = None;
         self.current_open_is_system = false;
@@ -102,6 +106,17 @@ impl Shell {
                 self.desk_relayout();
                 Task::none()
             }
+            DeskMsg::Fields {
+                generation,
+                item,
+                fields,
+            } => {
+                if let Some(desk) = self.desk.as_mut().filter(|d| d.generation == generation) {
+                    desk.fields_came(item, fields);
+                }
+                self.desk_relayout();
+                Task::none()
+            }
             DeskMsg::Delivered { to, result } => match result {
                 Ok(ticket) => {
                     send(&to, DeskPick::VaultInsert { ticket: ticket.0 });
@@ -131,7 +146,7 @@ impl Shell {
             Outcome::Nothing => Task::none(),
             Outcome::Moved => {
                 self.desk_relayout();
-                self.desk_field_focus()
+                Task::batch([self.desk_field_focus(), self.desk_ask_fields()])
             }
             Outcome::Pick(pick) => {
                 if let Some(desk) = self.desk_close() {
@@ -182,6 +197,26 @@ impl Shell {
                 ])
             }
         }
+    }
+
+    /// An item's column opened: ask the vault what it can put in (labels,
+    /// off the iced thread), once per item and menu.
+    fn desk_ask_fields(&mut self) -> Task<Msg> {
+        let Some(desk) = self.desk.as_mut() else {
+            return Task::none();
+        };
+        let Some(item) = desk.wanted_fields() else {
+            return Task::none();
+        };
+        let generation = desk.generation;
+        let id = item.clone();
+        Task::perform(vault::off_thread(move || vault::fields(id)), move |fields| {
+            Msg::Desk(DeskMsg::Fields {
+                generation,
+                item: item.clone(),
+                fields: fields.unwrap_or_else(|| ItemFields::Failed("The vault went away.".into())),
+            })
+        })
     }
 
     /// The search field takes the keyboard while the keys are in its

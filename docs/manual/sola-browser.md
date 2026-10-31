@@ -217,13 +217,14 @@ not show. The page's rows come first:
 
 Then the Edit rows: **Cut** with a selection in a field, **Copy** with a
 selection, and **Paste** and **Select All** in a field; never Cut or Copy
-out of a password field. In a field, **Vault ▸** offers the page's logins
-first: **Fill** fills the whole login as the vault panel does, and
-**Username**, **Password**, and **One-time code** go in at the field's
-caret. Chromium does not say which fields are passwords: Browser tells
-one only when something in it is selected (it reads as dots), so in an
-empty password field Vault ▸ offers the username too. The Shell gets the
-page's address without its query or fragment, to find its logins.
+out of a field Chromium will not copy from (a password field). In a
+field, **Vault ▸** offers the page's logins first: **Fill** fills the
+whole login as the vault panel does, and each of the login's values
+(**Username**, **Password**, **One-time code**, and the rest) goes in at
+the field's caret. **Search vault…** finds any item, and its values go in
+the same way. Every field gets the same rows, a password field too
+([Shell](sola-shell.md#the-right-click-menu)). The Shell gets the page's
+address without its query or fragment, to find its logins.
 
 Browser's own fields (the location bar, the vault panel's fields) get the
 menu every Sola text field gets.

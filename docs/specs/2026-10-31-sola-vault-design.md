@@ -84,7 +84,7 @@ commits):
 | Fill | `fill_material` (an item for an origin, today's `FillMaterial`) | browser |
 | Passkeys | `passkey_candidates`, `passkey_assert`, `passkey_create` (the daemon checks the rp id against the origin again) | browser |
 | Generate | `generate` (password, passphrase, username) | Vault, browser, shell |
-| Deliver | `deliver` (item, field, target pid) → ticket; `redeem` (ticket) → value | shell; any Sola kit app (its own tickets) |
+| Deliver | `fields` (an item's values by label, never a value); `deliver` (item, field, target pid) → ticket; `redeem` (ticket) → value | shell; any Sola kit app (its own tickets) |
 | Events | `subscribe`: lock state, sync, item changes (ids only) | all of the above |
 
 **Bus:** `Topic::VaultState` (sticky): signed in, locked, email, last sync,
@@ -143,10 +143,13 @@ pick:  app item  → MenuAction to the app (as the titlebar menus do)
   submenu. Sent with each right-click, not published.
 - **Edit** follows the context (Cut only with a selection in an editable
   field, Paste only in an editable one).
-- **Vault ▸**, in an editable field: the site's logins first (each a
-  submenu: Username, Password, One-time code), then Search vault… (the
-  shell's picker over every item); Unlock vault… when locked. In a secret
-  field, Password and One-time code only.
+- **Vault ▸**, in an editable field: the site's logins first, then
+  Search vault… (the shell's picker over every item, of every kind);
+  Unlock vault… when locked. Each item is a submenu of every value it
+  has, by label — a login's username, password and code, a card's
+  number, custom fields, notes. The same in every field, a secret one
+  too (Joshua, 2026-10-31: "We don't need special handling, any field is
+  fine to show the items").
 - **Drawn by the shell** as an overlay like its menus (Graphite dropdown:
   raised, 12 radius, 26 px rows), at the pointer, with keys (arrows,
   Enter, Escape, typing to search in the vault submenu).

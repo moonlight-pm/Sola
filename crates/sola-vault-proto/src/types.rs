@@ -430,8 +430,26 @@ pub enum DeliverField {
     Password,
     /// The authenticator code now.
     Code,
-    /// Any field of the record by its [`RecordField::key`].
+    /// A value by its [`FieldInfo::key`]: a [`RecordField::key`],
+    /// [`FIELD_TOTP`] or [`FIELD_NOTES`].
     Field { key: String },
+}
+
+/// [`FieldInfo::key`] of a login's one-time code (the code when it is
+/// delivered).
+pub const FIELD_TOTP: &str = "totp";
+/// [`FieldInfo::key`] of an item's notes.
+pub const FIELD_NOTES: &str = "notes";
+
+/// A value an item can put into a field, as the desk menu lists it:
+/// never the value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldInfo {
+    /// Delivered as [`DeliverField::Field`] with this key.
+    pub key: String,
+    pub label: String,
+    /// A secret (a password, a card number, a hidden field).
+    pub hidden: bool,
 }
 
 /// What the generator makes.

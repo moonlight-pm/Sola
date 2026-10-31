@@ -274,8 +274,8 @@ place of its record: **Master password** and **Continue**. Once you give
 it, the item stays open to you until the vault locks or Vault quits.
 Browser's panel asks the same before it opens or fills such an item. The
 right-click menu cannot ask, so it puts none of such an item's values into
-a field; the top row says "Vault: This item asks for your master password
-— open it in Vault."
+a field; it shows them dimmed, with **Open in Vault…**
+([Shell](sola-shell.md#the-right-click-menu)).
 
 ### Copying
 

@@ -1,13 +1,14 @@
 //! The vault as the desk menu asks it: on the vault's own socket
-//! (`sola_vault_proto`), off the iced thread. The shell sees names and
-//! usernames, never a value: a picked value is delivered by the daemon to
-//! the app's process, and the app gets only a ticket to redeem.
+//! (`sola_vault_proto`), off the iced thread. The shell sees names,
+//! usernames and the labels of an item's values, never a value: a picked
+//! value is delivered by the daemon to the app's process, and the app
+//! gets only a ticket to redeem.
 
 use std::time::Duration;
 
 use sola_bus::topics::{LaunchAppPayload, Topic};
 use sola_vault_proto::{
-    Client, DeliverField, ErrorCode, ItemKind, ItemSummary, Reply, Request, VaultError,
+    Client, DeliverField, ErrorCode, FieldInfo, ItemSummary, Reply, Request, VaultError,
 };
 
 /// How the shell names itself to the daemon.
@@ -16,8 +17,18 @@ const CLIENT: &str = "sola-shell";
 /// Vault's app id: Sign in, Unlock and Open in Vault bring it forward.
 pub const VAULT_APP: &str = "sola-vault";
 
-/// Search results shown at once.
-pub const FOUND_MAX: usize = 8;
+/// Search results shown at once: as many as fit the output, within
+/// these.
+pub const FOUND_MIN: usize = 8;
+pub const FOUND_CAP: usize = 16;
+
+/// How many search results fit under the search field on an output
+/// `output_h` pixels tall.
+pub fn found_max(output_h: f32) -> usize {
+    let room = output_h - super::place::search_height(0) - 2.0 * super::place::EDGE;
+    let rows = (room / sola_kit::components::menu_sheet::ROW_H).floor().max(0.0) as usize;
+    rows.clamp(FOUND_MIN, FOUND_CAP)
+}
 
 /// The vault, as Vault ▸ shows it.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,22 +46,33 @@ pub enum VaultView {
 }
 
 /// Vault ▸ turned into a search over every item.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Search {
     pub query: String,
     /// `None` while the list is on its way.
     pub items: Option<Result<Vec<ItemSummary>, String>>,
+    /// Results shown at once ([`found_max`]).
+    pub max: usize,
 }
 
 impl Search {
-    /// The logins the query finds, most recently used first.
+    pub fn new(max: usize) -> Self {
+        Self {
+            query: String::new(),
+            items: None,
+            max,
+        }
+    }
+
+    /// The items the query finds, of every kind, most recently used
+    /// first (none in the trash).
     pub fn found(&self) -> Vec<&ItemSummary> {
         let Some(Ok(items)) = &self.items else {
             return Vec::new();
         };
         let mut found: Vec<&ItemSummary> = items
             .iter()
-            .filter(|i| i.kind == ItemKind::Login && !i.deleted)
+            .filter(|i| !i.deleted)
             .filter(|i| i.matches_query(&self.query))
             .collect();
         found.sort_by(|a, b| {
@@ -58,9 +80,19 @@ impl Search {
                 .cmp(&a.last_used)
                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
-        found.truncate(FOUND_MAX);
+        found.truncate(self.max);
         found
     }
+}
+
+/// An item's values, as its column lists them.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemFields {
+    /// Asked, on its way.
+    Asking,
+    Listed(Vec<FieldInfo>),
+    /// The daemon said why not, for a person.
+    Failed(String),
 }
 
 /// A delivery's ticket: never printed.
@@ -120,6 +152,15 @@ pub fn list() -> Result<Vec<ItemSummary>, String> {
         Ok(Reply::Items { items, .. }) => Ok(items),
         Ok(_) => Err("The vault answered something else.".into()),
         Err(e) => Err(e.message),
+    }
+}
+
+/// What `item` can put into a field, by label (never a value). Blocking.
+pub fn fields(item: String) -> ItemFields {
+    match sola_vault_proto::call(CLIENT, Request::Fields { id: item }) {
+        Ok(Reply::Fields(fields)) => ItemFields::Listed(fields),
+        Ok(_) => ItemFields::Failed("The vault answered something else.".into()),
+        Err(e) => ItemFields::Failed(e.message),
     }
 }
 
@@ -189,25 +230,38 @@ mod tests {
     use crate::desk_menu::rows::tests::login;
 
     #[test]
-    fn search_finds_logins_most_recent_first() {
+    fn search_finds_every_kind_most_recent_first() {
         let mut a = login("alpha", false);
         a.last_used = 10;
         let mut b = login("beta", false);
         b.last_used = 20;
-        let mut note = login("alpha-note", false);
-        note.kind = ItemKind::SecureNote;
+        let mut card = login("alpha-card", false);
+        card.kind = sola_vault_proto::ItemKind::Card;
+        card.last_used = 5;
         let mut gone = login("alpha-old", false);
         gone.deleted = true;
-        let mut s = Search {
-            query: String::new(),
-            items: Some(Ok(vec![a, b, note, gone])),
-        };
+        let mut s = Search::new(FOUND_MIN);
+        s.items = Some(Ok(vec![a, b, card, gone]));
         let ids = |s: &Search| s.found().iter().map(|i| i.id.clone()).collect::<Vec<_>>();
-        assert_eq!(ids(&s), ["beta", "alpha"]);
+        assert_eq!(ids(&s), ["beta", "alpha", "alpha-card"]);
         s.query = "alp".into();
+        assert_eq!(ids(&s), ["alpha", "alpha-card"]);
+        s.max = 1;
         assert_eq!(ids(&s), ["alpha"]);
         s.items = None;
         assert!(s.found().is_empty());
+    }
+
+    #[test]
+    fn as_many_results_as_fit() {
+        assert_eq!(found_max(1080.0), FOUND_CAP);
+        assert_eq!(found_max(200.0), FOUND_MIN);
+        let tall_enough = |n: usize| {
+            super::super::place::search_height(n)
+                + 2.0 * super::super::place::EDGE
+                + sola_kit::components::menu_sheet::ROW_H * 0.5
+        };
+        assert_eq!(found_max(tall_enough(12)), 12);
     }
 
     #[test]
