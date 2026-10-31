@@ -251,7 +251,7 @@ impl App {
                 None,
                 Some(widgets::glyph_plate("lucide/download", PlateSize::Small)),
                 "Export the vault".into(),
-                "Items in folders, without attachments".into(),
+                "Your own items, without attachments".into(),
             ),
             body.into(),
             400.0,
