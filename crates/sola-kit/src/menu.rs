@@ -159,6 +159,25 @@ pub fn prepare(payload: AppMenuPayload) -> AppMenuPayload {
     crate::keys::apply(&payload)
 }
 
+/// The item of this app's menus whose key now is `key` (not a Window
+/// item): for keys an app reads itself (a letter, no Super), so they
+/// follow your changes in Settings → Keybindings.
+pub fn action_for_key(key: KeyChord) -> Option<String> {
+    current()?
+        .menus
+        .iter()
+        .flat_map(|m| m.items.iter())
+        .find_map(|item| match item {
+            MenuItem::Action {
+                id,
+                shortcut: Some(k),
+                disabled: false,
+                ..
+            } if *k == key && parse_window_action(id).is_none() => Some(id.clone()),
+            _ => None,
+        })
+}
+
 /// [`current`] made again on its next call (the menus, the keys or the
 /// layout changed).
 fn forget_current() {

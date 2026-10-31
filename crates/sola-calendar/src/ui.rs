@@ -175,7 +175,7 @@ pub enum Msg {
     OpenUrl(String),
     Refresh,
     DismissToast { generation: u64 },
-    KeyPressed(keyboard::Key, keyboard::Modifiers),
+    KeyPressed(keyboard::Key, keyboard::key::Physical, keyboard::Modifiers),
     Tick,
     MaybeMigrate,
     SidebarPress,
@@ -265,9 +265,12 @@ impl App {
             crate::instance::subscription().map(Msg::OpenFiles),
             iced::time::every(Duration::from_secs(5)).map(|_| Msg::Tick),
             event::listen_with(|event, _status, _id| match event {
-                Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                    Some(Msg::KeyPressed(key, modifiers))
-                }
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key,
+                    physical_key,
+                    modifiers,
+                    ..
+                }) => Some(Msg::KeyPressed(key, physical_key, modifiers)),
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
                     Some(Msg::CursorMoved(position.x))
                 }
@@ -460,7 +463,7 @@ impl App {
                 }
                 Task::none()
             }
-            Msg::KeyPressed(key, mods) => self.on_key(key, mods),
+            Msg::KeyPressed(key, physical, mods) => self.on_key(key, physical, mods),
             Msg::MaybeMigrate => {
                 if !self.got_config {
                     self.emit_config_from_store();
@@ -744,16 +747,24 @@ impl App {
         }
     }
 
-    fn on_key(&mut self, key: keyboard::Key, mods: keyboard::Modifiers) -> Task<Msg> {
+    fn on_key(
+        &mut self,
+        key: keyboard::Key,
+        physical: keyboard::key::Physical,
+        mods: keyboard::Modifiers,
+    ) -> Task<Msg> {
         if mods.command() {
             return Task::none();
         }
+        // A menu item's key as it is now (Month 1, Week 2, Day 3, Today T),
+        // so a change in Settings → Keybindings moves it.
+        let item = sola_kit::keys::chord_from_iced(&physical, mods)
+            .and_then(sola_kit::menu::action_for_key);
+        if let Some(id) = item {
+            return self.on_menu(&id);
+        }
         match key.as_ref() {
-            keyboard::Key::Character("t") => self.update(Msg::Today),
             keyboard::Key::Character("n") => self.update(Msg::NewEvent),
-            keyboard::Key::Character("1") => self.update(Msg::SetView(View::Month)),
-            keyboard::Key::Character("2") => self.update(Msg::SetView(View::Week)),
-            keyboard::Key::Character("3") => self.update(Msg::SetView(View::Day)),
             keyboard::Key::Named(NamedKey::ArrowLeft) => self.update(Msg::Prev),
             keyboard::Key::Named(NamedKey::ArrowRight) => self.update(Msg::Next),
             keyboard::Key::Named(NamedKey::Escape) => {

@@ -1,7 +1,9 @@
-//! Keyboard: Escape layering and the single-key message shortcuts.
+//! Keyboard: Escape layering and the single-key message shortcuts. The
+//! single keys are the menu items' keys now (`sola_kit::menu::
+//! action_for_key`), so a change in Settings → Keybindings moves them.
 
 use iced::Task;
-use iced::keyboard::key::Named;
+use iced::keyboard::key::{Named, Physical};
 use iced::keyboard::{Key, Modifiers};
 
 use super::{App, Msg};
@@ -9,7 +11,13 @@ use super::{App, Msg};
 impl App {
     /// `captured`: a focused widget (Search, a compose field) already
     /// used the key — single-letter shortcuts must not fire then.
-    pub(super) fn on_key(&mut self, key: Key, mods: Modifiers, captured: bool) -> Task<Msg> {
+    pub(super) fn on_key(
+        &mut self,
+        key: Key,
+        physical: Physical,
+        mods: Modifiers,
+        captured: bool,
+    ) -> Task<Msg> {
         let escape = matches!(key, Key::Named(Named::Escape));
         // The panel takes its own keys (FilePicker::keys).
         if self.picker.is_some() {
@@ -63,18 +71,15 @@ impl App {
         if mods.control() || mods.alt() || mods.logo() {
             return Task::none();
         }
-        let Key::Character(c) = &key else {
-            return Task::none();
-        };
-        match c.as_str() {
-            "x" => self.update(Msg::MoveSelected("Junk".into())),
-            "i" => self.update(Msg::MoveSelected("INBOX".into())),
-            "a" => self.update(Msg::MoveSelected("Archive".into())),
-            "d" => self.update(Msg::MoveSelected("Trash".into())),
-            "u" => self.update(Msg::Undo),
-            "w" => self.select_prev(false),
-            "s" => self.select_next(false),
-            "/" => self.update(Msg::SearchFocus),
+        // A menu item's key (Archive A, Delete D, Next S, …), as it is now.
+        let item = sola_kit::keys::chord_from_iced(&physical, mods)
+            .and_then(sola_kit::menu::action_for_key);
+        if let Some(id) = item {
+            return self.on_menu_action(&id);
+        }
+        // Slash searches, besides Find's own key.
+        match &key {
+            Key::Character(c) if c.as_str() == "/" => self.update(Msg::SearchFocus),
             _ => Task::none(),
         }
     }
