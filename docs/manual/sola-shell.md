@@ -36,7 +36,7 @@ key.
 | Super+K | Keyboard shortcuts overlay (press again to close) |
 | Super+H | Hide the focused app |
 | Super+L | Lock the screen (needs a password: [Security](security.md#locking)) |
-| Super+Q | Close the focused app: every window of it |
+| Super+Q | Close the focused app: every window of it. One that isn't Sola's quits whole ([Session manager](session.md#applications-that-arent-solas)) |
 | Super+Backtick | Show the next window in the bar (Super+Shift+Backtick: the previous) |
 | Super+1 … Super+9 | Show workspace 1 to 9 |
 | Super+Ctrl+1 … Super+Ctrl+9 | Send the focused window to workspace 1 to 9 |
@@ -69,6 +69,11 @@ panel, except the screenshot chords, which copy the screen as it is.
 The focused app's menu shortcuts that use Super (Super+C, Super+T, …) are
 taken by the Shell while that app has focus and handed to it as the menu
 choice, so a shortcut and a click on the menu item do the same thing.
+
+An app that isn't Sola's has no menu of its own, so the Shell gives it
+one: **Close Window** (Super+W) and **Quit <App>** (Super+Q). Super+W is
+taken only while such an app has focus, and closes the focused window as
+its bar row's × does; Sola's own apps keep Super+W for themselves.
 
 ### Focus
 

@@ -62,6 +62,7 @@ one PID 1 gives the service. `sola-session` adds:
 | `XDG_SESSION_TYPE` | `wayland`, when it found a Wayland socket. Chromium-based applications and desktop portals treat other values as not Wayland. |
 | `DISPLAY` | The first live X socket in `/tmp/.X11-unix`, as `:N`, when there is one |
 | `XDG_RUNTIME_DIR` | Passed through when set |
+| `SOLA_APP` | The app id, for an application that isn't Sola's ([below](#applications-that-arent-solas)) |
 
 It also removes `SOLA_NO_SELF_WATCH`, so a kit application watches its own
 executable and executes the new file in place when it changes
@@ -208,11 +209,63 @@ every window with that app id to close ([Compositor](compositor.md)), and
 a kit application quits by itself. `solactl session close` does only the
 first.
 
+An application that isn't Sola's quits whole instead, as the next section
+says; the call replies `{app_id, quitting: true}`.
+
+## Applications that aren't Sola's
+
+An application whose command runs a program whose name does not start
+with `sola` (Steam, any other X11 or Wayland program in the catalog) is
+not Sola's. Kit applications and web apps (`sola-browser --app …`) are.
+
+Such an application starts with `SOLA_APP=<app_id>` in its environment,
+and every process it starts inherits it, including ones that leave its
+process tree: Steam's pressure-vessel containers and webhelpers start
+sessions of their own, and its logger ends up under PID 1. That variable
+is how `sola-session` finds all of the application.
+
+It runs only while it has a window on the desk. Sola has no tray, so an
+application that hides in one when its window closes, as Steam does, would
+otherwise keep running with nothing to show for it. A window counts as
+the application's when its app id is the application's, or when its
+process, or the nearest process above it, carries the application's
+`SOLA_APP`. A game Steam started (app id `steam_app_<id>`) is Steam's, so
+Steam stays while the game is open. Hidden windows and windows on other
+workspaces count.
+
+| When | `sola-session` quits it |
+|---|---|
+| It had a window and has had none for 5 s: its own close button, the bar's ×, Super+W, its last window crashing | Yes |
+| It has shown no window 2 minutes after it started | Yes |
+| `CloseApp`: Super+Q, the `close` call | Yes, at once |
+| **Exit Sola** | Yes, within the 6 s every application gets |
+
+Quitting goes in steps until no process carries its `SOLA_APP`:
+
+1. While it runs, its own quit command, when it has one. Steam's is
+   `/bin/steam -shutdown`, which hands the request to the running Steam as
+   **Steam → Exit** does, so Steam saves its state and ends its games.
+   Steam's command starts Steam when none is running, so it is sent only
+   while one is, and only once.
+2. After 15 s (at once, with no quit command), SIGTERM to every process
+   that carries its `SOLA_APP`.
+3. After 5 s more, SIGKILL to the rest.
+
+It leaves the saved set when it starts quitting, except at **Exit Sola**,
+which keeps the set as it was. Picking it in the launcher while it quits
+starts it again once it is gone.
+
+```bash
+solactl session close steam
+```
+
 ## Ending the session
 
 On `Shutdown` (**Exit Sola** in the flower menu), `sola-session` sends
 SIGTERM to every application it is tracking, waits up to 6 s for them to
-exit, sends SIGKILL to any that remain, then exits. It does not change the
+exit, sends SIGKILL to any that remain, then exits. Applications that
+aren't Sola's get their own quit command first (Steam's `-shutdown`), and
+SIGKILL goes to every process left with their `SOLA_APP`. It does not change the
 saved set, so the applications open at **Exit Sola** are the ones
 restored.
 
@@ -401,7 +454,7 @@ Call methods, owner `session` (also the MCP tools `session_launch` and
 
 | What restarts | What happens |
 |---|---|
-| `sola-session` | Open applications keep running, but the new `sola-session` did not start them: no `UserAppExited`, and `solactl session close` does not find them. The listed ones with windows stay in `SessionApps` while they have windows (3 s grace). Super+Q still closes their windows. Restore launches only listed applications that have no window. An apply that moves `pkg:sola` stops `sola-session`, which closes the applications as at **Exit Sola**; the new one opens them again. |
+| `sola-session` | Open applications keep running, but the new `sola-session` did not start them: no `UserAppExited`, and `solactl session close` does not find them. The listed ones with windows stay in `SessionApps` while they have windows (3 s grace). Super+Q still closes their windows. Restore launches only listed applications that have no window. A listed one that isn't Sola's is watched as before: once its windows are gone for 5 s, it quits whole. An apply that moves `pkg:sola` stops `sola-session`, which closes the applications as at **Exit Sola**; the new one opens them again. |
 | `sola-bus` | `sola-session` reconnects and subscribes again. A `LaunchApp` sent while the bus was down is lost. |
 | The compositor | The applications lose their display and exit; they stay in `SessionApps` and start again on the new compositor. See [Architecture](architecture.md#when-a-part-stops). |
 
@@ -409,7 +462,7 @@ Call methods, owner `session` (also the MCP tools `session_launch` and
 
 | File | Contents |
 |---|---|
-| `~/.local/state/sola/sola.log` | `sola-session`'s log, lines tagged `[session]`: `launch`, `user app launched` with the pid, `CloseApp: stopping`, `user app exited`, and what restore decided |
+| `~/.local/state/sola/sola.log` | `sola-session`'s log, lines tagged `[session]`: `launch`, `user app launched` with the pid, `CloseApp: stopping`, `user app exited`, `quitting` with the reason and `quit: …` for each step, and what restore decided |
 | `~/.local/state/sola/app-<app_id>.log` | Each application's standard output and standard error |
 
 ```bash
@@ -431,5 +484,10 @@ solactl logs app-sola-mail --follow
 - Restore starts one process per application with its launch command. It
   does not restore a second copy launched with a different command.
 - There is no autostart list besides session restore.
-- Closing sends SIGTERM to the application's process only, not to the
-  processes it started.
+- Closing one of Sola's applications sends SIGTERM to its process only,
+  not to the processes it started.
+- An application that isn't Sola's and was started some other way (a
+  terminal, or a `sola-session` older than 2026-10-31) has no `SOLA_APP`,
+  so nothing watches its windows and closing does not find all of it.
+- An application that isn't Sola's and never shows a window (a
+  command-line tool in the catalog) is quit after 2 minutes.

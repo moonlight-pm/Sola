@@ -15,6 +15,15 @@ use sola_core::{KeyChord, KeyCode};
 /// hasn't shipped its own menu.
 pub const SYNTHESIZED_CLOSE_ACTION: &str = "_close";
 
+/// Action id of the synthesized "Close Window" item: the shell closes the
+/// focused window, as the tab bar's close does.
+pub const SYNTHESIZED_CLOSE_WINDOW_ACTION: &str = "_close_window";
+
+/// Its key. Quit's Super+Q is a system key; this one is grabbed only while
+/// an app without a menu of its own has focus (Sola's apps give Super+W
+/// their own meaning).
+pub const SYNTHESIZED_CLOSE_WINDOW_KEY: KeyChord = KeyCode::W.meta();
+
 /// The flower's item that opens Settings.
 pub const ACTION_SETTINGS: &str = "settings";
 
@@ -83,21 +92,27 @@ pub fn fill_window_menu(
 }
 
 /// Build a default menu for an external app that hasn't shipped its own.
-/// Single menu labeled `<label>` containing one item: "Quit <label>" with
-/// the Meta+Q shortcut shown next to it. The chord itself is already
-/// dispatched globally in `keys::handle_chord`.
+/// Single menu labeled `<label>`: "Close Window" (Super+W) and "Quit
+/// <label>" (Super+Q, a system key).
 pub fn synthesized_menu(app_id: &str, label: &str) -> AppMenuPayload {
     AppMenuPayload {
         app_id: app_id.to_string(),
         menus: vec![MenuDefinition {
             label: label.to_string(),
-            items: vec![MenuItem::Action {
-                id: SYNTHESIZED_CLOSE_ACTION.to_string(),
-                label: format!("Quit {label}"),
-                shortcut: Some(KeyCode::Q.meta()),
-                disabled: false,
-                checked: false,
-            }],
+            items: vec![
+                action(
+                    SYNTHESIZED_CLOSE_WINDOW_ACTION,
+                    "Close Window",
+                    Some(SYNTHESIZED_CLOSE_WINDOW_KEY),
+                ),
+                MenuItem::Action {
+                    id: SYNTHESIZED_CLOSE_ACTION.to_string(),
+                    label: format!("Quit {label}"),
+                    shortcut: Some(KeyCode::Q.meta()),
+                    disabled: false,
+                    checked: false,
+                },
+            ],
         }],
     }
 }
@@ -269,14 +284,22 @@ mod tests {
     }
 
     #[test]
-    fn synthesized_menu_has_single_quit_item() {
+    fn synthesized_menu_has_close_window_and_quit() {
         let payload = synthesized_menu("firefox", "Firefox");
         assert_eq!(payload.app_id, "firefox");
         assert_eq!(payload.menus.len(), 1);
         let menu = &payload.menus[0];
         assert_eq!(menu.label, "Firefox");
-        assert_eq!(menu.items.len(), 1);
+        assert_eq!(menu.items.len(), 2);
         match &menu.items[0] {
+            MenuItem::Action { id, label, shortcut, .. } => {
+                assert_eq!(id, SYNTHESIZED_CLOSE_WINDOW_ACTION);
+                assert_eq!(label, "Close Window");
+                assert_eq!(*shortcut, Some(KeyCode::W.meta()));
+            }
+            other => panic!("expected Action item, got {other:?}"),
+        }
+        match &menu.items[1] {
             MenuItem::Action {
                 id,
                 label,
@@ -303,7 +326,7 @@ mod tests {
     fn synthesized_menu_label_in_quit_string() {
         // "Quit <label>" must use the provided label, not the app_id.
         let payload = synthesized_menu("sola-browser", "Sola Browser");
-        let label = match &payload.menus[0].items[0] {
+        let label = match &payload.menus[0].items[1] {
             MenuItem::Action { label, .. } => label.clone(),
             _ => panic!("expected Action"),
         };

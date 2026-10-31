@@ -18,6 +18,10 @@ use sola_core::{env, paths};
 
 use crate::adopted::{self, Adopted};
 use crate::display;
+use crate::tag;
+use crate::watch::{Foreign, Owners};
+
+mod foreign;
 
 /// How long a new compositor runs before the apps that went with the last
 /// one are started on it (sola-river and the shell come back first).
@@ -65,6 +69,10 @@ pub struct Session {
     back_since: Option<(String, Instant)>,
     /// Saved apps found running at start (not started by this process).
     adopted: Vec<Adopted>,
+    /// Apps that aren't Sola's, by app id: they live while they have a
+    /// window (`crate::watch`).
+    foreign: HashMap<String, Foreign>,
+    owners: Owners,
 }
 
 impl Session {
@@ -79,6 +87,8 @@ impl Session {
             lost: Vec::new(),
             back_since: None,
             adopted: Vec::new(),
+            foreign: HashMap::new(),
+            owners: Owners::default(),
         }
     }
 
@@ -167,6 +177,11 @@ impl Session {
         if !self.adopted.is_empty() {
             info!(count = self.adopted.len(), "session restore: keeping the saved apps already running");
         }
+        let now = Instant::now();
+        for a in self.adopted.iter().filter(|a| tag::is_foreign(&a.command)) {
+            self.foreign
+                .insert(a.app_id.clone(), Foreign::adopted(&a.command, now));
+        }
         let plan = restore_plan(&persisted, &running, &children_keys);
         if plan.is_empty() {
             info!(
@@ -208,6 +223,9 @@ impl Session {
     }
 
     fn launch_result(&mut self, payload: LaunchAppPayload) -> Result<serde_json::Value, String> {
+        let Some(payload) = self.defer_while_quitting(payload) else {
+            return Ok(serde_json::json!({ "deferred": true }));
+        };
         let LaunchAppPayload { app_id, command } = payload;
         info!(%app_id, %command, "launch");
 
@@ -260,50 +278,8 @@ impl Session {
             c
         };
 
-        if let Some(name) = env::child_wayland_display() {
-            cmd.env("WAYLAND_DISPLAY", name);
-            // TTY launch leaves XDG_SESSION_TYPE=tty on the tree.
-            // Chromium/Electron camera + xdg-desktop-portal treat that
-            // as not-Wayland. Nested gamescope sets x11 itself.
-            cmd.env("XDG_SESSION_TYPE", "wayland");
-        } else {
-            warn!("no WAYLAND_DISPLAY available");
-        }
-        if let Some(display) = env::x_display() {
-            cmd.env("DISPLAY", display);
-        }
-        // Ensure seat apps inherit a runtime dir for wayland sockets, etc.
-        if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
-            cmd.env("XDG_RUNTIME_DIR", runtime);
-        }
-
-        // sola launches us (a MANAGED process) with SOLA_NO_SELF_WATCH=1
-        // so we don't double-restart — sola already respawns its managed
-        // set on binary change. But `systemd-run --scope` execs the user
-        // app as our child, so it would inherit that flag and skip its
-        // own self-watch. User apps are NOT in sola's managed set, so
-        // nothing else restarts them on redeploy — they must self-watch.
-        // Strip the flag so the kit's startup() arms watch_own_binary and
-        // `cargo make install <app>` reloads the running app.
-        cmd.env_remove("SOLA_NO_SELF_WATCH");
-
-        // Capture the app's own stdout+stderr to a durable per-app log at
-        // `/opt/sola/log/app-<id>.log`. Without this the scope's output is
-        // lost, so an app that dies during restore before it can log anything
-        // itself (a cold-boot GPU/wayland race, a panic before its own tracing
-        // hook is armed, an `iced::Result` error) leaves nothing to diagnose.
-        // Always on — no flag to remember. Falls back to inheriting
-        // sola-session's stdio if the log file can't be opened.
-        cmd.stdin(Stdio::null());
-        if let Some(out) = app_log_file(&app_id) {
-            match out.try_clone() {
-                Ok(err) => {
-                    cmd.stdout(Stdio::from(out));
-                    cmd.stderr(Stdio::from(err));
-                }
-                Err(e) => warn!(%app_id, %e, "app capture: fd clone failed, inheriting stdio"),
-            }
-        }
+        let foreign = tag::is_foreign(&command);
+        prepare(&mut cmd, &app_id, foreign);
 
         let unit = if use_scope {
             unit
@@ -331,6 +307,9 @@ impl Session {
                         closing: false,
                         display: on,
                     });
+                if foreign {
+                    self.watch_foreign(&app_id, &command);
+                }
                 self.emit_launch_result(&app_id, &command, true, None);
                 self.emit_session_apps();
                 Ok(serde_json::json!({
@@ -364,6 +343,10 @@ impl Session {
     }
 
     fn close_result(&mut self, app_id: &str) -> Result<serde_json::Value, String> {
+        if self.quit_foreign(app_id, "asked to quit") {
+            self.emit_session_apps();
+            return Ok(serde_json::json!({ "app_id": app_id, "quitting": true }));
+        }
         let Some(records) = self.children.get_mut(app_id) else {
             info!(%app_id, "CloseApp: no live children");
             return Err(format!("no live children for {app_id}"));
@@ -391,8 +374,19 @@ impl Session {
     /// Anything still alive after that gets a hard kill on the systemd-run
     /// client and a second `systemctl stop` on the unit. Belt-and-braces:
     /// systemd's own SIGTERM→SIGKILL escalation will already have cleared
-    /// the cgroup in practice, but we don't want to wait forever.
+    /// the cgroup in practice, but we don't want to wait forever. Apps that
+    /// aren't Sola's quit their own way first (Steam: `-shutdown`), and what
+    /// is left of them by then gets SIGKILL too.
     fn shutdown_all_apps(&mut self) {
+        let foreign: Vec<String> = self.foreign.keys().cloned().collect();
+        for app_id in &foreign {
+            self.quit_foreign(app_id, "the desk is ending");
+        }
+        for f in self.foreign.values_mut() {
+            if let Some(q) = f.quit.as_mut() {
+                q.then_launch = None;
+            }
+        }
         for records in self.children.values_mut() {
             for r in records.iter_mut() {
                 if r.closing {
@@ -418,11 +412,13 @@ impl Session {
                     }
                 }
             }
-            if alive == 0 || Instant::now() >= deadline {
+            self.step_quits(Instant::now());
+            if (alive == 0 && !self.foreign_quitting()) || Instant::now() >= deadline {
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+        self.kill_foreign();
 
         for records in self.children.values_mut() {
             for r in records.iter_mut() {
@@ -442,6 +438,7 @@ impl Session {
         self.reap_exited();
         self.settle_adopted();
         self.bring_back_lost();
+        self.step_foreign();
     }
 
     /// One bus message: a live window list goes to the adopted apps (a
@@ -449,8 +446,9 @@ impl Session {
     pub fn on_message(&mut self, msg: &sola_bus::Message) {
         match Topic::parse(msg) {
             Some(Topic::Windows(ws)) if msg.sticky => {
-                let open: HashSet<String> = ws.into_iter().map(|w| w.app_id).collect();
+                let open: HashSet<String> = ws.iter().map(|w| w.app_id.clone()).collect();
                 adopted::note_windows(&mut self.adopted, &open, Instant::now());
+                self.note_foreign_windows(&ws);
             }
             Some(topic) => self.handle(topic),
             None => {}
@@ -569,6 +567,59 @@ impl Session {
                 command: l.command,
             });
         }
+    }
+}
+
+/// The environment and output of an app (and of its quit command): the
+/// compositor and X display it runs on, and its log. One that isn't Sola's
+/// carries its tag ([`tag::VAR`]).
+fn prepare(cmd: &mut Command, app_id: &str, foreign: bool) {
+    if let Some(name) = env::child_wayland_display() {
+        cmd.env("WAYLAND_DISPLAY", name);
+        // TTY launch leaves XDG_SESSION_TYPE=tty on the tree.
+        // Chromium/Electron camera + xdg-desktop-portal treat that
+        // as not-Wayland. Nested gamescope sets x11 itself.
+        cmd.env("XDG_SESSION_TYPE", "wayland");
+    } else {
+        warn!("no WAYLAND_DISPLAY available");
+    }
+    if let Some(display) = env::x_display() {
+        cmd.env("DISPLAY", display);
+    }
+    // Ensure seat apps inherit a runtime dir for wayland sockets, etc.
+    if let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") {
+        cmd.env("XDG_RUNTIME_DIR", runtime);
+    }
+
+    // sola launches us (a MANAGED process) with SOLA_NO_SELF_WATCH=1
+    // so we don't double-restart — sola already respawns its managed
+    // set on binary change. But `systemd-run --scope` execs the user
+    // app as our child, so it would inherit that flag and skip its
+    // own self-watch. User apps are NOT in sola's managed set, so
+    // nothing else restarts them on redeploy — they must self-watch.
+    // Strip the flag so the kit's startup() arms watch_own_binary and
+    // `cargo make install <app>` reloads the running app.
+    cmd.env_remove("SOLA_NO_SELF_WATCH");
+
+    // Capture the app's own stdout+stderr to a durable per-app log at
+    // `/opt/sola/log/app-<id>.log`. Without this the scope's output is
+    // lost, so an app that dies during restore before it can log anything
+    // itself (a cold-boot GPU/wayland race, a panic before its own tracing
+    // hook is armed, an `iced::Result` error) leaves nothing to diagnose.
+    // Always on — no flag to remember. Falls back to inheriting
+    // sola-session's stdio if the log file can't be opened.
+    cmd.stdin(Stdio::null());
+    if let Some(out) = app_log_file(app_id) {
+        match out.try_clone() {
+            Ok(err) => {
+                cmd.stdout(Stdio::from(out));
+                cmd.stderr(Stdio::from(err));
+            }
+            Err(e) => warn!(%app_id, %e, "app capture: fd clone failed, inheriting stdio"),
+        }
+    }
+    if foreign {
+        cmd.env(tag::VAR, app_id);
     }
 }
 
