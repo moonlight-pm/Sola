@@ -9,7 +9,7 @@
 use std::time::Duration;
 
 use iced::Task;
-use sola_vault_proto::{FillMaterial, ItemKind, Request};
+use sola_vault_proto::{FillMaterial, ItemKind, ItemSummary, Request};
 use zeroize::Zeroize;
 
 use super::update::VaultMsg;
@@ -69,19 +69,68 @@ impl<E: Engine> App<E> {
     }
 
     /// The desk menu's Fill on a page: the item into `tab`, the sheet
-    /// untouched (a re-prompt opens it).
+    /// untouched (a re-prompt, or a refusal, opens it). An item the
+    /// sheet's list does not have is looked up first: a re-prompt item is
+    /// never filled on the list's word alone.
     pub(crate) fn vault_fill_into(&mut self, tab: TabId, item: String) -> Task<Msg> {
+        let v = &self.vault;
+        let known = v.reprompt_ok.contains(&item) || v.list.items.iter().any(|i| i.id == item);
+        if !known {
+            self.vault
+                .ask(Ask::FillCheck { tab, item }, Request::List { url: None });
+            return Task::none();
+        }
+        self.vault_fill_known(tab, item)
+    }
+
+    /// The service's list for a [`Ask::FillCheck`]: fill, ask for the
+    /// master password, or say the item is gone.
+    pub(super) fn vault_fill_checked(&mut self, tab: TabId, item: String, items: &[ItemSummary]) -> Task<Msg> {
+        match asks_master_password(items, &item) {
+            None => self.vault_fill_refused(tab, "That item isn't in the vault.".into()),
+            Some(true) if !self.vault.reprompt_ok.contains(&item) => {
+                self.switch_active_tab(tab);
+                // The sheet's list, for the fill after the re-prompt.
+                self.vault_list();
+                self.vault_ask_reprompt(RepromptFor::Fill(item))
+            }
+            Some(_) => self.vault_fill_send(tab, item),
+        }
+    }
+
+    fn vault_fill_known(&mut self, tab: TabId, item: String) -> Task<Msg> {
         if self.vault_needs_reprompt(&item) {
             self.switch_active_tab(tab);
             return self.vault_ask_reprompt(RepromptFor::Fill(item));
         }
+        self.vault_fill_send(tab, item)
+    }
+
+    fn vault_fill_send(&mut self, tab: TabId, item: String) -> Task<Msg> {
         let Some(aim) = self.vault_aim(tab, AfterFill::Quiet) else {
-            return Task::none();
+            return self.vault_fill_refused(tab, "This page can't be filled.".into());
         };
         let url = aim.url.clone();
         self.vault
             .ask(Ask::Fill(aim), Request::FillMaterial { id: item, url });
         Task::none()
+    }
+
+    /// A desk-menu fill that did not happen: the sheet opens over `tab`
+    /// and says why (the browser has no other place to say it).
+    pub(super) fn vault_fill_refused(&mut self, tab: TabId, message: String) -> Task<Msg> {
+        tracing::info!(tab = tab.0, "vault: the desk menu's fill was refused");
+        if tab != self.cached_active {
+            self.switch_active_tab(tab);
+        }
+        let opened = if self.vault.is_open() {
+            Task::none()
+        } else {
+            self.set_vault_open(true);
+            self.vault_opened()
+        };
+        self.vault.error = Some(message);
+        opened
     }
 
     /// Fill material is here: run its script at the aim, then let go of it.
@@ -333,5 +382,47 @@ fn launch_vault(item: Option<&str>) {
             app_id: "sola-vault".into(),
             command,
         }));
+    }
+}
+
+/// Whether item `id` asks for the master password before it fills;
+/// `None` when the list does not have it.
+fn asks_master_password(items: &[ItemSummary], id: &str) -> Option<bool> {
+    items.iter().find(|i| i.id == id && !i.deleted).map(|i| i.reprompt)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::asks_master_password;
+    use sola_vault_proto::{ItemKind, ItemSummary};
+
+    fn item(id: &str, reprompt: bool, deleted: bool) -> ItemSummary {
+        ItemSummary {
+            id: id.into(),
+            kind: ItemKind::Login,
+            name: id.into(),
+            subtitle: String::new(),
+            last_used: 0,
+            revised: 0,
+            has_totp: false,
+            has_passkey: false,
+            uri_match: false,
+            reprompt,
+            favorite: false,
+            folder_id: None,
+            organization_id: None,
+            collection_ids: Vec::new(),
+            deleted,
+            search: String::new(),
+        }
+    }
+
+    #[test]
+    fn the_services_list_decides_the_re_prompt() {
+        let items = [item("a", false, false), item("b", true, false), item("c", false, true)];
+        assert_eq!(asks_master_password(&items, "a"), Some(false));
+        assert_eq!(asks_master_password(&items, "b"), Some(true));
+        assert_eq!(asks_master_password(&items, "c"), None, "in the trash");
+        assert_eq!(asks_master_password(&items, "d"), None);
     }
 }

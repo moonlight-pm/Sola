@@ -500,7 +500,7 @@ impl<E: Engine> App<E> {
 
     /// The sheet just opened: ask what it needs and put the caret where
     /// the first key belongs.
-    fn vault_opened(&mut self) -> Task<Msg> {
+    pub(super) fn vault_opened(&mut self) -> Task<Msg> {
         let v = &mut self.vault;
         if v.screen != Screen::Edit {
             v.error = None;

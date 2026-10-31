@@ -52,6 +52,9 @@ pub(crate) enum Ask {
     Create(Option<Aim>),
     Generate(Generated),
     Fill(Aim),
+    /// The desk menu's Fill of an item the sheet's list lacks: the
+    /// service's list says whether it asks for the master password first.
+    FillCheck { tab: TabId, item: String },
     /// Passkeys for a page's `get()`.
     PasskeyList { req: u64 },
     /// The site's logins a `create()` could go onto.
@@ -79,6 +82,7 @@ impl Ask {
             Self::Create(_) => "create",
             Self::Generate(_) => "generate",
             Self::Fill(_) => "fill",
+            Self::FillCheck { .. } => "fill_check",
             Self::PasskeyList { .. } => "passkey_list",
             Self::PasskeyLogins { .. } => "passkey_logins",
             Self::PasskeySign { .. } => "passkey_sign",

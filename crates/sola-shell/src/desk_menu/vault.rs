@@ -3,12 +3,18 @@
 //! usernames, never a value: a picked value is delivered by the daemon to
 //! the app's process, and the app gets only a ticket to redeem.
 
+use std::time::Duration;
+
+use sola_bus::topics::{LaunchAppPayload, Topic};
 use sola_vault_proto::{
     Client, DeliverField, ErrorCode, ItemKind, ItemSummary, Reply, Request, VaultError,
 };
 
 /// How the shell names itself to the daemon.
 const CLIENT: &str = "sola-shell";
+
+/// Vault's app id: Sign in, Unlock and Open in Vault bring it forward.
+pub const VAULT_APP: &str = "sola-vault";
 
 /// Search results shown at once.
 pub const FOUND_MAX: usize = 8;
@@ -127,6 +133,47 @@ pub fn deliver(item: String, field: DeliverField, pid: u32) -> Result<Ticket, St
     }
 }
 
+/// How long `vault.open` has to answer before the shell starts Vault
+/// itself.
+const OPEN_CALL_WAIT: Duration = Duration::from_secs(3);
+
+/// Show item `id` in Vault (a re-prompt item: its values wait for the
+/// master password there). The service's `vault.open` checks the id and
+/// has the session start or raise Vault on it; with no service to ask,
+/// the session starts `sola-vault --item <id>` itself. Blocking.
+pub fn open_item(id: String) {
+    match sola_call::invoke("vault", "open", serde_json::json!({ "id": id }), OPEN_CALL_WAIT) {
+        Ok(_) => tracing::info!("desk menu: an item opened in Vault"),
+        Err(e) => {
+            tracing::info!(error = %e, "desk menu: vault.open not answered; starting Vault");
+            let Some(bus) = sola_kit::app::try_bus() else {
+                return;
+            };
+            if let Ok(mut bus) = bus.lock() {
+                let _ = bus.emit(Topic::LaunchApp(LaunchAppPayload {
+                    app_id: VAULT_APP.into(),
+                    command: open_command(&id),
+                }));
+            }
+        }
+    }
+}
+
+/// Vault at item `id`; an id that is not an item's (a UUID) is left off,
+/// so nothing else reaches a command line.
+fn open_command(id: &str) -> String {
+    let bin = sola_core::paths::bin_path(VAULT_APP).display().to_string();
+    let uuid = id.len() == 36
+        && id
+            .char_indices()
+            .all(|(i, c)| if matches!(i, 8 | 13 | 18 | 23) { c == '-' } else { c.is_ascii_hexdigit() });
+    if uuid {
+        format!("{bin} --item {id}")
+    } else {
+        bin
+    }
+}
+
 fn refused(e: VaultError) -> VaultView {
     match e.code {
         ErrorCode::Unavailable => VaultView::Unavailable,
@@ -161,6 +208,12 @@ mod tests {
         assert_eq!(ids(&s), ["alpha"]);
         s.items = None;
         assert!(s.found().is_empty());
+    }
+
+    #[test]
+    fn only_an_item_id_reaches_the_command_line() {
+        assert!(open_command("11111111-aaaa-1111-1111-111111111111").ends_with("sola-vault --item 11111111-aaaa-1111-1111-111111111111"));
+        assert!(open_command("x; rm -rf ~").ends_with("sola-vault"));
     }
 
     #[test]

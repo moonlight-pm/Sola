@@ -410,7 +410,10 @@ frames that may have it, while the page stays on the origin it had:
 Filling closes the panel. An item that asks for your master password asks
 first, in the panel; the answer holds while the panel stays open. The
 right-click menu's **Fill** does the same as the panel's, without opening
-it ([Page menu](#page-menu)).
+it ([Page menu](#page-menu)); for a login the panel's list does not have
+yet, Browser asks the service whether it asks for your master password
+before it fills. When the service refuses the fill, or the page can't be
+filled, the panel opens and says why.
 
 ### Editing and new logins
 

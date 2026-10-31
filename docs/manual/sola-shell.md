@@ -462,15 +462,20 @@ From the top, a hairline between groups:
 
 A login opens its values:
 
-- **Fill**, on a page: the whole login into the page, as Browser's
-  vault panel fills it ([Filling a page](sola-browser.md#filling-a-page)).
+- **Fill**, on a page and for the page's own logins only: the whole
+  login into the page, as Browser's vault panel fills it
+  ([Filling a page](sola-browser.md#filling-a-page)).
 - **Username**, **Password**, and **One-time code** (when the login has
   one). In a password field, only **Password** and **One-time code**.
+- A login that asks for your master password shows these dimmed, under
+  them **Asks for your master password**, and **Open in Vault…**, which
+  brings Vault forward on the login.
 
 **Search vault…** turns the column into a search field over your logins:
 type, and up to eight matches show, the most recently used first. ↓ or a
-click moves into them, and → or Return opens one's values. ← in an empty
-field goes back to the vault's rows. Only logins are searched.
+click moves into them, and → or Return opens one's values: no **Fill**,
+since a match can be any site's. ← in an empty field goes back to the
+vault's rows. Only logins are searched.
 
 ### Vault values
 

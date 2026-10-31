@@ -261,6 +261,9 @@ impl<E: Engine> App<E> {
                 password.zeroize();
             }
             (Ask::Fill(aim), Reply::Fill(material)) => return self.vault_filled(aim, material),
+            (Ask::FillCheck { tab, item }, Reply::Items { items, .. }) => {
+                return self.vault_fill_checked(tab, item, &items);
+            }
             (Ask::PasskeyList { req }, Reply::Passkeys(candidates)) => {
                 self.passkey_candidates(req, candidates)
             }
@@ -315,7 +318,11 @@ impl<E: Engine> App<E> {
                 v.error = Some("That isn't your master password.".into());
             }
             Ask::SendEmailCode => v.error = Some(format!("Could not send the code: {}", e.message)),
-            Ask::Fill(aim) if aim.then == AfterFill::Quiet => {}
+            Ask::Fill(aim) if aim.then == AfterFill::Quiet => {
+                // The desk menu's fill: say why, in the sheet.
+                return self.vault_fill_refused(aim.tab, e.message);
+            }
+            Ask::FillCheck { tab, .. } => return self.vault_fill_refused(tab, e.message),
             Ask::Fill(aim) if aim.then == AfterFill::Created => {
                 // Saved; it just did not fill.
                 self.vault_created_filled(false);
