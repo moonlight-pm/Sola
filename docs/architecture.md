@@ -231,7 +231,7 @@ Projects sends each project window's roll-up (a tab waiting on a decision
 beats a tab working). `Topic::Zones` is no
 longer read or written on `next`.
 
-**Zones (branch `zone-layout`, 2026-10-31):** the content area is a grid of
+**Zones (2026-10-31):** the content area is a grid of
 equal cells from the persistent `Topic::ZoneLayout` (Settings → Zones →
 shell; `sola_bus::topics::ZoneLayout`, which also knows overlaps, cell
 fractions and place names). A zone is `Zone::Grid(id)` (a rectangle of
@@ -248,7 +248,7 @@ sola-river grants an app's own fullscreen request at once and emits
 `Topic::FullscreenRequest`; the shell moves the tab to Cinema and back
 (`app/zones.rs`, `Stacks::cinema_return`).
 
-**Keys (branch `zone-layout`, 2026-10-31):** `sola_core::keys::KEYS` is the
+**Keys (2026-10-31):** `sola_core::keys::KEYS` is the
 one key table (keycode, keysym, NumLock-off keysym, name). The shell's system
 actions are one table (`sola-shell/src/bindings.rs`: id, group, label,
 default; zone actions built from the layout): `shell_key_chords` registers

@@ -1,7 +1,7 @@
 # Zone layout — zones drawn on a grid (Settings → Zones)
 
 **Date:** 2026-10-30  
-**Status:** **Built** 2026-10-31 on branch `zone-layout` (not merged), applied on novus and smoked by injection; P1 built as proposed, awaiting Joshua's look.  
+**Status:** **Built** 2026-10-31 on branch `zone-layout`, merged to master the same day, applied on novus and smoked by injection; P1 built as proposed, awaiting Joshua's look.  
 **Related:** [Next tab bar](2026-10-21-next-tab-bar-design.md) (§ Full; § Merge: "the zone layout becomes configurable" before novus); [keybindings](2026-10-30-keybindings-design.md) (Z14); capabilities `shell-zoning`, `shell-desks`, `settings`
 
 | | |
