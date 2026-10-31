@@ -3,6 +3,11 @@
 //! The draft is plain strings (same secrets the item record already
 //! showed). Apply mutates a decrypted [`CipherView`] in place so
 //! passkeys, attachments, collections, and linked fields stay put.
+//!
+//! Apply writes only what the user changed since the form opened. The
+//! cipher is synced just before the write, so a field the form never
+//! showed (a TOTP we cannot read, an empty custom field) or one changed
+//! elsewhere meanwhile is left as the server has it.
 
 use bitwarden_vault::{
     BankAccountView, CardView, CipherType, CipherView, DriversLicenseView, FieldType, FieldView,
@@ -34,8 +39,16 @@ impl Drop for DraftRow {
     }
 }
 
+/// A website on a login. `index` is its place in the cipher's URI list
+/// (`None` = newly added), so its match type stays with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UriDraft {
+    pub index: Option<usize>,
+    pub value: String,
+}
+
 /// Custom field the user can rename, edit, or drop.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustomDraft {
     /// Index in the original `CipherView.fields` list. `None` = newly added.
     pub index: Option<usize>,
@@ -62,8 +75,10 @@ pub struct ItemDraft {
     pub name: String,
     pub notes: String,
     pub rows: Vec<DraftRow>,
-    pub uris: Vec<String>,
+    pub uris: Vec<UriDraft>,
     pub custom: Vec<CustomDraft>,
+    /// The draft as the form opened. `None` writes every field.
+    base: Option<Box<ItemDraft>>,
 }
 
 impl Drop for ItemDraft {
@@ -108,15 +123,15 @@ impl ItemDraft {
                 if record.view_password {
                     rows.push(row("password", "Password", true, true));
                 }
-                rows.push(row("totp", "Authenticator key", true, false));
-                if let Some(totp) = record.totp_secret.as_ref() {
-                    if let Some(r) = rows.iter_mut().find(|r| r.key == "totp") {
-                        r.value = totp.clone();
-                    }
-                }
+                let mut totp = row("totp", "Authenticator key", true, false);
+                totp.value = record.totp_secret.clone().unwrap_or_default();
+                rows.push(totp);
                 for f in &record.fields {
-                    if f.key.starts_with("uri") {
-                        uris.push(f.value.clone());
+                    if let Some(i) = f.key.strip_prefix("uri") {
+                        uris.push(UriDraft {
+                            index: i.parse().ok(),
+                            value: f.value.clone(),
+                        });
                     }
                 }
             }
@@ -182,7 +197,7 @@ impl ItemDraft {
             })
             .collect();
 
-        Self {
+        let mut draft = Self {
             id: record.id.clone(),
             kind: record.kind,
             can_edit: record.can_edit,
@@ -192,7 +207,10 @@ impl ItemDraft {
             rows,
             uris,
             custom,
-        }
+            base: None,
+        };
+        draft.base = Some(Box::new(draft.clone()));
+        draft
     }
 
     pub fn set_row(&mut self, key: &str, value: String) {
@@ -207,6 +225,38 @@ impl ItemDraft {
             .find(|r| r.key == key)
             .map(|r| r.value.as_str())
             .unwrap_or("")
+    }
+
+    /// The row's value when the user changed it since the form opened.
+    fn changed_row(&self, key: &str) -> Option<&str> {
+        let now = self.row_value(key);
+        match &self.base {
+            Some(base) if base.row_value(key) == now => None,
+            _ => Some(now),
+        }
+    }
+
+    fn name_changed(&self) -> bool {
+        self.base.as_ref().is_none_or(|b| b.name != self.name)
+    }
+
+    fn notes_changed(&self) -> bool {
+        self.base.as_ref().is_none_or(|b| b.notes != self.notes)
+    }
+
+    fn uris_changed(&self) -> bool {
+        self.base.as_ref().is_none_or(|b| b.uris != self.uris)
+    }
+
+    fn custom_changed(&self) -> bool {
+        self.base.as_ref().is_none_or(|b| b.custom != self.custom)
+    }
+
+    /// The form showed the cipher's custom field `index` when it opened.
+    fn custom_was_shown(&self, index: usize) -> bool {
+        self.base
+            .as_ref()
+            .is_none_or(|b| b.custom.iter().any(|c| c.index == Some(index)))
     }
 }
 
@@ -284,13 +334,17 @@ pub fn apply_draft(view: &mut CipherView, draft: &ItemDraft) -> Result<(), Strin
         return Err("Item type changed while editing.".into());
     }
 
-    let name = draft.name.trim();
-    view.name = if name.is_empty() {
-        kind.label().to_string()
-    } else {
-        name.to_string()
-    };
-    view.notes = opt(&draft.notes);
+    if draft.name_changed() {
+        let name = draft.name.trim();
+        view.name = if name.is_empty() {
+            kind.label().to_string()
+        } else {
+            name.to_string()
+        };
+    }
+    if draft.notes_changed() {
+        view.notes = opt(&draft.notes);
+    }
 
     match view.r#type {
         CipherType::Login => apply_login(view, draft)?,
@@ -302,69 +356,81 @@ pub fn apply_draft(view: &mut CipherView, draft: &ItemDraft) -> Result<(), Strin
         CipherType::DriversLicense => apply_license(view, draft)?,
         CipherType::Passport => apply_passport(view, draft)?,
     }
-    apply_custom(view, draft);
+    if draft.custom_changed() {
+        apply_custom(view, draft);
+    }
+    Ok(())
+}
+
+/// Write `key` into `slot` when the user changed it.
+fn set(slot: &mut Option<String>, draft: &ItemDraft, key: &str) {
+    if let Some(v) = draft.changed_row(key) {
+        *slot = opt(v);
+    }
+}
+
+/// [`set`] for a `YYYY-MM-DD` row.
+fn set_date(
+    slot: &mut Option<NaiveDate>,
+    draft: &ItemDraft,
+    key: &str,
+    label: &str,
+) -> Result<(), String> {
+    if let Some(v) = draft.changed_row(key) {
+        *slot = parse_date(v, label)?;
+    }
     Ok(())
 }
 
 fn apply_login(view: &mut CipherView, draft: &ItemDraft) -> Result<(), String> {
-    if view.login.is_none() {
-        view.login = Some(bitwarden_vault::LoginView {
-            username: None,
-            password: None,
-            password_revision_date: None,
-            uris: None,
-            totp: None,
-            autofill_on_page_load: None,
-            fido2_credentials: None,
-        });
-    }
-    let fido2 = view
-        .login
-        .as_ref()
-        .and_then(|l| l.fido2_credentials.clone());
-    if let Some(login) = view.login.as_mut() {
-        login.username = opt(draft.row_value("username"));
-        login.totp = opt(draft.row_value("totp"));
-    }
-    if draft.view_password {
-        let new_password = opt(draft.row_value("password"));
-        let old_password = view.login.as_ref().and_then(|l| l.password.clone());
-        if old_password != new_password {
-            if let Some(old) = old_password.filter(|s| !s.is_empty()) {
-                push_history(view, old);
-            }
-            if let Some(login) = view.login.as_mut() {
-                login.password = new_password;
-                login.password_revision_date = Some(Utc::now());
-            }
+    let login = view.login.get_or_insert_with(|| bitwarden_vault::LoginView {
+        username: None,
+        password: None,
+        password_revision_date: None,
+        uris: None,
+        totp: None,
+        autofill_on_page_load: None,
+        fido2_credentials: None,
+    });
+    set(&mut login.username, draft, "username");
+    set(&mut login.totp, draft, "totp");
+
+    let mut retired = None;
+    if let Some(new) = draft.changed_row("password").filter(|_| draft.view_password) {
+        let new = opt(new);
+        if login.password != new {
+            retired = std::mem::replace(&mut login.password, new);
+            login.password_revision_date = Some(Utc::now());
         }
     }
 
-    let orig = view
-        .login
-        .as_ref()
-        .and_then(|l| l.uris.clone())
-        .unwrap_or_default();
-    let mut uris = Vec::new();
-    for (i, raw) in draft.uris.iter().enumerate() {
-        let t = raw.trim();
-        if t.is_empty() {
-            continue;
+    if draft.uris_changed() {
+        let orig = login.uris.take().unwrap_or_default();
+        let mut uris = Vec::new();
+        for d in &draft.uris {
+            let t = d.value.trim();
+            if t.is_empty() {
+                continue;
+            }
+            let mut uri = d
+                .index
+                .and_then(|i| orig.get(i).cloned())
+                .unwrap_or(LoginUriView {
+                    uri: None,
+                    r#match: Some(UriMatchType::Domain),
+                    uri_checksum: None,
+                });
+            uri.uri = Some(t.to_string());
+            uris.push(uri);
         }
-        let mut uri = orig.get(i).cloned().unwrap_or(LoginUriView {
-            uri: None,
-            r#match: Some(UriMatchType::Domain),
-            uri_checksum: None,
-        });
-        uri.uri = Some(t.to_string());
-        uris.push(uri);
+        login.uris = (!uris.is_empty()).then_some(uris);
     }
-    if let Some(login) = view.login.as_mut() {
-        login.uris = if uris.is_empty() { None } else { Some(uris) };
-        login.generate_checksums();
-        if login.fido2_credentials.is_none() {
-            login.fido2_credentials = fido2;
-        }
+    // Checksum-less URIs are dropped by readers once the cipher has its
+    // own key, which the blob write gives it: always stamp them.
+    login.generate_checksums();
+
+    if let Some(old) = retired.filter(|s| !s.is_empty()) {
+        push_history(view, old);
     }
     Ok(())
 }
@@ -378,34 +444,36 @@ fn apply_card(view: &mut CipherView, draft: &ItemDraft) {
         brand: None,
         number: None,
     });
-    card.cardholder_name = opt(draft.row_value("cardholder"));
-    card.brand = opt(draft.row_value("brand"));
-    card.number = opt(draft.row_value("number"));
-    card.exp_month = opt(draft.row_value("exp_month")).map(normalize_month);
-    card.exp_year = opt(draft.row_value("exp_year"));
-    card.code = opt(draft.row_value("code"));
+    set(&mut card.cardholder_name, draft, "cardholder");
+    set(&mut card.brand, draft, "brand");
+    set(&mut card.number, draft, "number");
+    if let Some(v) = draft.changed_row("exp_month") {
+        card.exp_month = opt(v).map(normalize_month);
+    }
+    set(&mut card.exp_year, draft, "exp_year");
+    set(&mut card.code, draft, "code");
 }
 
 fn apply_identity(view: &mut CipherView, draft: &ItemDraft) {
     let id = view.identity.get_or_insert_with(empty_identity);
-    id.title = opt(draft.row_value("title"));
-    id.first_name = opt(draft.row_value("first"));
-    id.middle_name = opt(draft.row_value("middle"));
-    id.last_name = opt(draft.row_value("last"));
-    id.username = opt(draft.row_value("username"));
-    id.company = opt(draft.row_value("company"));
-    id.ssn = opt(draft.row_value("ssn"));
-    id.passport_number = opt(draft.row_value("passport"));
-    id.license_number = opt(draft.row_value("license"));
-    id.email = opt(draft.row_value("email"));
-    id.phone = opt(draft.row_value("phone"));
-    id.address1 = opt(draft.row_value("addr1"));
-    id.address2 = opt(draft.row_value("addr2"));
-    id.address3 = opt(draft.row_value("addr3"));
-    id.city = opt(draft.row_value("city"));
-    id.state = opt(draft.row_value("state"));
-    id.postal_code = opt(draft.row_value("postal"));
-    id.country = opt(draft.row_value("country"));
+    set(&mut id.title, draft, "title");
+    set(&mut id.first_name, draft, "first");
+    set(&mut id.middle_name, draft, "middle");
+    set(&mut id.last_name, draft, "last");
+    set(&mut id.username, draft, "username");
+    set(&mut id.company, draft, "company");
+    set(&mut id.ssn, draft, "ssn");
+    set(&mut id.passport_number, draft, "passport");
+    set(&mut id.license_number, draft, "license");
+    set(&mut id.email, draft, "email");
+    set(&mut id.phone, draft, "phone");
+    set(&mut id.address1, draft, "addr1");
+    set(&mut id.address2, draft, "addr2");
+    set(&mut id.address3, draft, "addr3");
+    set(&mut id.city, draft, "city");
+    set(&mut id.state, draft, "state");
+    set(&mut id.postal_code, draft, "postal");
+    set(&mut id.country, draft, "country");
 }
 
 fn apply_ssh(view: &mut CipherView, draft: &ItemDraft) {
@@ -414,60 +482,66 @@ fn apply_ssh(view: &mut CipherView, draft: &ItemDraft) {
         public_key: String::new(),
         fingerprint: String::new(),
     });
-    ssh.fingerprint = draft.row_value("fingerprint").to_string();
-    ssh.public_key = draft.row_value("public").to_string();
-    ssh.private_key = draft.row_value("private").to_string();
+    if let Some(v) = draft.changed_row("fingerprint") {
+        ssh.fingerprint = v.to_string();
+    }
+    if let Some(v) = draft.changed_row("public") {
+        ssh.public_key = v.to_string();
+    }
+    if let Some(v) = draft.changed_row("private") {
+        ssh.private_key = v.to_string();
+    }
 }
 
 fn apply_bank(view: &mut CipherView, draft: &ItemDraft) {
     let b = view
         .bank_account
         .get_or_insert_with(BankAccountView::default);
-    b.bank_name = opt(draft.row_value("bank"));
-    b.name_on_account = opt(draft.row_value("name_on"));
-    b.account_type = opt(draft.row_value("type"));
-    b.account_number = opt(draft.row_value("acct"));
-    b.routing_number = opt(draft.row_value("routing"));
-    b.branch_number = opt(draft.row_value("branch"));
-    b.pin = opt(draft.row_value("pin"));
-    b.swift_code = opt(draft.row_value("swift"));
-    b.iban = opt(draft.row_value("iban"));
-    b.bank_contact_phone = opt(draft.row_value("phone"));
+    set(&mut b.bank_name, draft, "bank");
+    set(&mut b.name_on_account, draft, "name_on");
+    set(&mut b.account_type, draft, "type");
+    set(&mut b.account_number, draft, "acct");
+    set(&mut b.routing_number, draft, "routing");
+    set(&mut b.branch_number, draft, "branch");
+    set(&mut b.pin, draft, "pin");
+    set(&mut b.swift_code, draft, "swift");
+    set(&mut b.iban, draft, "iban");
+    set(&mut b.bank_contact_phone, draft, "phone");
 }
 
 fn apply_license(view: &mut CipherView, draft: &ItemDraft) -> Result<(), String> {
     let d = view
         .drivers_license
         .get_or_insert_with(DriversLicenseView::default);
-    d.first_name = opt(draft.row_value("first"));
-    d.middle_name = opt(draft.row_value("middle"));
-    d.last_name = opt(draft.row_value("last"));
-    d.date_of_birth = parse_date(draft.row_value("dob"), "Date of birth")?;
-    d.license_number = opt(draft.row_value("number"));
-    d.issuing_country = opt(draft.row_value("country"));
-    d.issuing_state = opt(draft.row_value("state"));
-    d.issue_date = parse_date(draft.row_value("issued"), "Issued")?;
-    d.expiration_date = parse_date(draft.row_value("expires"), "Expires")?;
-    d.issuing_authority = opt(draft.row_value("authority"));
-    d.license_class = opt(draft.row_value("class"));
+    set(&mut d.first_name, draft, "first");
+    set(&mut d.middle_name, draft, "middle");
+    set(&mut d.last_name, draft, "last");
+    set_date(&mut d.date_of_birth, draft, "dob", "Date of birth")?;
+    set(&mut d.license_number, draft, "number");
+    set(&mut d.issuing_country, draft, "country");
+    set(&mut d.issuing_state, draft, "state");
+    set_date(&mut d.issue_date, draft, "issued", "Issued")?;
+    set_date(&mut d.expiration_date, draft, "expires", "Expires")?;
+    set(&mut d.issuing_authority, draft, "authority");
+    set(&mut d.license_class, draft, "class");
     Ok(())
 }
 
 fn apply_passport(view: &mut CipherView, draft: &ItemDraft) -> Result<(), String> {
     let p = view.passport.get_or_insert_with(PassportView::default);
-    p.given_name = opt(draft.row_value("given"));
-    p.surname = opt(draft.row_value("surname"));
-    p.date_of_birth = parse_date(draft.row_value("dob"), "Date of birth")?;
-    p.sex = opt(draft.row_value("sex"));
-    p.birth_place = opt(draft.row_value("birth"));
-    p.nationality = opt(draft.row_value("nat"));
-    p.issuing_country = opt(draft.row_value("country"));
-    p.passport_number = opt(draft.row_value("number"));
-    p.passport_type = opt(draft.row_value("type"));
-    p.national_identification_number = opt(draft.row_value("nid"));
-    p.issuing_authority = opt(draft.row_value("authority"));
-    p.issue_date = parse_date(draft.row_value("issued"), "Issued")?;
-    p.expiration_date = parse_date(draft.row_value("expires"), "Expires")?;
+    set(&mut p.given_name, draft, "given");
+    set(&mut p.surname, draft, "surname");
+    set_date(&mut p.date_of_birth, draft, "dob", "Date of birth")?;
+    set(&mut p.sex, draft, "sex");
+    set(&mut p.birth_place, draft, "birth");
+    set(&mut p.nationality, draft, "nat");
+    set(&mut p.issuing_country, draft, "country");
+    set(&mut p.passport_number, draft, "number");
+    set(&mut p.passport_type, draft, "type");
+    set(&mut p.national_identification_number, draft, "nid");
+    set(&mut p.issuing_authority, draft, "authority");
+    set_date(&mut p.issue_date, draft, "issued", "Issued")?;
+    set_date(&mut p.expiration_date, draft, "expires", "Expires")?;
     Ok(())
 }
 
@@ -480,7 +554,12 @@ fn apply_custom(view: &mut CipherView, draft: &ItemDraft) {
             continue;
         }
         let Some(d) = draft.custom.iter().find(|c| c.index == Some(i)) else {
-            // Dropped from the form.
+            if !draft.custom_was_shown(i) {
+                // The record never listed it (an empty value): keep it.
+                next.push(f.clone());
+                continue;
+            }
+            // Removed on the form.
             if f.r#type == FieldType::Hidden {
                 if let Some(old) = f.value.as_deref().filter(|s| !s.is_empty()) {
                     let label = f.name.as_deref().unwrap_or("Field");
@@ -616,7 +695,7 @@ fn empty_identity() -> IdentityView {
 mod tests {
     use super::*;
     use crate::vault::client::new_login_view;
-    use crate::vault::item::RecordField;
+    use crate::vault::item::{RecordField, record_from_view};
     use bitwarden_vault::CipherRepromptType;
 
     fn login_cipher() -> CipherView {
@@ -692,7 +771,11 @@ mod tests {
         draft.set_row("username", "bob".into());
         draft.set_row("password", "newpass".into());
         draft.set_row("totp", "JBSWY3DPEHPK3PXP".into());
-        draft.uris = vec!["https://github.com/login".into(), " ".into()];
+        draft.uris[0].value = "https://github.com/login".into();
+        draft.uris.push(UriDraft {
+            index: None,
+            value: " ".into(),
+        });
         apply_draft(&mut view, &draft).unwrap();
         assert_eq!(view.name, "GH");
         assert_eq!(view.notes.as_deref(), Some("work"));
@@ -864,6 +947,100 @@ mod tests {
                 .any(|r| r.key == "email" && r.value.is_empty())
         );
         assert_eq!(draft.row_value("first"), "Jane");
+    }
+
+    #[test]
+    fn unreadable_totp_survives_an_unrelated_edit() {
+        let mut view = login_cipher();
+        // SHA-256: stored by another client, no code from us.
+        let raw = "otpauth://totp/X?secret=JBSWY3DPEHPK3PXP&algorithm=SHA256";
+        view.login.as_mut().unwrap().totp = Some(raw.into());
+        let record = record_from_view(view.clone()).unwrap();
+        assert_eq!(record.unreadable_totp(), Some(raw));
+        let mut draft = ItemDraft::from_record(&record);
+        assert_eq!(draft.row_value("totp"), raw);
+        draft.notes = "recovery: 1111-2222".into();
+        apply_draft(&mut view, &draft).unwrap();
+        assert_eq!(view.login.as_ref().unwrap().totp.as_deref(), Some(raw));
+        assert_eq!(view.notes.as_deref(), Some("recovery: 1111-2222"));
+    }
+
+    #[test]
+    fn a_field_changed_elsewhere_survives_the_save() {
+        let mut view = login_cipher();
+        let mut draft = ItemDraft::from_record(&record_for(&view));
+        // Saved from another window or device after the form opened.
+        view.login.as_mut().unwrap().totp = Some("JBSWY3DPEHPK3PXP".into());
+        view.name = "GitHub (work)".into();
+        draft.notes = "codes".into();
+        apply_draft(&mut view, &draft).unwrap();
+        let login = view.login.as_ref().unwrap();
+        assert_eq!(login.totp.as_deref(), Some("JBSWY3DPEHPK3PXP"));
+        assert_eq!(view.name, "GitHub (work)");
+        assert_eq!(login.password.as_deref(), Some("oldpass"));
+        assert_eq!(view.notes.as_deref(), Some("codes"));
+    }
+
+    #[test]
+    fn clearing_the_totp_on_the_form_removes_it() {
+        let mut view = login_cipher();
+        view.login.as_mut().unwrap().totp = Some("JBSWY3DPEHPK3PXP".into());
+        let mut draft = ItemDraft::from_record(&record_from_view(view.clone()).unwrap());
+        draft.set_row("totp", String::new());
+        apply_draft(&mut view, &draft).unwrap();
+        assert_eq!(view.login.as_ref().unwrap().totp, None);
+    }
+
+    #[test]
+    fn empty_custom_field_survives_an_edit_to_another() {
+        let mut view = login_cipher();
+        view.fields = Some(vec![
+            FieldView {
+                name: Some("Security answer".into()),
+                value: None,
+                r#type: FieldType::Hidden,
+                linked_id: None,
+            },
+            FieldView {
+                name: Some("Backup".into()),
+                value: Some("alpha".into()),
+                r#type: FieldType::Text,
+                linked_id: None,
+            },
+        ]);
+        let mut draft = ItemDraft::from_record(&record_from_view(view.clone()).unwrap());
+        assert_eq!(draft.custom.len(), 1);
+        draft.custom[0].value = "beta".into();
+        apply_draft(&mut view, &draft).unwrap();
+        let fields = view.fields.as_ref().unwrap();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name.as_deref(), Some("Security answer"));
+        assert_eq!(fields[1].value.as_deref(), Some("beta"));
+    }
+
+    #[test]
+    fn edited_website_keeps_its_own_match_type() {
+        let mut view = login_cipher();
+        view.login.as_mut().unwrap().uris = Some(vec![
+            LoginUriView {
+                uri: None,
+                r#match: Some(UriMatchType::Exact),
+                uri_checksum: None,
+            },
+            LoginUriView {
+                uri: Some("https://example.com".into()),
+                r#match: Some(UriMatchType::Host),
+                uri_checksum: None,
+            },
+        ]);
+        let mut draft = ItemDraft::from_record(&record_from_view(view.clone()).unwrap());
+        assert_eq!(draft.uris.len(), 1);
+        draft.uris[0].value = "https://example.org".into();
+        apply_draft(&mut view, &draft).unwrap();
+        let uris = view.login.as_ref().unwrap().uris.as_ref().unwrap();
+        assert_eq!(uris.len(), 1);
+        assert_eq!(uris[0].uri.as_deref(), Some("https://example.org"));
+        assert_eq!(uris[0].r#match, Some(UriMatchType::Host));
     }
 
     #[test]
