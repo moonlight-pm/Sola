@@ -80,12 +80,22 @@ delivering while the call host restarts.
 
 ### Packages
 
-Sola ships on Oath as three packages. Their programs appear in `/bin`, and
-Sola's icons and cursors are in `/oath/store/pkg/sola/share`.
+Sola ships on Oath as the desk's core and a package per application.
+Their programs appear in `/bin`, and Sola's icons and cursors are in
+`/oath/store/pkg/sola/share`. Changing an application moves only its own
+package, so only that application restarts; changing the core restarts
+the desk.
 
 | Package | Programs |
 |---|---|
-| `pkg:sola` | `sola-bus`, `sola-call`, `sola-river`, `sola-shell`, `sola-session`, `sola-lock`, `sola-kvm`, `sola-botsd`, `solactl`, and Terminal, Projects, Paint, Preview, Scope, Monitor, Calendar, Mail, Settings, Bots, and Oath |
+| `pkg:sola` | `sola-bus`, `sola-call`, `sola-river`, `sola-shell`, `sola-session`, `sola-lock`, `sola-kvm`, `solactl`, and Oath (`sola-oath`) |
+| `pkg:sola-terminal` | Terminal |
+| `pkg:sola-projects` | Projects |
+| `pkg:sola-paint`, `pkg:sola-preview`, `pkg:sola-scope` | Paint, Preview, Scope |
+| `pkg:sola-monitor` | Monitor |
+| `pkg:sola-calendar`, `pkg:sola-mail` | Calendar, Mail |
+| `pkg:sola-settings` | Settings |
+| `pkg:sola-bots` | Bots (`sola-bots`, `sola-botsd`) |
 | `pkg:sola-browser` | Browser, which also hosts the web apps |
 | `pkg:sola-design` | Design |
 
@@ -105,7 +115,7 @@ its environment.
 | `$XDG_RUNTIME_DIR/sola-bus` | The bus |
 | `$XDG_RUNTIME_DIR/sola-call` | The call plane (mode 0600) |
 | `$XDG_RUNTIME_DIR/sola-bots` | `sola-botsd`'s HTTP API |
-| `$XDG_RUNTIME_DIR/sola-ws-hooks.sock` | Projects' agent hooks; `sola-ws-hooks-<host>.sock` for each computer a project runs on |
+| `~/.local/state/sola/projects/hooks.log` | Projects' agent hooks: each computer's agents append their events; every Projects watching its sessions follows it |
 | `$XDG_RUNTIME_DIR/sola-ssh/` | Projects' shared ssh connections |
 | `$XDG_RUNTIME_DIR/sola/` | Single-instance sockets: `terminal.sock`, `projects.sock`, `paint.lock.sock`, `design.sock`, `calendar.sock` |
 

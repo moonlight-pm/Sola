@@ -3,7 +3,7 @@
 use tracing::{error, info, warn};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_child};
 
-use sola_bus::topics::{Topic, WindowGeometry, WindowParent};
+use sola_bus::topics::{FullscreenRequest, Topic, WindowGeometry, WindowParent};
 
 use crate::client::{AppData, op};
 use crate::protocol::river_window_management_v1::{
@@ -188,7 +188,14 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             Event::FullscreenRequested { output: _ } => {
                 let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
                 info!(window_id, app_id, "fullscreen requested (client-initiated)");
+                // Granted at once (an XWayland game falls back to an
+                // unmanaged surface otherwise); the shell moves the tab to
+                // Cinema.
                 state.pending.queue_fullscreen(window_id);
+                let _ = state.bus.emit(Topic::FullscreenRequest(FullscreenRequest {
+                    window_id,
+                    fullscreen: true,
+                }));
             }
             Event::ExitFullscreenRequested => {
                 let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
@@ -197,6 +204,10 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                     app_id, "exit fullscreen requested (client-initiated)"
                 );
                 state.pending.queue_exit_fullscreen(window_id);
+                let _ = state.bus.emit(Topic::FullscreenRequest(FullscreenRequest {
+                    window_id,
+                    fullscreen: false,
+                }));
             }
             Event::Dimensions { width, height } => {
                 let newly_initialized = !state.first_dimensions.contains(&window_id);

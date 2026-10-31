@@ -844,7 +844,7 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::hooks::map::MappedHook;
-    use crate::hooks::server::Incoming;
+    use crate::hooks::event::Incoming;
 
     fn hook(session: &str, status: AgentStatus) -> Incoming {
         Incoming {

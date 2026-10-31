@@ -270,9 +270,80 @@ pub struct TabLayout {
     #[serde(default)]
     pub showing: String,
     /// The workspaces whose Full zone is on screen (the rest show their
-    /// halves).
+    /// halves). Read from older files only; [`Self::picks`] has it now.
     #[serde(default)]
     pub full: Vec<String>,
+    /// Each workspace's zones in the order they were last picked, most
+    /// recent first: what is on screen follows from it.
+    #[serde(default)]
+    pub picks: Vec<WorkspacePicks>,
+}
+
+/// A workspace's zones, most recently picked first (`TabLayout.picks`).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct WorkspacePicks {
+    pub workspace: String,
+    pub zones: Vec<Zone>,
+}
+
+/// An app asked to enter or leave fullscreen (sola-river → shell). sola-river
+/// answers at once (an XWayland game falls back to an unmanaged surface
+/// otherwise); the shell moves the tab to Cinema, or back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FullscreenRequest {
+    pub window_id: u32,
+    pub fullscreen: bool,
+}
+
+/// One action a key can be bound to (`Topic::KeyActions`). Its id is
+/// stable; the label is what Settings and Super+K show.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyAction {
+    pub id: String,
+    pub label: String,
+    /// The heading it sits under in Settings and Super+K ("Workspaces").
+    #[serde(default)]
+    pub group: String,
+    /// The key it has until you change it.
+    #[serde(default)]
+    pub default: Option<sola_core::KeyChord>,
+}
+
+/// An owner's bindable actions (`Topic::KeyActions`, persistent, keyed by
+/// owner): `"system"` (the shell, zones included), `"common"` (the kit's
+/// shared actions), or an app id. Stored, so Settings lists an app's keys
+/// while it is closed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyActions {
+    pub owner: String,
+    pub label: String,
+    pub actions: Vec<KeyAction>,
+}
+
+/// Your change to one action's key. `key: None` leaves it without one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyOverride {
+    pub owner: String,
+    pub action: String,
+    #[serde(default)]
+    pub key: Option<sola_core::KeyChord>,
+}
+
+/// Your changes to keys (`Topic::Keybindings`, persistent; Settings →
+/// shell, apps). Defaults stay in code; resetting an action drops its
+/// override.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Keybindings {
+    #[serde(default)]
+    pub overrides: Vec<KeyOverride>,
+}
+
+/// Settings is waiting for a key (`Topic::KeyCapture`, sticky): the shell
+/// drops its grabs so the key reaches Settings' window, and grabs again
+/// when it is retracted (or after a while on its own).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyCapture {
+    pub app_id: String,
 }
 
 /// A desktop workspace (Next slice 5): a whole desk of windows. The id
@@ -677,51 +748,246 @@ pub struct MouseClickedPayload {
     pub window_id: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Where a window is (`docs/specs/2026-10-30-zone-layout-design.md`):
+/// Full (the content area), Cinema (the whole output), Floating, or a
+/// grid zone of the layout ([`ZoneLayout`]) by its id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum Zone {
-    Left,
-    Right,
-    Top,
-    Bottom,
-    TopMiddle,
-    BottomMiddle,
-    FullMiddle,
-    /// Center + right columns combined (FullMiddle ∪ Right). Full height
-    /// under the menubar — Meta+KP_Add.
-    MiddleRight,
-    /// Fullscreen *under* the menubar — the standard "max window". On
-    /// Next, the tab bar's Full zone: the content area right of the bar.
+    /// Full: the content area right of the bar, every cell of the grid.
     Fullscreen,
-    /// True fullscreen including the menubar — the cinema / no-chrome
-    /// view. The shell skips its menubar offset for this zone so the
-    /// window covers the whole output.
+    /// The whole output, top row and bar included; nothing of the desk
+    /// shows behind or over it.
     Cinema,
-    /// App-sized / floating: positioned by the shell (centered, or a
-    /// remembered location in later phases) but never force-resized. The
-    /// window keeps the size it chooses for itself; the shell emits no
-    /// sizing frame for it. Reuses the whole zone pipeline for
-    /// designation + persistence.
+    /// App-sized / floating: the window keeps the size it chooses; the
+    /// shell emits no sizing frame for it.
     Float,
+    /// A zone of the layout's grid.
+    Grid(u32),
 }
 
-impl Zone {
-    /// Returns (x%, y%, width%, height%) as fractions of the output.
-    pub fn rect(&self) -> (f64, f64, f64, f64) {
-        match self {
-            Zone::Left => (0.0, 0.0, 0.28, 1.0),
-            Zone::Right => (0.72, 0.0, 0.28, 1.0),
-            Zone::Top => (0.0, 0.0, 1.0, 0.7),
-            Zone::Bottom => (0.0, 0.7, 1.0, 0.3),
-            Zone::TopMiddle => (0.28, 0.0, 0.44, 0.7),
-            Zone::BottomMiddle => (0.28, 0.7, 0.44, 0.3),
-            Zone::FullMiddle => (0.28, 0.0, 0.44, 1.0),
-            // FullMiddle (0.28..0.72) + Right (0.72..1.0) → 0.28..1.0
-            Zone::MiddleRight => (0.28, 0.0, 0.72, 1.0),
-            Zone::Fullscreen => (0.0, 0.0, 1.0, 1.0),
-            Zone::Cinema => (0.0, 0.0, 1.0, 1.0),
-            // Float never goes through the sizing path; the value is unused
-            // but the match must stay exhaustive.
-            Zone::Float => (0.0, 0.0, 0.0, 0.0),
+/// On the wire (postcard) a `Zone` is exactly its variants. On disk
+/// (YAML) it also reads the zones before the grid: Left and Right are the
+/// default layout's zones 1 and 2; the rest had no place and go to Full.
+impl<'de> Deserialize<'de> for Zone {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename = "Zone")]
+        enum Wire {
+            Fullscreen,
+            Cinema,
+            Float,
+            Grid(u32),
+        }
+        #[derive(Deserialize)]
+        #[serde(rename = "Zone")]
+        enum Named {
+            Fullscreen,
+            Cinema,
+            Float,
+            Grid(u32),
+            Left,
+            Right,
+            Top,
+            Bottom,
+            TopMiddle,
+            BottomMiddle,
+            FullMiddle,
+            MiddleRight,
+        }
+        if !d.is_human_readable() {
+            return Ok(match Wire::deserialize(d)? {
+                Wire::Fullscreen => Zone::Fullscreen,
+                Wire::Cinema => Zone::Cinema,
+                Wire::Float => Zone::Float,
+                Wire::Grid(id) => Zone::Grid(id),
+            });
+        }
+        Ok(match Named::deserialize(d)? {
+            Named::Fullscreen => Zone::Fullscreen,
+            Named::Cinema => Zone::Cinema,
+            Named::Float => Zone::Float,
+            Named::Grid(id) => Zone::Grid(id),
+            Named::Left => Zone::Grid(1),
+            Named::Right => Zone::Grid(2),
+            Named::Top
+            | Named::Bottom
+            | Named::TopMiddle
+            | Named::BottomMiddle
+            | Named::FullMiddle
+            | Named::MiddleRight => Zone::Fullscreen,
+        })
+    }
+}
+
+/// A grid zone: a rectangle of cells, by its first row and column and
+/// how many of each it spans. Its id is stable for its life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GridZone {
+    pub id: u32,
+    pub row: u8,
+    pub column: u8,
+    pub rows: u8,
+    pub columns: u8,
+}
+
+impl GridZone {
+    pub fn overlaps(&self, o: &GridZone) -> bool {
+        self.row < o.row + o.rows
+            && o.row < self.row + self.rows
+            && self.column < o.column + o.columns
+            && o.column < self.column + self.columns
+    }
+
+    pub fn same_cells(&self, o: &GridZone) -> bool {
+        (self.row, self.column, self.rows, self.columns) == (o.row, o.column, o.rows, o.columns)
+    }
+}
+
+/// The zone layout (`Topic::ZoneLayout`, persistent; Settings → shell):
+/// the content area as a grid of equal cells, and the zones drawn on it.
+/// Full, Cinema and Floating always exist besides.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZoneLayout {
+    pub rows: u8,
+    pub columns: u8,
+    #[serde(default)]
+    pub zones: Vec<GridZone>,
+}
+
+impl Default for ZoneLayout {
+    /// Today's: one row, two columns, a zone each (Left and Right).
+    fn default() -> Self {
+        Self {
+            rows: 1,
+            columns: 2,
+            zones: vec![
+                GridZone { id: 1, row: 0, column: 0, rows: 1, columns: 1 },
+                GridZone { id: 2, row: 0, column: 1, rows: 1, columns: 1 },
+            ],
+        }
+    }
+}
+
+impl ZoneLayout {
+    /// The most rows, and the most columns.
+    pub const MAX: u8 = 12;
+
+    pub fn grid(&self, id: u32) -> Option<&GridZone> {
+        self.zones.iter().find(|z| z.id == id)
+    }
+
+    /// Whether `zone` is in this layout (Full, Cinema and Floating always
+    /// are).
+    pub fn contains(&self, zone: Zone) -> bool {
+        match zone {
+            Zone::Grid(id) => self.grid(id).is_some(),
+            _ => true,
+        }
+    }
+
+    /// The zones that show one tab at a time: the grid's, Full, Cinema.
+    pub fn tiled(&self) -> Vec<Zone> {
+        let mut all: Vec<Zone> = self.zones.iter().map(|z| Zone::Grid(z.id)).collect();
+        all.extend([Zone::Fullscreen, Zone::Cinema]);
+        all
+    }
+
+    /// Every zone a window can be in: [`Self::tiled`] and Floating.
+    pub fn zones(&self) -> Vec<Zone> {
+        let mut all = self.tiled();
+        all.push(Zone::Float);
+        all
+    }
+
+    /// Whether two tiled zones cover any of the same screen: Cinema
+    /// covers everything, Full every cell. Floating overlaps nothing.
+    pub fn overlaps(&self, a: Zone, b: Zone) -> bool {
+        match (a, b) {
+            (Zone::Float, _) | (_, Zone::Float) => false,
+            _ if a == b => true,
+            (Zone::Cinema, _) | (_, Zone::Cinema) => true,
+            (Zone::Fullscreen, _) | (_, Zone::Fullscreen) => true,
+            (Zone::Grid(x), Zone::Grid(y)) => match (self.grid(x), self.grid(y)) {
+                (Some(x), Some(y)) => x.overlaps(y),
+                _ => false,
+            },
+        }
+    }
+
+    /// `zone`'s cells as fractions of the content area (x, y, w, h), the
+    /// gaps aside. Full is all of it; Cinema and Floating have none.
+    pub fn fraction(&self, zone: Zone) -> Option<(f32, f32, f32, f32)> {
+        let z = match zone {
+            Zone::Fullscreen => return Some((0.0, 0.0, 1.0, 1.0)),
+            Zone::Grid(id) => self.grid(id)?,
+            _ => return None,
+        };
+        let (c, r) = (f32::from(self.columns), f32::from(self.rows));
+        Some((
+            f32::from(z.column) / c,
+            f32::from(z.row) / r,
+            f32::from(z.columns) / c,
+            f32::from(z.rows) / r,
+        ))
+    }
+
+    /// An id no zone of this layout has had... nor has now.
+    pub fn next_id(&self) -> u32 {
+        self.zones.iter().map(|z| z.id).max().unwrap_or(0) + 1
+    }
+
+    /// Where a grid zone sits, in words ("Column 1", "Rows 1–2, column
+    /// 3"): what a menu or a list says where there is no drawing.
+    pub fn label(&self, id: u32) -> String {
+        let Some(z) = self.grid(id) else {
+            return format!("Zone {id}");
+        };
+        let span = |first: u8, n: u8, one: &str, many: &str| {
+            if n == 1 {
+                format!("{one} {}", first + 1)
+            } else {
+                format!("{many} {}–{}", first + 1, first + n)
+            }
+        };
+        let columns = span(z.column, z.columns, "column", "columns");
+        let rows = span(z.row, z.rows, "row", "rows");
+        let all_rows = z.row == 0 && z.rows == self.rows;
+        let all_columns = z.column == 0 && z.columns == self.columns;
+        let text = match (all_rows, all_columns) {
+            (true, false) => columns,
+            (false, true) => rows,
+            _ => format!("{rows}, {columns}"),
+        };
+        let mut chars = text.chars();
+        chars
+            .next()
+            .map_or(String::new(), |f| f.to_uppercase().collect::<String>() + chars.as_str())
+    }
+
+    /// The zones taking away the bottom row (`rows`) or the right column
+    /// would cut.
+    pub fn cut_by_shrink(&self, rows: bool) -> Vec<u32> {
+        self.zones
+            .iter()
+            .filter(|z| {
+                if rows {
+                    z.row + z.rows >= self.rows
+                } else {
+                    z.column + z.columns >= self.columns
+                }
+            })
+            .map(|z| z.id)
+            .collect()
+    }
+
+    /// Take away the bottom row or the right column, and the zones on it.
+    pub fn shrink(&mut self, rows: bool) {
+        let cut = self.cut_by_shrink(rows);
+        self.zones.retain(|z| !cut.contains(&z.id));
+        if rows {
+            self.rows = self.rows.saturating_sub(1).max(1);
+        } else {
+            self.columns = self.columns.saturating_sub(1).max(1);
         }
     }
 }
@@ -1915,6 +2181,30 @@ define_topics! {
     // `Focus`, which is the shell's word to sola-river and does not show
     // a window its zone is not showing. Appended last.
     ShowWindow(u32),
+
+    // Every owner's bindable actions (shell, kit, apps → Settings).
+    // Persistent, keyed by owner. Appended last.
+    #[persistent(keys = [owner])]
+    KeyActions(KeyActions),
+
+    // Your changes to keys (Settings → shell, apps). Persistent. Appended
+    // last.
+    #[persistent]
+    Keybindings(Keybindings),
+
+    // Settings is waiting for a key (Settings → shell). Sticky; retracted
+    // when it has one. Appended last.
+    #[sticky]
+    KeyCapture(KeyCapture),
+
+    // The zone layout: the grid and its zones (Settings → shell).
+    // Persistent. Appended last.
+    #[persistent]
+    ZoneLayout(ZoneLayout),
+
+    // An app asked to enter or leave fullscreen (sola-river → shell).
+    // Appended last.
+    FullscreenRequest(FullscreenRequest),
 }
 
 #[cfg(test)]
@@ -2297,8 +2587,8 @@ mod tests {
     #[test]
     fn zones_roundtrips_via_yaml() {
         let mut zones: HashMap<String, Zone> = HashMap::new();
-        zones.insert("sola-browser".into(), Zone::Left);
-        zones.insert("sola-terminal".into(), Zone::Right);
+        zones.insert("sola-browser".into(), Zone::Grid(1));
+        zones.insert("sola-terminal".into(), Zone::Grid(2));
 
         let topic = Topic::Zones(zones.clone());
         let value = topic
@@ -2312,16 +2602,42 @@ mod tests {
     }
 
     #[test]
-    fn zone_float_rect_is_zero() {
-        // Float never goes through the sizing path; rect() must stay
-        // exhaustive but its value is unused.
-        assert_eq!(Zone::Float.rect(), (0.0, 0.0, 0.0, 0.0));
+    fn zones_before_the_grid_read_from_yaml() {
+        let read = |name: &str| -> Zone { serde_yaml_ng::from_str(name).expect("a zone") };
+        assert_eq!(read("Left"), Zone::Grid(1));
+        assert_eq!(read("Right"), Zone::Grid(2));
+        assert_eq!(read("MiddleRight"), Zone::Fullscreen);
+        assert_eq!(read("Cinema"), Zone::Cinema);
+        let three = serde_yaml_ng::to_string(&Zone::Grid(3)).unwrap();
+        assert_eq!(read(&three), Zone::Grid(3));
     }
 
     #[test]
-    fn zone_middle_right_is_full_middle_union_right() {
-        // FullMiddle (0.28, 0.44) ∪ Right (0.72, 0.28) → (0.28, 0.72)
-        assert_eq!(Zone::MiddleRight.rect(), (0.28, 0.0, 0.72, 1.0));
+    fn zones_round_trip_on_the_wire() {
+        for z in [Zone::Fullscreen, Zone::Cinema, Zone::Float, Zone::Grid(7)] {
+            let bytes = postcard::to_allocvec(&z).unwrap();
+            assert_eq!(postcard::from_bytes::<Zone>(&bytes).unwrap(), z);
+        }
+    }
+
+    #[test]
+    fn layout_overlaps_and_labels() {
+        let mut l = ZoneLayout::default();
+        assert!(!l.overlaps(Zone::Grid(1), Zone::Grid(2)));
+        assert!(l.overlaps(Zone::Fullscreen, Zone::Grid(2)));
+        assert!(l.overlaps(Zone::Cinema, Zone::Fullscreen));
+        assert!(!l.overlaps(Zone::Float, Zone::Grid(1)));
+        assert_eq!(l.label(1), "Column 1");
+        l.rows = 2;
+        l.zones.push(GridZone { id: 3, row: 1, column: 0, rows: 1, columns: 2 });
+        assert_eq!(l.label(3), "Row 2");
+        assert_eq!(l.label(1), "Row 1, column 1");
+        assert!(l.overlaps(Zone::Grid(1), Zone::Grid(1)));
+        assert_eq!(l.cut_by_shrink(true), vec![3]);
+        assert_eq!(l.cut_by_shrink(false), vec![2, 3]);
+        l.shrink(false);
+        assert_eq!((l.columns, l.zones.len()), (1, 1));
+        assert_eq!(l.next_id(), 2);
     }
 
     #[test]

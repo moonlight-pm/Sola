@@ -17,22 +17,98 @@
 
 use std::sync::RwLock;
 
-use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, Zone};
+use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, Zone, ZoneLayout};
 use sola_core::{KeyChord, KeyCode};
 
 /// This process's latest published menus.
 static APP_MENU: RwLock<Option<AppMenuPayload>> = RwLock::new(None);
 
+/// Menus published for other app ids (a web app's), as declared, so they
+/// follow your key changes too.
+static HOSTED: RwLock<Vec<AppMenuPayload>> = RwLock::new(Vec::new());
+
+/// The zone layout (`Topic::ZoneLayout`), for the Window menu's grid
+/// zones. `None`: the default.
+static LAYOUT: RwLock<Option<ZoneLayout>> = RwLock::new(None);
+
+/// [`current`]'s answer until something it reads changes.
+static CURRENT: RwLock<Option<AppMenuPayload>> = RwLock::new(None);
+
+/// Learn the zone layout from a bus message (the kit's poller shows it
+/// every one).
+pub(crate) fn observe(message: &sola_bus::Message) {
+    if message.topic != "ZoneLayout" {
+        return;
+    }
+    if let Some(Topic::ZoneLayout(l)) = Topic::parse(message) {
+        *LAYOUT.write().unwrap_or_else(|p| p.into_inner()) = message.sticky.then_some(l);
+        forget_current();
+    }
+}
+
+/// Give a Window menu the layout's grid zones, after Float, named by
+/// their place ("Column 1"); their keys come with the rest
+/// (`crate::keys::apply`, or the shell's own table).
+pub fn fill_window_menu(menu: &mut MenuDefinition, layout: &ZoneLayout) {
+    menu.items.retain(|item| {
+        !matches!(item, MenuItem::Action { id, .. } if id.starts_with(ACTION_GRID_PREFIX))
+    });
+    let at = menu
+        .items
+        .iter()
+        .position(|item| matches!(item, MenuItem::Action { id, .. } if id == ACTION_FLOAT))
+        .map_or(menu.items.len(), |i| i + 1);
+    let mut block = Vec::new();
+    for z in &layout.zones {
+        block.push(MenuItem::Action {
+            id: grid_action_id(z.id),
+            label: layout.label(z.id),
+            shortcut: None,
+            disabled: false,
+            checked: false,
+        });
+    }
+    if !block.is_empty() {
+        block.insert(0, MenuItem::Divider);
+        menu.items.splice(at..at, block);
+    }
+}
+
 /// Publish this app's menus: kept for its titlebars and sent to the shell.
 /// Call again whenever they change.
 pub fn publish(payload: AppMenuPayload) {
     remember(payload.clone());
+    send(&payload);
+}
+
+/// Send `payload` with every item's key now (`crate::keys::apply`), and
+/// declare its app's keyed actions and the shared ones to Settings
+/// (`Topic::KeyActions`).
+fn send(payload: &AppMenuPayload) {
     let Some(bus) = crate::app::try_bus() else {
         return;
     };
     if let Ok(mut bus) = bus.lock() {
-        if let Err(e) = bus.emit(Topic::SetAppMenu(payload)) {
+        if let Err(e) = bus.emit(Topic::SetAppMenu(crate::keys::apply(payload))) {
             tracing::warn!("publish app menu failed: {e}");
+        }
+        let _ = bus.emit(Topic::KeyActions(crate::keys::declaration(payload)));
+        let _ = bus.emit(Topic::KeyActions(crate::keys::common_declaration()));
+    }
+}
+
+/// Send every menu this process published again, with its keys now (your
+/// key changes, or the shell's, arrived).
+pub(crate) fn republish() {
+    forget_current();
+    let own = APP_MENU.read().unwrap_or_else(|p| p.into_inner()).clone();
+    let hosted = HOSTED.read().unwrap_or_else(|p| p.into_inner()).clone();
+    let Some(bus) = crate::app::try_bus() else {
+        return;
+    };
+    if let Ok(mut bus) = bus.lock() {
+        for payload in own.iter().chain(hosted.iter()) {
+            let _ = bus.emit(Topic::SetAppMenu(crate::keys::apply(payload)));
         }
     }
 }
@@ -42,27 +118,70 @@ pub fn publish(payload: AppMenuPayload) {
 /// those windows pass theirs to their titlebars
 /// ([`WindowFrame::menus`](crate::components::window_frame::WindowFrame::menus)).
 pub fn publish_for(payload: AppMenuPayload) {
-    let Some(bus) = crate::app::try_bus() else {
-        return;
-    };
-    if let Ok(mut bus) = bus.lock() {
-        if let Err(e) = bus.emit(Topic::SetAppMenu(payload)) {
-            tracing::warn!("publish hosted app menu failed: {e}");
-        }
+    {
+        let mut hosted = HOSTED.write().unwrap_or_else(|p| p.into_inner());
+        hosted.retain(|p| p.app_id != payload.app_id);
+        hosted.push(payload.clone());
     }
+    send(&payload);
 }
 
 /// Keep `payload` for the titlebars without sending it.
 pub(crate) fn remember(payload: AppMenuPayload) {
-    let mut slot = APP_MENU.write().unwrap_or_else(|p| p.into_inner());
-    *slot = Some(payload);
+    *APP_MENU.write().unwrap_or_else(|p| p.into_inner()) = Some(payload);
+    forget_current();
 }
 
 /// The menus this app's titlebars show, the Window menu last. `None`
 /// until the app publishes.
 pub fn current() -> Option<AppMenuPayload> {
-    let slot = APP_MENU.read().unwrap_or_else(|p| p.into_inner());
-    slot.clone().map(ensure_window_menu)
+    if let Some(p) = CURRENT.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
+        return Some(p.clone());
+    }
+    let declared = APP_MENU.read().unwrap_or_else(|p| p.into_inner()).clone()?;
+    let prepared = prepare(declared);
+    *CURRENT.write().unwrap_or_else(|p| p.into_inner()) = Some(prepared.clone());
+    Some(prepared)
+}
+
+/// What a titlebar shows of `payload`: the Window menu (added when it has
+/// none) with the layout's grid zones, and every item's key now.
+pub fn prepare(payload: AppMenuPayload) -> AppMenuPayload {
+    let mut payload = ensure_window_menu(payload);
+    let layout = LAYOUT
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .unwrap_or_default();
+    if let Some(menu) = payload.menus.iter_mut().find(|m| m.label == WINDOW_MENU_LABEL) {
+        fill_window_menu(menu, &layout);
+    }
+    crate::keys::apply(&payload)
+}
+
+/// The item of this app's menus whose key now is `key` (not a Window
+/// item): for keys an app reads itself (a letter, no Super), so they
+/// follow your changes in Settings → Keybindings.
+pub fn action_for_key(key: KeyChord) -> Option<String> {
+    current()?
+        .menus
+        .iter()
+        .flat_map(|m| m.items.iter())
+        .find_map(|item| match item {
+            MenuItem::Action {
+                id,
+                shortcut: Some(k),
+                disabled: false,
+                ..
+            } if *k == key && parse_window_action(id).is_none() => Some(id.clone()),
+            _ => None,
+        })
+}
+
+/// [`current`] made again on its next call (the menus, the keys or the
+/// layout changed).
+fn forget_current() {
+    *CURRENT.write().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
 /// Act on a titlebar menu choice. Window items are the shell's (it acts on
@@ -90,16 +209,16 @@ pub const WINDOW_MENU_LABEL: &str = "Window";
 pub const ACTION_HIDE: &str = "window.hide";
 pub const ACTION_CYCLE: &str = "window.cycle";
 pub const ACTION_FLOAT: &str = "window.float";
-pub const ACTION_LEFT: &str = "window.left";
-pub const ACTION_RIGHT: &str = "window.right";
-pub const ACTION_TOP: &str = "window.top";
-pub const ACTION_BOTTOM: &str = "window.bottom";
-pub const ACTION_TOP_MIDDLE: &str = "window.top-middle";
-pub const ACTION_BOTTOM_MIDDLE: &str = "window.bottom-middle";
-pub const ACTION_FULL_MIDDLE: &str = "window.full-middle";
-pub const ACTION_MIDDLE_RIGHT: &str = "window.middle-right";
 pub const ACTION_FULLSCREEN: &str = "window.fullscreen";
 pub const ACTION_CINEMA: &str = "window.cinema";
+/// A grid zone's item: `window.zone.<id>` (the layout's zones are the
+/// shell's; it adds their items to the menus it draws).
+pub const ACTION_GRID_PREFIX: &str = "window.zone.";
+
+/// The Window menu item id that moves a tab to grid zone `id`.
+pub fn grid_action_id(id: u32) -> String {
+    format!("{ACTION_GRID_PREFIX}{id}")
+}
 
 /// Compositor action the shell handles instead of forwarding `MenuAction`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,56 +278,6 @@ pub const WINDOW_MENU_ENTRIES: &[WindowMenuEntry] = &[
     ),
     WindowMenuEntry::Divider,
     item(
-        ACTION_LEFT,
-        "Left",
-        kp(KeyCode::KP_4),
-        WindowAction::Zone(Zone::Left),
-    ),
-    item(
-        ACTION_RIGHT,
-        "Right",
-        kp(KeyCode::KP_6),
-        WindowAction::Zone(Zone::Right),
-    ),
-    item(
-        ACTION_TOP,
-        "Top",
-        kp(KeyCode::KP_EQUAL),
-        WindowAction::Zone(Zone::Top),
-    ),
-    item(
-        ACTION_BOTTOM,
-        "Bottom",
-        kp(KeyCode::KP_DECIMAL),
-        WindowAction::Zone(Zone::Bottom),
-    ),
-    WindowMenuEntry::Divider,
-    item(
-        ACTION_TOP_MIDDLE,
-        "Top Middle",
-        kp(KeyCode::KP_8),
-        WindowAction::Zone(Zone::TopMiddle),
-    ),
-    item(
-        ACTION_FULL_MIDDLE,
-        "Full Middle",
-        kp(KeyCode::KP_5),
-        WindowAction::Zone(Zone::FullMiddle),
-    ),
-    item(
-        ACTION_BOTTOM_MIDDLE,
-        "Bottom Middle",
-        kp(KeyCode::KP_2),
-        WindowAction::Zone(Zone::BottomMiddle),
-    ),
-    item(
-        ACTION_MIDDLE_RIGHT,
-        "Middle Right",
-        kp(KeyCode::KP_ADD),
-        WindowAction::Zone(Zone::MiddleRight),
-    ),
-    WindowMenuEntry::Divider,
-    item(
         ACTION_FULLSCREEN,
         "Full",
         kp(KeyCode::KP_0),
@@ -255,6 +324,9 @@ pub fn window_menu() -> MenuDefinition {
 /// Map a menu action id to a compositor window action. `None` means the
 /// id is not a kit Window item (forward to the app).
 pub fn parse_window_action(id: &str) -> Option<WindowAction> {
+    if let Some(n) = id.strip_prefix(ACTION_GRID_PREFIX) {
+        return n.parse().ok().map(|n| WindowAction::Zone(Zone::Grid(n)));
+    }
     WINDOW_MENU_ENTRIES.iter().find_map(|entry| match entry {
         WindowMenuEntry::Item(i) if i.id == id => Some(i.action),
         _ => None,
@@ -276,42 +348,20 @@ pub fn ensure_window_menu(mut payload: AppMenuPayload) -> AppMenuPayload {
 mod tests {
     use super::*;
 
-    fn zone_action_id(zone: Zone) -> &'static str {
-        // Exhaustive: a new Zone variant fails to compile until the Window
-        // menu names it.
-        match zone {
-            Zone::Left => ACTION_LEFT,
-            Zone::Right => ACTION_RIGHT,
-            Zone::Top => ACTION_TOP,
-            Zone::Bottom => ACTION_BOTTOM,
-            Zone::TopMiddle => ACTION_TOP_MIDDLE,
-            Zone::BottomMiddle => ACTION_BOTTOM_MIDDLE,
-            Zone::FullMiddle => ACTION_FULL_MIDDLE,
-            Zone::MiddleRight => ACTION_MIDDLE_RIGHT,
-            Zone::Fullscreen => ACTION_FULLSCREEN,
-            Zone::Cinema => ACTION_CINEMA,
-            Zone::Float => ACTION_FLOAT,
-        }
-    }
-
     #[test]
     fn window_menu_covers_every_zone() {
-        for zone in [
-            Zone::Left,
-            Zone::Right,
-            Zone::Top,
-            Zone::Bottom,
-            Zone::TopMiddle,
-            Zone::BottomMiddle,
-            Zone::FullMiddle,
-            Zone::MiddleRight,
-            Zone::Fullscreen,
-            Zone::Cinema,
-            Zone::Float,
+        for (id, zone) in [
+            (ACTION_FULLSCREEN, Zone::Fullscreen),
+            (ACTION_CINEMA, Zone::Cinema),
+            (ACTION_FLOAT, Zone::Float),
         ] {
-            let id = zone_action_id(zone);
             assert_eq!(parse_window_action(id), Some(WindowAction::Zone(zone)));
         }
+        assert_eq!(
+            parse_window_action(&grid_action_id(3)),
+            Some(WindowAction::Zone(Zone::Grid(3)))
+        );
+        assert_eq!(parse_window_action("window.zone.x"), None);
     }
 
     #[test]

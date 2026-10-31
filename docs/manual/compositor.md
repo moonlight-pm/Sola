@@ -103,8 +103,8 @@ manager that stops answering for more than 3 s.
 | Size of a floating window | The application, unless the shell gives it a rectangle (a remembered one, a tile floated in place, gamescope's nest size) | Lets it choose; centers it once if nothing placed it |
 | Floating | Shell (`WindowFloating`) | Allows move and resize, draws the shadow |
 | Tiled state and the rim | Shell (`WindowChrome`) | Tells tiled windows they are tiled; rims windows whose app draws no frame ([Frames, rims, and corners](#frames-rims-and-corners)) |
-| Key bindings | Shell (`RegisteredChords`) | Registers them with the compositor, reports presses |
-| Fullscreen | The application, or Cinema | Grants it; ends it when focus moves away |
+| Key bindings | Shell (`RegisteredChords`; your changes in `Keybindings`) | Registers them with the compositor, reports presses; registers none while Settings waits for a key (`KeyCapture`) |
+| Fullscreen | The application, or Cinema | Grants it, and tells the shell (`FullscreenRequest`); ends it when focus moves away |
 | The background picture | Whoever sets `Background` | Draws it behind everything ([The background picture](#the-background-picture)) |
 | The desk's opacity, the idle fade and dim | Settings → Appearance (`Appearance`) | Draws the picture, then black, over the desk ([The idle fade](#the-idle-fade)) |
 | Output mode | sola-river | Picks a mode for each output |
@@ -150,7 +150,8 @@ shell adds them to the stack.
 The shell builds the stack, bottom to top, as: the top row and the bar;
 the tab each tiled zone on screen shows, with its dialogs; the floating
 windows, least recently raised first; any window the bar has not placed;
-a window in Cinema; then the open overlays. It lists only the showing
+then the open overlays. While a Cinema tab is on screen it is the whole
+stack (with its dialogs), under the overlays you open; notices wait. It lists only the showing
 workspace. Every other window (a tab its zone is not showing, a window on
 another workspace, an app hidden with Super+H) is left out, so the
 compositor hides it and it keeps running. [Shell](sola-shell.md) describes
@@ -229,27 +230,35 @@ The bar is docked left, 240 px wide, from y 48. One 10 px gap runs around
 the output under the top row, between the bar and the tiles, and between
 tiles; the ground shows through it.
 
-| Zone | Rectangle | Key |
+The content area is a grid of equal cells, rows × columns
+(`ZoneLayout`, set in Settings → Zones; one row of two columns by
+default). A zone is a rectangle of cells.
+
+| Zone | Rectangle | Default key |
 |---|---|---|
 | Full | The content area right of the bar | `Super+KP_0` |
-| Left | The left half of the content area | `Super+KP_4` |
-| Right | The right half, one gap from the left | `Super+KP_6` |
+| A grid zone | Its cells, one gap between neighbouring cells; a zone over several takes the gaps inside it | the default layout's two: `Super+KP_4`, `Super+KP_6` |
 | Floating | The window's own size, or its remembered rectangle; a tile floated with the key keeps its place, 50 px smaller on each side | `Super+KP_*` |
-| Cinema | The whole output, top row and bar included, in fullscreen state | `Super+KP_Enter` (again to leave) |
+| Cinema | The whole output, top row and bar included, in fullscreen state | `Super+KP_Enter` |
 
-Each tiled zone (Full, Left, Right) shows one tab at a time, and Full and
-the halves take turns on screen. The shell frames every tiled tab to its
-zone's rectangle, shown or not, so showing one needs no resize; the tabs a
-zone is not showing are left out of `Composition`. Floating windows
-(Scope, Preview, gamescope, and windows moved there with `Super+KP_*`) all
-show, above the tiles; a dialog floats above its parent. The shell
-remembers a floating app's rectangle (`FloatGeometry`) and restores it
-when the app floats again.
+Each tiled zone (Full, the grid's, Cinema) shows one tab at a time. Each
+workspace keeps the order its zones were picked; walking it, a zone with
+something to show goes on screen unless one already on screen overlaps it
+(Full overlaps every grid zone, Cinema everything). The shell frames
+every tiled tab to its zone's rectangle, shown or not, so showing one
+needs no resize; the tabs a zone is not showing are left out of
+`Composition`. Only the Cinema tab on screen is framed fullscreen; the
+rest of Cinema's tabs keep the output's size. Floating windows (Scope,
+Preview, gamescope, and windows moved there with `Super+KP_*`) all show,
+above the tiles; a dialog floats above its parent. The shell remembers a
+floating app's rectangle (`FloatGeometry`) and restores it when the app
+floats again.
 
-The zone keys work with NumLock on or off: the shell registers the keysyms
-of both states. Each kit window's titlebar **Window** menu offers these
-moves too; its other zone entries do nothing on this layout
-([Shell § Window menu](sola-shell.md#window-menu)).
+The keypad keys work with NumLock on or off: the shell registers the
+keysyms of both states. Each kit window's titlebar **Window** menu offers
+every zone too ([Shell § Window menu](sola-shell.md#window-menu)).
+Every key is changeable (Settings → Keybindings; zone keys in Settings →
+Zones).
 
 Each workspace is a desk of its own (Super+1…9 shows one, Super+Tab steps
 through them). The shell composes only the showing workspace; the
@@ -273,15 +282,20 @@ and Design picks the element under it.
 
 ### Fullscreen
 
-`sola-river` grants every fullscreen request from an application, on the
-first output. For Xwayland games (Wine, Proton, SDL) this keeps the
+`sola-river` grants every fullscreen request from an application at once,
+on the first output. For Xwayland games (Wine, Proton, SDL) this keeps the
 fullscreen window managed: when the request is refused, some of them open
-a separate surface that bypasses the window manager. Cinema uses the same
-state: its `Frame` asks for fullscreen.
+a separate surface that bypasses the window manager. It also tells the
+shell (`FullscreenRequest`), which moves the window's tab to Cinema, and
+back to the zone it came from when the application leaves fullscreen.
+Cinema uses the same state: the `Frame` of the Cinema tab on screen asks
+for fullscreen. While a fullscreen window is in the composition the
+background picture is taken away, so what shows around or through it is
+black.
 
 A window leaves fullscreen when it asks to, when the shell sends it a
-`Frame` without fullscreen (another zone key, or `Super+KP_Enter` again),
-and when keyboard focus moves to another window. The last rule covers
+`Frame` without fullscreen (another zone's key, or another tab taking the
+screen), and when keyboard focus moves to another window. The last rule covers
 games that switch to a windowed mode internally without telling the
 compositor, and would otherwise stay above everything.
 

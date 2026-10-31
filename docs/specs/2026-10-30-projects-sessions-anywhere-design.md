@@ -86,32 +86,41 @@ alternatively other sessions could tell them to start." So both:
 - **At boot.** A headless restore (`sola-projects --restore`: no window, the
   same code the app uses) starts every session whose file is there and whose
   tmux is not, resuming its agent (`claude --resume` / `grok -r`) when its
-  transcript is on disk. On Oath it runs once at boot as `home` (an Oath
-  `svc`, work with the Oath tab), so a computer with no desk (buccina) brings
-  its sessions back too. Projects also runs it when it starts.
-- **On request.** Anything may start a stopped session: a viewer opening it,
-  or another session on any computer (`solactl projects session.start --host H
-  --session S`). A host with no Sola (tmux only) gets this one: the viewer
-  does the start over ssh, as remote attach does today.
+  transcript is on disk. On Oath it runs once at boot as `home`
+  (`svc:sola-sessions`, Oath's desk profile), so a computer with no desk
+  brings its sessions back too. Projects also runs it when it starts.
+- **On request.** *(As built: no separate verb.)* Any computer that links
+  the host — opening a project there, or a window of one of its sessions —
+  runs the same restore there over ssh first, so a host with no Sola (tmux
+  only) gets its sessions back that way too.
+- The file: `~/.config/sola/projects/sessions/<id>.json` (project, name,
+  title, kind, folder, agent, agent session). Written when a session is made
+  or first attached, rewritten when its agent's session changes or it is
+  renamed, removed when it is ended or its shell exits with its computer up.
 
 `SOLA_PANE_ID` and `SOLA_WS_PATH` stay in the environment; `SOLA_WS_HOOKS_SOCK`
 goes.
 
 ### Status lives on the host
 
-- **Hooks write into their own session.** A hook runs inside the pane, so it
-  sets `@sola-status` (and the agent's session id) with plain `tmux set-option`
-  and updates the session's file. No socket, no `curl`, no reverse link.
-- **Viewers watch each host with one tmux control-mode client** (`tmux -L
-  sola-ws -C`, `ignore-size,no-output`): locally direct, remotely over the
-  shared ssh ControlMaster. It subscribes to one format over every session
-  (`#{S:…@sola-status…}`) and gets `%sessions-changed`. Status pushes to every
-  viewer at once (tmux checks subscriptions about once a second).
+*(As built, 2026-10-30 — changed from tmux options: a hook's payload can be
+megabytes (a tool's input), and a Codex hook can run outside its session.)*
+
+- **Hooks append to their computer's hook log**
+  (`~/.local/state/sola/projects/hooks.log`): one line per event,
+  `<agent>\t<SOLA_PANE_ID>\t<base64 payload>`, under `flock`, rotated at
+  8 MiB. No socket, no `curl`, no reverse link.
+- **Viewers follow each host's log**: this computer's by reading the file,
+  another's with one `ssh host tail -F` per host (the link). Each event goes
+  through the same mapping and placing as before (`SOLA_PANE_ID`, else the
+  payload's cwd), tagged with its host. Status reaches every viewer at once.
+- **Seen is shared:** a viewer that looks at or answers an island appends
+  `seen\t<id>\t`; every viewer lets that island go.
 - What still needs a look goes on the existing per-host tick through
   `Machine`: presence from `ps`, Codex rollouts, `×N`, gone worktrees, now for
   every host a viewer has a window on.
-- Retired: the hooks server and its sockets, the per-host `ssh -N -R` link, the
-  boot adopt / quarantine (`bind_session`): a session says what it is.
+- Retired: the hooks server and its sockets, the per-host `ssh -N -R`
+  forward. (The boot adopt / quarantine of local sessions stays for now.)
 
 ### Windows
 
@@ -203,13 +212,15 @@ canto's output windows are going to be much smaller."
    chooser lists a host's sessions and opens one. **Done when:** a session
    started on novus opens from canto, both type in it, the session follows the
    desk in use, and closing canto's window leaves it running on novus.
-2. **Status on the host.** Hooks → tmux options; control-mode watch per host;
-   islands on every desk with that session open; link and hooks server
+2. **Status on the host.** Hooks → the host's hook log; viewers follow it
+   (here by reading, elsewhere by `ssh tail -F`); islands on every desk with
+   that session open, seen shared; hooks server and the reverse forward
    removed.
-3. **Mirrors.** A viewer that does not hold the size scales the session to
-   fit; Watch (read-only).
-4. **Reboot.** `sola-projects --restore` at boot (Oath `svc`, with the Oath
-   tab) and at Projects start; `session.start` from anywhere.
+3. **Mirrors — not doing** (Joshua, 2026-10-30: "keep it working like it
+   currently does … the scaling will just look silly"): the window not
+   holding the size shows the session as tmux draws it.
+4. **Reboot.** `sola-projects --restore` at boot (Oath `svc`), at Projects
+   start, and on every link to a host.
 5. **CLI** `tab.*` → `session.*` with the manual (`solactl.md`) in the same
    change.
 

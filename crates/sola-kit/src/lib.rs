@@ -36,6 +36,7 @@ pub mod clipboard;
 pub mod components;
 pub mod float;
 pub mod fonts;
+pub mod keys;
 pub mod menu;
 pub mod tabs;
 pub mod theme;

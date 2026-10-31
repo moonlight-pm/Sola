@@ -35,11 +35,15 @@ const WORK: &str = "target/oath/publish";
 /// `local`: build the plans here and upload nothing.
 pub fn publish(local: bool) -> Result<(), String> {
     let origin = if local { None } else { Some(Origin::from_env()?) };
-    let (rev, dirty) = git_rev()?;
-    if dirty {
+    if git_dirty()? {
         return Err("commit first: a published source is the committed tree".into());
     }
-    let version = format!("{}+g{rev}", env!("CARGO_PKG_VERSION"));
+    if !local {
+        released_from_master()?;
+    }
+    // Not the commit (see `stage`): an untouched package builds to the
+    // hash it had.
+    let version = env!("CARGO_PKG_VERSION");
     let work = Path::new(WORK);
     let _ = fs::remove_dir_all(work);
 
@@ -189,10 +193,11 @@ fn closure<'a>(names: impl Iterator<Item = &'a &'a str>) -> Result<Vec<(String, 
     Ok(out.into_iter().collect())
 }
 
-/// `pkg.needs` at the hashes just built (Sola's own) or live here.
+/// `pkg`'s run-time needs at the hashes just built (Sola's own) or live
+/// here.
 fn run_needs(pkg: &Package, built: &BTreeMap<&str, String>) -> Result<Vec<(String, String)>, String> {
-    pkg.needs
-        .iter()
+    pkg.runtime_needs()
+        .into_iter()
         .map(|n| {
             let hash = match built.get(n) {
                 Some(h) => h.clone(),
@@ -233,7 +238,34 @@ fn upload(origin: &Origin, key: &str, file: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn git_rev() -> Result<(String, bool), String> {
+/// A release comes from master only: this checkout on master, and master
+/// pushed (`HEAD == origin/master`), so every machine's packages are work
+/// everyone has (the `oath-packages` skill).
+fn released_from_master() -> Result<(), String> {
+    let out = |args: &[&str]| {
+        Command::new("git")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let branch = out(&["branch", "--show-current"]).unwrap_or_default();
+    if branch != "master" {
+        return Err(format!(
+            "publish from master (this is {}): merge the work to master and push it first",
+            if branch.is_empty() { "a detached HEAD" } else { &branch }
+        ));
+    }
+    let head = out(&["rev-parse", "HEAD"]).unwrap_or_default();
+    let pushed = out(&["rev-parse", "origin/master"]).unwrap_or_default();
+    if head != pushed {
+        return Err("push master first: a release is what origin/master has".into());
+    }
+    Ok(())
+}
+
+fn git_dirty() -> Result<bool, String> {
     let out = |args: &[&str]| {
         Command::new("git")
             .args(args)
@@ -241,9 +273,7 @@ fn git_rev() -> Result<(String, bool), String> {
             .map_err(|e| format!("git: {e}"))
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
     };
-    let rev = out(&["rev-parse", "--short", "HEAD"])?;
-    let dirty = !out(&["status", "--porcelain"])?.is_empty();
-    Ok((rev, dirty))
+    Ok(!out(&["status", "--porcelain"])?.is_empty())
 }
 
 fn sh(script: &str) -> Result<(), String> {

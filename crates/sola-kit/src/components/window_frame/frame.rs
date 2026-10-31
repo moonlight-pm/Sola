@@ -84,7 +84,7 @@ impl<'a, Message> WindowFrame<'a, Message> {
 
     /// Show these menus instead of the app's published ones.
     pub fn menus(mut self, menus: AppMenuPayload) -> Self {
-        self.menus = Some(crate::menu::ensure_window_menu(menus));
+        self.menus = Some(crate::menu::prepare(menus));
         self
     }
 

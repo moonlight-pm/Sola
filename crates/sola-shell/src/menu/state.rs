@@ -59,6 +59,29 @@ pub fn effective_app_menu(cache: &MenuCache, app_id: &str, label: &str) -> AppMe
     sola_kit::menu::ensure_window_menu(base)
 }
 
+/// Give a Window menu the layout's grid zones (`sola_kit::menu::
+/// fill_window_menu`) and every item its key now (`crate::bindings`).
+pub fn fill_window_menu(
+    menu: &mut MenuDefinition,
+    layout: &sola_bus::topics::ZoneLayout,
+    keys: &crate::bindings::Bindings,
+) {
+    use crate::bindings::Act;
+    use sola_kit::menu::{WindowAction, parse_window_action};
+    sola_kit::menu::fill_window_menu(menu, layout);
+    for item in &mut menu.items {
+        if let MenuItem::Action { id, shortcut, .. } = item {
+            let act = match parse_window_action(id) {
+                Some(WindowAction::Hide) => Act::Hide,
+                Some(WindowAction::Cycle) => Act::NextTab,
+                Some(WindowAction::Zone(z)) => Act::Zone(z),
+                None => continue,
+            };
+            *shortcut = keys.key(act);
+        }
+    }
+}
+
 /// Build a default menu for an external app that hasn't shipped its own.
 /// Single menu labeled `<label>` containing one item: "Quit <label>" with
 /// the Meta+Q shortcut shown next to it. The chord itself is already
@@ -113,6 +136,7 @@ impl MenuCache {
         let entries = self.shortcuts.get(chord)?;
         entries
             .iter()
+            .filter(|(_, action)| sola_kit::menu::parse_window_action(action).is_none())
             .find(|(app_id, _)| app_id == focused_app_id)
             .map(|(app_id, action_id)| MenuActionPayload {
                 app_id: app_id.clone(),
@@ -146,6 +170,23 @@ impl MenuCache {
     /// River — registering globally causes a Sola app's shortcut (e.g.
     /// sola-browser's Meta+W) to be grabbed even when a non-Sola client
     /// like Zed is focused, swallowing the chord.
+    /// `app_id`'s own menu keys: not its Window menu's, which are system
+    /// actions (`crate::bindings`).
+    pub fn app_key_bindings(&self, app_id: &str) -> Vec<KeyChord> {
+        let mut out: Vec<KeyChord> = self
+            .shortcuts
+            .iter()
+            .filter(|(_, entries)| {
+                entries.iter().any(|(id, action)| {
+                    id == app_id && sola_kit::menu::parse_window_action(action).is_none()
+                })
+            })
+            .map(|(chord, _)| *chord)
+            .collect();
+        out.sort_by_key(|b| (b.keycode.raw(), b.meta, b.alt, b.ctrl, b.shift));
+        out
+    }
+
     pub fn key_bindings_for(&self, app_id: &str) -> Vec<KeyChord> {
         let mut set: HashSet<KeyChord> = HashSet::new();
 

@@ -29,7 +29,9 @@ solactl projects ps
 ```
 
 Targets = every checkout under `.worktrees/` for **this** repo. Skip the
-master checkout you are sitting in.
+master checkout you are sitting in, and **`.worktrees/next`**: it is the
+integration branch overlays come from (the `oath-packages` skill), never
+merged into master itself — its branches are merged one by one.
 
 Since 2026-10-30 a worktree belongs to the **session** that made it, not
 to a Projects tab: every session starts in the root and makes its own
@@ -119,6 +121,18 @@ from here and note it.
 ```bash
 git -C .worktrees/SLUG merge master
 ```
+
+## Pass 3 — `next` and what is live
+
+- `next`: once every branch in it is on master
+  (`git rev-list --no-merges master..next` is empty), reset it:
+  `git -C .worktrees/next reset --hard master`. Otherwise merge master into
+  it (`git -C .worktrees/next merge master`) and report what is still
+  unmerged there.
+- What runs on this machine: `oath diff` (each overlay with its source)
+  and `oath get pkg:sola` (the `oath-packages` skill). After a sync, master
+  holds everyone's work: say so, and offer an apply from master — only with
+  the user's word (it may restart the desk).
 
 ## Report
 

@@ -165,30 +165,41 @@ docs/
   never touches worktrees; closing its window does not end it.
 
 ### Installing
-- **NEVER run `cargo make install` (or any variant) without express user permission for that specific install.** This applies to subagents too — if you delegate work, your prompt MUST tell the subagent not to install. Permission for one install is not permission for the next; ask each time.
-- Use `cargo make build` (or `cargo build`) to verify a change compiles. Stop there. Do not install just because a plan or task description says "install and smoke" — that step is for the user to run.
-- Install is local: binaries go to `/opt/sola/bin/`.
-- **On Oath** (`/oath/INDEX.md` exists), `cargo make oath apply` is the
-  install: it stores Sola's package trees with `oath store`, pins them and
-  `oath apply`s them, and PID 1 restarts the `svc:sola-*` that run from
-  them. Same rule: only with express permission for that apply.
-  `cargo make oath stage` (build + assemble under `target/oath/`, no
-  catalog change) is fine without asking. `cargo make oath publish`
-  (plan builds in `oath build`'s sandbox, then upload to
-  `store.oath.moonlight.pm` with `~/.config/oath/origin.env`) is
-  outward-facing: only with express permission, from a committed tree.
-  `--local` builds the plans here and uploads nothing (no permission
-  needed).
-- `cargo make install` — builds and copies all binaries to `/opt/sola/bin/`.
-- `cargo make install <app>…` — builds and installs one or more apps (e.g. `shell kit`).
-- Multi-target installs **replace binaries in restart order** (`sola-bus` →
-  `sola-call` → `sola-botsd` → `sola-river` → `sola-shell` → `sola-session` → `sola-kvm` → `sola`, then
-  other apps) with a **1s settle gap** between actual replaces so the
-  process manager can restart each component before the next kill.
-  CLI order is ignored for that sequence (`install shell river` still
-  copies river first).
-- `cargo make install <app> --watch` — watches for changes, rebuilds, and reinstalls automatically.
-- The user launches `sola` manually from a physical TTY. Do not configure auto-start.
+- **Ask each time.** An apply, an install or a publish needs the user's
+  word for that one; permission for one is not for the next. Subagents too:
+  a delegated prompt says "do not install". Verify with `cargo make build`
+  (or `cargo make oath stage`) and stop there; "install and smoke" in a
+  plan is the user's step unless they say otherwise.
+- **The procedure is the `oath-packages` skill** (user-level): two lanes
+  (dev overlay, release), provenance, the guard, `next`, releases from
+  master. Load it before any apply or publish. Spec:
+  [`docs/specs/2026-10-31-oath-package-development-design.md`](docs/specs/2026-10-31-oath-package-development-design.md).
+- **On Oath** (`/oath/INDEX.md` exists):
+  - `cargo make oath stage` — build + assemble the package trees under
+    `target/oath/`; no catalog change, no asking.
+  - `cargo make oath apply` — the overlay: stores the trees, pins the
+    packages whose tree or needs changed, `oath apply`s them, and records
+    where each came from as its `source` (`oath get pkg:X`). It refuses
+    when a live package was applied from this repo at a commit this tree
+    lacks (another session's work): merge it, or apply from `next`;
+    `--force` only when the user says to drop it. With other sessions
+    working, apply from `.worktrees/next`, not your branch. A package that
+    moves restarts the services that run from it — `pkg:sola` holds
+    `sola-river`, so the whole desk: say so when asking.
+  - `cargo make oath publish` — the release: from master only (clean,
+    pushed, `HEAD == origin/master`; it refuses otherwise), plan builds in
+    `oath build`'s sandbox, uploaded to `store.oath.moonlight.pm` with
+    `~/.config/oath/origin.env`. Outward-facing. `--local` builds the plans
+    here and uploads nothing (no asking).
+  - Write what you applied with its source (`pkg:sola f2406bf… from
+    next@ce6408de`), in `CURRENT.md`.
+- **On NixOS** (the Shape 1 colleague path): `cargo make install
+  [<app>…] [--watch]` builds and copies to `/opt/sola/bin/`, replacing
+  binaries in restart order (`sola-bus` → `sola-call` → `sola-botsd` →
+  `sola-river` → `sola-shell` → `sola-session` → `sola-kvm` → `sola`, then
+  other apps) with a 1 s settle gap. Same ask-each-time rule.
+- The user starts the desk (Oath's desk profile, or `sola` from a TTY on
+  NixOS). Do not configure auto-start.
 
 ### Building
 - Always use `cargo make build` — never raw `cargo build` or `cp`.

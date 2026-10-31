@@ -89,19 +89,28 @@ impl Hosts {
     }
 }
 
-/// A computer's `~/Projects`: its full path there, and its folders.
+/// A computer's `~/Projects`: its full path there, its folders, and the
+/// Projects sessions running there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listing {
     pub root: PathBuf,
     /// By name, case aside; no hidden ones.
     pub names: Vec<String>,
+    pub sessions: Vec<sola_core::project_sessions::HostSession>,
 }
+
+/// Between the folders and the sessions in [`list`]'s output.
+const SESSIONS_MARK: &str = "--sola-sessions--";
 
 /// List `host`'s `~/Projects` over ssh. Waits on ssh: run it off the UI
 /// thread. A tab there needs tmux, so its absence is an error here too.
 pub fn list(host: &str) -> Result<Listing, String> {
     let host = ssh::check_host(host)?;
-    let out = ssh::run(ssh::batch(host, LIST_SCRIPT), None)?;
+    let script = format!(
+        "{LIST_SCRIPT}; echo {SESSIONS_MARK}; {}",
+        sola_core::project_sessions::script()
+    );
+    let out = ssh::run(ssh::batch(host, &script), None)?;
     match out.status.code() {
         Some(0) => parse_listing(&String::from_utf8_lossy(&out.stdout)),
         Some(3) => Err(format!("There is no ~/Projects on {host}")),
@@ -116,6 +125,10 @@ const LIST_SCRIPT: &str = "cd \"$HOME/Projects\" 2>/dev/null || exit 3; \
     pwd; for d in */; do [ -d \"$d\" ] && printf %s \"${d%/}\" && echo; done; true";
 
 fn parse_listing(out: &str) -> Result<Listing, String> {
+    let (out, sessions) = match out.split_once(&format!("{SESSIONS_MARK}\n")) {
+        Some((folders, sessions)) => (folders, sola_core::project_sessions::parse(sessions)),
+        None => (out, Vec::new()),
+    };
     let mut lines = out.lines();
     let root = PathBuf::from(lines.next().unwrap_or_default().trim());
     if !root.is_absolute() {
@@ -126,7 +139,11 @@ fn parse_listing(out: &str) -> Result<Listing, String> {
         .filter(|n| !n.is_empty() && !n.starts_with('.'))
         .collect();
     names.sort_by_key(|n| n.to_lowercase());
-    Ok(Listing { root, names })
+    Ok(Listing {
+        root,
+        names,
+        sessions,
+    })
 }
 
 /// Make folder `name` in `root` (its `~/Projects`) on `host`; an
@@ -218,6 +235,21 @@ mod tests {
         assert_eq!(l.names, ["Oath", "sola"]);
         assert!(parse_listing("").is_err());
         assert!(parse_listing("Projects\nsola").is_err());
+    }
+
+    #[test]
+    fn a_listing_carries_the_sessions_there() {
+        let l = parse_listing(
+            "/home/Projects\nSola\n--sola-sessions--\nsws-ws-main\t/home/Projects/Sola\troot\t\tmain\t/home/Projects/Sola\n",
+        )
+        .unwrap();
+        assert_eq!(l.names, ["Sola"]);
+        assert_eq!(l.sessions.len(), 1);
+        assert_eq!(l.sessions[0].id, "ws-main");
+        assert!(ssh::is_quotable(&format!(
+            "{LIST_SCRIPT}; echo {SESSIONS_MARK}; {}",
+            sola_core::project_sessions::script()
+        )));
     }
 
     #[test]

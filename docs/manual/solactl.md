@@ -496,7 +496,7 @@ solactl projects                           # list methods
 solactl projects ps
 solactl projects project.list
 solactl projects project.open --path ~/Projects/Sola    # its sessions here
-solactl projects project.open --host <computer> --path /home/<user>/Projects/Sola
+solactl projects project.open --host <computer> --path /home/<user>/Projects/Sola [--session ws-main]
 solactl projects project.close --project Sola   # its windows close; sessions run on
 solactl projects tab.list [--project Sola]
 solactl projects tab.spawn --project Sola [--name review] [--title 'fix login'] \
@@ -546,7 +546,9 @@ Errors name what went wrong: `<path> is not a folder of ~/Projects` for
 `project.open` opens a project's sessions here, each in its own window:
 every session running on its computer in that folder, whichever computer
 started it (one already open here comes forward). With none running
-anywhere, it starts the project's main session. A folder that is not a
+anywhere, it starts the project's main session. `--session <id>` (its id
+there, as `ws-main`) opens that session alone: the launcher's chooser does
+this from a session's row. A folder that is not a
 project here yet is added first. Its reply is the project with `opened`
 (none of its sessions was open here). The launcher's Projects chooser
 uses it, and Project → Open lists the folders of `~/Projects` with no
@@ -599,13 +601,18 @@ launcher's Projects chooser does this from **On another computer…**.
 Its sessions run there, in that computer's own Projects tmux (socket
 `sola-ws`, the one its own Projects uses), reached over ssh: a Projects
 restart, or losing the network, leaves them running, and the windows
-attach them again. Here such a session's id is `<id>@<computer>`. While
-the computer has a session open here, Projects keeps a connection there of
-its own (the link) that brings the hooks of agents it started back: marks,
-islands, desk cards and `pane.wait` work as here. The first link installs
-the same agent hooks there (Claude's `settings.json`, Codex's
-`hooks.json`, Grok's `sola-status.json`; scripts in
-`~/.config/sola/remote/`). `pane.send`, `pane.read` and `tab.exec` reach
+attach them again. Here such a session's id is `<id>@<computer>`.
+
+Status lives on the computer a session runs on: its agents' hooks append
+their events to that computer's hook log
+(`~/.local/state/sola/projects/hooks.log`), and every Projects watching any
+of its sessions follows that log — this computer's by reading it, another
+computer's over a connection of its own (the link, `ssh … tail -F`). So
+marks, islands, desk cards and `pane.wait` work on every computer that has
+the session open, whichever one started it; looking at or answering an
+island on one lets it go on all. The first link installs the same agent
+hooks there (Claude's `settings.json`, Codex's `hooks.json`, Grok's
+`sola-status.json`; scripts in `~/.config/sola/remote/`). `pane.send`, `pane.read` and `tab.exec` reach
 its panes; a lost session whose Grok or Claude transcript is still there
 resumes.
 
@@ -613,8 +620,7 @@ Sessions opened from another computer before 2026-10-30 lived on a socket
 of their own there (`sola-ws-remote`); they are still found and attached
 until they end, and nothing new is made there. A session's ssh may ask
 for a password in its window. The link and the listing never ask: they
-need a key or an agent that logs you in, tmux there, and curl there for
-marks.
+need a key or an agent that logs you in, and tmux and base64 there.
 
 - The connection drops: the window says **Can't reach** the computer,
   with ssh's reason, and **Reconnect**. The session there is left alone,
@@ -640,8 +646,19 @@ running. `kind` is `main` (the project's main session), `folder` (the main
 session of a non-git project), or `root` (any other).
 
 `pane.list` and `whoami` include `session_id` when that pane's Grok or
-Claude owner session is known. Use it with `grok -r` or `claude --resume`
-after a reboot loses tmux.
+Claude owner session is known.
+
+### After a reboot
+
+Sessions come back by themselves. Each has a record on the computer it
+runs on (`~/.config/sola/projects/sessions/<id>.json`: its project, name,
+title, folder, and the agent in it with that agent's session). Any session
+recorded there whose tmux is gone is made again, in its folder, with its
+agent resumed (`claude --resume`, `grok -r`) when its transcript is still
+there, else a shell: when Projects starts, when any computer's Projects
+connects to that computer, and at boot (`sola-projects --restore`). Ending
+a session (End Session…, `tab.rm`), or its shell exiting, removes its
+record.
 
 ### Panes
 

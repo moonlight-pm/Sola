@@ -42,6 +42,7 @@ mod machine;
 mod menu;
 mod paths;
 mod presence;
+mod records;
 mod remote;
 mod sessions;
 mod spawn;
@@ -76,9 +77,9 @@ fn now_millis() -> u128 {
         .unwrap_or(0)
 }
 
-const TMUX_SOCKET: &str = "sola-ws";
+const TMUX_SOCKET: &str = sola_core::project_sessions::SOCKET;
 const TMUX_UNIT: &str = "sola-ws-tmux.service";
-const TMUX_PREFIX: &str = "sws-";
+const TMUX_PREFIX: &str = sola_core::project_sessions::PREFIX;
 /// Started with no project open, Projects waits this long for one, then
 /// quits.
 const IDLE_QUIT_AFTER: Duration = Duration::from_secs(20);
@@ -86,12 +87,51 @@ const IDLE_QUIT_AFTER: Duration = Duration::from_secs(20);
 /// alive is not reattached on its own (it would only end again).
 const REMOTE_REATTACH_AFTER: Duration = Duration::from_secs(5);
 
+/// At boot, how long `--restore` waits for the tmux server, and for the
+/// desk's Wayland socket (it restores without one after that).
+const RESTORE_SERVER_WAIT: Duration = Duration::from_secs(30);
+const RESTORE_DESK_WAIT: Duration = Duration::from_secs(15);
+
+/// Projects' tmux server is up (`-N`: asking never starts one).
+fn tmux_server_up() -> bool {
+    std::process::Command::new("tmux")
+        .args(["-L", TMUX_SOCKET, "-N", "show-options", "-gv", "exit-empty"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 const DEFAULT_COLS: u16 = 80;
 /// A window's size before it reports one.
 const DEFAULT_WINDOW: iced::Size = iced::Size::new(1100.0, 720.0);
 const DEFAULT_ROWS: u16 = 24;
 
 fn main() -> iced::Result {
+    // At boot, with no desk: bring this computer's sessions back, then go
+    // ([`records`]). Before `startup`, which waits for Wayland.
+    if std::env::args().any(|a| a == "--restore") {
+        sola_core::log::init(APP_ID);
+        tmux::configure(TMUX_SOCKET, TMUX_UNIT, TMUX_PREFIX);
+        // PID 1 starts the server (`svc:sola-tmux-ws`) as it starts this:
+        // wait for it, and never start one of our own.
+        let deadline = Instant::now() + RESTORE_SERVER_WAIT;
+        while !tmux_server_up() {
+            if Instant::now() > deadline {
+                tracing::error!("no sola-ws tmux server after 30 s; nothing restored");
+                std::process::exit(1);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let how = records::Restore {
+            no_server: true,
+            // The desk, if it is coming (the seat may be the console's).
+            env: records::desk_env(RESTORE_DESK_WAIT),
+        };
+        let made = records::restore(&Machine::Local, &how);
+        tracing::info!(count = made.len(), env = ?how.env, "restored sessions at boot");
+        return Ok(());
+    }
     startup(APP_ID);
 
     // One Projects: a second launch asks the running one to show its
@@ -162,7 +202,6 @@ struct App {
     /// A window per session, each a tab in the shell's tab bar.
     windows: windows::SessionWindows,
     pane_status: HashMap<String, status::PaneStatus>,
-    hook_sock: String,
     /// Previous pane id if we renamed a *path-matched* orphan onto `ws-main`.
     adopted_from: Option<String>,
     spawn: cards::SpawnDraft,
@@ -179,9 +218,11 @@ struct App {
     /// Panes on another computer whose ssh ended with their session out
     /// of reach, and why. Their tab says so and offers to reconnect.
     remote_down: HashMap<String, String>,
-    /// Each host's link ([`link`]), and its hook socket here.
+    /// Each host's link ([`link`]).
     links: HashMap<String, link::Link>,
-    link_socks: HashMap<String, PathBuf>,
+    /// The agent and agent session last written to each session's record
+    /// ([`records`]): a hook that says otherwise rewrites it.
+    recorded: HashMap<String, (Option<String>, Option<String>)>,
     /// Remote panes waiting for their link to attach.
     remote_pending: HashSet<String>,
     /// Hosts whose status tick is out, and when each last went out.
@@ -228,6 +269,12 @@ enum Msg {
     PaneFocused(String),
     Ignore,
     Hook(hooks::Incoming),
+    /// Another computer (or this one) looked at session `pane` (its id on
+    /// `host`): its island goes here too.
+    Seen {
+        host: Option<String>,
+        pane: String,
+    },
     /// Read a session's screen for its island (the prompt's choices, or a
     /// body), a moment after it began to need you.
     IslandScan(String),
@@ -255,6 +302,13 @@ enum Msg {
     HostSessions {
         project: String,
         found: Result<Vec<sessions::HostSession>, String>,
+        /// Open this session alone (its id there), not all of them.
+        only: Option<String>,
+    },
+    /// A host's sessions a reboot took are back ([`records::restore`]).
+    HostRestored {
+        host: String,
+        made: Vec<String>,
     },
     /// A resumable remote pane's attach, planned off the UI thread.
     RemoteAttach {
@@ -293,9 +347,17 @@ struct DetachedPane {
 }
 
 impl DetachedPane {
+    /// Ended on purpose: its record goes too, so a reboot does not bring
+    /// it back ([`records`]).
+    fn forget_record(&self) {
+        let id = self.session.strip_prefix(TMUX_PREFIX).unwrap_or(&self.session);
+        records::remove(self.host.as_deref(), id);
+    }
+
     /// [`Self::close`], waiting until a remote session is gone too (call it
     /// off the UI thread).
     fn close_blocking(self) {
+        self.forget_record();
         match self.host.clone() {
             None => self.close(),
             Some(host) => {
@@ -390,7 +452,7 @@ fn remote_exit_task(pane: String, host: String, lived: Duration) -> Task<Msg> {
 
 impl App {
     fn boot() -> (Self, Task<Msg>) {
-        let hook_paths = hooks::start();
+        hooks::start();
         let _ = sola_terminal::osc9999::sender();
         let catalog = catalog::load();
         let selected = catalog
@@ -410,9 +472,9 @@ impl App {
             });
         let mut pane_status = HashMap::new();
         for ws in &catalog.tabs {
-            // Saved under its id before sessions were keyed by host.
-            let st = status::hydrate(&ws.id).or_else(|| status::hydrate(catalog::bare_id(&ws.id)));
-            if let Some(st) = st {
+            // By its key alone: a bare id here is this computer's session
+            // (`ws-main@novus` is not this computer's `ws-main`).
+            if let Some(st) = status::hydrate(&ws.id) {
                 pane_status.insert(ws.id.clone(), st);
             }
         }
@@ -433,7 +495,6 @@ impl App {
             float: sola_kit::FloatState::new(APP_ID),
             windows: windows::SessionWindows::new(APP_ID),
             pane_status,
-            hook_sock: hook_paths.socket_path.to_string_lossy().into_owned(),
             adopted_from,
             spawn: cards::SpawnDraft::default(),
             add: cards::AddDraft::default(),
@@ -444,13 +505,23 @@ impl App {
             islands: islands::Islands::default(),
             remote_down: HashMap::new(),
             links: HashMap::new(),
-            link_socks: HashMap::new(),
+            recorded: HashMap::new(),
             remote_pending: HashSet::new(),
             remote_busy: HashSet::new(),
             remote_ticked: HashMap::new(),
         };
         app.link_hosts();
         app.sync_all_rows();
+        // This computer's sessions that a reboot took, back before the
+        // windows attach (one may be another computer's, not open here).
+        let how = records::Restore {
+            no_server: false,
+            env: records::desk_env(Duration::ZERO),
+        };
+        let made = records::restore(&Machine::Local, &how);
+        if !made.is_empty() {
+            tracing::info!(count = made.len(), "restored sessions");
+        }
         let windows = app.open_all_windows();
         // Nothing open: stay a moment for the launcher's `project.open`
         // (it starts Projects, then asks), then quit.
@@ -509,7 +580,10 @@ impl App {
             emulator::output_subscription().map(Msg::PtyOutput),
             emulator::exit_subscription().map(Msg::PtyExit),
             emulator::title_subscription().map(|(id, t)| Msg::Title(id, t)),
-            hooks::subscription().map(Msg::Hook),
+            hooks::subscription().map(|e| match e {
+                hooks::Event::Hook(incoming) => Msg::Hook(incoming),
+                hooks::Event::Seen { host, pane } => Msg::Seen { host, pane },
+            }),
             link::subscription().map(Msg::Link),
             sola_kit::call_subscription().map(Msg::Call),
             sola_terminal::osc9999::subscription().map(|(id, payload)| Msg::Osc(id, payload)),
@@ -568,6 +642,9 @@ impl App {
                     .map(|w| w.path.clone());
                 let st = self.pane_status.entry(id.clone()).or_default();
                 st.apply_hook(&incoming);
+                let owner = (st.agent.clone(), st.owner_session.clone());
+                let owner_changed =
+                    owner.1.is_some() && self.recorded.get(&id) != Some(&owner);
                 if incoming.mapped.compacted || incoming.mapped.session_id.is_some() {
                     if let Some(cwd) = cwd.as_deref() {
                         st.refresh_compaction(&Machine::Local, cwd);
@@ -579,9 +656,19 @@ impl App {
                 let now = st.status;
                 let unconfirmed = st.restored_unconfirmed;
                 status::persist_all(&self.pane_status);
+                // Its agent's session is what a reboot resumes.
+                if owner_changed {
+                    self.save_record(&id, true);
+                    self.recorded.insert(id.clone(), owner);
+                }
                 self.sync_row(&id);
                 self.maybe_toast_status(&id, prev, now, unconfirmed);
                 self.flush_waits();
+                Task::none()
+            }
+            Msg::Seen { host, pane } => {
+                let key = catalog::key_for(&pane, host.as_deref());
+                self.islands.answer(&key);
                 Task::none()
             }
             Msg::IslandScan(id) => self.scan_island(&id),
@@ -730,6 +817,8 @@ impl App {
                     st.tool = None;
                     st.owner_session = None;
                 }
+                // Its shell ended here, its computer up: not coming back.
+                records::remove(None, catalog::bare_id(&id));
                 // Its window stays, offering Start new shell.
                 self.pane_grids.remove(&id);
                 self.sync_row(&id);
@@ -747,7 +836,8 @@ impl App {
             Msg::Link(ev) => self.on_link(ev),
             Msg::RemoteTick { host, panes } => self.on_remote_tick(host, panes),
             Msg::RemoteAttach { pane, exec } => self.attach_planned(&pane, exec),
-            Msg::HostSessions { project, found } => self.on_host_sessions(&project, found),
+            Msg::HostRestored { host, made } => self.on_host_restored(host, made),
+            Msg::HostSessions { project, found, only } => self.on_host_sessions(&project, found, only),
             Msg::RemoteExec {
                 tab,
                 pane,
@@ -1127,7 +1217,7 @@ impl App {
                     },
                     open if open.starts_with(menu::OPEN_PREFIX) => {
                         let path = open[menu::OPEN_PREFIX.len()..].to_string();
-                        match self.cli_open_project(&path, None) {
+                        match self.cli_open_project(&path, None, None) {
                             Ok((_, task)) => task,
                             Err(e) => {
                                 tracing::warn!(%path, "Project → Open: {e}");
@@ -1259,12 +1349,7 @@ impl App {
         let term = em.term();
         let cursor = em.cursor_snap();
 
-        let hook_sock = self.hook_sock.clone();
-        let env = [
-            ("SOLA_PANE_ID", id),
-            ("SOLA_WS_HOOKS_SOCK", hook_sock.as_str()),
-            (catalog::SOLA_WS_PATH, cwd.as_str()),
-        ];
+        let env = [("SOLA_PANE_ID", id), (catalog::SOLA_WS_PATH, cwd.as_str())];
         let new_session = !tmux::has_session(&tmux_session);
         let backend = match PtyBackend::spawn_or_attach_with_env(
             id,
@@ -1288,6 +1373,11 @@ impl App {
         if new_session {
             sessions::stamp(&tmux_session, &self.session_options(id));
         }
+        if let Some(rec) = self.record_of(id) {
+            if let Err(e) = records::ensure(&Machine::Local, &rec) {
+                tracing::warn!(pane = %id, "its record: {e}");
+            }
+        }
         // Another computer may watch it too: its size follows whoever
         // typed last, not this window alone.
         tmux::follow_latest(&tmux_session);
@@ -1303,6 +1393,74 @@ impl App {
         );
         self.resize_all_panes();
         Task::none()
+    }
+
+    /// Session `id` renamed: what it says it is, there (its options and
+    /// its record), for every computer that lists it.
+    fn restamp(&self, id: &str) {
+        let opts = self.session_options(id);
+        match self.tab_for_pane(id).and_then(|w| w.host.clone()) {
+            None => sessions::stamp(&catalog::session_name(id), &opts),
+            Some(host) => {
+                let target = format!("={}:", catalog::session_name(id));
+                std::thread::spawn(move || {
+                    let mut argv: Vec<String> = vec!["tmux".into(), "-L".into(), TMUX_SOCKET.into()];
+                    for (i, (k, v)) in opts.into_iter().enumerate() {
+                        if i > 0 {
+                            argv.push(";".into());
+                        }
+                        argv.extend(["set-option".into(), "-t".into(), target.clone(), k, v]);
+                    }
+                    let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+                    let script = sola_core::ssh::argv_script(None, &[], &refs);
+                    if let Err(e) = sola_core::ssh::run(sola_core::ssh::batch(&host, &script), None) {
+                        tracing::warn!(%host, "renaming the session there: {e}");
+                    }
+                });
+            }
+        }
+        self.save_record(id, true);
+    }
+
+    /// Session `id`'s record ([`records`]) from its row and its status.
+    fn record_of(&self, id: &str) -> Option<records::Record> {
+        let tab = self.tab_for_pane(id)?;
+        let root = catalog::find_project(&self.projects, &tab.project_id)
+            .map_or_else(|| tab.path.clone(), |p| p.root.clone());
+        Some(records::of(
+            catalog::bare_id(id),
+            &root,
+            &tab.name,
+            tab.title.as_deref(),
+            cli::kind_str(tab.kind),
+            &tab.path,
+            self.pane_status.get(id),
+        ))
+    }
+
+    /// Write session `id`'s record where it runs (off the UI thread for
+    /// another computer): `overwrite` when its agent changed, else only
+    /// when it has none.
+    fn save_record(&self, id: &str, overwrite: bool) {
+        let Some(rec) = self.record_of(id) else {
+            return;
+        };
+        let host = self.tab_for_pane(id).and_then(|w| w.host.clone());
+        let m = match self.machine_for(host.as_deref()) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        let job = move || {
+            let done = if overwrite { records::write(&m, &rec) } else { records::ensure(&m, &rec) };
+            if let Err(e) = done {
+                tracing::warn!(host = ?m.host(), session = %rec.id, "its record: {e}");
+            }
+        };
+        if host.is_some() {
+            std::thread::spawn(job);
+        } else {
+            job();
+        }
     }
 
     /// What session `id` says it is, for any computer that lists it
@@ -1351,16 +1509,16 @@ impl App {
                 )
             })
             .collect();
-        let leaves: Vec<hooks::server::HookLeaf<'_>> = owned
+        let leaves: Vec<hooks::event::HookLeaf<'_>> = owned
             .iter()
-            .map(|(id, path, agent, session)| hooks::server::HookLeaf {
+            .map(|(id, path, agent, session)| hooks::event::HookLeaf {
                 id,
                 path,
                 agent: agent.as_deref(),
                 session_id: session.as_deref(),
             })
             .collect();
-        hooks::server::resolve_hook_target(
+        hooks::event::resolve_hook_target(
             header.as_deref(),
             header_path.as_deref(),
             incoming.cwd.as_deref().map(std::path::Path::new),
@@ -1630,7 +1788,10 @@ impl App {
             let (project, name) = self.island_place(&pane);
             place.insert(pane, (project.unwrap_or_default(), name));
         }
-        self.islands.sync(&looked, &place, &known);
+        for pane in self.islands.sync(&looked, &place, &known) {
+            // Looked at here: every computer watching it lets it go.
+            self.announce_seen(&pane);
+        }
         Task::batch(scans.into_iter().map(|id| island_scan_later(id, ISLAND_SCAN_MS)))
     }
 
@@ -1696,6 +1857,8 @@ impl App {
     /// its tab pulled up.
     fn on_island_action(&mut self, a: AgentIslandAction) -> Task<Msg> {
         let pane = a.key;
+        // Answered or pulled up here: every computer lets it go.
+        self.announce_seen(&pane);
         match a.action {
             IslandAction::Show => {
                 self.islands.answer(&pane);
@@ -1861,7 +2024,8 @@ impl App {
                     return (Err("missing path".into()), Task::none());
                 };
                 let host = param_str(params, "host").filter(|h| !h.trim().is_empty());
-                match self.cli_open_project(&path, host.as_deref()) {
+                let session = param_str(params, "session");
+                match self.cli_open_project(&path, host.as_deref(), session) {
                     Ok((data, task)) => (Ok(data), task),
                     Err(e) => (Err(e), Task::none()),
                 }
@@ -2097,6 +2261,7 @@ impl App {
             }
         }
         self.persist_catalog();
+        self.restamp(&id);
         let ws = catalog::resolve_tab(&self.tabs, &id)?;
         Ok(cli::tab_json(ws, Some(&self.selected)))
     }
@@ -2167,6 +2332,7 @@ impl App {
         &mut self,
         path: &str,
         host: Option<&str>,
+        only: Option<String>,
     ) -> Result<(serde_json::Value, Task<Msg>), String> {
         let known = match host {
             Some(host) => {
@@ -2204,7 +2370,7 @@ impl App {
         let task = match host {
             None => {
                 let found = sessions::list_local();
-                self.on_host_sessions(&project_id, found)
+                self.on_host_sessions(&project_id, found, only)
             }
             Some(host) => {
                 let (host, project) = (host.to_string(), project_id.clone());
@@ -2217,6 +2383,7 @@ impl App {
                     move |found| Msg::HostSessions {
                         project: project.clone(),
                         found,
+                        only: only.clone(),
                     },
                 )
             }
@@ -2477,7 +2644,7 @@ impl App {
             std::fs::create_dir_all(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             Ok(path)
         });
-        match made.and_then(|path| self.cli_open_project(&path.to_string_lossy(), None)) {
+        match made.and_then(|path| self.cli_open_project(&path.to_string_lossy(), None, None)) {
             Ok((_, task)) => {
                 self.add = cards::AddDraft::default();
                 task
@@ -2537,11 +2704,13 @@ impl App {
     /// Project `project_id`'s computer listed its sessions: each one of
     /// this project not open here gets a window; with none anywhere, its
     /// main session starts (its id free on that computer). Then its
-    /// windows come up, the first in front.
+    /// windows come up, the first in front. With `only` (a session's id
+    /// there, the chooser's pick), that session alone.
     fn on_host_sessions(
         &mut self,
         project_id: &str,
         found: Result<Vec<sessions::HostSession>, String>,
+        only: Option<String>,
     ) -> Task<Msg> {
         let Some(project) = self.projects.iter().find(|p| p.id == project_id).cloned() else {
             return Task::none();
@@ -2551,7 +2720,11 @@ impl App {
             Vec::new()
         });
         let host = project.host.as_deref();
-        for s in found.iter().filter(|s| s.project.as_deref() == Some(project.root.as_path())) {
+        let wanted = |s: &&sessions::HostSession| {
+            s.project.as_deref() == Some(project.root.as_path())
+                && only.as_deref().is_none_or(|id| s.id == id)
+        };
+        for s in found.iter().filter(wanted) {
             let key = catalog::key_for(&s.id, host);
             if self.tabs.iter().any(|w| w.id == key) {
                 continue;
@@ -2591,6 +2764,12 @@ impl App {
             }
         }
         self.persist_catalog();
+        if let Some(key) = only.map(|id| catalog::key_for(&id, host)) {
+            if self.tabs.iter().any(|w| w.id == key) {
+                return Task::batch([learn, self.show_tab(&key)]);
+            }
+            tracing::warn!(session = %key, "the chosen session is not there any more");
+        }
         Task::batch([learn, self.show_project(project_id)])
     }
 

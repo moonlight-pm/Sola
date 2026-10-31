@@ -98,7 +98,7 @@ fn main() -> iced::Result {
                 item("junk", "Move to Junk", Some(KeyCode::X.chord())),
                 item("trash", "Delete", Some(KeyCode::D.chord())),
                 MenuItem::Divider,
-                item("undo", "Undo Move", Some(KeyCode::U.chord())),
+                item("undo_move", "Undo Move", Some(KeyCode::U.chord())),
             ],
         ))
         .app_menu_definition(menu(

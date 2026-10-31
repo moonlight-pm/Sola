@@ -416,8 +416,8 @@ mod tests {
         let path = tmp.path().join("state.yaml");
 
         let mut zones = HashMap::new();
-        zones.insert("sola-browser".to_string(), Zone::Left);
-        zones.insert("sola-terminal".to_string(), Zone::Right);
+        zones.insert("sola-browser".to_string(), Zone::Grid(1));
+        zones.insert("sola-terminal".to_string(), Zone::Grid(2));
 
         write_section(&path, &Topic::Zones(zones.clone())).unwrap();
         assert!(path.exists(), "write_section should create the file");
@@ -445,7 +445,7 @@ mod tests {
 
         let zones = std::collections::HashMap::from([(
             "sola-browser".to_string(),
-            crate::topics::Zone::Left,
+            crate::topics::Zone::Grid(1),
         )]);
         write_section(&path, &Topic::Zones(zones)).unwrap();
 
@@ -460,7 +460,7 @@ mod tests {
         let path = tmp.path().join("state.yaml");
 
         let mut zones = std::collections::HashMap::new();
-        zones.insert("sola-browser".to_string(), crate::topics::Zone::Left);
+        zones.insert("sola-browser".to_string(), crate::topics::Zone::Grid(1));
         write_section(&path, &Topic::Zones(zones)).unwrap();
         assert!(path.exists());
 

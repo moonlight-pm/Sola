@@ -1,11 +1,10 @@
 //! One workspace: every tab in bar order, each in its zone; what each
-//! tiled zone shows (and showed before it), whether Full or the halves
-//! are up, the floats' stacking, the last focused half, and the tab in
-//! Cinema.
+//! tiled zone shows (and showed before it), the order its zones were
+//! picked, the floats' stacking, and the zone last looked at.
 
-use sola_bus::topics::Zone;
+use sola_bus::topics::{Zone, ZoneLayout};
 
-use super::{FULL, HALVES, Tab, ZONES, is_half};
+use super::{FULL, Tab};
 
 pub(super) struct Column {
     pub zone: Zone,
@@ -17,6 +16,14 @@ pub(super) struct Column {
 }
 
 impl Column {
+    fn new(zone: Zone) -> Self {
+        Self {
+            zone,
+            shown: None,
+            recent: Vec::new(),
+        }
+    }
+
     /// Show `window_id` (a tiled zone).
     pub fn show(&mut self, window_id: u32) {
         self.shown = Some(window_id);
@@ -34,33 +41,62 @@ pub(super) struct Desk {
     pub columns: Vec<Column>,
     /// Floats bottom → top.
     pub float_z: Vec<u32>,
-    /// Full was picked last (else the halves were). See [`Self::on_screen`].
-    pub full: bool,
-    /// Where a new window goes while the halves are up: the last half
-    /// that had focus.
-    pub last_half: Zone,
-    /// The tab shown over the whole output, menubar and bar included.
-    pub cinema: Option<u32>,
+    /// The tiled zones, most recently picked first. See [`Self::on_screen`].
+    pub picks: Vec<Zone>,
+    /// The tiled zone last looked at (focused, or picked): where a new
+    /// window goes.
+    pub last_zone: Zone,
 }
 
 impl Desk {
-    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+    pub fn new(id: impl Into<String>, name: impl Into<String>, zones: &[Zone]) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
             tabs: Vec::new(),
-            columns: ZONES
-                .iter()
-                .map(|&zone| Column {
-                    zone,
-                    shown: None,
-                    recent: Vec::new(),
-                })
-                .collect(),
+            columns: zones.iter().map(|&z| Column::new(z)).collect(),
             float_z: Vec::new(),
-            full: false,
-            last_half: HALVES[0].0,
-            cinema: None,
+            picks: Vec::new(),
+            last_zone: FULL,
+        }
+    }
+
+    /// The layout changed: columns for new zones; a gone zone's tabs move
+    /// to the end of Full (shown there when Full showed nothing).
+    pub fn set_zones(&mut self, zones: &[Zone]) {
+        for &z in zones {
+            if !self.columns.iter().any(|c| c.zone == z) {
+                self.columns.push(Column::new(z));
+            }
+        }
+        let gone: Vec<Zone> = self
+            .columns
+            .iter()
+            .map(|c| c.zone)
+            .filter(|z| !zones.contains(z))
+            .collect();
+        if gone.is_empty() {
+            return;
+        }
+        let moved: Vec<u32> = self
+            .tabs
+            .iter()
+            .filter(|t| gone.contains(&t.zone))
+            .map(|t| t.window_id)
+            .collect();
+        for t in self.tabs.iter_mut().filter(|t| gone.contains(&t.zone)) {
+            t.zone = FULL;
+        }
+        self.columns.retain(|c| !gone.contains(&c.zone));
+        let full = self.column_mut(FULL);
+        for w in moved {
+            if full.shown.is_none() {
+                full.show(w);
+            }
+        }
+        self.picks.retain(|z| !gone.contains(z));
+        if gone.contains(&self.last_zone) {
+            self.last_zone = FULL;
         }
     }
 
@@ -93,25 +129,34 @@ impl Desk {
         self.tabs.iter().find(|t| t.window_id == window_id)
     }
 
-    /// Where a new tiled window goes: Full while it is up, or when no half
-    /// has a tab; else the last focused half.
-    pub fn landing(&self) -> Zone {
-        let has = |z: Zone| self.in_zone(z).next().is_some();
-        if (self.full && has(FULL)) || !HALVES.iter().any(|(z, _)| has(*z)) {
-            FULL
-        } else {
-            self.last_half
+    /// Where a new tiled window goes: the zone last looked at. The first
+    /// window of a workspace goes to Full, and so does one opened while
+    /// Cinema was looked at last (it takes no new windows). A zone that
+    /// emptied gives way to what is on screen now.
+    pub fn landing(&self, layout: &ZoneLayout) -> Zone {
+        if !self.tabs.iter().any(|t| t.zone != Zone::Float) {
+            return FULL;
+        }
+        match self.last_zone {
+            Zone::Cinema | Zone::Float => FULL,
+            z if self.in_zone(z).next().is_some() => z,
+            _ => self
+                .on_screen(layout, &|_| false)
+                .into_iter()
+                .find(|z| *z != Zone::Cinema)
+                .unwrap_or(FULL),
         }
     }
 
-    /// A tab in `zone` was shown: Full takes the screen, or the halves do.
+    /// A tab in tiled `zone` was shown: it comes first, and pushes off
+    /// whatever overlaps it.
     pub fn pick(&mut self, zone: Zone) {
-        if zone == FULL {
-            self.full = true;
-        } else if is_half(zone) {
-            self.full = false;
-            self.last_half = zone;
+        if zone == Zone::Float {
+            return;
         }
+        self.picks.retain(|z| *z != zone);
+        self.picks.insert(0, zone);
+        self.last_zone = zone;
     }
 
     /// Put `tab` at the end of the bar; a tiled zone shows it when `show`
@@ -143,9 +188,6 @@ impl Desk {
     /// before (else its next in the bar, else its previous).
     pub fn take(&mut self, window_id: u32) -> Option<(Zone, usize, Tab, bool)> {
         self.float_z.retain(|&w| w != window_id);
-        if self.cinema == Some(window_id) {
-            self.cinema = None;
-        }
         let at = self.tabs.iter().position(|t| t.window_id == window_id)?;
         let tab = self.tabs.remove(at);
         let zone = tab.zone;
@@ -188,7 +230,6 @@ impl Desk {
             c.recent.clear();
         }
         self.float_z.clear();
-        self.cinema = None;
     }
 
     /// What a tiled zone puts on screen: its shown tab, or, when that
@@ -205,29 +246,41 @@ impl Desk {
             .map(|t| t.window_id)
     }
 
-    /// The tiled zones on screen: Full alone when it was picked last (or
-    /// the halves have nothing to show) and has something to show itself;
-    /// else the halves with something to show, left to right.
-    pub fn on_screen(&self, hidden: &dyn Fn(&str) -> bool) -> Vec<Zone> {
-        let halves: Vec<Zone> = HALVES
-            .iter()
-            .map(|(z, _)| *z)
-            .filter(|z| self.visible_shown(*z, hidden).is_some())
-            .collect();
-        let full = self.visible_shown(FULL, hidden).is_some();
-        if full && (self.full || halves.is_empty()) {
-            vec![FULL]
-        } else {
-            halves
+    /// The tiled zones on screen. Walk the zones most recently picked
+    /// first (then the ones never picked: the grid's, Full, Cinema); each
+    /// with something to show takes its cells unless one already taken
+    /// overlaps it. So picking Full takes the halves off, and picking a
+    /// half takes Full off and brings the other half back. Listed in the
+    /// layout's order.
+    pub fn on_screen(&self, layout: &ZoneLayout, hidden: &dyn Fn(&str) -> bool) -> Vec<Zone> {
+        let mut order: Vec<Zone> = self.picks.clone();
+        for z in layout.tiled() {
+            if !order.contains(&z) {
+                order.push(z);
+            }
         }
+        let mut taken: Vec<Zone> = Vec::new();
+        for z in order {
+            if !layout.contains(z) || self.visible_shown(z, hidden).is_none() {
+                continue;
+            }
+            if taken.iter().any(|t| layout.overlaps(*t, z)) {
+                continue;
+            }
+            taken.push(z);
+        }
+        // In the layout's order (left to right, as the grid lists them).
+        let tiled = layout.tiled();
+        taken.sort_by_key(|z| tiled.iter().position(|t| t == z));
+        taken
     }
 
-    /// The tab focus belongs on: Full's when it is up, else the last
-    /// focused half's (else the other half's).
-    pub fn front(&self, hidden: &dyn Fn(&str) -> bool) -> Option<u32> {
-        let on = self.on_screen(hidden);
-        let zone = if on.contains(&self.last_half) {
-            self.last_half
+    /// The tab focus belongs on: the last looked-at zone's when it is on
+    /// screen, else the first on screen's.
+    pub fn front(&self, layout: &ZoneLayout, hidden: &dyn Fn(&str) -> bool) -> Option<u32> {
+        let on = self.on_screen(layout, hidden);
+        let zone = if on.contains(&self.last_zone) {
+            self.last_zone
         } else {
             *on.first()?
         };

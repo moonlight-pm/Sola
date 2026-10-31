@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn browser_plan_copies_its_program_and_links_cef() {
-        let pkg = &PACKAGES[1];
+        let pkg = PACKAGES.iter().find(|p| p.name == "sola-browser").unwrap();
         let t = text(&Plan {
             name: pkg.name.into(),
             build_needs: vec![("pkg:sola-build".into(), "sha256-b".into())],
