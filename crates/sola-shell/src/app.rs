@@ -1669,6 +1669,12 @@ impl Shell {
         });
     }
 
+    /// An app that isn't Sola's (no menu of its own): the shell gives it a
+    /// menu, and closes its windows on Super+W.
+    pub fn has_synthesized_menu(&self, app_id: &str) -> bool {
+        app_id != Self::APP_ID && self.menus.get_menu(app_id).is_none()
+    }
+
     /// Build the list of chords the shell wants River to grab: every
     /// system key now (`crate::bindings`), and the focused app's Super
     /// menu keys.
@@ -1690,6 +1696,9 @@ impl Shell {
                         .into_iter()
                         .filter(|b| b.meta),
                 );
+            }
+            if self.has_synthesized_menu(focused) {
+                bindings.push(crate::menu::state::SYNTHESIZED_CLOSE_WINDOW_KEY);
             }
         }
 
@@ -2512,6 +2521,16 @@ impl Shell {
                     self.emit_registered_chords();
                     return self.handle_window_action(action);
                 }
+                if action_id == crate::menu::state::SYNTHESIZED_CLOSE_WINDOW_ACTION {
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
+                    self.emit_composition();
+                    self.emit_registered_chords();
+                    return match self.focused_window_id {
+                        Some(wid) => iced::Task::done(Msg::CloseWindow(wid)),
+                        None => iced::Task::none(),
+                    };
+                }
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
                     if app_id == Self::APP_ID && (action_id == "exit" || action_id == "quit") {
                         // Broadcast so sola-river (and later session) exit,
@@ -2521,7 +2540,7 @@ impl Shell {
                         mark_clean_shutdown();
                         let _ = bus.emit(Topic::Shutdown);
                         return iced::exit();
-                    } else if action_id == "_close" {
+                    } else if action_id == crate::menu::state::SYNTHESIZED_CLOSE_ACTION {
                         if let Some(ref focused) = self.focused_app_id.clone() {
                             let _ = bus.emit(Topic::CloseApp(focused.clone()));
                         }
@@ -3418,6 +3437,23 @@ mod hide_tests {
                 .any(|c| c.keycode == KeyCode::K && c.meta && !c.shift && !c.ctrl && !c.alt),
             "Super+K must be a registered shell chord (Omarchy cheatsheet)"
         );
+    }
+
+    #[test]
+    fn super_w_closes_an_app_without_a_menu_of_its_own() {
+        let mut shell = test_shell(
+            vec![win(1, "sola-terminal", "Terminal"), win(2, "steam", "Steam")],
+            Some("steam"),
+            &["steam"],
+        );
+        shell.menus.set_menu(sola_bus::topics::AppMenuPayload {
+            app_id: "sola-terminal".into(),
+            menus: vec![],
+        });
+        let close = |s: &Shell| s.shell_key_chords().contains(&KeyCode::W.meta());
+        assert!(close(&shell), "Steam's Super+W is the shell's Close Window");
+        shell.focused_app_id = Some("sola-terminal".into());
+        assert!(!close(&shell), "Terminal keeps its own Super+W");
     }
 
     #[test]

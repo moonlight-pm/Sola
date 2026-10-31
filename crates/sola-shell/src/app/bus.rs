@@ -1217,9 +1217,16 @@ impl Shell {
             return self.run_act(act);
         }
 
-        // Focused app menu shortcut lookup.
+        // Focused app menu shortcut lookup (the shell's own menu for an app
+        // without one: Super+W closes its window).
         if let Some(focused) = self.focused_app_id.clone() {
-            if let Some(action) = self.menus.lookup_shortcut(&chord, &focused) {
+            let synthesized = (self.has_synthesized_menu(&focused)
+                && chord == crate::menu::state::SYNTHESIZED_CLOSE_WINDOW_KEY)
+                .then(|| MenuActionPayload {
+                    app_id: focused.clone(),
+                    action_id: crate::menu::state::SYNTHESIZED_CLOSE_WINDOW_ACTION.into(),
+                });
+            if let Some(action) = self.menus.lookup_shortcut(&chord, &focused).or(synthesized) {
                 tracing::info!(
                     app_id = %action.app_id,
                     action_id = %action.action_id,
