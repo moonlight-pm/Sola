@@ -29,6 +29,34 @@ own `iced::application` or `iced::daemon` from the kit's parts.
 | `menu`, `float`, `app::window_settings` | The app's menus in its titlebars and the standard Window menu; moving and resizing floating windows; window settings that carry the application's Wayland `app_id` and turn off server decorations |
 | `tabs` | A window per document: tells the Shell which window is which tab, so it keeps its place in the bar, puts an activity mark on its row, and asks the Shell to show it |
 
+### Text fields
+
+Every one-line text field in a Sola application is the kit's
+(`components::text_input`), and each one has, with no code in the
+application:
+
+- **Undo and Redo.** A field keeps its own history, up to 100 steps.
+  Ctrl+Z undoes; Ctrl+Shift+Z or Ctrl+Y redoes. A run of typing is one
+  step: it ends after a second's pause, where a new word starts, or when
+  the caret moves. A run of Backspace or Delete is one step the same way.
+  A paste, a cut, a deleted selection, Ctrl+K (delete to the end) and a
+  value from the right-click menu are each a step of their own. A new
+  edit after an Undo drops what Redo had. When the application puts a
+  different value in the field (a cleared search, a reset form), the
+  history starts again, and it goes when the field leaves the window. A
+  password field keeps a history too, wiped from memory as it is dropped.
+- **The right-click menu** ([Shell](sola-shell.md#the-right-click-menu)):
+  Cut, Copy, Paste, Select All and the vault's values at the caret.
+
+The Shell takes the ⌘ keys of an application's menus, so the Edit menu's
+**Undo** (⌘Z), **Redo** (⌘⇧Z), **Cut**, **Copy**, **Paste** and **Select
+All** reach the application, not the field. An application hands them to
+the focused field with `text_input::edit_focused`, which answers with the
+field's id and new value for the application to store as typing would
+have. Vault, Mail, Settings and Browser do. In an application whose menus
+have no Undo or Redo, ⌘Z and ⌘⇧Z reach the field and work as Ctrl+Z and
+Ctrl+Shift+Z.
+
 ## The theme on the bus
 
 The theme travels as the persistent topic `Theme`

@@ -14,6 +14,9 @@
 //! - **Desk menu:** a right-click asks the shell for it and the field
 //!   applies the pick (`desk.rs`, [`crate::desk_menu`]): Edit, or a vault
 //!   value at the caret.
+//! - **Undo / Redo:** each field keeps its own history (`history.rs`):
+//!   Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y (Super+Z / Super+Shift+Z when they
+//!   reach it), and the Edit menu's through [`edit_focused`].
 //! - **Future:** try stock `iced::widget::text_input` + `Catalog` style; delete
 //!   this fork if behavior parity holds. Until then, consumers should import
 //!   kit’s path and treat the API as stable.
@@ -50,6 +53,7 @@
 //! ```
 mod desk;
 mod editor;
+mod history;
 mod menu_edit;
 mod value;
 
@@ -59,7 +63,7 @@ pub use cursor::Cursor;
 pub use menu_edit::{MenuEdit, MenuEdited, edit_focused};
 pub use value::Value;
 
-use editor::Editor;
+use history::Step;
 
 use iced_core::alignment;
 use iced_core::clipboard::{self, Clipboard};
@@ -628,6 +632,9 @@ where
         if self.on_input.is_none() {
             state.is_pasting = None;
         }
+
+        // A value the field did not publish: its history is of another.
+        state.history.sync(&self.value);
     }
 
     fn size(&self) -> Size<Length> {
@@ -667,9 +674,11 @@ where
                 cursor: state.cursor,
                 editable: self.on_input.is_some(),
                 secure: self.is_secure,
+                history: std::mem::take(&mut state.history),
             };
             operation.custom(self.id.as_ref(), layout.bounds(), &mut focused);
             state.cursor = focused.cursor;
+            state.history = focused.history;
         }
     }
 
@@ -915,10 +924,14 @@ where
                                 );
                             }
 
-                            let mut editor = Editor::new(&mut self.value, &mut state.cursor);
-                            editor.delete();
+                            let contents = state.history.edit(
+                                Step::Own,
+                                &mut self.value,
+                                &mut state.cursor,
+                                |editor| editor.delete(),
+                            );
 
-                            let message = (on_input)(editor.contents());
+                            let message = (on_input)(contents);
                             shell.publish(message);
                             shell.capture_event();
 
@@ -949,13 +962,17 @@ where
                                 }
                             };
 
-                            let mut editor = Editor::new(&mut self.value, &mut state.cursor);
-                            editor.paste(content.clone());
+                            let contents = state.history.edit(
+                                Step::Own,
+                                &mut self.value,
+                                &mut state.cursor,
+                                |editor| editor.paste(content.clone()),
+                            );
 
                             let message = if let Some(paste) = &self.on_paste {
-                                (paste)(editor.contents())
+                                (paste)(contents)
                             } else {
-                                (on_input)(editor.contents())
+                                (on_input)(contents)
                             };
                             shell.publish(message);
                             shell.capture_event();
@@ -997,13 +1014,32 @@ where
                             let to = self.value.len();
                             if from < to {
                                 state.cursor.select_range(from, to);
-                                let mut editor = Editor::new(&mut self.value, &mut state.cursor);
-                                editor.delete();
-                                let message = (on_input)(editor.contents());
+                                let contents = state.history.edit(
+                                    Step::Own,
+                                    &mut self.value,
+                                    &mut state.cursor,
+                                    |editor| editor.delete(),
+                                );
+                                let message = (on_input)(contents);
                                 shell.publish(message);
                                 focus.updated_at = Instant::now();
                                 update_cache(state, &self.value);
                             }
+                            shell.capture_event();
+                            return;
+                        }
+                        // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y, and Super+Z /
+                        // Super+Shift+Z when the shell lets them through:
+                        // the field's own history (`history.rs`).
+                        Some(c @ ('z' | 'Z' | 'y' | 'Y'))
+                            if state.keyboard_modifiers.command()
+                                || (c.eq_ignore_ascii_case(&'z')
+                                    && state.keyboard_modifiers.logo()) =>
+                        {
+                            let redo =
+                                c.eq_ignore_ascii_case(&'y') || state.keyboard_modifiers.shift();
+                            focus.updated_at = Instant::now();
+                            self.history_key(state, redo, layout, renderer, shell);
                             shell.capture_event();
                             return;
                         }
@@ -1018,11 +1054,14 @@ where
                         state.is_pasting = None;
 
                         if let Some(c) = text.chars().next().filter(|c| !c.is_control()) {
-                            let mut editor = Editor::new(&mut self.value, &mut state.cursor);
+                            let contents = state.history.edit(
+                                Step::Type(c.is_whitespace()),
+                                &mut self.value,
+                                &mut state.cursor,
+                                |editor| editor.insert(c),
+                            );
 
-                            editor.insert(c);
-
-                            let message = (on_input)(editor.contents());
+                            let message = (on_input)(contents);
                             shell.publish(message);
                             shell.capture_event();
 
@@ -1061,10 +1100,14 @@ where
                                 }
                             }
 
-                            let mut editor = Editor::new(&mut self.value, &mut state.cursor);
-                            editor.backspace();
+                            let contents = state.history.edit(
+                                Step::Erase,
+                                &mut self.value,
+                                &mut state.cursor,
+                                |editor| editor.backspace(),
+                            );
 
-                            let message = (on_input)(editor.contents());
+                            let message = (on_input)(contents);
                             shell.publish(message);
                             shell.capture_event();
 
@@ -1088,10 +1131,14 @@ where
                                 }
                             }
 
-                            let mut editor = Editor::new(&mut self.value, &mut state.cursor);
-                            editor.delete();
+                            let contents = state.history.edit(
+                                Step::Erase,
+                                &mut self.value,
+                                &mut state.cursor,
+                                |editor| editor.delete(),
+                            );
 
-                            let message = (on_input)(editor.contents());
+                            let message = (on_input)(contents);
                             shell.publish(message);
                             shell.capture_event();
 
@@ -1261,13 +1308,17 @@ where
                             return;
                         };
 
-                        let mut editor = Editor::new(&mut self.value, &mut state.cursor);
-                        editor.paste(Value::new(text));
+                        let contents = state.history.edit(
+                            Step::Type(text.chars().all(char::is_whitespace)),
+                            &mut self.value,
+                            &mut state.cursor,
+                            |editor| editor.paste(Value::new(text)),
+                        );
 
                         focus.updated_at = Instant::now();
                         state.is_pasting = None;
 
-                        let message = (on_input)(editor.contents());
+                        let message = (on_input)(contents);
                         shell.publish(message);
                         shell.capture_event();
 
@@ -1426,6 +1477,8 @@ pub struct State<P: text::Paragraph> {
     keyboard_modifiers: keyboard::Modifiers,
     /// The desk menu this field opened, until its pick is applied.
     desk: Option<u64>,
+    /// What the field held before its edits, for Undo and Redo.
+    history: history::History,
     // TODO: Add stateful horizontal scrolling offset
 }
 

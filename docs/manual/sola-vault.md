@@ -435,6 +435,7 @@ session, decrypted key and all, in
   unlock while Bitwarden cannot be reached has no items to show; the
   list says so until a sync works.
 - Nothing syncs on a timer.
-- **Edit → Undo** and **Redo** do nothing.
+- An item's notes have no **Undo** or **Redo**; the one-line fields do,
+  each with its own history ([Text fields](theme.md#text-fields)).
 - The sort order and the generator's options are not kept after Vault
   quits.

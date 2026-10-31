@@ -95,7 +95,8 @@ impl App {
     pub(super) fn on_menu_action(&mut self, action: &str) -> Task<Msg> {
         let unlocked = self.phase() == Phase::Unlocked;
         match action {
-            menus::UNDO | menus::REDO => Task::none(),
+            menus::UNDO => self.menu_edit(MenuEdit::Undo),
+            menus::REDO => self.menu_edit(MenuEdit::Redo),
             menus::CUT => self.menu_edit(MenuEdit::Cut),
             menus::COPY => self.menu_edit(MenuEdit::Copy),
             menus::PASTE => self.menu_paste(),

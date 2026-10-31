@@ -3,7 +3,8 @@
 //! The shell grabs an app menu's Super chords at the compositor (Super+V,
 //! Super+C, …), so the input never sees the key; the app gets a
 //! `MenuAction` instead. [`edit_focused`] applies that action where the
-//! key would have: at the focused input's caret and selection. The app
+//! key would have: at the focused input's caret and selection, or for
+//! Undo and Redo, through the input's own history (`history.rs`). The app
 //! stores the new value as it would an `on_input` value.
 
 use std::any::Any;
@@ -13,7 +14,7 @@ use iced_core::Rectangle;
 use iced_core::widget::Id;
 use iced_core::widget::operation::{Operation, Outcome};
 
-use super::editor::Editor;
+use super::history::{History, Step};
 use super::{Cursor, Value};
 
 /// An Edit menu command.
@@ -24,13 +25,17 @@ pub enum MenuEdit {
     Copy,
     Cut,
     SelectAll,
+    /// Back one step in the input's history.
+    Undo,
+    /// Forward again after an Undo.
+    Redo,
 }
 
 /// What [`edit_focused`] did to the focused input.
 #[derive(Debug, Clone, Default)]
 pub struct MenuEdited {
     pub id: Option<Id>,
-    /// The input's new value (paste, cut).
+    /// The input's new value (paste, cut, undo, redo).
     pub value: Option<String>,
     /// Text for the clipboard (copy, cut).
     pub copied: Option<String>,
@@ -50,6 +55,8 @@ pub(super) struct Focused {
     /// Has `on_input` (a read-only input only copies and selects).
     pub editable: bool,
     pub secure: bool,
+    /// The input's history, lent for the operation.
+    pub history: History,
 }
 
 impl Focused {
@@ -66,18 +73,30 @@ impl Focused {
             MenuEdit::Paste(text) if self.editable => {
                 // As the key path: a field is one line.
                 let text: String = text.chars().filter(|c| !c.is_control()).collect();
-                let mut editor = Editor::new(&mut self.value, &mut self.cursor);
-                editor.paste(Value::new(&text));
-                done.value = Some(editor.contents());
+                done.value = Some(self.history.edit(
+                    Step::Own,
+                    &mut self.value,
+                    &mut self.cursor,
+                    |editor| editor.paste(Value::new(&text)),
+                ));
             }
             MenuEdit::Copy if !self.secure => done.copied = selected,
             MenuEdit::Cut if self.editable && !self.secure && selected.is_some() => {
                 done.copied = selected;
-                let mut editor = Editor::new(&mut self.value, &mut self.cursor);
-                editor.delete();
-                done.value = Some(editor.contents());
+                done.value = Some(self.history.edit(
+                    Step::Own,
+                    &mut self.value,
+                    &mut self.cursor,
+                    |editor| editor.delete(),
+                ));
             }
             MenuEdit::SelectAll => self.cursor.select_all(&self.value),
+            MenuEdit::Undo if self.editable => {
+                done.value = self.history.undo(&mut self.value, &mut self.cursor);
+            }
+            MenuEdit::Redo if self.editable => {
+                done.value = self.history.redo(&mut self.value, &mut self.cursor);
+            }
             _ => {}
         }
         done
@@ -120,6 +139,7 @@ mod tests {
             cursor,
             editable: true,
             secure: false,
+            history: History::default(),
         }
     }
 
@@ -150,5 +170,52 @@ mod tests {
         let mut f = focused("hunter2", 0, 7);
         f.secure = true;
         assert!(f.apply(&MenuEdit::Copy, None).copied.is_none());
+    }
+
+    #[test]
+    fn undo_takes_back_a_paste_and_redo_puts_it_again() {
+        let mut f = focused("ann@a.com", 9, 9);
+        f.apply(&MenuEdit::Paste(", bob@b.com".into()), None);
+        let done = f.apply(&MenuEdit::Undo, None);
+        assert_eq!(done.value.as_deref(), Some("ann@a.com"));
+        assert_eq!(f.apply(&MenuEdit::Undo, None).value, None);
+        let done = f.apply(&MenuEdit::Redo, None);
+        assert_eq!(done.value.as_deref(), Some("ann@a.com, bob@b.com"));
+    }
+
+    #[test]
+    fn undo_takes_back_a_cut() {
+        let mut f = focused("ann@a.com", 3, 9);
+        f.apply(&MenuEdit::Cut, None);
+        let done = f.apply(&MenuEdit::Undo, None);
+        assert_eq!(done.value.as_deref(), Some("ann@a.com"));
+        assert!(done.copied.is_none());
+    }
+
+    #[test]
+    fn the_operation_undoes_with_the_history_the_input_lent() {
+        let mut f = focused("ann", 3, 3);
+        f.apply(&MenuEdit::Paste("@a.com".into()), None);
+        let id = Id::new("to");
+        let mut op = EditFocused {
+            edit: MenuEdit::Undo,
+            done: None,
+        };
+        op.custom(Some(&id), Rectangle::default(), &mut f);
+        let Outcome::Some(Some(done)) = op.finish() else {
+            panic!("the focused input answers");
+        };
+        assert_eq!(done.id, Some(id));
+        assert_eq!(done.value.as_deref(), Some("ann"));
+        // The input keeps the history back, Redo waiting in it.
+        assert_eq!(f.apply(&MenuEdit::Redo, None).value.as_deref(), Some("ann@a.com"));
+    }
+
+    #[test]
+    fn a_read_only_input_does_not_undo() {
+        let mut f = focused("ann", 3, 3);
+        f.apply(&MenuEdit::Paste("@a.com".into()), None);
+        f.editable = false;
+        assert_eq!(f.apply(&MenuEdit::Undo, None).value, None);
     }
 }

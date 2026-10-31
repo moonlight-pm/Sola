@@ -26,9 +26,9 @@ These are the default keys. Every one of them can be changed in
 that another action holds is offered to move, never shared. A system key
 always includes Super. The zone keys are set in **Settings → Zones**
 ([Zones](#zones)). The same page lists the apps' menu keys: the ones
-every app shares (Undo, Cut, Copy, Paste, Select All, Find), then each
-running app's own; two apps may use the same key, but no app a system
-key.
+every app shares (Undo, Redo, Cut, Copy, Paste, Select All, Find), then
+each running app's own; two apps may use the same key, but no app a
+system key.
 
 | Chord | Action |
 |-------|--------|

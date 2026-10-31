@@ -10,7 +10,7 @@ use iced_core::time::Instant;
 use iced_core::{Layout, Shell};
 use sola_bus::topics::DeskMenuContext;
 
-use super::editor::Editor;
+use super::history::Step;
 use super::{
     Catalog, Focus, State, TextInput, Value, alignment_offset, find_cursor_position,
     replace_paragraph,
@@ -117,9 +117,12 @@ where
                     let text = text.or_else(|| clipboard.read(clipboard::Kind::Standard));
                     // As the key path: a field is one line.
                     let text: String = text.unwrap_or_default().chars().filter(|c| !c.is_control()).collect();
-                    let mut editor = Editor::new(&mut self.value, &mut state.cursor);
-                    editor.paste(Value::new(&text));
-                    let value = editor.contents();
+                    let value = state.history.edit(
+                        Step::Own,
+                        &mut self.value,
+                        &mut state.cursor,
+                        |editor| editor.paste(Value::new(&text)),
+                    );
                     changed = Some(match &self.on_paste {
                         Some(on_paste) => on_paste(value),
                         None => (self.on_input.as_ref().expect("editable"))(value),
@@ -134,9 +137,13 @@ where
             FieldOp::Cut if !self.is_secure => {
                 if let (Some(on_input), Some(text)) = (&self.on_input, selected) {
                     copy(text, clipboard);
-                    let mut editor = Editor::new(&mut self.value, &mut state.cursor);
-                    editor.delete();
-                    changed = Some(on_input(editor.contents()));
+                    let value = state.history.edit(
+                        Step::Own,
+                        &mut self.value,
+                        &mut state.cursor,
+                        |editor| editor.delete(),
+                    );
+                    changed = Some(on_input(value));
                 }
             }
             FieldOp::SelectAll => state.cursor.select_all(&self.value),
@@ -149,9 +156,13 @@ where
                             .filter(|c| !c.is_control())
                             .collect::<String>(),
                     );
-                    let mut editor = Editor::new(&mut self.value, &mut state.cursor);
-                    editor.paste(Value::new(&text));
-                    changed = Some(on_input(editor.contents()));
+                    let value = state.history.edit(
+                        Step::Own,
+                        &mut self.value,
+                        &mut state.cursor,
+                        |editor| editor.paste(Value::new(&text)),
+                    );
+                    changed = Some(on_input(value));
                 }
             }
             FieldOp::Copy | FieldOp::Cut => {}

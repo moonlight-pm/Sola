@@ -608,6 +608,8 @@ impl App {
 
     fn on_menu_action(&mut self, action: &str) -> Task<Msg> {
         let msg = match action {
+            "undo" => return self.menu_edit(MenuEdit::Undo),
+            "redo" => return self.menu_edit(MenuEdit::Redo),
             "cut" => return self.menu_edit(MenuEdit::Cut),
             "copy" => return self.menu_edit(MenuEdit::Copy),
             "paste" => return self.edit_paste(),
@@ -626,7 +628,7 @@ impl App {
             "trash" => Msg::MoveSelected("Trash".into()),
             "junk" => Msg::MoveSelected("Junk".into()),
             "inbox" => Msg::MoveSelected("INBOX".into()),
-            "undo_move" | "undo" => Msg::Undo,
+            "undo_move" => Msg::Undo,
             "copy_message" => Msg::CopyBody,
             "empty_junk" => Msg::AskErase("Junk".into()),
             "empty_trash" => Msg::AskErase("Trash".into()),

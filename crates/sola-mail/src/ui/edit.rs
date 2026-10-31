@@ -1,9 +1,10 @@
-//! The Edit menu: Cut, Copy, Paste, Select All.
+//! The Edit menu: Undo, Redo, Cut, Copy, Paste, Select All.
 //!
 //! A focused field (To, Cc, Subject, Search) takes them first, at its
-//! caret (`text_input::edit_focused`: the shell grabs the Super chords,
-//! so the field never sees the key). Otherwise they go to the draft's
-//! body, or to the open letter.
+//! caret or through its own history (`text_input::edit_focused`: the
+//! shell grabs the Super chords, so the field never sees the key).
+//! Otherwise they go to the draft's body, or to the open letter; Undo
+//! with no draft open undoes the last move.
 
 use iced::Task;
 use iced::widget::text_editor;
@@ -41,6 +42,9 @@ impl App {
                     self.select_all();
                     Task::none()
                 }
+                // The body (iced's text editor) keeps no history.
+                MenuEdit::Undo if self.compose.is_none() => self.update(Msg::Undo),
+                MenuEdit::Undo | MenuEdit::Redo => Task::none(),
             };
         };
         let stored = match (done.id, done.value) {

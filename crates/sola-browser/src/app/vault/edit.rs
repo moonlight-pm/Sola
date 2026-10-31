@@ -1,6 +1,7 @@
 //! The Edit menu on the sheet's fields: the shell takes ⌘C / ⌘V / ⌘X / ⌘A
-//! at the compositor, so the app applies them to the focused field
-//! itself and stores the new value as `on_input` would have.
+//! and ⌘Z / ⌘⇧Z at the compositor, so the app applies them to the focused
+//! field itself (Undo and Redo through the field's own history) and
+//! stores the new value as `on_input` would have.
 
 use iced::Task;
 use iced::widget::text_editor;
@@ -22,7 +23,8 @@ impl<E: Engine> App<E> {
             EditCmd::Copy => self.vault_menu_edit(MenuEdit::Copy),
             EditCmd::Cut => self.vault_menu_edit(MenuEdit::Cut),
             EditCmd::SelectAll => self.vault_menu_edit(MenuEdit::SelectAll),
-            EditCmd::Undo | EditCmd::Redo => Task::none(),
+            EditCmd::Undo => self.vault_menu_edit(MenuEdit::Undo),
+            EditCmd::Redo => self.vault_menu_edit(MenuEdit::Redo),
         }
     }
 
@@ -139,6 +141,8 @@ impl<E: Engine> App<E> {
                     .then_some(text_editor::Action::Edit(text_editor::Edit::Delete)),
                 selection,
             ),
+            // iced's text editor keeps no history.
+            MenuEdit::Undo | MenuEdit::Redo => (None, None),
         };
         if let Some(action) = action.filter(|_| !self.vault.busy) {
             self.vault_edit_notes(action);

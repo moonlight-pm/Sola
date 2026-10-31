@@ -48,6 +48,9 @@ fn main() -> iced::Result {
         .app_menu_definition(menu(
             "Edit",
             vec![
+                item("undo", "Undo", Some(KeyCode::Z.meta())),
+                item("redo", "Redo", Some(KeyCode::Z.meta_shift())),
+                MenuItem::Divider,
                 item("cut", "Cut", Some(KeyCode::X.meta())),
                 item("copy", "Copy", Some(KeyCode::C.meta())),
                 item("paste", "Paste", Some(KeyCode::V.meta())),
