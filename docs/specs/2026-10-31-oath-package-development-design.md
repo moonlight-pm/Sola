@@ -45,9 +45,10 @@ release tools.
    built_at}`. It is metadata, not content: never part of the hash (or
    every commit would move every package), never a reason to move or
    restart anything. Oath carries it on the `pkg` object (`source`,
-   shown by `oath get`); until a machine's `oath` has the field, the tool
-   keeps it in `~/.local/state/oath-dev/pins.json` (per machine, keyed by
-   `pkg:<name>` with the hash it describes).
+   shown by `oath get`); `cargo make oath apply` sets it with each pin
+   (`oath set --from-json`, Release A's `oath`). Pins made before are in
+   `~/.local/state/oath-dev/pins.json` (per machine, keyed by
+   `pkg:<name>` with the hash it describes), read and no longer written.
 2. **An overlay keeps what is live.** Before pinning, the tool reads the
    live pin's source. Same repo and its commit not in `HEAD`'s history →
    refuse, naming it (`pkg:sola runs bdbc8d5a from zone-layout; this tree
@@ -164,5 +165,5 @@ from master or `next`, with the guard; a desk restart is asked for.
 5. Sola published the split from master@92815a65 (2026-10-31, from
    novus; `pkg:sola` 7a03048c5a39 and 12 more, entries with their
    source handed to Oath) → Oath pins it in one commit → Release B (`oath update --confirm --reboot`, Joshua's call).
-   Then `sola-make` sets `source=` with each pin (`oath set
-   --from-json`).
+   `sola-make` sets `source` with each pin (`oath set --from-json`) —
+   done 2026-10-31, once Release A's `oath` was on every machine.

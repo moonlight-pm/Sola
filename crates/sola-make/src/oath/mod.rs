@@ -118,16 +118,14 @@ fn apply(staged: &[Staged], force: bool) -> Result<(), String> {
         // A package this machine does not have yet (an app split out of
         // the core): made, and its /bin names pass to it in this apply.
         if was == "none" && !catalog::exists(id) {
-            catalog::create(id, hash, needs)?;
+            catalog::create(id, hash, needs, &me)?;
         } else {
-            catalog::set(id, hash, needs)?;
+            catalog::set(id, hash, needs, &me)?;
         }
         println!("[oath] {id}: {} -> {}", short(was), short(hash));
     }
     let ids: Vec<String> = moves.iter().map(|(id, ..)| id.clone()).collect();
     catalog::apply(&ids)?;
-    let pins: Vec<(String, String)> = moves.iter().map(|(id, hash, ..)| (id.clone(), hash.clone())).collect();
-    provenance::record(&pins, &me)?;
     println!("[oath] applied {} from {}", ids.join(" "), me.short());
     Ok(())
 }

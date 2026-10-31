@@ -59,7 +59,7 @@ Run through every item. Mark N/A only with a reason.
    - **Known dogfood state** if runtime facts changed.  
    - **Applied / published**: name each package with its source, not a
      bare hash — `pkg:sola f2406bf… from next@ce6408de on novus` (the
-     `oath-packages` skill; `~/.local/state/oath-dev/pins.json` has it).
+     `oath-packages` skill; `oath get pkg:X` shows it).
      Another session may have applied since: check before writing what runs.  
    - **Locked models** only if a product lock was decided.  
    - Keep CURRENT a **dashboard** — do not dump long history here.

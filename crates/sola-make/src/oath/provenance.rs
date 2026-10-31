@@ -1,12 +1,13 @@
 //! Where a pinned package came from (the `oath-packages` skill;
 //! `docs/specs/2026-10-31-oath-package-development-design.md`).
 //!
-//! A pin is a hash. Beside it this machine keeps who made it — repo,
-//! commit, branch, dirty, machine, time — in
+//! A pin is a hash. Who made it — repo, commit, branch, dirty, machine,
+//! time — goes on the `pkg` object as `source` (Oath R47) with the pin.
+//! Pins made before Oath had the field are in
 //! `~/.local/state/oath-dev/pins.json` (each entry with the hash it
-//! describes; one whose hash is not the live one is stale), until `oath`
-//! carries it on the `pkg` object. Never in the tree: that would move every
-//! package on every commit.
+//! describes; one whose hash is not the live one is stale), read here and
+//! no longer written. Never in the tree: that would move every package on
+//! every commit.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -116,32 +117,24 @@ fn read() -> BTreeMap<String, Pin> {
         .unwrap_or_default()
 }
 
-/// Where `id`'s live pin `live_hash` came from, if this machine knows.
+/// Where `id`'s live pin `live_hash` came from, if this machine knows:
+/// Oath's `source` on the pin, else what `pins.json` recorded before it.
 pub fn live(id: &str, live_hash: &str) -> Option<Source> {
-    read()
-        .remove(id)
-        .filter(|p| p.hash == live_hash)
-        .map(|p| p.source)
+    oath_source(id, live_hash).or_else(|| {
+        read()
+            .remove(id)
+            .filter(|p| p.hash == live_hash)
+            .map(|p| p.source)
+    })
 }
 
-/// Remember that `id` is pinned to `hash` from `source`.
-pub fn record(pins: &[(String, String)], source: &Source) -> Result<(), String> {
-    let mut all = read();
-    for (id, hash) in pins {
-        all.insert(
-            id.clone(),
-            Pin {
-                hash: hash.clone(),
-                source: source.clone(),
-            },
-        );
+fn oath_source(id: &str, live_hash: &str) -> Option<Source> {
+    let out = Command::new("oath").args(["--json", "get", id]).output().ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    if v["desired"]["hash"] != live_hash {
+        return None;
     }
-    let path = pins_path();
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    let text = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))
+    serde_json::from_value(v["desired"]["source"].clone()).ok()
 }
 
 /// This checkout's history has `commit` (an unknown commit: no).
