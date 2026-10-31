@@ -79,8 +79,8 @@ fn apply(staged: &[Staged], force: bool) -> Result<(), String> {
         let id = s.pkg.id();
         let was = catalog::live_hash(&id).unwrap_or_else(|_| "none".into());
         let mut needs = Vec::new();
-        for need in s.pkg.needs {
-            let need_hash = match stored.iter().find(|(n, _)| n == need) {
+        for need in s.pkg.runtime_needs() {
+            let need_hash = match stored.iter().find(|(n, _)| *n == need) {
                 Some((_, h)) => h.clone(),
                 None => catalog::live_hash(&format!("pkg:{need}"))?,
             };
@@ -115,7 +115,13 @@ fn apply(staged: &[Staged], force: bool) -> Result<(), String> {
         eprintln!("[oath] --force: {msg}");
     }
     for (id, hash, needs, was) in &moves {
-        catalog::set(id, hash, needs)?;
+        // A package this machine does not have yet (an app split out of
+        // the core): made, and its /bin names pass to it in this apply.
+        if was == "none" && !catalog::exists(id) {
+            catalog::create(id, hash, needs)?;
+        } else {
+            catalog::set(id, hash, needs)?;
+        }
         println!("[oath] {id}: {} -> {}", short(was), short(hash));
     }
     let ids: Vec<String> = moves.iter().map(|(id, ..)| id.clone()).collect();

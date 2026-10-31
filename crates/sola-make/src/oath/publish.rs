@@ -192,10 +192,11 @@ fn closure<'a>(names: impl Iterator<Item = &'a &'a str>) -> Result<Vec<(String, 
     Ok(out.into_iter().collect())
 }
 
-/// `pkg.needs` at the hashes just built (Sola's own) or live here.
+/// `pkg`'s run-time needs at the hashes just built (Sola's own) or live
+/// here.
 fn run_needs(pkg: &Package, built: &BTreeMap<&str, String>) -> Result<Vec<(String, String)>, String> {
-    pkg.needs
-        .iter()
+    pkg.runtime_needs()
+        .into_iter()
         .map(|n| {
             let hash = match built.get(n) {
                 Some(h) => h.clone(),

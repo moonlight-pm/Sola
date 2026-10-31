@@ -88,6 +88,26 @@ pub fn set(id: &str, hash: &str, needs: &[(String, String)]) -> Result<(), Strin
     .map(drop)
 }
 
+/// The catalog has `id` (a `pkg` this machine knows, present or not).
+pub fn exists(id: &str) -> bool {
+    Command::new("oath")
+        .args(["--json", "get", id])
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+/// Make `pkg:<name>` pinned to `hash` with `needs` (it runs at apply).
+pub fn create(id: &str, hash: &str, needs: &[(String, String)]) -> Result<(), String> {
+    run(Command::new("sudo").args([
+        "oath",
+        "new",
+        id,
+        &format!("hash={hash}"),
+        &format!("needs={}", needs_json(needs)),
+    ]))
+    .map(drop)
+}
+
 /// `oath apply` these ids together.
 pub fn apply(ids: &[String]) -> Result<(), String> {
     run(Command::new("sudo").args(["oath", "apply"]).args(ids)).map(drop)

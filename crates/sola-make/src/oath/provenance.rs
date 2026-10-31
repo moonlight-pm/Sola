@@ -148,6 +148,7 @@ pub fn record(pins: &[(String, String)], source: &Source) -> Result<(), String> 
 pub fn has_commit(commit: &str) -> bool {
     Command::new("git")
         .args(["merge-base", "--is-ancestor", commit, "HEAD"])
+        .stderr(std::process::Stdio::null())
         .status()
         .is_ok_and(|s| s.success())
 }
