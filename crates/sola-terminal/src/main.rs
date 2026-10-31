@@ -513,6 +513,14 @@ impl App {
                 self.focused = Some(id);
                 Task::none()
             }
+            window::Event::Unfocused => {
+                // A key released while another surface has the keyboard (a
+                // switcher, the KVM taking it) never reaches us: forget the
+                // held modifiers, or Super stays down.
+                self.keys_held_mods = keyboard::Modifiers::empty();
+                self.keyboard_mods = keyboard::Modifiers::empty();
+                Task::none()
+            }
             window::Event::CloseRequested => match self.tab_of.get(&id).cloned() {
                 Some(tab) => self.close_tab(&tab),
                 None => window::close(id),

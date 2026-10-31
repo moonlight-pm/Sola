@@ -20,7 +20,7 @@ useful for any layer client (KVM, future panels, etc.).
 |-------|----------------------|
 | Global bind | Logs `bound river_layer_shell_v1 (layer-shell clients enabled)` |
 | Outputs / seat | `get_output` / `get_seat` children; first output `set_default` on manage |
-| Exclusive focus | Skips `focus_window` / `clear_focus` while layer owns focus |
+| Exclusive focus | Skips `focus_window` / `clear_focus` while layer owns focus; on release, applies the held request or refocuses the window that had the keyboard |
 | Chord suppress | Disables shell xkb chords (Meta+Space, Meta+Tab, …) during exclusive focus so keys reach the layer client (e.g. Mac Cmd via sola-kvm) |
 
 ## Operator check

@@ -24,9 +24,12 @@ xkbcommon = "0.8"
 arboard = "3"
 # In-process data-control (text + image/png). Oath has no wl-copy on PATH.
 wl-clipboard-rs = "0.9"
-# Paired traffic (`seal`): every packet sealed with the pair key.
-chacha20poly1305 = "0.10"
+# Paired traffic (`link`): Noise IK between the two machines' static keys.
+snow = "0.10"
 getrandom = "0.2"
+# Server capture through the compositor: pointer lock, relative motion,
+# shortcuts inhibitor.
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1425,6 +1425,10 @@ impl<E: Engine> App<E> {
                 }
                 Task::none()
             }
+            WE::Unfocused => {
+                crate::input::forget_held();
+                Task::none()
+            }
             WE::CloseRequested => match self.windows.tab_of(window) {
                 Some(tab) => self.update_msg(Msg::CloseTab(tab)),
                 None => iced::window::close(window),

@@ -22,6 +22,33 @@ describes both the open default and the closed setup, and what each leaves open.
 
 ## 1. KVM pairing (Sola: `sola-kvm`, `apps/sola-kvm-mac`) — built 2026-10-29
 
+**Superseded 2026-10-30 (Oath R44: "make sola-kvm secure before novus drives
+canto again"), built on `next`:**
+
+- **Keys:** each machine has a static X25519 key pair
+  (`~/.config/sola-kvm/key`, 0600, and `key.pub`) and keeps the other's
+  public key (`peer.pub`), swapped like SSH host keys: `sola-kvm pair <peer>`
+  sends the server's public key over ssh to `pair --accept`, which keeps it
+  and prints the peer's; `pair --public` and `--accept` pair by hand.
+- **Link** (`crates/sola-kvm/src/link.rs`, included by the Mac agent): Noise
+  IK (`Noise_IK_25519_ChaChaPoly_BLAKE2s`, the `snow` crate), the server the
+  initiator. Input as WireGuard does it: `Init` carries the server's clock
+  (nanoseconds) and the peer takes only a later one; data carries an
+  explicit counter as the nonce, a window of 64 takes each once; a new
+  session every 2 min, none used after 3. Clipboard: a handshake per TCP
+  connection, then records (`u16` length, Noise message) that a large frame
+  spans. No clock agreement needed between the machines.
+- **Neither side starts unpaired**, nor with keys it cannot read, nor with
+  an old shared `pair.key`. The listener drops anything not from the peer's
+  key; the clipboard refuses another key's connection.
+- **Server capture** without evdev: `capture.rs` — the layer-shell edge strip
+  takes the keyboard (exclusive), locks the pointer, reads relative motion
+  and holds a keyboard-shortcuts inhibitor (rivulet `be2a874d`) while
+  remote; Ctrl+Alt+Esc comes back. Listeners keep the virtual pointer and
+  keyboard (no uinput).
+
+The shared-key design below is what it replaced.
+
 - `sola-kvm pair <peer>` on the server makes a 32-byte key, installs it on the
   peer over ssh (`ssh <peer> sola-kvm pair --accept`, key on stdin; a Mac:
   `--remote-bin sola-kvm-mac`), then saves it here: `~/.config/sola-kvm/pair.key`

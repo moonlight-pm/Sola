@@ -234,7 +234,8 @@ It publishes the list again after every launch, close, and exit. An
 application you close, or one that quits or crashes, leaves the list.
 
 An application that exits because its compositor went (rivulet restarted
-under the running desk, say by an Oath update that moved it) did not
+under the running desk, say by an `oath apply` that moved `pkg:rivulet`)
+did not
 close: it stays on the list, and once a new compositor has answered for
 2 s it is started again. `sola-session` tells by the compositor's Wayland
 socket: the one the application was launched on no longer answers, or a

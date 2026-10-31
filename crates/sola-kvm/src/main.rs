@@ -13,8 +13,8 @@ use tracing::{error, info, warn};
 use sola_kvm::config::Config;
 use sola_kvm::input::InputBackendKind;
 use sola_kvm::protocol::{Edge, Packet};
+use sola_kvm::link::{self, Keys};
 use sola_kvm::run;
-use sola_kvm::seal::{self, Channel, Seal};
 use sola_kvm::udp::Sender;
 
 #[derive(Parser, Debug)]
@@ -46,15 +46,16 @@ enum Command {
     /// Run the server: edge enter/leave + virtual cursor + UDP emit.
     ///
     /// Input backends:
-    /// - `evdev` (default): layer-shell physical edge + EVIOCGRAB while remote
+    /// - `wayland` (default): through the compositor — a layer-shell strip on
+    ///   the shared edge; while remote it holds the keyboard, a pointer lock
+    ///   and a shortcuts inhibitor. Ctrl+Alt+Esc comes back.
     /// - `feed`: stdin line protocol (`rel`/`abs`/`btn`/`key`/`scroll`/`leave`)
     /// - `demo`: scripted smoke sequence then idle
     ///
-    /// When sola manages this binary it runs `server --input evdev` with no
-    /// extra flags. Bare `sola-kvm` (no subcommand) also starts the server.
+    /// Bare `sola-kvm` (no subcommand) also starts the server.
     Server {
-        /// Input backend: feed | demo | evdev
-        #[arg(long, default_value = "evdev")]
+        /// Input backend: wayland | feed | demo (`evdev` means wayland).
+        #[arg(long, default_value = "wayland")]
         input: String,
     },
 
@@ -71,19 +72,25 @@ enum Command {
         dump: bool,
     },
 
-    /// Pair this machine (the server) with its peer: make a key, install it
-    /// on the peer over ssh, then keep it here. From then on each side takes
-    /// only the other's input and clipboard. Restart sola-kvm on both after.
+    /// Pair this machine (the server) with its peer by public key, as SSH
+    /// swaps host keys: each keeps its own key pair and the other's public
+    /// key, swapped over ssh. From then on each side takes only the other's
+    /// input and clipboard, and neither starts unpaired. Restart sola-kvm on
+    /// both after.
     Pair {
         /// The peer's ssh host (default: the config's peer host).
         peer: Option<String>,
         /// The KVM binary to run on the peer (`sola-kvm-mac` on a Mac).
         #[arg(long, default_value = "sola-kvm")]
         remote_bin: String,
-        /// Take a key on stdin (what `pair` runs on the peer).
-        #[arg(long, conflicts_with_all = ["peer", "forget"])]
+        /// Read the other machine's public key on stdin, keep it, and print
+        /// this machine's (what `pair` runs on the peer; also pairs by hand).
+        #[arg(long, conflicts_with_all = ["peer", "forget", "public"])]
         accept: bool,
-        /// Remove this machine's key: unpaired, open to the network again.
+        /// Print this machine's public key (made the first time).
+        #[arg(long, conflicts_with_all = ["peer", "forget"])]
+        public: bool,
+        /// Forget the peer's key: unpaired, and sola-kvm will not start.
         #[arg(long, conflicts_with = "peer")]
         forget: bool,
     },
@@ -109,7 +116,7 @@ fn main() {
     let config_path = cli.config.unwrap_or_else(Config::default_path);
 
     match cli.command {
-        None => cmd_server(&config_path, "evdev"),
+        None => cmd_server(&config_path, "wayland"),
         Some(Command::Show) => cmd_show(&config_path),
         Some(Command::Init { force }) => cmd_init(&config_path, force),
         Some(Command::Server { input }) => cmd_server(&config_path, &input),
@@ -119,91 +126,118 @@ fn main() {
             peer,
             remote_bin,
             accept,
+            public,
             forget,
-        }) => cmd_pair(&config_path, peer, &remote_bin, accept, forget),
+        }) => cmd_pair(&config_path, peer, &remote_bin, accept, public, forget),
     }
 }
 
-/// The pair key, if this machine is paired. A key file that cannot be read
-/// stops the process: running unpaired would open the port to anyone.
-fn pair_key() -> Option<[u8; 32]> {
-    let path = seal::key_path();
-    match seal::load_key(&path) {
-        Ok(Some(key)) => {
-            info!(path = %path.display(), "paired: input and clipboard sealed with the pair key");
-            Some(key)
+/// The pairing. Unpaired, or keys that cannot be read, stop the process:
+/// sola-kvm sends and takes only the paired machine's traffic.
+fn paired() -> Keys {
+    let dir = link::dir();
+    match link::load(&dir) {
+        Ok(Some(keys)) => {
+            info!(
+                peer = %link::hex(&keys.peer),
+                "paired: input and clipboard go only to and from the paired machine"
+            );
+            keys
         }
         Ok(None) => {
-            warn!("not paired: input and clipboard are open to the network (`sola-kvm pair`)");
-            None
+            error!("not paired, not starting: run `sola-kvm pair <peer>` on the server");
+            std::process::exit(1);
         }
         Err(e) => {
-            error!(path = %path.display(), "pair key unreadable, not starting: {e}");
+            error!(dir = %dir.display(), "pairing unreadable, not starting: {e}");
             std::process::exit(1);
         }
     }
 }
 
-fn cmd_pair(path: &PathBuf, peer: Option<String>, remote_bin: &str, accept: bool, forget: bool) {
-    let key_path = seal::key_path();
+fn cmd_pair(
+    path: &PathBuf,
+    peer: Option<String>,
+    remote_bin: &str,
+    accept: bool,
+    public: bool,
+    forget: bool,
+) {
+    let dir = link::dir();
     let fail = |msg: String| -> ! {
         eprintln!("sola-kvm pair: {msg}");
         std::process::exit(1);
     };
     if forget {
-        match std::fs::remove_file(&key_path) {
-            Ok(()) => println!("Unpaired: removed {}. Restart sola-kvm.", key_path.display()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => println!("Not paired."),
-            Err(e) => fail(format!("remove {}: {e}", key_path.display())),
+        match link::forget_peer(&dir) {
+            Ok(true) => println!("Unpaired: forgot the peer's key. sola-kvm will not start until paired again."),
+            Ok(false) => println!("Not paired."),
+            Err(e) => fail(format!("forget the peer in {}: {e}", dir.display())),
         }
         return;
     }
+    let (_, own) = link::own_or_new(&dir)
+        .unwrap_or_else(|e| fail(format!("this machine's key in {}: {e}", dir.display())));
+    if public {
+        println!("{}", link::hex(&own));
+        return;
+    }
     if accept {
+        // Standard output carries only this machine's public key: the server
+        // reads it back over ssh.
         let mut line = String::new();
         if let Err(e) = std::io::stdin().read_line(&mut line) {
             fail(format!("read the key: {e}"));
         }
-        let Some(key) = seal::parse_key(&line) else {
-            fail("stdin is not a pair key (64 hex digits)".into());
+        let Some(theirs) = link::parse_hex(&line) else {
+            fail("stdin is not a public key (64 hex digits)".into());
         };
-        if let Err(e) = seal::save_key(&key_path, &key) {
-            fail(format!("save {}: {e}", key_path.display()));
+        if let Err(e) = link::save_peer(&dir, &theirs) {
+            fail(format!("save the peer's key in {}: {e}", dir.display()));
         }
-        println!("Paired: key saved at {}.", key_path.display());
+        println!("{}", link::hex(&own));
+        eprintln!("Paired with {}.", link::hex(&theirs));
         return;
     }
     let host = peer.unwrap_or_else(|| load(path).peer.host);
-    let key = seal::new_key();
-    // The peer first: if it cannot take the key, this side stays unpaired too.
+    // The peer first: it keeps this machine's key and answers with its own.
     let mut child = std::process::Command::new("ssh")
         .args(["-o", "BatchMode=yes", &host, remote_bin, "pair", "--accept"])
         .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap_or_else(|e| fail(format!("ssh {host}: {e}")));
     {
         use std::io::Write;
         let mut stdin = child.stdin.take().expect("piped stdin");
-        if let Err(e) = writeln!(stdin, "{}", seal::key_hex(&key)) {
-            fail(format!("send the key to {host}: {e}"));
+        if let Err(e) = writeln!(stdin, "{}", link::hex(&own)) {
+            fail(format!("send this machine's key to {host}: {e}"));
         }
     }
-    match child.wait() {
-        Ok(status) if status.success() => {}
-        Ok(status) => fail(format!(
-            "`{remote_bin} pair --accept` on {host} failed ({status}); nothing changed here"
-        )),
-        Err(e) => fail(format!("ssh {host}: {e}")),
-    }
-    if let Err(e) = seal::save_key(&key_path, &key) {
+    let out = child
+        .wait_with_output()
+        .unwrap_or_else(|e| fail(format!("ssh {host}: {e}")));
+    if !out.status.success() {
         fail(format!(
-            "{host} has the key but saving it here failed ({}: {e}); run pair again",
-            key_path.display()
+            "`{remote_bin} pair --accept` on {host} failed ({}); nothing changed here",
+            out.status
+        ));
+    }
+    let answer = String::from_utf8_lossy(&out.stdout);
+    let Some(theirs) = answer.lines().rev().find_map(link::parse_hex) else {
+        fail(format!("{host} answered with no public key; nothing changed here"));
+    };
+    if let Err(e) = link::save_peer(&dir, &theirs) {
+        fail(format!(
+            "{host} keeps this machine's key, but keeping its key here failed ({}: {e}); run pair again",
+            dir.display()
         ));
     }
     println!(
-        "Paired with {host}: key saved at {} here and there.\n\
-         Restart sola-kvm on both machines (it reads the key when it starts).",
-        key_path.display()
+        "Paired with {host}.\n  this machine: {}\n  {host}: {}\n\
+         Restart sola-kvm on both machines (it reads the keys when it starts).",
+        link::hex(&own),
+        link::hex(&theirs)
     );
 }
 
@@ -288,11 +322,11 @@ fn cmd_server(path: &PathBuf, input: &str) {
     let backend = match InputBackendKind::parse(input) {
         Some(b) => b,
         None => {
-            error!(input, "unknown --input backend (want feed | demo | evdev)");
+            error!(input, "unknown --input backend (want wayland | feed | demo)");
             std::process::exit(2);
         }
     };
-    if let Err(e) = run::run_server(&cfg, backend, pair_key()) {
+    if let Err(e) = run::run_server(&cfg, backend, paired()) {
         error!("{e}");
         std::process::exit(1);
     }
@@ -300,10 +334,10 @@ fn cmd_server(path: &PathBuf, input: &str) {
 
 fn cmd_listen(path: &PathBuf, bind: Option<String>, dump: bool) {
     let cfg = load(path);
-    let key = pair_key();
+    let keys = paired();
     let addr = bind.unwrap_or_else(|| format!("0.0.0.0:{}", cfg.peer.port));
     let result = if dump {
-        sola_kvm::inject::run_dump(&addr, key)
+        sola_kvm::inject::run_dump(&addr, keys)
     } else {
         let clip = if cfg.clipboard.enable {
             Some(sola_kvm::clip::ClipConfig {
@@ -312,7 +346,7 @@ fn cmd_listen(path: &PathBuf, bind: Option<String>, dump: bool) {
                 max_bytes: cfg.clipboard.max_bytes,
                 sync_on_enter: cfg.clipboard.sync_on_enter,
                 sync_on_leave: cfg.clipboard.sync_on_leave,
-                seal: key.map(|k| Seal::new(&k, Channel::Clipboard)),
+                keys: keys.clone(),
             })
         } else {
             None
@@ -322,7 +356,7 @@ fn cmd_listen(path: &PathBuf, bind: Option<String>, dump: bool) {
             cfg.layout.mac_width,
             cfg.layout.mac_height,
             clip,
-            key,
+            keys,
         )
     };
     if let Err(e) = result {
@@ -334,13 +368,17 @@ fn cmd_listen(path: &PathBuf, bind: Option<String>, dump: bool) {
 fn cmd_send_test(path: &PathBuf, to: Option<String>, x: i32, y: i32) {
     let cfg = load(path);
     let peer = to.unwrap_or_else(|| cfg.peer_addr());
-    let mut sender = match Sender::connect(&peer) {
-        Ok(s) => s.sealed(pair_key().as_ref()),
+    let mut sender = match Sender::connect(&peer, paired()) {
+        Ok(s) => s,
         Err(e) => {
             error!("connect {peer}: {e}");
             std::process::exit(1);
         }
     };
+    if !sender.wait_up(Duration::from_secs(3)) {
+        error!(peer = %sender.peer(), "the paired peer did not answer the handshake");
+        std::process::exit(1);
+    }
     info!(peer = %sender.peer(), "sending test sequence");
 
     let packets = [

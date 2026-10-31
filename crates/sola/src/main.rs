@@ -249,13 +249,13 @@ fn launch<'a>(
     // self-restart watcher — sola is already restarting these on
     // binary change, so without this they'd double-restart (kit
     // exec_self followed instantly by sola kill + launch).
-    // sola-kvm is a multi-command CLI; managed mode is always the KVM server
-    // with the physical-edge (layer-shell) + evdev path.
+    // sola-kvm is a multi-command CLI; managed mode is always the KVM server,
+    // capturing through the compositor.
     let result = unsafe {
         let mut cmd = Command::new(&bin);
         cmd.env("SOLA_NO_SELF_WATCH", "1");
         if name == "sola-kvm" {
-            cmd.args(["server", "--input", "evdev"]);
+            cmd.args(["server"]);
         }
         cmd.pre_exec(sola_core::process::set_pdeathsig_and_leader)
             .spawn()

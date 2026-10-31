@@ -43,11 +43,17 @@ image (`cargo make build --profile desk` in Oath's repository) and
 installing it. Each package's programs are linked into `/bin`;
 `oath get pkg:sola` shows the pin and what is live.
 
-`oath update` does not move these three packages: a package the profile
-pins from elsewhere keeps the machine's own pin, and only its needs move.
-To take a published release, set each pin to the entry the release's
-publish printed, which is the JSON `oath set --from-json` takes, and apply
-the three together:
+`oath update` moves these three packages to the pins of the output it
+takes while the machine still has the pins its current output set (an
+output lists them; older ones did not, and an update from one of those
+leaves them). Once you move a pin yourself, with `cargo make oath apply`
+or `oath set`, the machine keeps it, and an update moves only its needs.
+Take an update that moves Sola with `--reboot`: an update without it
+leaves the desk's services running their old programs (see
+[Updates](process-manager.md#updates)). To take a published Sola release
+on a machine that keeps its own pins, set each pin to the entry the
+release's publish printed, which is the JSON `oath set --from-json`
+takes, and apply the three together:
 
 ```bash
 sudo oath set pkg:sola --from-json '{"present": true, "hash": "sha256-…", "needs": […]}'

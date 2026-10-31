@@ -37,6 +37,10 @@ pub struct LayerShellState {
     /// Whether we have disabled shell xkb chords for the exclusive-focus
     /// period. Used to re-enable them exactly once on focus release.
     pub chords_suppressed: bool,
+    /// The window that had the keyboard when a layer surface took it. River
+    /// leaves focus where it is when exclusive focus ends, so it goes back
+    /// here unless the shell asked for another meanwhile.
+    pub focus_before: Option<u32>,
     /// First manage sequence after an output appears should mark a default
     /// output for layer clients that don't pick one.
     pub need_set_default: bool,
@@ -151,8 +155,11 @@ impl Dispatch<RiverLayerShellSeatV1, ()> for AppData {
             Event::FocusExclusive => {
                 info!("layer-shell exclusive keyboard focus");
                 state.layer_shell.exclusive_focus = true;
-                // Don't keep a stale window focus claim while River owns focus.
-                state.focused_window = None;
+                // Don't keep a stale window focus claim while River owns
+                // focus; remember it for the release.
+                if let Some(id) = state.focused_window.take() {
+                    state.layer_shell.focus_before = Some(id);
+                }
                 // Disable shell chords (Meta+Space launcher, Meta+Tab, …) so
                 // those keys reach the layer client (e.g. sola-kvm → Mac Cmd).
                 // enable/disable are manage-sequence-only.
@@ -166,6 +173,14 @@ impl Dispatch<RiverLayerShellSeatV1, ()> for AppData {
             Event::FocusNone => {
                 info!("layer-shell focus released");
                 state.layer_shell.exclusive_focus = false;
+                // River leaves the keyboard on the layer surface: give it
+                // back to the window that had it.
+                let before = state.layer_shell.focus_before.take();
+                if state.pending.focus.is_none() {
+                    if let Some(id) = before {
+                        state.pending.focus = Some(crate::pending::FocusAction::Window(id));
+                    }
+                }
                 // Re-run manage so pending Focus applies and shell chords
                 // are re-enabled.
                 state.pending.manage_dirty = true;

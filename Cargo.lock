@@ -55,6 +55,17 @@ dependencies = [
 
 [[package]]
 name = "aes"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
+dependencies = [
+ "cfg-if",
+ "cipher 0.4.4",
+ "cpufeatures 0.2.17",
+]
+
+[[package]]
+name = "aes"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8eb277bec05f56a0e0591f155a484cbd0f4f07ff2905051a48c72f004f7ed58"
@@ -67,15 +78,29 @@ dependencies = [
 
 [[package]]
 name = "aes-gcm"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "831010a0f742e1209b3bcea8fab6a8e149051ba6099432c8cb2cc117dec3ead1"
+dependencies = [
+ "aead 0.5.2",
+ "aes 0.8.4",
+ "cipher 0.4.4",
+ "ctr 0.9.2",
+ "ghash 0.5.1",
+ "subtle",
+]
+
+[[package]]
+name = "aes-gcm"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fdf011db2e21ce0d575593d749db5554b47fed37aff429e4dc50bc91ac93a028"
 dependencies = [
  "aead 0.6.1",
- "aes",
+ "aes 0.9.2",
  "cipher 0.5.2",
- "ctr",
- "ghash",
+ "ctr 0.10.1",
+ "ghash 0.6.0",
  "subtle",
  "zeroize",
 ]
@@ -258,7 +283,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -269,7 +294,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -331,7 +356,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7af50940b73bf4e16c15c448a2b121c63f2d68e3e54b6a8731673cb4aa0cdff5"
 dependencies = [
  "base64ct",
- "blake2",
+ "blake2 0.11.0-rc.6",
  "cpufeatures 0.3.0",
  "kdf",
  "password-hash",
@@ -805,7 +830,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_repr",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
  "uuid",
@@ -823,7 +848,7 @@ dependencies = [
  "bitwarden-uuid",
  "serde",
  "serde_repr",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "uuid",
 ]
 
@@ -858,7 +883,7 @@ dependencies = [
  "serde_json",
  "serde_qs 0.15.0",
  "serde_repr",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "tracing",
  "url",
  "uuid",
@@ -881,8 +906,8 @@ name = "bitwarden-crypto"
 version = "3.0.0"
 source = "git+https://github.com/bitwarden/sdk-internal?rev=2c940917dca13c62640709f5584f069ccb6369e6#2c940917dca13c62640709f5584f069ccb6369e6"
 dependencies = [
- "aes",
- "aes-gcm",
+ "aes 0.9.2",
+ "aes-gcm 0.11.0",
  "argon2",
  "bitwarden-api-key-connector",
  "bitwarden-encoding",
@@ -913,7 +938,7 @@ dependencies = [
  "sha1 0.11.0",
  "sha2 0.11.0",
  "subtle",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
  "typenum",
@@ -943,7 +968,7 @@ dependencies = [
  "bitwarden-crypto",
  "bitwarden-sync",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -954,7 +979,7 @@ dependencies = [
  "data-encoding",
  "data-encoding-macro",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -995,7 +1020,7 @@ dependencies = [
  "num-traits",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "url",
  "uuid",
  "zeroize",
@@ -1021,7 +1046,7 @@ dependencies = [
  "reqwest 0.13.4",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "tracing",
  "uuid",
 ]
@@ -1041,7 +1066,7 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -1060,7 +1085,7 @@ dependencies = [
  "data-encoding",
  "keepass",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "uuid",
  "zeroize",
 ]
@@ -1101,7 +1126,7 @@ dependencies = [
  "serde",
  "serde_json",
  "subtle",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "zeroize",
 ]
 
@@ -1118,7 +1143,7 @@ dependencies = [
  "bitwarden-organization-crypto",
  "chrono",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "uuid",
 ]
 
@@ -1159,7 +1184,7 @@ dependencies = [
  "bitwarden-user-crypto-management",
  "bitwarden-vault",
  "reqwest-middleware",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "tracing",
 ]
 
@@ -1184,7 +1209,7 @@ source = "git+https://github.com/bitwarden/sdk-internal?rev=2c940917dca13c626407
 dependencies = [
  "bitwarden-error",
  "rand 0.10.2",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "uuid",
 ]
 
@@ -1206,7 +1231,7 @@ dependencies = [
  "serde",
  "serde_repr",
  "sha2 0.11.0",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "uuid",
  "zeroize",
 ]
@@ -1231,7 +1256,7 @@ dependencies = [
  "reqwest 0.13.4",
  "reqwest-middleware",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
 ]
@@ -1256,7 +1281,7 @@ dependencies = [
  "serde",
  "ssh-cipher",
  "ssh-key",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -1272,7 +1297,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
  "tsify",
@@ -1299,7 +1324,7 @@ dependencies = [
  "bitwarden-state",
  "chrono",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
 ]
@@ -1311,7 +1336,7 @@ source = "git+https://github.com/bitwarden/sdk-internal?rev=2c940917dca13c626407
 dependencies = [
  "bitwarden-error",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1325,7 +1350,7 @@ dependencies = [
  "bitwarden-core",
  "bitwarden-crypto",
  "bitwarden-state",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "tracing",
 ]
 
@@ -1347,7 +1372,7 @@ dependencies = [
  "reqwest 0.13.4",
  "serde",
  "serde_bytes",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
  "uuid",
@@ -1400,12 +1425,21 @@ dependencies = [
  "sha1 0.11.0",
  "sha2 0.11.0",
  "subtle",
- "thiserror 1.0.69",
+ "thiserror 2.0.19",
  "tokio",
  "tokio-util",
  "tracing",
  "uuid",
  "zxcvbn",
+]
+
+[[package]]
+name = "blake2"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
+dependencies = [
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -2266,7 +2300,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
- "rand_core 0.6.4",
  "typenum",
 ]
 
@@ -2310,6 +2343,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "704a3c26996a80471189265814dbc2c257598b96b8a7feae2d31ace646bb9782"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "ctr"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0369ee1ad671834580515889b80f2ea915f23b8be8d0daa4bbaf2ac5c7590835"
+dependencies = [
+ "cipher 0.4.4",
 ]
 
 [[package]]
@@ -2915,7 +2957,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3446,11 +3488,21 @@ dependencies = [
 
 [[package]]
 name = "ghash"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0d8a4362ccb29cb0b265253fb0a2728f592895ee6854fd9bc13f2ffda266ff1"
+dependencies = [
+ "opaque-debug",
+ "polyval 0.6.2",
+]
+
+[[package]]
+name = "ghash"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2eecf2d5dc9b66b732b97707a0210906b1d30523eb773193ab777c0c84b3e8d5"
 dependencies = [
- "polyval",
+ "polyval 0.7.3",
 ]
 
 [[package]]
@@ -4693,7 +4745,7 @@ version = "0.13.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8014931bc1d5d427563b2c75e7b240a92353463e89cb2b4e21c98fb776c1c28"
 dependencies = [
- "aes",
+ "aes 0.9.2",
  "base64 0.23.1",
  "block-modes",
  "byteorder",
@@ -5174,7 +5226,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "536bfad37a309d62069485248eeaba1e8d9853aaf951caaeaed0585a95346f08"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5413,7 +5465,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5885,7 +5937,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.45.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6266,8 +6318,8 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63d440a804ec8d6fafbb6b84471e013286658d373248927692ab3366686220ca"
 dependencies = [
- "aes",
- "aes-gcm",
+ "aes 0.9.2",
+ "aes-gcm 0.11.0",
  "cbc",
  "der 0.8.1",
  "pbkdf2 0.13.0",
@@ -6384,6 +6436,18 @@ dependencies = [
  "cpufeatures 0.3.0",
  "universal-hash 0.6.1",
  "zeroize",
+]
+
+[[package]]
+name = "polyval"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d1fe60d06143b2430aa532c94cfe9e29783047f06c0d7fd359a9a51b729fa25"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "opaque-debug",
+ "universal-hash 0.5.1",
 ]
 
 [[package]]
@@ -6711,7 +6775,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7341,7 +7405,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7425,7 +7489,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7446,7 +7510,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8194,13 +8258,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "snow"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "599b506ccc4aff8cf7844bc42cf783009a434c1e26c964432560fb6d6ad02d82"
+dependencies = [
+ "aes-gcm 0.10.3",
+ "blake2 0.10.6",
+ "chacha20poly1305 0.10.1",
+ "curve25519-dalek 4.1.3",
+ "getrandom 0.3.4",
+ "ring",
+ "rustc_version",
+ "sha2 0.10.9",
+ "subtle",
+]
+
+[[package]]
 name = "socket2"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8442,17 +8523,18 @@ name = "sola-kvm"
 version = "0.1.0"
 dependencies = [
  "arboard",
- "chacha20poly1305 0.10.1",
  "clap",
  "getrandom 0.2.17",
  "libc",
  "rustix 1.1.4",
  "serde",
+ "snow",
  "sola-core",
  "tempfile",
  "toml 0.8.23",
  "tracing",
  "wayland-client",
+ "wayland-protocols",
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "wl-clipboard-rs",
@@ -8771,8 +8853,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d801accda99469cde6d73da741422610fdf6508a72d9a69d1b55cb241c720597"
 dependencies = [
  "aead 0.6.1",
- "aes",
- "aes-gcm",
+ "aes 0.9.2",
+ "aes-gcm 0.11.0",
  "chacha20 0.10.1",
  "cipher 0.5.2",
  "ctutils",
@@ -8988,10 +9070,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9509,7 +9591,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10257,7 +10339,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -10855,8 +10937,8 @@ checksum = "0efddf28e82b0708d683ea8383665f65d5de10b758cefedc238a4f9a89a33ae9"
 dependencies = [
  "aead 0.6.1",
  "aead-stream",
- "aes",
- "aes-gcm",
+ "aes 0.9.2",
+ "aes-gcm 0.11.0",
  "cipher 0.5.2",
 ]
 

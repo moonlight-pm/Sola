@@ -5,12 +5,11 @@ use std::time::{Duration, Instant};
 
 use tracing::{debug, error, info, warn};
 
-use crate::barrier::EdgeBarrier;
+use crate::capture::{Capture, CaptureEvent};
 use crate::clip::{self, ClipHandle};
 use crate::config::Config;
-use crate::input::{
-    coalesce_input_events, demo_events, EvdevSource, FeedSource, InputBackendKind, EVDEV_POLL,
-};
+use crate::input::{coalesce_input_events, demo_events, FeedSource, InputBackendKind};
+use crate::link::Keys;
 use crate::metrics::Metrics;
 use crate::protocol::Packet;
 use crate::server::{InputEvent, Session, SideEffect};
@@ -23,20 +22,16 @@ use crate::udp::Sender;
 /// pending motion first.
 const MOTION_MIN_INTERVAL: Duration = Duration::from_millis(8);
 
-/// Run the Phase C server until input EOF (feed) or forever (evdev/demo tail).
-///
-/// `key`: the pair key (`sola-kvm pair`); with one, input and clipboard are
-/// sealed and only a peer with the same key takes them.
-pub fn run_server(
-    cfg: &Config,
-    backend: InputBackendKind,
-    key: Option<[u8; 32]>,
-) -> Result<(), String> {
+/// How long the server waits on its inputs before pumping the link again.
+const IDLE_WAIT: Duration = Duration::from_millis(100);
+
+/// Run the server until input EOF (feed) or forever (wayland, demo tail).
+/// Input and clipboard go only to the paired peer (`keys`).
+pub fn run_server(cfg: &Config, backend: InputBackendKind, keys: Keys) -> Result<(), String> {
     let layout = cfg.layout();
     let peer = cfg.peer_addr();
-    let mut sender = Sender::connect(&peer)
-        .map_err(|e| format!("udp connect {peer}: {e}"))?
-        .sealed(key.as_ref());
+    let mut sender =
+        Sender::connect(&peer, keys.clone()).map_err(|e| format!("udp connect {peer}: {e}"))?;
 
     info!(
         peer = %peer,
@@ -67,7 +62,7 @@ pub fn run_server(
             max_bytes: cfg.clipboard.max_bytes,
             sync_on_enter: cfg.clipboard.sync_on_enter,
             sync_on_leave: cfg.clipboard.sync_on_leave,
-            seal: key.map(|k| crate::seal::Seal::new(&k, crate::seal::Channel::Clipboard)),
+            keys,
         })
     } else {
         info!("clipboard sync disabled in config");
@@ -75,9 +70,22 @@ pub fn run_server(
     };
 
     match backend {
-        InputBackendKind::Feed => run_feed(&mut session, &mut sender, &clip),
-        InputBackendKind::Demo => run_demo(&mut session, &mut sender, &clip),
-        InputBackendKind::Evdev => run_evdev(&mut session, &mut sender, &clip),
+        InputBackendKind::Wayland => run_wayland(&mut session, &mut sender, &clip),
+        InputBackendKind::Feed => {
+            wait_link(&mut sender);
+            run_feed(&mut session, &mut sender, &clip)
+        }
+        InputBackendKind::Demo => {
+            wait_link(&mut sender);
+            run_demo(&mut session, &mut sender, &clip)
+        }
+    }
+}
+
+/// The one-shot backends: give the handshake a moment before sending.
+fn wait_link(sender: &mut Sender) {
+    if !sender.wait_up(Duration::from_secs(3)) {
+        warn!(peer = %sender.peer(), "the paired peer is not answering; packets are dropped until it does");
     }
 }
 
@@ -141,10 +149,15 @@ impl MotionPacer {
 
 fn send_packet(sender: &mut Sender, metrics: &mut Metrics, packet: &Packet) {
     let t0 = Instant::now();
+    sender.pump();
     match sender.send(packet) {
         Ok(seq) => {
             debug!(seq, ?packet, "sent");
             metrics.on_send(packet, t0.elapsed(), false);
+        }
+        Err(crate::udp::UdpError::LinkDown) => {
+            debug!(?packet, "not sent: the link is down");
+            metrics.on_send(packet, t0.elapsed(), true);
         }
         Err(e) => {
             error!(?packet, %e, "udp send failed");
@@ -195,43 +208,34 @@ fn emit_packets(
     }
 }
 
+/// Apply one event to the session; `effect` carries out its grab and
+/// release.
 fn apply(
     session: &mut Session,
     sender: &mut Sender,
     pacer: &mut MotionPacer,
     metrics: &mut Metrics,
     event: InputEvent,
-    grab: &mut dyn FnMut(bool),
+    effect: &mut dyn FnMut(&SideEffect),
     clip: &ClipHandle,
 ) {
     let remote_before = session.is_remote();
     let step = session.handle(event);
-    for effect in &step.effects {
-        match effect {
-            SideEffect::Grab => {
-                info!(
-                    mac = ?session.mac_pos(),
-                    local_x = session.local_x,
-                    local_y = session.local_y,
-                    "ENTER remote — grab + chord suppress (if available)"
-                );
-                grab(true);
-            }
-            SideEffect::Release { warp_primary } => {
-                info!(
-                    warp_x = warp_primary.0,
-                    warp_y = warp_primary.1,
-                    "LEAVE remote — release grab + restore chords"
-                );
-                grab(false);
-                // Wayland warp is not wired in this spike; log the desired point.
-                debug!(
-                    x = warp_primary.0,
-                    y = warp_primary.1,
-                    "desired local pointer warp (compositor warp not yet implemented)"
-                );
-            }
+    for e in &step.effects {
+        match e {
+            SideEffect::Grab => info!(
+                mac = ?session.mac_pos(),
+                local_x = session.local_x,
+                local_y = session.local_y,
+                "ENTER remote"
+            ),
+            SideEffect::Release { warp_primary } => info!(
+                warp_x = warp_primary.0,
+                warp_y = warp_primary.1,
+                "LEAVE remote"
+            ),
         }
+        effect(e);
     }
     emit_packets(sender, pacer, metrics, &step.packets);
     if remote_before != session.is_remote() {
@@ -254,11 +258,7 @@ fn run_feed(
     info!("input backend: feed (stdin). Commands: rel/abs/btn/key/scroll/leave");
     info!("example: echo -e 'abs 5119 2000\\nrel 3 0\\nrel 50 10\\nleave' | sola-kvm server");
     let mut feed = FeedSource::stdin();
-    let mut grab_state = false;
-    let mut set_grab = |g: bool| {
-        grab_state = g;
-        debug!(grab_state, "feed backend has no real grab");
-    };
+    let mut set_grab = |e: &SideEffect| debug!(?e, "feed backend has no real grab");
     let mut pacer = MotionPacer::new(MOTION_MIN_INTERVAL);
     let mut metrics = Metrics::new();
     while let Some(ev) = feed
@@ -297,11 +297,7 @@ fn run_demo(
     clip: &ClipHandle,
 ) -> Result<(), String> {
     info!("input backend: demo — scripted enter/motion/leave");
-    let mut grab_state = false;
-    let mut set_grab = |g: bool| {
-        grab_state = g;
-        info!(grab = grab_state, "demo grab side-effect (logical only)");
-    };
+    let mut set_grab = |e: &SideEffect| info!(?e, "demo grab side-effect (logical only)");
     let mut pacer = MotionPacer::new(Duration::ZERO); // no pacing in demo
     let mut metrics = Metrics::new();
     for ev in demo_events() {
@@ -337,48 +333,19 @@ fn run_demo(
     }
 }
 
-fn run_evdev(
+fn run_wayland(
     session: &mut Session,
     sender: &mut Sender,
     clip: &ClipHandle,
 ) -> Result<(), String> {
-    let mut source = EvdevSource::open_all().map_err(|e| {
-        format!(
-            "evdev open failed: {e}. \
-             Need read/write on /dev/input/event* (input group or seat uaccess). \
-             Fall back: sola-kvm server --input feed|demo"
-        )
-    })?;
-
-    // Physical edge only: layer-shell strip. Relative estimate is NEVER used
-    // to enter remote (that was the "hit zone creeping left" bug).
-    let mut barrier = match EdgeBarrier::connect(
+    let mut capture = Capture::connect(
         session.layout.side,
         session.layout.primary_w,
         session.layout.primary_h,
-    ) {
-        Ok(b) => {
-            let (w, h) = b.primary_size();
-            // Prefer compositor-reported size if larger than config.
-            if w > 0 && h > 0 {
-                info!(w, h, "barrier reports output size");
-            }
-            Some(b)
-        }
-        Err(e) => {
-            warn!(
-                %e,
-                "layer-shell barrier unavailable — edge enter disabled (use feed/demo, or fix WAYLAND_DISPLAY)"
-            );
-            None
-        }
-    };
-
+    )?;
     info!(
-        "input backend: evdev + layer-shell barrier — enter ONLY on physical shared edge"
-    );
-    info!(
-        "while remote: relative motion + EVIOCGRAB; leave toward primary releases"
+        "input: through the compositor — edge strip, keyboard, pointer lock, \
+         shortcuts inhibited while remote; Ctrl+Alt+Esc comes back"
     );
     info!(
         log = %sola_core::paths::log_path("sola.log").display(),
@@ -387,265 +354,102 @@ fn run_evdev(
 
     let mut pacer = MotionPacer::new(MOTION_MIN_INTERVAL);
     let mut metrics = Metrics::new();
-
-    // If a previous sola-kvm died mid-remote, ember still has keyboard associate.
-    // Always clear that on boot before any edge hit can re-enter.
-    info!(
-        spray = LEAVE_SPRAY,
-        "startup Leave — clear any stale remote associate on peer"
-    );
-    for _ in 0..LEAVE_SPRAY {
-        send_packet(sender, &mut metrics, &Packet::Leave);
-    }
-
-    let mut last_rescan = Instant::now();
-    let mut last_empty_warn = Instant::now()
-        .checked_sub(Duration::from_secs(60))
-        .unwrap_or_else(Instant::now);
-    /// How often to look for newly plugged (and newly-readable) devices.
-    const RESCAN: Duration = Duration::from_secs(1);
-    /// Don't spam the log every second while waiting for ACL after boot.
-    const EMPTY_WARN: Duration = Duration::from_secs(30);
+    // A server that died remote may have left the peer holding keys: clear
+    // that once the link is up, before anything can enter.
+    let mut cleared = false;
+    let mut refused_logged: Option<Instant> = None;
 
     loop {
-        let mut work = false;
-
-        // Hotplug: drop dead nodes; try to open new ones. If a pointer vanishes
-        // while remote, force Leave immediately — never keep keyboard grab alone.
-        let lost_ptr = source.prune_dead();
-        if last_rescan.elapsed() >= RESCAN {
-            let had_ptr = source.has_pointer();
-            let gained = source.rescan_new();
-            if gained && !had_ptr {
-                info!(
-                    "pointer /dev/input became readable — remote enter re-enabled"
-                );
-            } else if !source.has_pointer() && last_empty_warn.elapsed() >= EMPTY_WARN {
-                warn!(
-                    "still no readable pointer — edge enter disabled. \
-                     sudo /opt/sola/bin/sola-kvm-grant-input-acl  (then wait ~1s, no restart needed)"
-                );
-                last_empty_warn = Instant::now();
+        sender.pump();
+        if !cleared && sender.is_up() {
+            info!(spray = LEAVE_SPRAY, "startup Leave — clear any stale remote on the peer");
+            for _ in 0..LEAVE_SPRAY {
+                send_packet(sender, &mut metrics, &Packet::Leave);
             }
-            last_rescan = Instant::now();
-        }
-        if session.is_remote() && (lost_ptr || !source.has_pointer()) {
-            error!(
-                "pointer lost while remote — forcing leave (prevents split seat: \
-                 local mouse + grabbed keyboard)"
-            );
-            let mut grab_fn = |g: bool| {
-                let _ = source.set_grabbed(g);
-                if let Some(ref mut b) = barrier {
-                    let _ = b.set_active(!g);
-                }
-            };
-            apply(
-                session,
-                sender,
-                &mut pacer,
-                &mut metrics,
-                InputEvent::ForceLeave,
-                &mut grab_fn,
-                clip,
-            );
-            if let Some(ref mut b) = barrier {
-                let _ = b.set_active(true);
-            }
-            work = true;
+            cleared = true;
         }
 
-        // 1) Physical edge hit while local.
-        // Poll the barrier without holding the borrow across grab/session work.
-        let edge_hit = if !session.is_remote() {
-            if let Some(ref mut b) = barrier {
-                match b.poll_hit() {
-                    Ok(hit) => hit,
-                    Err(e) => {
-                        warn!(%e, "barrier poll");
-                        None
+        let mut inputs = Vec::new();
+        if session.is_remote() && !sender.is_up() {
+            warn!("the paired peer stopped answering while remote; coming back");
+            inputs.push(InputEvent::ForceLeave);
+        }
+        for event in capture.poll()? {
+            match event {
+                CaptureEvent::Edge(along) if !session.is_remote() => {
+                    if !sender.is_up() {
+                        if refused_logged.is_none_or(|t| t.elapsed() >= Duration::from_secs(10)) {
+                            warn!("edge reached, but the paired peer is not answering; staying here");
+                            refused_logged = Some(Instant::now());
+                        }
+                        continue;
                     }
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        if let Some(along) = edge_hit {
-            // Keyboard-only open + remote = split seat (local mouse,
-            // grabbed keys to Mac). Refuse enter until a pointer is open.
-            if !source.has_pointer() {
-                // Keep trying to open a mouse (ACL may have been fixed).
-                let _ = source.rescan_new();
-                if !source.has_pointer() {
-                    warn!(
-                        "edge hit ignored — no pointer /dev/input open. \
-                         Fix: sudo /opt/sola/bin/sola-kvm-grant-input-acl \
-                         && killall sola-kvm \
-                         (permanent: services.sola udev uaccess rule)"
-                    );
-                    // Fall through to rest of loop (rescan / poll).
-                }
-            }
-            if source.has_pointer() {
-                // Grab pointer(+kbd) *before* mutating session / sending Enter.
-                // If grab fails, stay fully local — never keyboard-only remote.
-                if !source.set_grabbed(true) {
-                    error!(
-                        "ENTER aborted — EVIOCGRAB failed for pointer. \
-                         Staying local (no Enter UDP). Fix mouse ACL if re-plugged."
-                    );
-                    let _ = source.set_grabbed(false);
-                } else {
-                    work = true;
+                    if let Err(e) = capture.grab() {
+                        warn!(%e, "ENTER aborted: input not captured, staying here");
+                        continue;
+                    }
                     let step = session.enter_from_physical_edge(along);
-                    info!(
-                        mac = ?session.mac_pos(),
-                        local_x = session.local_x,
-                        local_y = session.local_y,
-                        "ENTER remote (physical edge barrier)"
-                    );
-                    if let Some(ref mut b) = barrier {
-                        let _ = b.set_active(false);
-                    }
-                    // Drop kernel-buffered events from the edge push / grab
-                    // transition so they don't spray as a laggy burst on the
-                    // first remote frames.
-                    match source.poll() {
-                        Ok(stale) if !stale.is_empty() => {
-                            debug!(
-                                n = stale.len(),
-                                "discarded stale evdev events after grab"
-                            );
-                        }
-                        Ok(_) => {}
-                        Err(e) => warn!(%e, "post-grab evdev drain"),
-                    }
-                    // Pointer may have died during drain — never emit Enter
-                    // without a live grabbed pointer.
-                    if !source.has_pointer() {
-                        error!(
-                            "ENTER aborted mid-grab — pointer died. Force leave, no Enter."
-                        );
-                        let _ = source.set_grabbed(false);
-                        let undo = session.handle(InputEvent::ForceLeave);
-                        emit_packets(sender, &mut pacer, &mut metrics, &undo.packets);
-                        if let Some(ref mut b) = barrier {
-                            let _ = b.set_active(true);
-                        }
-                    } else {
-                        emit_packets(sender, &mut pacer, &mut metrics, &step.packets);
-                        metrics.set_remote(true);
-                        info!(remote = true, "mode change");
-                        info!("clip: enqueue PushToMac after physical enter");
-                        clip.push_to_mac();
-                    }
+                    info!(mac = ?session.mac_pos(), along, "ENTER remote (edge)");
+                    emit_packets(sender, &mut pacer, &mut metrics, &step.packets);
+                    metrics.set_remote(true);
+                    clip.push_to_mac();
                 }
+                CaptureEvent::Input(ev) if session.is_remote() => inputs.push(ev),
+                CaptureEvent::Escape | CaptureEvent::Lost if session.is_remote() => {
+                    inputs.push(InputEvent::ForceLeave)
+                }
+                _ => {}
             }
         }
-
-        // 2) Evdev: only drive the session while remote (or keys/buttons).
-        //    While local, ignore relative motion entirely — no estimate creep.
-        let events = source.poll().map_err(|e| format!("evdev poll: {e}"))?;
-        // If poll dropped the last pointer while remote, leave before forwarding
-        // any keys from this batch (keys may still be in `events` from keyboard).
-        if session.is_remote() && !source.has_pointer() {
-            error!(
-                "pointer died during poll — forcing leave before key forward \
-                 (prevents split seat)"
-            );
-            let mut grab_fn = |g: bool| {
-                let _ = source.set_grabbed(g);
-                if let Some(ref mut b) = barrier {
-                    let _ = b.set_active(!g);
+        let inputs = coalesce_input_events(inputs);
+        metrics.on_input_events(inputs.len());
+        let worked = !inputs.is_empty();
+        for ev in inputs {
+            let mut release = |e: &SideEffect| {
+                if let SideEffect::Release { warp_primary } = e {
+                    capture.release(*warp_primary);
                 }
             };
-            apply(
-                session,
-                sender,
-                &mut pacer,
-                &mut metrics,
-                InputEvent::ForceLeave,
-                &mut grab_fn,
-                clip,
-            );
-            if let Some(ref mut b) = barrier {
-                let _ = b.set_active(true);
-            }
-            // Drop this batch — it was captured under a dying seat.
+            apply(session, sender, &mut pacer, &mut metrics, ev, &mut release, clip);
+        }
+        if !session.is_remote() && capture.is_captured() {
+            // Never hold the keyboard while local.
+            capture.release((session.local_x, session.local_y));
+        }
+
+        pacer.try_flush(sender, &mut metrics);
+        if worked {
             continue;
         }
-        // Collapse multi-SYN motion runs so a high-rate mouse does not flood
-        // ember with one UDP datagram per kernel report.
-        let events = coalesce_input_events(events);
-        metrics.on_input_events(events.len());
-        if !events.is_empty() {
-            work = true;
-        }
-        for ev in events {
-            if !session.is_remote() {
-                // Local: drop pointer rel/abs from evdev — barrier owns enter.
-                match &ev {
-                    InputEvent::PointerRel { .. } | InputEvent::PointerAbs { .. } => continue,
-                    _ => continue, // also drop keys while local for now
-                }
-            }
-            let was_remote = session.is_remote();
-            let mut grab_fn = |g: bool| {
-                let _ = source.set_grabbed(g);
-                if let Some(ref mut b) = barrier {
-                    let _ = b.set_active(!g);
-                }
+        let mut wait = IDLE_WAIT;
+        if pacer.has_pending() {
+            wait = match pacer.last_sent {
+                Some(t) => pacer.min_interval.saturating_sub(t.elapsed()).min(wait),
+                None => Duration::ZERO,
             };
-            apply(
-                session,
-                sender,
-                &mut pacer,
-                &mut metrics,
-                ev,
-                &mut grab_fn,
-                clip,
-            );
-            if was_remote && !session.is_remote() {
-                // Re-arm barrier on leave.
-                if let Some(ref mut b) = barrier {
-                    let _ = b.set_active(true);
-                }
-            }
         }
-
-        // Flush paced motion if the interval has elapsed (even mid-burst).
+        if let Some(at) = capture.next_repeat() {
+            wait = wait.min(at.saturating_duration_since(Instant::now()));
+        }
+        wait_readable(&[capture.fd(), sender.fd()], wait);
         pacer.try_flush(sender, &mut metrics);
-
-        // Idle only: block on device/wayland fds up to EVDEV_POLL so input
-        // wakes us immediately (no fixed 2ms sleep after every busy tick).
-        // If we still hold a paced Motion, wait at most until it is due.
-        if !work {
-            let wait = if pacer.has_pending() {
-                match pacer.last_sent {
-                    Some(t) => pacer.min_interval.saturating_sub(t.elapsed()).min(EVDEV_POLL),
-                    None => Duration::ZERO,
-                }
-            } else {
-                EVDEV_POLL
-            };
-            if wait.is_zero() && pacer.has_pending() {
-                pacer.flush(sender, &mut metrics);
-                continue;
-            }
-            let mut extra = Vec::new();
-            if !session.is_remote() {
-                if let Some(ref b) = barrier {
-                    extra.push(b.wayland_fd());
-                }
-            }
-            source.wait_readable(&extra, wait);
-            // After a short wait for pacing, send any held motion.
-            pacer.try_flush(sender, &mut metrics);
-            metrics.on_idle_tick();
-        }
+        metrics.on_idle_tick();
     }
+}
+
+/// Block until one of `fds` is readable or `timeout` passes.
+fn wait_readable(fds: &[std::os::fd::RawFd], timeout: Duration) {
+    let mut pfds: Vec<libc::pollfd> = fds
+        .iter()
+        .map(|&fd| libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        })
+        .collect();
+    let ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    // SAFETY: poll on open fds; the timeout is non-negative.
+    let _ = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, ms) };
 }
 
 #[cfg(test)]

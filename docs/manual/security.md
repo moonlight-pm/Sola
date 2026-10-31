@@ -1,9 +1,7 @@
 # Security
 
-By default a Sola desk on Oath trusts the network it is on and whoever
-sits at its keyboard: the desk starts signed in, nothing locks it, and
-the KVM takes input from any machine that reaches it. Each way in can be
-closed. This chapter lists each way into a running desk, what it lets
+By default a Sola desk on Oath trusts whoever sits at its keyboard: the
+desk starts signed in and nothing locks it. Each way in can be closed. This chapter lists each way into a running desk, what it lets
 through by default, and what closes it. Oath keeps the desk user's
 password and decides who has the screen and keyboard; Sola draws the
 desk, locks it, and runs the KVM. The design is in the
@@ -13,7 +11,7 @@ desk, locks it, and runs the KVM. The design is in the
 
 | Way in | By default | To close it |
 |---|---|---|
-| The network, through the KVM | `svc:sola-kvm` injects any input that reaches UDP port 4242, and its clipboard connection on TCP port 4242 has no check: anyone on the network can type into the desk and read or set its clipboard | Pair the KVM ([Pairing the KVM](#pairing-the-kvm)) |
+| The network, through the KVM | `sola-kvm` does not start unpaired (Oath's desk profile has `svc:sola-kvm` off); paired, it takes input and clipboard only from the paired machine's key | Nothing more to close; to open it, pair ([Pairing the KVM](#pairing-the-kvm)) |
 | The network, over SSH | Oath's sshd takes keys only (no passwords, no root login) | Nothing more to close |
 | The keyboard, at boot | The desk starts signed in | A password, with **Sign in automatically** off ([The password](#the-password)) |
 | The keyboard, while you are away | Nothing locks the desk | Super+L, or **Lock when the windows have faded** ([Locking](#locking)) |
@@ -26,10 +24,10 @@ service**, and Settings → Login says the service is not running.
 
 ## Pairing the KVM
 
-Unpaired, `sola-kvm listen` logs `not paired: input and clipboard are
-open to the network` when it starts. Pairing gives the server (the
-machine whose keyboard and mouse are shared) and the peer one key, and
-from then on each drops whatever the other did not seal with it.
+`sola-kvm` (the server, and `listen` on a peer) and the Mac agent do not
+start unpaired, and say so in their log. Pairing gives each machine its own
+key pair and the other's public key, as SSH swaps host keys; from then on
+each drops whatever does not come from the other's key.
 
 On the server, once, with ssh to the peer working:
 
@@ -38,28 +36,35 @@ sola-kvm pair home@<peer-host>                       # an Oath peer
 sola-kvm pair <mac-host> --remote-bin sola-kvm-mac   # a Mac peer
 ```
 
-The peer is an ssh destination; without one, `pair` uses `peer.host`
-from the server's config. It makes a 32-byte key, installs it on the peer over ssh (`sola-kvm pair
---accept` there, the key on standard input), then saves it on the server.
-Both keep it at `~/.config/sola-kvm/pair.key`, readable by its owner
-only. If the peer cannot take the key, neither side changes. Then restart
-`sola-kvm` on both machines; on Oath, `pkill -x sola-kvm`, and PID 1
-starts it again. Each side then logs `paired: input and clipboard sealed
-with the pair key` (`oath logs svc:sola-kvm` on Oath).
+The peer is an ssh destination; without one, `pair` uses `peer.host` from
+the server's config. It sends the server's public key to the peer
+(`sola-kvm pair --accept` there), which keeps it and answers with its own,
+which the server keeps. The private key, `~/.config/sola-kvm/key`, never
+leaves its machine and is readable by its owner only; the other's public
+key is in `peer.pub`. If the peer cannot take the key, the server does not
+change. Then restart `sola-kvm` on both machines; on Oath, turn
+`svc:sola-kvm` on, or `pkill -x sola-kvm` when it already runs, and PID 1
+starts it. Each side then logs `paired` with the other's key (`oath logs
+svc:sola-kvm` on Oath). Without ssh, swap the keys by hand with `sola-kvm
+pair --public` and `sola-kvm pair --accept` ([KVM notes](sola-kvm-operator.md#pairing)).
 
-Paired, every input packet and every clipboard message is sealed with
-the key (XChaCha20-Poly1305). The receiver drops a message that does not
-open with the key, one sealed for the other channel, one it has already
-seen, and one whose clock is more than 30 seconds from its own, so keep
-both machines' clocks in sync. Dropped input is logged at most every
-10 seconds, with the sender's address. A key file that cannot be read
-stops `sola-kvm` from starting rather than letting it run open.
+Paired, every input packet and every clipboard message is encrypted and
+authenticated with Noise IK between the two keys. The peer drops a packet
+from any other key, one it has already taken, and a handshake no later
+than the last one; it refuses a clipboard connection from any other key.
+Dropped input is logged at most every 10 seconds, with the sender's
+address. Keys that cannot be read stop `sola-kvm` from starting.
 
-`sola-kvm pair --forget` (`sola-kvm-mac pair --forget` on a Mac) removes
-that side's key: it is open to the network again, and the other side,
-still paired, no longer reaches it. Pair both sides from versions that
-have pairing; a side without it cannot read a paired one. Setup of the
-server and of each kind of peer is in the [KVM notes](sola-kvm-operator.md).
+`sola-kvm pair --forget` (`sola-kvm-mac pair --forget` on a Mac) forgets
+the other machine's key: that side does not start until paired again. A
+machine paired by an older `sola-kvm` (a shared `pair.key`) does not start
+until paired again. Setup of the server and of each kind of peer is in
+the [KVM notes](sola-kvm-operator.md).
+
+The server captures input through the compositor while the pointer is on
+the peer: it holds the keyboard, a pointer lock and a shortcuts inhibitor,
+and needs no access to `/dev/input`. Ctrl+Alt+Esc takes the keyboard and
+pointer back.
 
 ## The password
 

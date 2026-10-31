@@ -188,7 +188,8 @@ The compositor reports each move's position as it happens
 When the focused window closes, `sola-river` clears focus before the
 window is destroyed. While a layer-shell surface holds exclusive keyboard
 focus, the compositor ignores focus requests; `sola-river` keeps the
-latest one and applies it when the surface lets go (see
+latest one and applies it when the surface lets go, and with none it
+gives the keyboard back to the window that had it (see
 [Layer shell](#layer-shell)).
 
 ### Size and position
@@ -493,8 +494,10 @@ Layer surfaces are not windows: they have no window id, are not in
 When a layer surface takes exclusive keyboard focus, the compositor stops
 honoring the window manager's focus requests. `sola-river` holds the
 shell's focus requests and disables the shell's chords until the
-compositor reports the focus released. [KVM](sola-kvm-operator.md)
-captures the keyboard and pointer this way.
+compositor reports the focus released. The compositor leaves the keyboard
+on the layer surface then, so `sola-river` applies the held request, or,
+with none, focuses the window that had the keyboard before.
+[KVM](sola-kvm-operator.md) captures the keyboard and pointer this way.
 
 Exclusive zones are not applied. The shell lays out against the whole
 output, so a panel that reserves an edge overlaps windows.

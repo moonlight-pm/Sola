@@ -13,7 +13,7 @@ use super::platform::LocalClip;
 use super::proto::{
     AckStatus, MIME_PNG, MIME_TEXT_UTF8, Message, Role, hash_text, read_message, write_message,
 };
-use crate::seal::Seal;
+use crate::link::{self, Keys};
 
 /// Work enqueued from the input / enter-leave path (never blocks long).
 #[derive(Debug, Clone, Copy)]
@@ -62,32 +62,31 @@ pub struct ClipConfig {
     pub max_bytes: u32,
     pub sync_on_enter: bool,
     pub sync_on_leave: bool,
-    /// Paired: every frame sealed with the pair key (`seal::Channel::Clipboard`).
-    pub seal: Option<Seal>,
+    /// The pairing: each connection runs a handshake with the paired
+    /// machine, and its frames travel under that session's keys.
+    pub keys: Keys,
 }
 
-impl ClipConfig {
-    /// Read one message (sealed when paired).
-    fn recv(&self, r: &mut dyn std::io::Read) -> std::io::Result<(u32, Message)> {
-        match &self.seal {
-            Some(seal) => {
-                let plain = seal.read_frame(r, self.max_bytes)?;
-                read_message(&mut std::io::Cursor::new(plain), self.max_bytes)
-            }
-            None => read_message(r, self.max_bytes),
-        }
+/// How long a connection's handshake may take.
+const HANDSHAKE: Duration = Duration::from_secs(2);
+
+/// A paired clipboard connection: the socket and its Noise session.
+struct Peer {
+    tcp: TcpStream,
+    link: link::Conn,
+}
+
+impl Peer {
+    /// Read one message. A read that times out keeps what came so far.
+    fn recv(&mut self, max: u32) -> std::io::Result<(u32, Message)> {
+        let plain = self.link.read_frame(&mut self.tcp, max)?;
+        read_message(&mut std::io::Cursor::new(plain), max)
     }
 
-    /// Write one message (sealed when paired).
-    fn send(&self, w: &mut dyn std::io::Write, seq: u32, msg: &Message) -> std::io::Result<()> {
-        match &self.seal {
-            Some(seal) => {
-                let mut plain = Vec::new();
-                write_message(&mut plain, seq, msg)?;
-                seal.write_frame(w, &plain)
-            }
-            None => write_message(w, seq, msg),
-        }
+    fn send(&mut self, seq: u32, msg: &Message) -> std::io::Result<()> {
+        let mut plain = Vec::new();
+        write_message(&mut plain, seq, msg)?;
+        self.link.write_frame(&mut self.tcp, &plain)
     }
 }
 
@@ -153,7 +152,7 @@ fn worker_main(cfg: ClipConfig, jobs: Receiver<ClipJob>) {
     platform::probe_and_log();
 
     let mut cache = Cache::new();
-    let mut stream: Option<TcpStream> = None;
+    let mut stream: Option<Peer> = None;
     let mut out_seq: u32 = 1;
     let mut last_connect_try = Instant::now()
         .checked_sub(Duration::from_secs(60))
@@ -219,9 +218,9 @@ fn worker_main(cfg: ClipConfig, jobs: Receiver<ClipJob>) {
         //    Apply is hard-capped in platform so we always reach the Ack write
         //    (a hung wl-copy previously froze this worker forever).
         if let Some(ref mut s) = stream {
-            s.set_nonblocking(false).ok();
-            s.set_read_timeout(Some(Duration::from_millis(1))).ok();
-            match cfg.recv(s) {
+            s.tcp.set_nonblocking(false).ok();
+            s.tcp.set_read_timeout(Some(Duration::from_millis(1))).ok();
+            match s.recv(cfg.max_bytes) {
                 Ok((seq, Message::Offer { mime, hash, body })) => {
                     info!(
                         seq,
@@ -231,9 +230,7 @@ fn worker_main(cfg: ClipConfig, jobs: Receiver<ClipJob>) {
                         "clip inbound Offer from peer"
                     );
                     let ok = apply_inbound(mime, hash, &body, &mut cache);
-                    if let Err(e) = cfg.send(
-                        s,
-                        out_seq,
+                    if let Err(e) = s.send(out_seq,
                         &Message::Ack {
                             of_seq: seq,
                             status: if ok { AckStatus::Ok } else { AckStatus::Reject },
@@ -253,9 +250,7 @@ fn worker_main(cfg: ClipConfig, jobs: Receiver<ClipJob>) {
                     } else {
                         warn!("clip clear from Empty failed");
                     }
-                    if let Err(e) = cfg.send(
-                        s,
-                        out_seq,
+                    if let Err(e) = s.send(out_seq,
                         &Message::Ack {
                             of_seq: seq,
                             status: if ok { AckStatus::Ok } else { AckStatus::Reject },
@@ -298,7 +293,7 @@ fn worker_main(cfg: ClipConfig, jobs: Receiver<ClipJob>) {
 
 fn ensure_connected(
     cfg: &ClipConfig,
-    stream: &mut Option<TcpStream>,
+    stream: &mut Option<Peer>,
     last_try: &mut Instant,
     out_seq: &mut u32,
 ) {
@@ -324,17 +319,26 @@ fn ensure_connected(
         }
     };
     match TcpStream::connect_timeout(&sock_addr, Duration::from_secs(2)) {
-        Ok(mut s) => {
-            s.set_nodelay(true).ok();
-            s.set_nonblocking(false).ok();
-            if let Err(e) = cfg.send(&mut s, *out_seq, &Message::Hello { role: Role::Novus }) {
+        Ok(mut tcp) => {
+            tcp.set_nodelay(true).ok();
+            tcp.set_nonblocking(false).ok();
+            tcp.set_read_timeout(Some(HANDSHAKE)).ok();
+            let link = match link::Conn::connect(&mut tcp, &cfg.keys) {
+                Ok(link) => link,
+                Err(e) => {
+                    warn!(%e, %addr_str, "clip handshake with the paired peer failed");
+                    return;
+                }
+            };
+            let mut s = Peer { tcp, link };
+            if let Err(e) = s.send(*out_seq, &Message::Hello { role: Role::Novus }) {
                 warn!(%e, "clip hello send failed");
                 return;
             }
             *out_seq = out_seq.wrapping_add(1);
             // Optional peer hello.
-            s.set_read_timeout(Some(Duration::from_millis(500))).ok();
-            match cfg.recv(&mut s) {
+            s.tcp.set_read_timeout(Some(Duration::from_millis(500))).ok();
+            match s.recv(cfg.max_bytes) {
                 Ok((_, Message::Hello { role })) => {
                     info!(?role, %addr_str, "clipboard TCP connected");
                 }
@@ -347,7 +351,7 @@ fn ensure_connected(
                     info!(%addr_str, "clipboard TCP connected");
                 }
             }
-            s.set_read_timeout(Some(Duration::from_millis(1))).ok();
+            s.tcp.set_read_timeout(Some(Duration::from_millis(1))).ok();
             *stream = Some(s);
         }
         Err(e) => {
@@ -358,7 +362,7 @@ fn ensure_connected(
 }
 
 fn push_local_to_peer(
-    s: &mut TcpStream,
+    s: &mut Peer,
     cfg: &ClipConfig,
     cache: &mut Cache,
     out_seq: &mut u32,
@@ -385,11 +389,11 @@ fn push_local_to_peer(
         }
         let seq = *out_seq;
         *out_seq = out_seq.wrapping_add(1);
-        cfg.send(s, seq, &Message::Empty)?;
+        s.send(seq, &Message::Empty)?;
         // Wait ack briefly.
-        s.set_read_timeout(Some(Duration::from_secs(2))).ok();
-        let _ = cfg.recv(s);
-        s.set_read_timeout(Some(Duration::from_millis(1))).ok();
+        s.tcp.set_read_timeout(Some(Duration::from_secs(2))).ok();
+        let _ = s.recv(cfg.max_bytes);
+        s.tcp.set_read_timeout(Some(Duration::from_millis(1))).ok();
         cache.last_sent = Some(hash_text(""));
         info!("clip Empty → peer");
         return Ok(());
@@ -409,22 +413,20 @@ fn push_local_to_peer(
     let nbytes = local.len();
     let mime = local.mime();
     info!(seq, hash, mime, bytes = nbytes, "clip sending Offer → peer");
-    cfg.send(
-        s,
-        seq,
+    s.send(seq,
         &Message::Offer {
             mime: local.mime(),
             hash,
             body: local.body().to_vec(),
         },
     )?;
-    s.set_nonblocking(false).ok();
-    s.set_read_timeout(Some(Duration::from_secs(3))).ok();
+    s.tcp.set_nonblocking(false).ok();
+    s.tcp.set_read_timeout(Some(Duration::from_secs(3))).ok();
     // Peer may push an Offer at the same moment (Leave/Enter race). Drain
     // any inbound Offers while waiting for our Ack.
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
-        match cfg.recv(s) {
+        match s.recv(cfg.max_bytes) {
             Ok((
                 _,
                 Message::Ack {
@@ -456,9 +458,7 @@ fn push_local_to_peer(
                     "clip inbound Offer while awaiting Ack — apply now"
                 );
                 let ok = apply_inbound(imime, ih, &body, cache);
-                let _ = cfg.send(
-                    s,
-                    *out_seq,
+                let _ = s.send(*out_seq,
                     &Message::Ack {
                         of_seq: iseq,
                         status: if ok { AckStatus::Ok } else { AckStatus::Reject },
@@ -478,17 +478,17 @@ fn push_local_to_peer(
                 }
             }
             Err(e) if is_soft_timeout(&e) => {
-                s.set_read_timeout(Some(Duration::from_millis(1))).ok();
+                s.tcp.set_read_timeout(Some(Duration::from_millis(1))).ok();
                 warn!(%e, "clip Offer Ack soft-timeout — Offer sent; keeping stream");
                 return Err(e);
             }
             Err(e) => {
-                s.set_read_timeout(Some(Duration::from_millis(1))).ok();
+                s.tcp.set_read_timeout(Some(Duration::from_millis(1))).ok();
                 return Err(e);
             }
         }
     }
-    s.set_read_timeout(Some(Duration::from_millis(1))).ok();
+    s.tcp.set_read_timeout(Some(Duration::from_millis(1))).ok();
     Ok(())
 }
 
@@ -529,7 +529,7 @@ fn apply_inbound(mime: u8, hash: u32, body: &[u8], cache: &mut Cache) -> bool {
 
 fn listen_main(listener: std::net::TcpListener, cfg: ClipConfig, jobs: Receiver<ClipJob>) {
     let mut cache = Cache::new();
-    let mut peer: Option<TcpStream> = None;
+    let mut peer: Option<Peer> = None;
     let mut out_seq: u32 = 1;
     let mut last_push = Instant::now()
         .checked_sub(Duration::from_secs(10))
@@ -538,12 +538,21 @@ fn listen_main(listener: std::net::TcpListener, cfg: ClipConfig, jobs: Receiver<
 
     loop {
         match listener.accept() {
-            Ok((mut s, addr)) => {
+            Ok((mut tcp, addr)) => {
                 info!(%addr, "clipboard TCP accept");
-                s.set_nodelay(true).ok();
-                s.set_nonblocking(false).ok();
-                s.set_read_timeout(Some(Duration::from_millis(500))).ok();
-                match cfg.recv(&mut s) {
+                tcp.set_nodelay(true).ok();
+                tcp.set_nonblocking(false).ok();
+                tcp.set_read_timeout(Some(HANDSHAKE)).ok();
+                let link = match link::Conn::accept(&mut tcp, &cfg.keys) {
+                    Ok(link) => link,
+                    Err(e) => {
+                        warn!(%addr, %e, "clip connection refused: not the paired server");
+                        continue;
+                    }
+                };
+                let mut s = Peer { tcp, link };
+                s.tcp.set_read_timeout(Some(Duration::from_millis(500))).ok();
+                match s.recv(cfg.max_bytes) {
                     Ok((_, Message::Hello { role })) => {
                         info!(?role, "clip hello from novus");
                     }
@@ -552,10 +561,10 @@ fn listen_main(listener: std::net::TcpListener, cfg: ClipConfig, jobs: Receiver<
                 }
                 let seq = out_seq;
                 out_seq = out_seq.wrapping_add(1);
-                if let Err(e) = cfg.send(&mut s, seq, &Message::Hello { role: Role::Ember }) {
+                if let Err(e) = s.send(seq, &Message::Hello { role: Role::Ember }) {
                     warn!(%e, "clip hello reply failed");
                 } else {
-                    s.set_read_timeout(Some(Duration::from_millis(1))).ok();
+                    s.tcp.set_read_timeout(Some(Duration::from_millis(1))).ok();
                     peer = Some(s);
                     info!("clip peer ready (duplex)");
                     if pending_push {
@@ -608,16 +617,14 @@ fn listen_main(listener: std::net::TcpListener, cfg: ClipConfig, jobs: Receiver<
         while matches!(jobs.try_recv(), Ok(_)) {}
 
         if let Some(ref mut s) = peer {
-            s.set_read_timeout(Some(Duration::from_millis(1))).ok();
-            match cfg.recv(s) {
+            s.tcp.set_read_timeout(Some(Duration::from_millis(1))).ok();
+            match s.recv(cfg.max_bytes) {
                 Ok((seq, Message::Offer { mime, hash, body })) => {
                     info!(seq, hash, mime, bytes = body.len(), "clip inbound Offer");
                     let ok = apply_inbound(mime, hash, &body, &mut cache);
                     let aseq = out_seq;
                     out_seq = out_seq.wrapping_add(1);
-                    if let Err(e) = cfg.send(
-                        s,
-                        aseq,
+                    if let Err(e) = s.send(aseq,
                         &Message::Ack {
                             of_seq: seq,
                             status: if ok { AckStatus::Ok } else { AckStatus::Reject },
@@ -634,9 +641,7 @@ fn listen_main(listener: std::net::TcpListener, cfg: ClipConfig, jobs: Receiver<
                     info!(seq, "clip cleared from Empty");
                     let aseq = out_seq;
                     out_seq = out_seq.wrapping_add(1);
-                    if cfg.send(
-                        s,
-                        aseq,
+                    if s.send(aseq,
                         &Message::Ack {
                             of_seq: seq,
                             status: AckStatus::Ok,
@@ -665,37 +670,37 @@ fn listen_main(listener: std::net::TcpListener, cfg: ClipConfig, jobs: Receiver<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::seal::Channel;
 
-    fn cfg(key: Option<[u8; 32]>) -> ClipConfig {
-        ClipConfig {
-            peer_host: "peer".into(),
-            peer_port: 4242,
-            max_bytes: 1 << 20,
-            sync_on_enter: true,
-            sync_on_leave: true,
-            seal: key.map(|k| Seal::new(&k, Channel::Clipboard)),
-        }
+    fn keys() -> (Keys, Keys) {
+        let (sp, spub) = link::new_pair().unwrap();
+        let (pp, ppub) = link::new_pair().unwrap();
+        (
+            Keys { private: sp, public: spub, peer: ppub },
+            Keys { private: pp, public: ppub, peer: spub },
+        )
     }
 
     #[test]
-    fn a_paired_clipboard_frame_reads_only_with_the_key() {
-        let key = [5u8; 32];
+    fn a_clipboard_offer_crosses_encrypted() {
+        let (server, peer) = keys();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
         let offer = Message::Offer {
             mime: MIME_TEXT_UTF8,
             hash: hash_text("secret"),
             body: b"secret".to_vec(),
         };
-        let mut wire = Vec::new();
-        cfg(Some(key)).send(&mut wire, 7, &offer).unwrap();
-        assert!(!wire.windows(6).any(|w| w == b"secret"), "sealed on the wire");
-        let got = cfg(Some(key)).recv(&mut std::io::Cursor::new(&wire)).unwrap();
-        assert_eq!(got, (7, offer));
-        assert!(cfg(None).recv(&mut std::io::Cursor::new(&wire)).is_err());
-        assert!(
-            cfg(Some([6u8; 32]))
-                .recv(&mut std::io::Cursor::new(&wire))
-                .is_err()
-        );
+        let want = offer.clone();
+        let accepting = std::thread::spawn(move || {
+            let (mut tcp, _) = listener.accept().unwrap();
+            let link = link::Conn::accept(&mut tcp, &peer).unwrap();
+            let mut p = Peer { tcp, link };
+            p.recv(1 << 20).unwrap()
+        });
+        let mut tcp = TcpStream::connect(addr).unwrap();
+        let link = link::Conn::connect(&mut tcp, &server).unwrap();
+        let mut p = Peer { tcp, link };
+        p.send(7, &offer).unwrap();
+        assert_eq!(accepting.join().unwrap(), (7, want));
     }
 }

@@ -60,6 +60,14 @@ pub fn note_super_key(down: bool) {
     SUPER_HELD.store(down, Ordering::Relaxed);
 }
 
+/// A window lost the keyboard: a key released while another surface has
+/// it (a switcher, the KVM taking it) never reaches us, so forget what is
+/// held, or Super stays down and every click is a Cmd-click.
+pub fn forget_held() {
+    LAST_MODS.store(0, Ordering::Relaxed);
+    SUPER_HELD.store(false, Ordering::Relaxed);
+}
+
 /// XK_Super_L / XK_Super_R. River delivers these as `Topic::Chord` because
 /// bare Super_L is a registered binding (switcher confirm) — iced never sees
 /// the key, so [`note_super_key`] would stay false without the bus path.
@@ -372,6 +380,10 @@ mod tests {
         assert!(stored_modifiers().logo());
         note_super_key(false);
         assert!(!stored_modifiers().logo());
+        store_modifiers(Modifiers::LOGO);
+        note_super_key(true);
+        forget_held();
+        assert_eq!(stored_modifiers(), Modifiers::empty());
     }
 
     #[test]

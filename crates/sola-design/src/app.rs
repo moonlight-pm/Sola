@@ -773,6 +773,7 @@ impl App {
                 if self.windows.active == Some(window) {
                     self.focused = false;
                 }
+                sola_browser::input::forget_held();
             }
             window::Event::Rescaled(f) => return self.handle(Msg::Scale(window, f)),
             window::Event::CloseRequested => return self.close_window(window),

@@ -116,6 +116,22 @@ apply of `pkg:sola` (`cargo make oath apply` does one) therefore restarts
 `svc:sola-session`, and `svc:sola-kvm`. It does not restart rivulet or the
 two tmux servers, whose programs are in other packages.
 
+`oath update` is different. Rivulet, `svc:sola-river`, `svc:sola-shell`,
+and `svc:sola-session` hold the seat (`seat: desk`), and an update leaves
+a service that holds the seat on the program it started with until it
+next starts: at a reboot, or at **Exit Sola** and `oath desk`. The bus,
+the call host and the KVM bridge restart on the new programs. An update
+that moves `pkg:sola` therefore leaves the shell and the session manager
+of the old build talking to the bus and the applications of the new one.
+They agree on which topics each asked for (see
+[Subscribing](bus.md#subscribing)), but a topic whose payload changed
+between the two builds does not get through until the desk restarts:
+from the Sola in Oath's desk output to `next` today, that is
+`Appearance`, so the shell would miss changes made in Settings →
+Appearance. Take such an update with `sudo oath update --confirm
+--reboot`, which restarts nothing before the reboot. A PID 1 from Oath's desk output
+`fdecb1ec3d68` or older restarts the seat's services in an update anyway.
+
 Stopping `svc:sola-session` stops the applications in its cgroup with it.
 The new session manager reopens the applications that were open, and
 Terminal and Projects reattach to their tmux sessions, which kept running.

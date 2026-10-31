@@ -160,15 +160,13 @@ in
       });
     '';
 
-    # sola-kvm (evdev backend) needs RW on /dev/input/event* for EVIOCGRAB
-    # while remote. Re-plug creates *new* nodes that do not inherit old ACLs,
-    # so a one-shot setfacl always rots. TAG+="uaccess" lets logind grant the
-    # active seat user RW on every (re)plug; GROUP=input is a belt-and-braces
-    # path for users who are also in the input group.
+    # sola-shell's mouse battery chip reads the receiver's hidraw node.
+    # TAG+="uaccess" lets logind grant the active seat user RW on every
+    # (re)plug; GROUP=input is a belt-and-braces path for users who are also
+    # in the input group. (sola-kvm captures through the compositor and needs
+    # no input nodes.)
     users.groups.input = { };
     services.udev.extraRules = ''
-      # sola-kvm: seat user can open input event nodes after re-plug
-      SUBSYSTEM=="input", KERNEL=="event[0-9]*", MODE="0660", GROUP="input", TAG+="uaccess"
       # sola-shell: menubar mouse battery asks the Lamzu 4K receiver over hidraw
       KERNEL=="hidraw*", ATTRS{idVendor}=="3554", ATTRS{idProduct}=="f510", MODE="0660", GROUP="input", TAG+="uaccess"
     '';

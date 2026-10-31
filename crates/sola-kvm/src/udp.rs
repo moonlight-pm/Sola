@@ -1,40 +1,46 @@
-//! UDP send / receive helpers for sola-kvm packets.
+//! UDP send / receive for sola-kvm packets, over the paired link
+//! ([`crate::link`]): the server's [`Sender`] runs the handshake, the
+//! peer's [`Listener`] answers it.
 
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
-use std::time::Duration;
+use std::os::fd::{AsRawFd, RawFd};
+use std::time::{Duration, Instant};
 
+use tracing::{debug, info, warn};
+
+use crate::link::{Dropped, Initiator, Keys, Responder, Taken};
 use crate::protocol::{self, DecodeError, EncodeError, Packet};
-use crate::seal::{Channel, OpenError, Seal};
 
-/// Outbound sender (novus server → ember client).
+/// Outbound sender (server → peer).
 pub struct Sender {
     sock: UdpSocket,
     peer: SocketAddr,
     seq: u32,
-    /// Paired: every datagram sealed.
-    seal: Option<Seal>,
+    link: Initiator,
+    /// Whether the link was up at the last [`Sender::pump`] (for the log).
+    up: bool,
 }
 
 impl Sender {
-    /// Bind an ephemeral local port and target `peer` (`host:port`).
-    pub fn connect(peer: &str) -> Result<Self, UdpError> {
+    /// Bind an ephemeral local port, target `peer` (`host:port`), and start
+    /// the handshake with the paired machine there.
+    pub fn connect(peer: &str, keys: Keys) -> Result<Self, UdpError> {
         let peer = resolve_one(peer)?;
         let sock = UdpSocket::bind("0.0.0.0:0").map_err(UdpError::Io)?;
-        // Connected UDP so send() doesn't need the address each time.
+        // Connected UDP: send() needs no address, and recv() takes only the
+        // peer's datagrams.
         sock.connect(peer).map_err(UdpError::Io)?;
+        sock.set_nonblocking(true).map_err(UdpError::Io)?;
         crate::priority::boost_udp_socket(&sock);
-        Ok(Self {
+        let mut sender = Self {
             sock,
             peer,
             seq: 0,
-            seal: None,
-        })
-    }
-
-    /// Seal every datagram with the pair key (`None`: unpaired, as before).
-    pub fn sealed(mut self, key: Option<&[u8; 32]>) -> Self {
-        self.seal = key.map(|k| Seal::new(k, Channel::Input));
-        self
+            link: Initiator::new(keys),
+            up: false,
+        };
+        sender.pump();
+        Ok(sender)
     }
 
     pub fn peer(&self) -> SocketAddr {
@@ -45,38 +51,94 @@ impl Sender {
         self.seq
     }
 
-    /// Encode and send one packet; advances sequence on success.
+    /// The socket, to wait on with the other inputs.
+    pub fn fd(&self) -> RawFd {
+        self.sock.as_raw_fd()
+    }
+
+    /// Whether packets can go: the handshake is done and fresh.
+    pub fn is_up(&self) -> bool {
+        self.link.is_up(Instant::now())
+    }
+
+    /// Take the peer's handshake replies and send a handshake when one is
+    /// due. Call often (each loop turn); it never blocks.
+    pub fn pump(&mut self) {
+        let mut buf = [0u8; 512];
+        loop {
+            match self.sock.recv(&mut buf) {
+                Ok(n) => {
+                    if let Err(reason) = self.link.take(&buf[..n], Instant::now()) {
+                        debug!(peer = %self.peer, %reason, "link: reply dropped");
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                // A refused send comes back as an error on the next recv.
+                Err(e) => {
+                    debug!(peer = %self.peer, %e, "link: recv");
+                    break;
+                }
+            }
+        }
+        if let Some(init) = self.link.due(Instant::now()) {
+            if let Err(e) = self.sock.send(&init) {
+                debug!(peer = %self.peer, %e, "link: handshake send");
+            }
+        }
+        let up = self.is_up();
+        if up != self.up {
+            if up {
+                info!(peer = %self.peer, "link up: the paired peer answered");
+            } else {
+                warn!(peer = %self.peer, "link down: the paired peer is not answering");
+            }
+            self.up = up;
+        }
+    }
+
+    /// Encode and send one packet; advances the sequence on success. Fails
+    /// while the link is down.
     pub fn send(&mut self, packet: &Packet) -> Result<u32, UdpError> {
         let seq = self.seq;
-        let mut bytes = protocol::encode(seq, packet).map_err(UdpError::Encode)?;
-        if let Some(seal) = &self.seal {
-            bytes = seal.seal(&bytes);
-        }
-        self.sock.send(&bytes).map_err(UdpError::Io)?;
+        let plain = protocol::encode(seq, packet).map_err(UdpError::Encode)?;
+        let sealed = self
+            .link
+            .seal(&plain, Instant::now())
+            .ok_or(UdpError::LinkDown)?;
+        self.sock.send(&sealed).map_err(UdpError::Io)?;
         self.seq = self.seq.wrapping_add(1);
         Ok(seq)
     }
+
+    /// Pump until the link is up or `timeout` passes (one-shot tools).
+    pub fn wait_up(&mut self, timeout: Duration) -> bool {
+        let until = Instant::now() + timeout;
+        while Instant::now() < until {
+            self.pump();
+            if self.is_up() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
 }
 
-/// Inbound listener (ember client, or local dump/test).
+/// Inbound listener (the peer).
 pub struct Listener {
     sock: UdpSocket,
-    /// Paired: only datagrams sealed with the pair key are taken.
-    seal: Option<Seal>,
+    link: Responder,
 }
 
 impl Listener {
-    /// Bind `0.0.0.0:port` (or a full bind address like `127.0.0.1:4242`).
-    pub fn bind(addr: &str) -> Result<Self, UdpError> {
+    /// Bind `0.0.0.0:port` (or a full bind address like `127.0.0.1:4242`)
+    /// and take only the paired server's traffic.
+    pub fn bind(addr: &str, keys: Keys) -> Result<Self, UdpError> {
         let sock = UdpSocket::bind(addr).map_err(UdpError::Io)?;
-        Ok(Self { sock, seal: None })
-    }
-
-    /// Take only datagrams sealed with the pair key (`None`: unpaired —
-    /// anything that decodes, from anyone).
-    pub fn sealed(mut self, key: Option<&[u8; 32]>) -> Self {
-        self.seal = key.map(|k| Seal::new(k, Channel::Input));
-        self
+        Ok(Self {
+            sock,
+            link: Responder::new(keys),
+        })
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, UdpError> {
@@ -87,22 +149,26 @@ impl Listener {
         self.sock.set_read_timeout(timeout).map_err(UdpError::Io)
     }
 
-    /// Receive one datagram and decode. Returns `(src, seq, packet)`.
-    pub fn recv(&self) -> Result<(SocketAddr, u32, Packet), UdpError> {
+    /// Receive one packet and decode it. Returns `(src, seq, packet)`.
+    /// Handshakes are answered on the way.
+    pub fn recv(&mut self) -> Result<(SocketAddr, u32, Packet), UdpError> {
         let mut buf = [0u8; 512];
-        let (n, src) = self.sock.recv_from(&mut buf).map_err(UdpError::Io)?;
-        let opened;
-        let bytes = match &self.seal {
-            Some(seal) => {
-                opened = seal
-                    .open(&buf[..n])
-                    .map_err(|e| UdpError::Sealed { src, error: e })?;
-                &opened[..]
+        loop {
+            let (n, src) = self.sock.recv_from(&mut buf).map_err(UdpError::Io)?;
+            match self.link.take(&buf[..n], Instant::now()) {
+                Ok(Taken::Reply(reply)) => {
+                    debug!(%src, "link: handshake from the paired server");
+                    if let Err(e) = self.sock.send_to(&reply, src) {
+                        warn!(%src, %e, "link: handshake reply");
+                    }
+                }
+                Ok(Taken::Data(plain)) => {
+                    let (seq, packet) = protocol::decode(&plain).map_err(UdpError::Decode)?;
+                    return Ok((src, seq, packet));
+                }
+                Err(reason) => return Err(UdpError::Dropped { src, reason }),
             }
-            None => &buf[..n],
-        };
-        let (seq, packet) = protocol::decode(bytes).map_err(UdpError::Decode)?;
-        Ok((src, seq, packet))
+        }
     }
 }
 
@@ -119,8 +185,10 @@ pub enum UdpError {
     Resolve(String),
     Encode(EncodeError),
     Decode(DecodeError),
-    /// Paired, and this datagram is not sealed with the pair key.
-    Sealed { src: SocketAddr, error: OpenError },
+    /// Not from the paired machine, or not fit to take.
+    Dropped { src: SocketAddr, reason: Dropped },
+    /// No handshake with the peer yet (or it went stale).
+    LinkDown,
 }
 
 impl std::fmt::Display for UdpError {
@@ -130,7 +198,8 @@ impl std::fmt::Display for UdpError {
             Self::Resolve(s) => write!(f, "could not resolve peer: {s}"),
             Self::Encode(e) => write!(f, "encode: {e}"),
             Self::Decode(e) => write!(f, "decode: {e}"),
-            Self::Sealed { src, error } => write!(f, "dropped from {src}: {error}"),
+            Self::Dropped { src, reason } => write!(f, "dropped from {src}: {reason}"),
+            Self::LinkDown => write!(f, "link down: the paired peer is not answering"),
         }
     }
 }
@@ -140,57 +209,60 @@ impl std::error::Error for UdpError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{Edge, Packet};
+    use crate::protocol::Packet;
 
-    #[test]
-    fn localhost_roundtrip() {
-        let listener = Listener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let mut sender = Sender::connect(&addr.to_string()).unwrap();
+    fn keys() -> (Keys, Keys, Keys) {
+        let (sp, spub) = crate::link::new_pair().unwrap();
+        let (pp, ppub) = crate::link::new_pair().unwrap();
+        let (xp, xpub) = crate::link::new_pair().unwrap();
+        (
+            Keys { private: sp, public: spub, peer: ppub },
+            Keys { private: pp, public: ppub, peer: spub },
+            Keys { private: xp, public: xpub, peer: ppub },
+        )
+    }
 
-        let pkt = Packet::Enter {
-            edge: Edge::Right,
-            x: 10,
-            y: 20,
-        };
-        let seq = sender.send(&pkt).unwrap();
-        assert_eq!(seq, 0);
-
-        let (src, got_seq, got) = listener.recv().unwrap();
-        assert_eq!(got_seq, 0);
-        assert_eq!(got, pkt);
-        assert_eq!(src.ip(), std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    /// Run the listener on a thread for `n` packets.
+    fn listen(mut listener: Listener, n: usize) -> std::thread::JoinHandle<Vec<Packet>> {
+        listener.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+        std::thread::spawn(move || {
+            let mut got = Vec::new();
+            let until = Instant::now() + Duration::from_secs(if n == 0 { 1 } else { 5 });
+            // `n == 0`: listen until the time is up (nothing should come).
+            while (n == 0 || got.len() < n) && Instant::now() < until {
+                if let Ok((_, _, p)) = listener.recv() {
+                    got.push(p);
+                }
+            }
+            got
+        })
     }
 
     #[test]
-    fn a_paired_listener_takes_only_its_pair() {
-        let key = [3u8; 32];
-        let listener = Listener::bind("127.0.0.1:0").unwrap().sealed(Some(&key));
+    fn localhost_roundtrip_after_the_handshake() {
+        let (server, peer, _) = keys();
+        let listener = Listener::bind("127.0.0.1:0", peer).unwrap();
         let addr = listener.local_addr().unwrap().to_string();
+        let got = listen(listener, 1);
+        let mut sender = Sender::connect(&addr, server).unwrap();
         let pkt = Packet::Key {
             keycode: 30,
             pressed: 1,
         };
-        let mut paired = Sender::connect(&addr).unwrap().sealed(Some(&key));
-        paired.send(&pkt).unwrap();
-        assert_eq!(listener.recv().unwrap().2, pkt);
-        let mut open = Sender::connect(&addr).unwrap();
-        open.send(&pkt).unwrap();
-        assert!(matches!(
-            listener.recv(),
-            Err(UdpError::Sealed {
-                error: OpenError::NotSealed,
-                ..
-            })
-        ));
-        let mut stranger = Sender::connect(&addr).unwrap().sealed(Some(&[4u8; 32]));
-        stranger.send(&pkt).unwrap();
-        assert!(matches!(
-            listener.recv(),
-            Err(UdpError::Sealed {
-                error: OpenError::Forged,
-                ..
-            })
-        ));
+        assert!(matches!(sender.send(&pkt), Err(UdpError::LinkDown)));
+        assert!(sender.wait_up(Duration::from_secs(3)), "handshake answered");
+        sender.send(&pkt).unwrap();
+        assert_eq!(got.join().unwrap(), vec![pkt]);
+    }
+
+    #[test]
+    fn a_stranger_never_gets_a_link() {
+        let (_, peer, stranger) = keys();
+        let listener = Listener::bind("127.0.0.1:0", peer).unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let got = listen(listener, 0);
+        let mut sender = Sender::connect(&addr, stranger).unwrap();
+        assert!(!sender.wait_up(Duration::from_millis(500)));
+        assert!(got.join().unwrap().is_empty());
     }
 }
