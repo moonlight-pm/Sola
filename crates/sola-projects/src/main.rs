@@ -87,6 +87,21 @@ const IDLE_QUIT_AFTER: Duration = Duration::from_secs(20);
 /// alive is not reattached on its own (it would only end again).
 const REMOTE_REATTACH_AFTER: Duration = Duration::from_secs(5);
 
+/// At boot, how long `--restore` waits for the tmux server, and for the
+/// desk's Wayland socket (it restores without one after that).
+const RESTORE_SERVER_WAIT: Duration = Duration::from_secs(30);
+const RESTORE_DESK_WAIT: Duration = Duration::from_secs(15);
+
+/// Projects' tmux server is up (`-N`: asking never starts one).
+fn tmux_server_up() -> bool {
+    std::process::Command::new("tmux")
+        .args(["-L", TMUX_SOCKET, "-N", "show-options", "-gv", "exit-empty"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 const DEFAULT_COLS: u16 = 80;
 /// A window's size before it reports one.
 const DEFAULT_WINDOW: iced::Size = iced::Size::new(1100.0, 720.0);
@@ -98,8 +113,23 @@ fn main() -> iced::Result {
     if std::env::args().any(|a| a == "--restore") {
         sola_core::log::init(APP_ID);
         tmux::configure(TMUX_SOCKET, TMUX_UNIT, TMUX_PREFIX);
-        let made = records::restore(&Machine::Local);
-        tracing::info!(count = made.len(), "restored sessions at boot");
+        // PID 1 starts the server (`svc:sola-tmux-ws`) as it starts this:
+        // wait for it, and never start one of our own.
+        let deadline = Instant::now() + RESTORE_SERVER_WAIT;
+        while !tmux_server_up() {
+            if Instant::now() > deadline {
+                tracing::error!("no sola-ws tmux server after 30 s; nothing restored");
+                std::process::exit(1);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let how = records::Restore {
+            no_server: true,
+            // The desk, if it is coming (the seat may be the console's).
+            env: records::desk_env(RESTORE_DESK_WAIT),
+        };
+        let made = records::restore(&Machine::Local, &how);
+        tracing::info!(count = made.len(), env = ?how.env, "restored sessions at boot");
         return Ok(());
     }
     startup(APP_ID);
@@ -484,7 +514,11 @@ impl App {
         app.sync_all_rows();
         // This computer's sessions that a reboot took, back before the
         // windows attach (one may be another computer's, not open here).
-        let made = records::restore(&Machine::Local);
+        let how = records::Restore {
+            no_server: false,
+            env: records::desk_env(Duration::ZERO),
+        };
+        let made = records::restore(&Machine::Local, &how);
         if !made.is_empty() {
             tracing::info!(count = made.len(), "restored sessions");
         }

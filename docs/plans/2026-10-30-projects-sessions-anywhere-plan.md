@@ -97,9 +97,18 @@ shows the session as tmux draws it (padded or cut) until you type in it.
   comes up (that computer — any computer opening a project there brings
   its sessions back), and headless: `sola-projects --restore` (before
   `startup`, no Wayland). Tried on novus with a throwaway record.
-- [ ] At boot on Oath: `svc:sola-sessions` in the desk profile —
-  `exec ["/bin/sola-projects","--restore"]`, `restart never`, `user home`,
-  `wants ["svc:sola-tmux-ws"]` (Oath's to add).
+- [x] `--restore` at boot waits up to 30 s for the `sola-ws` server and
+  never starts one (`tmux -N`: one started in the oneshot's cgroup would
+  die with it, the sessions too — the Oath agent's catch); then up to 15 s
+  for the desk's Wayland name, and restored sessions get the desk's
+  `WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`, `DISPLAY` (a resumed agent keeps
+  its environment: Claude pastes images through Wayland). At Projects start
+  the same, without waiting. Tried on novus.
+- [~] At boot on Oath: `svc:sola-sessions` in the desk profile (Oath
+  `17e3f6c`…`eab6194`, pushed, `enabled: false` until the publish that
+  moves the `pkg:sola` pin; a 30 s server wait in its exec, droppable once
+  this `--restore` ships). Existing machines need `oath new` once (an
+  update does not make new objects).
 - Not done: `session.start` as its own verb (opening a project on a
   computer, or linking it, brings its sessions back).
 

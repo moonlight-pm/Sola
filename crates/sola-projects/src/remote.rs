@@ -212,7 +212,9 @@ impl App {
                 Task::perform(
                     async move {
                         let h = host.clone();
-                        let made = tokio::task::spawn_blocking(move || crate::records::restore(&machine))
+                        // Its desk's environment is its own: none given.
+                        let how = crate::records::Restore::default();
+                        let made = tokio::task::spawn_blocking(move || crate::records::restore(&machine, &how))
                             .await
                             .unwrap_or_default();
                         (h, made)

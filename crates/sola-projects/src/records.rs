@@ -118,10 +118,48 @@ fn parse(text: &str) -> Vec<Record> {
         .collect()
 }
 
+/// How [`restore`] makes sessions.
+#[derive(Clone, Debug, Default)]
+pub struct Restore {
+    /// Never start a tmux server (`tmux -N`): at boot the server is PID 1's
+    /// (`svc:sola-tmux-ws`), and one started here would die with this
+    /// oneshot's cgroup, the restored sessions with it.
+    pub no_server: bool,
+    /// The desk's environment for what runs in them (`WAYLAND_DISPLAY`,
+    /// `XDG_SESSION_TYPE`, `DISPLAY`): a resumed agent keeps it for life
+    /// (Claude pastes an image through Wayland).
+    pub env: Vec<(String, String)>,
+}
+
+/// This computer's desk, for sessions made here: its Wayland socket (the
+/// name sola-river publishes; `wait` that long for it at boot) and X
+/// display, when there is a desk.
+pub fn desk_env(wait: std::time::Duration) -> Vec<(String, String)> {
+    let deadline = std::time::Instant::now() + wait;
+    let wayland = loop {
+        match sola_core::env::wayland_socket() {
+            Some(name) => break Some(name),
+            None if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(250))
+            }
+            None => break sola_core::env::child_wayland_display(),
+        }
+    };
+    let mut env = Vec::new();
+    if let Some(name) = wayland {
+        env.push(("WAYLAND_DISPLAY".into(), name));
+        env.push(("XDG_SESSION_TYPE".into(), "wayland".into()));
+    }
+    if let Some(display) = sola_core::env::x_display() {
+        env.push(("DISPLAY".into(), display));
+    }
+    env
+}
+
 /// Make every session recorded on `m` whose tmux is not there, detached,
 /// as it was: its folder, its options, its agent resumed when its
 /// transcript is still there (else a shell). Returns the ids made.
-pub fn restore(m: &Machine) -> Vec<String> {
+pub fn restore(m: &Machine, how: &Restore) -> Vec<String> {
     let records = list(m);
     if records.is_empty() {
         return Vec::new();
@@ -136,7 +174,7 @@ pub fn restore(m: &Machine) -> Vec<String> {
     .collect();
     let mut made = Vec::new();
     for rec in records.iter().filter(|r| !live.contains(&r.id)) {
-        match make(m, rec) {
+        match make(m, rec, how) {
             Ok(()) => {
                 tracing::info!(host = ?m.host(), session = %rec.id, agent = ?rec.agent, "session back");
                 made.push(rec.id.clone());
@@ -148,16 +186,23 @@ pub fn restore(m: &Machine) -> Vec<String> {
 }
 
 /// `tmux new-session -d` for `rec`, then its options.
-fn make(m: &Machine, rec: &Record) -> Result<(), String> {
+fn make(m: &Machine, rec: &Record, how: &Restore) -> Result<(), String> {
     let session = format!("{}{}", project_sessions::PREFIX, rec.id);
     let cwd = rec.cwd.to_string_lossy().into_owned();
     let pane_env = format!("SOLA_PANE_ID={}", rec.id);
     let path_env = format!("{}={cwd}", crate::catalog::SOLA_WS_PATH);
     let resume = resume_argv(m, rec);
-    let mut argv: Vec<&str> = vec![
-        "tmux", "-L", project_sessions::SOCKET, "new-session", "-d", "-s", &session, "-c", &cwd, "-e",
-        &pane_env, "-e", &path_env,
-    ];
+    let desk: Vec<String> = how.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    let mut argv: Vec<&str> = vec!["tmux", "-L", project_sessions::SOCKET];
+    if how.no_server {
+        argv.push("-N");
+    }
+    argv.extend([
+        "new-session", "-d", "-s", &session, "-c", &cwd, "-e", &pane_env, "-e", &path_env,
+    ]);
+    for e in &desk {
+        argv.extend(["-e", e.as_str()]);
+    }
     argv.extend(resume.iter().map(String::as_str));
     let out = m.run(None, &[], &argv, None)?;
     if !out.status.success() {
