@@ -6,7 +6,7 @@
 //! `b.github.io` differ), widened by four of Bitwarden's global
 //! equivalent-domain groups. Sync-driven equivalent domains can come later.
 
-use bitwarden_vault::UriMatchType;
+use sola_vault_proto::UriMatch as UriMatchType;
 use public_suffix::{DEFAULT_PROVIDER, EffectiveTLDProvider};
 use regex::RegexBuilder;
 use url::{Host, Url};
