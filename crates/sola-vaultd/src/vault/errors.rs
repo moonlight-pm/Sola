@@ -26,6 +26,19 @@ pub fn signed_out() -> VaultError {
     err(ErrorCode::SignedOut, "No account is signed in.")
 }
 
+/// An SDK call failed: its "Item does not exist" (the SDK's error types
+/// are private to it) reads as [`ErrorCode::NotFound`], anything else as
+/// `what` went wrong.
+pub fn sdk(what: &str, e: impl std::fmt::Display) -> VaultError {
+    let msg = e.to_string();
+    if msg.to_lowercase().contains("does not exist") {
+        not_found()
+    } else {
+        tracing::warn!(error = %msg, "vault: {what}");
+        internal(format!("{what} ({msg})."))
+    }
+}
+
 /// An API call `op` failed: unreachable, gone, refused or stale.
 pub fn api(op: &str, e: ApiError) -> VaultError {
     match e {
@@ -81,6 +94,14 @@ mod tests {
         assert_eq!(e.code, ErrorCode::Conflict);
         let e = refused("update item", "the version is old");
         assert_eq!(e.code, ErrorCode::Conflict);
+    }
+
+    #[test]
+    fn the_sdks_not_found_reads_as_one() {
+        assert_eq!(sdk("Could not open it", "Item does not exist").code, ErrorCode::NotFound);
+        let e = sdk("Could not open it", "Missing key");
+        assert_eq!(e.code, ErrorCode::Internal);
+        assert_eq!(e.message, "Could not open it (Missing key).");
     }
 
     #[test]

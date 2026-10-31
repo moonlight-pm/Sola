@@ -11,7 +11,7 @@ use tracing::info;
 
 use super::client::BlobCipherWrites;
 use super::edit::apply_draft;
-use super::errors::{Result, api, err, internal};
+use super::errors::{Result, api, err, internal, sdk};
 use super::new_item::new_view;
 use super::service::VaultService;
 
@@ -56,7 +56,7 @@ pub async fn trash(svc: &VaultService, id: &str) -> Result<()> {
         .ciphers()
         .soft_delete(cipher_id(id)?)
         .await
-        .map_err(|e| internal(format!("Could not move it to the trash ({e}).")))?;
+        .map_err(|e| sdk("Could not move it to the trash", e))?;
     info!(%id, "vault: item trashed");
     Ok(())
 }
@@ -68,7 +68,7 @@ pub async fn restore(svc: &VaultService, id: &str) -> Result<()> {
         .ciphers()
         .restore(cipher_id(id)?)
         .await
-        .map_err(|e| internal(format!("Could not restore it ({e}).")))?;
+        .map_err(|e| sdk("Could not restore it", e))?;
     info!(%id, "vault: item restored");
     Ok(())
 }
@@ -81,7 +81,7 @@ pub async fn delete(svc: &VaultService, id: &str) -> Result<()> {
         .ciphers()
         .delete(cipher_id(id)?)
         .await
-        .map_err(|e| internal(format!("Could not delete it ({e}).")))?;
+        .map_err(|e| sdk("Could not delete it", e))?;
     info!(%id, "vault: item deleted");
     Ok(())
 }
@@ -137,7 +137,7 @@ pub async fn share(svc: &VaultService, id: &str, organization_id: &str, collecti
         .ciphers()
         .share_cipher(view, org, collections, None)
         .await
-        .map_err(|e| internal(format!("Could not move it ({e}).")))?;
+        .map_err(|e| sdk("Could not move it", e))?;
     info!(%id, "vault: item moved into an organization");
     Ok(())
 }

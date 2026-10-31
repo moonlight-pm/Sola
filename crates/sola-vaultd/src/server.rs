@@ -120,7 +120,7 @@ async fn connection(stream: UnixStream, ctx: Arc<Ctx>) {
         let response = match req {
             Request::Hello { version, client } => {
                 said_hello = true;
-                info!(pid, exe = %peer.exe, %client, version, "vault: hello");
+                debug!(pid, exe = %peer.exe, %client, version, "vault: hello");
                 Response::Ok(Reply::Hello { version: VERSION })
             }
             Request::Status => Response::Ok(Reply::Status(ctx.status.borrow().clone())),

@@ -18,7 +18,7 @@ use sola_vault_proto::{ErrorCode, Server, TwoFactorKind};
 use tracing::{info, warn};
 
 use super::client::{self, Built};
-use super::errors::{Result, api, err, internal, not_found};
+use super::errors::{Result, api, err, internal, sdk};
 use super::identity::{self, IdentityLogin, LoginStep, RefreshError};
 use super::session::{self, Session};
 
@@ -261,16 +261,12 @@ impl VaultService {
     /// message instead of reading "not found".
     pub async fn cipher(&self, id: &str) -> Result<CipherView> {
         super::write::cipher_id(id)?;
-        self.pm().vault().ciphers().get(id).await.map_err(|e| {
-            let msg = e.to_string();
-            // The SDK's `ItemNotFoundError` (its error type is private).
-            if msg.to_lowercase().contains("does not exist") {
-                not_found()
-            } else {
-                warn!(%id, error = %msg, "vault: item open failed");
-                internal(format!("Could not open this item: {msg}"))
-            }
-        })
+        self.pm()
+            .vault()
+            .ciphers()
+            .get(id)
+            .await
+            .map_err(|e| sdk("Could not open this item", e))
     }
 
     /// The encrypted items as synced (exports).

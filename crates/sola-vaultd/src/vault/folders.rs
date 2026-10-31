@@ -4,7 +4,7 @@ use bitwarden_vault::{FolderAddEditRequest, FolderId};
 use sola_vault_proto::{Collection, ErrorCode, Folder, Organization};
 use tracing::info;
 
-use super::errors::{Result, api, err, internal};
+use super::errors::{Result, api, err, internal, sdk};
 use super::service::VaultService;
 
 /// The folders, by name.
@@ -38,7 +38,7 @@ pub async fn create(svc: &VaultService, name: &str) -> Result<String> {
         .folders()
         .create(FolderAddEditRequest { name })
         .await
-        .map_err(|e| internal(format!("Could not make the folder ({e}).")))?;
+        .map_err(|e| sdk("Could not make the folder", e))?;
     let id = made
         .id
         .map(|i| i.to_string())
@@ -55,7 +55,7 @@ pub async fn rename(svc: &VaultService, id: &str, name: &str) -> Result<()> {
         .folders()
         .edit(folder_id(id)?, FolderAddEditRequest { name })
         .await
-        .map_err(|e| internal(format!("Could not rename the folder ({e}).")))?;
+        .map_err(|e| sdk("Could not rename the folder", e))?;
     info!(%id, "vault: folder renamed");
     Ok(())
 }

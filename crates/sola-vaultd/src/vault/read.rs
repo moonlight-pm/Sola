@@ -56,7 +56,7 @@ pub async fn matches(svc: &VaultService, url: &str, mru: &HashMap<String, i64>) 
         .into_iter()
         .filter(|s| s.uri_match && s.kind == ItemKind::Login && !s.deleted)
         .collect();
-    tracing::info!(matches = out.len(), host = %log_host(url), "vault: page matches");
+    tracing::debug!(matches = out.len(), host = %log_host(url), "vault: page matches");
     Ok(out)
 }
 
