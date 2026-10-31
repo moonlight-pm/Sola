@@ -1,25 +1,15 @@
 //! Shortcut catalog + filter state for Super+K.
 
-use sola_bus::topics::{AppMenuPayload, MenuItem, Zone};
-use sola_core::{KeyChord, KeyCode};
-use sola_kit::menu::{WINDOW_MENU_ENTRIES, WindowAction, WindowMenuEntry, parse_window_action};
+use sola_bus::topics::{AppMenuPayload, MenuItem};
+use sola_core::KeyChord;
+use sola_kit::menu::parse_window_action;
+
+use crate::bindings::{Act, Bindings};
 
 #[derive(Clone, Debug)]
 pub enum ShortcutAction {
-    OpenLauncher,
-    OpenShortcuts,
-    Hide,
-    CloseApp,
-    Cycle,
-    ScreenshotFull,
-    ScreenshotRegion,
-    ScreenshotWindow,
-    Zone(Zone),
-    /// Show workspace N (0-based).
-    ShowWorkspace(usize),
-    /// Send the focused window to workspace N (0-based).
-    SendToWorkspace(usize),
-    StepWorkspace { back: bool },
+    /// A system action (`crate::bindings`).
+    System(Act),
     Menu { app_id: String, action_id: String },
 }
 
@@ -83,18 +73,24 @@ impl ShortcutsState {
         }
     }
 
-    /// Rebuild from built-in chords + the focused app's published menus.
-    pub fn rebuild(&mut self, focused: Option<&AppMenuPayload>) {
-        self.rows = catalog(focused);
+    /// Rebuild from the system's keys + the focused app's published menus.
+    pub fn rebuild(&mut self, focused: Option<&AppMenuPayload>, keys: &Bindings) {
+        self.rows = catalog(focused, keys);
         self.apply_query(&self.query.clone());
     }
 }
 
-fn catalog(focused: Option<&AppMenuPayload>) -> Vec<ShortcutRow> {
-    let mut rows = Vec::new();
-
-    rows.extend(shell_rows());
-    rows.extend(window_rows());
+fn catalog(focused: Option<&AppMenuPayload>, keys: &Bindings) -> Vec<ShortcutRow> {
+    let mut rows: Vec<ShortcutRow> = keys
+        .rows()
+        .into_iter()
+        .map(|(group, label, chord, act)| ShortcutRow {
+            group,
+            label,
+            chord,
+            action: ShortcutAction::System(act),
+        })
+        .collect();
 
     if let Some(payload) = focused {
         for menu in &payload.menus {
@@ -162,136 +158,30 @@ fn menu_group(label: &str) -> &'static str {
     }
 }
 
-fn shell_rows() -> Vec<ShortcutRow> {
-    vec![
-        row(
-            "Shell",
-            "Launch Application",
-            Some(KeyCode::SPACE.meta()),
-            ShortcutAction::OpenLauncher,
-        ),
-        row(
-            "Shell",
-            "Keyboard Shortcuts",
-            Some(KeyCode::K.meta()),
-            ShortcutAction::OpenShortcuts,
-        ),
-        row(
-            "Shell",
-            "Hide App",
-            Some(KeyCode::H.meta()),
-            ShortcutAction::Hide,
-        ),
-        row(
-            "Shell",
-            "Close App",
-            Some(KeyCode::Q.meta()),
-            ShortcutAction::CloseApp,
-        ),
-        row(
-            "Shell",
-            "Next Tab",
-            Some(KeyCode::GRAVE.meta()),
-            ShortcutAction::Cycle,
-        ),
-        row(
-            "Workspaces",
-            "Show Workspace 1 (to 9)",
-            Some(KeyCode::KEY_1.meta()),
-            ShortcutAction::ShowWorkspace(0),
-        ),
-        row(
-            "Workspaces",
-            "Send Window to Workspace 1 (to 9)",
-            Some(KeyCode::KEY_1.meta().ctrl()),
-            ShortcutAction::SendToWorkspace(0),
-        ),
-        row(
-            "Workspaces",
-            "Next Workspace",
-            Some(KeyCode::TAB.meta()),
-            ShortcutAction::StepWorkspace { back: false },
-        ),
-        row(
-            "Workspaces",
-            "Previous Workspace",
-            Some(KeyCode::TAB.meta().shift()),
-            ShortcutAction::StepWorkspace { back: true },
-        ),
-        row(
-            "Capture",
-            "Screenshot Screen",
-            Some(KeyCode::KEY_3.meta_shift()),
-            ShortcutAction::ScreenshotFull,
-        ),
-        row(
-            "Capture",
-            "Screenshot Selection",
-            Some(KeyCode::KEY_4.meta_shift()),
-            ShortcutAction::ScreenshotRegion,
-        ),
-        row(
-            "Capture",
-            "Screenshot Window",
-            Some(KeyCode::KEY_5.meta_shift()),
-            ShortcutAction::ScreenshotWindow,
-        ),
-    ]
-}
-
-fn window_rows() -> Vec<ShortcutRow> {
-    WINDOW_MENU_ENTRIES
-        .iter()
-        .filter_map(|entry| match entry {
-            WindowMenuEntry::Item(i) => {
-                let action = match i.action {
-                    WindowAction::Hide | WindowAction::Cycle => return None,
-                    WindowAction::Zone(z) => ShortcutAction::Zone(z),
-                };
-                Some(row("Window", i.label, Some(i.shortcut), action))
-            }
-            WindowMenuEntry::Divider => None,
-        })
-        .collect()
-}
-
-fn row(
-    group: &'static str,
-    label: &str,
-    chord: Option<KeyChord>,
-    action: ShortcutAction,
-) -> ShortcutRow {
-    ShortcutRow {
-        group,
-        label: label.to_string(),
-        chord,
-        action,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sola_bus::topics::MenuDefinition;
+    use sola_bus::topics::{MenuDefinition, Zone};
+    use sola_core::KeyCode;
 
     #[test]
     fn catalog_includes_super_k_and_zones() {
-        let rows = catalog(None);
+        let rows = catalog(None, &Bindings::default());
         assert!(
             rows.iter()
-                .any(|r| matches!(r.action, ShortcutAction::OpenShortcuts))
+                .any(|r| matches!(r.action, ShortcutAction::System(Act::Shortcuts)))
         );
         assert!(
             rows.iter()
-                .any(|r| matches!(r.action, ShortcutAction::Zone(Zone::Float)))
+                .any(|r| matches!(r.action, ShortcutAction::System(Act::Zone(Zone::Float))))
         );
         assert!(
             rows.iter()
-                .any(|r| matches!(r.action, ShortcutAction::Zone(Zone::Left)))
+                .any(|r| matches!(r.action, ShortcutAction::System(Act::Zone(Zone::Left))))
         );
         assert!(
             rows.iter()
-                .any(|r| matches!(r.action, ShortcutAction::OpenLauncher))
+                .any(|r| matches!(r.action, ShortcutAction::System(Act::Launcher)))
         );
     }
 
@@ -339,14 +229,14 @@ mod tests {
                 },
             ],
         };
-        let rows = catalog(Some(&payload));
+        let rows = catalog(Some(&payload), &Bindings::default());
         assert!(rows.iter().any(|r| r.label == "Copy" && r.group == "Edit"));
         assert!(!rows.iter().any(|r| r.label == "Quit Terminal"));
         assert!(!rows.iter().any(|r| r.label == "Restart Computer"));
         assert!(!rows.iter().any(|r| r.label == "Shut Down"));
         let float_hits = rows
             .iter()
-            .filter(|r| matches!(r.action, ShortcutAction::Zone(Zone::Float)))
+            .filter(|r| matches!(r.action, ShortcutAction::System(Act::Zone(Zone::Float))))
             .count();
         assert_eq!(float_hits, 1);
     }
@@ -354,7 +244,7 @@ mod tests {
     #[test]
     fn apply_query_filters_and_resets_selection() {
         let mut s = ShortcutsState::default();
-        s.rebuild(None);
+        s.rebuild(None, &Bindings::default());
         s.selected = 3;
         s.apply_query("float");
         assert_eq!(s.filtered.len(), 1);

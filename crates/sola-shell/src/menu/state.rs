@@ -113,6 +113,7 @@ impl MenuCache {
         let entries = self.shortcuts.get(chord)?;
         entries
             .iter()
+            .filter(|(_, action)| sola_kit::menu::parse_window_action(action).is_none())
             .find(|(app_id, _)| app_id == focused_app_id)
             .map(|(app_id, action_id)| MenuActionPayload {
                 app_id: app_id.clone(),
@@ -146,6 +147,23 @@ impl MenuCache {
     /// River — registering globally causes a Sola app's shortcut (e.g.
     /// sola-browser's Meta+W) to be grabbed even when a non-Sola client
     /// like Zed is focused, swallowing the chord.
+    /// `app_id`'s own menu keys: not its Window menu's, which are system
+    /// actions (`crate::bindings`).
+    pub fn app_key_bindings(&self, app_id: &str) -> Vec<KeyChord> {
+        let mut out: Vec<KeyChord> = self
+            .shortcuts
+            .iter()
+            .filter(|(_, entries)| {
+                entries.iter().any(|(id, action)| {
+                    id == app_id && sola_kit::menu::parse_window_action(action).is_none()
+                })
+            })
+            .map(|(chord, _)| *chord)
+            .collect();
+        out.sort_by_key(|b| (b.keycode.raw(), b.meta, b.alt, b.ctrl, b.shift));
+        out
+    }
+
     pub fn key_bindings_for(&self, app_id: &str) -> Vec<KeyChord> {
         let mut set: HashSet<KeyChord> = HashSet::new();
 

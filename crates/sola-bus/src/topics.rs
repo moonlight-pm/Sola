@@ -275,6 +275,57 @@ pub struct TabLayout {
     pub full: Vec<String>,
 }
 
+/// One action a key can be bound to (`Topic::KeyActions`). Its id is
+/// stable; the label is what Settings and Super+K show.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyAction {
+    pub id: String,
+    pub label: String,
+    /// The heading it sits under in Settings and Super+K ("Workspaces").
+    #[serde(default)]
+    pub group: String,
+    /// The key it has until you change it.
+    #[serde(default)]
+    pub default: Option<sola_core::KeyChord>,
+}
+
+/// An owner's bindable actions (`Topic::KeyActions`, persistent, keyed by
+/// owner): `"system"` (the shell, zones included), `"common"` (the kit's
+/// shared actions), or an app id. Stored, so Settings lists an app's keys
+/// while it is closed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyActions {
+    pub owner: String,
+    pub label: String,
+    pub actions: Vec<KeyAction>,
+}
+
+/// Your change to one action's key. `key: None` leaves it without one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyOverride {
+    pub owner: String,
+    pub action: String,
+    #[serde(default)]
+    pub key: Option<sola_core::KeyChord>,
+}
+
+/// Your changes to keys (`Topic::Keybindings`, persistent; Settings →
+/// shell, apps). Defaults stay in code; resetting an action drops its
+/// override.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Keybindings {
+    #[serde(default)]
+    pub overrides: Vec<KeyOverride>,
+}
+
+/// Settings is waiting for a key (`Topic::KeyCapture`, sticky): the shell
+/// drops its grabs so the key reaches Settings' window, and grabs again
+/// when it is retracted (or after a while on its own).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyCapture {
+    pub app_id: String,
+}
+
 /// A desktop workspace (Next slice 5): a whole desk of windows. The id
 /// is stable for its life; the name is the user's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1915,6 +1966,21 @@ define_topics! {
     // `Focus`, which is the shell's word to sola-river and does not show
     // a window its zone is not showing. Appended last.
     ShowWindow(u32),
+
+    // Every owner's bindable actions (shell, kit, apps → Settings).
+    // Persistent, keyed by owner. Appended last.
+    #[persistent(keys = [owner])]
+    KeyActions(KeyActions),
+
+    // Your changes to keys (Settings → shell, apps). Persistent. Appended
+    // last.
+    #[persistent]
+    Keybindings(Keybindings),
+
+    // Settings is waiting for a key (Settings → shell). Sticky; retracted
+    // when it has one. Appended last.
+    #[sticky]
+    KeyCapture(KeyCapture),
 }
 
 #[cfg(test)]

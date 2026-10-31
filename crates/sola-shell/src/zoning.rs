@@ -5,7 +5,6 @@
 use std::collections::{HashMap, HashSet};
 
 use sola_bus::topics::{FloatGeometry, FrameUpdate, OutputGeometry, WindowGeometry, Zone};
-use sola_core::KeyCode;
 use tracing::info;
 
 use crate::stacks::HALVES;
@@ -594,26 +593,6 @@ impl ZoningState {
     }
 }
 
-/// The numpad zone keys (with Super) on the two-zone layout.
-pub const ZONING_KEYCODES: &[u32] = &[
-    KeyCode::KP_4.raw(),
-    KeyCode::KP_6.raw(),
-    KeyCode::KP_0.raw(),
-    KeyCode::KP_ENTER.raw(),
-    KeyCode::KP_MULTIPLY.raw(),
-];
-
-pub fn zone_for_keycode(code: u32) -> Option<Zone> {
-    match code {
-        c if c == KeyCode::KP_4.raw() => Some(Zone::Left),
-        c if c == KeyCode::KP_6.raw() => Some(Zone::Right),
-        c if c == KeyCode::KP_0.raw() => Some(Zone::Fullscreen),
-        c if c == KeyCode::KP_ENTER.raw() => Some(Zone::Cinema),
-        c if c == KeyCode::KP_MULTIPLY.raw() => Some(Zone::Float),
-        _ => None,
-    }
-}
-
 /// Default frame for a freshly-floated window with nothing to shrink
 /// from: the content area inset by `FLOAT_MARGIN` on every edge.
 fn float_frame(window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
@@ -759,16 +738,6 @@ mod tests {
         let aspect = f.width as f32 / f.height as f32;
         assert!((aspect - 16.0 / 9.0).abs() < 0.01, "{aspect}");
         assert!(s.float("gamescope", 10, false).is_some());
-    }
-
-    #[test]
-    fn numpad_keys_on_two_zones() {
-        assert_eq!(zone_for_keycode(KeyCode::KP_4.raw()), Some(Zone::Left));
-        assert_eq!(zone_for_keycode(KeyCode::KP_6.raw()), Some(Zone::Right));
-        assert_eq!(zone_for_keycode(KeyCode::KP_0.raw()), Some(Zone::Fullscreen));
-        assert_eq!(zone_for_keycode(KeyCode::KP_MULTIPLY.raw()), Some(Zone::Float));
-        assert_eq!(zone_for_keycode(KeyCode::KP_8.raw()), None);
-        assert!(ZONING_KEYCODES.contains(&KeyCode::KP_ENTER.raw()));
     }
 
     #[test]

@@ -10,7 +10,7 @@ use sola_bus::topics::{
     AppMenuPayload, ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate,
     MenuActionPayload, RegisteredChord, TabLayout, Topic, Window, Zone,
 };
-use sola_core::{KeyChord, KeyCode};
+use sola_core::KeyChord;
 use sola_kit::theme;
 
 use crate::keys;
@@ -89,6 +89,8 @@ const OVERLAY_LIVE_SLOTS: usize = 5;
 #[derive(Clone, Debug)]
 pub enum Msg {
     Bus(Arc<sola_bus::Message>),
+    /// A key capture outlived its time (Settings went away mid-capture).
+    KeyCaptureExpire(u64),
     /// Fired by `iced::window::open`'s Task when a window's OS handle is ready.
     WindowOpened(WindowKind, iced::window::Id),
     /// Overlay iced swapchain size (after Wayland configure). Used to delay
@@ -429,6 +431,10 @@ pub struct Shell {
     /// Last registered-chord set we emitted; skip identical re-emits that
     /// still force a River manage cycle (title-only Windows storms).
     pub last_registered_chords: Vec<RegisteredChord>,
+    /// The system actions and their keys now (`crate::bindings`).
+    pub keys: crate::bindings::Bindings,
+    /// Counts key captures, so a stale timeout ends none.
+    pub key_capture_gen: u64,
 
     // Application catalog (built-ins + user entries from Topic::Application)
     pub applications: ApplicationsConfig,
@@ -544,7 +550,7 @@ impl Shell {
         let (menubar_id, menubar_task) = menubar::open_window();
         let task = menubar_task.map(|id| Msg::WindowOpened(WindowKind::Menubar, id));
 
-        let state = Self {
+        let mut state = Self {
             theme,
             style: theme::ShellStyle::default(),
             menubar_window_id: Some(menubar_id),
@@ -581,6 +587,8 @@ impl Shell {
             window_id_by_key: HashMap::new(),
             last_composition: Vec::new(),
             last_registered_chords: Vec::new(),
+            keys: crate::bindings::Bindings::default(),
+            key_capture_gen: 0,
             applications: ApplicationsConfig {
                 apps: crate::builtins::builtin_apps(),
             },
@@ -616,8 +624,17 @@ impl Shell {
             calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
+        state.publish_key_actions();
 
         (state, task)
+    }
+
+    /// Tell Settings the system's actions (`Topic::KeyActions`).
+    pub(crate) fn publish_key_actions(&self) {
+        let decl = self.keys.declaration();
+        with_bus(|bus| {
+            let _ = bus.emit(Topic::KeyActions(decl));
+        });
     }
 
     // -------------------------------------------------------------------------
@@ -865,58 +882,8 @@ impl Shell {
         self.emit_composition();
         self.emit_registered_chords();
         match row.action {
-            ShortcutAction::OpenShortcuts => iced::Task::none(),
-            ShortcutAction::OpenLauncher => iced::Task::done(Msg::OpenLauncher),
-            ShortcutAction::Hide => {
-                self.hide_focused_app();
-                iced::Task::none()
-            }
-            ShortcutAction::CloseApp => {
-                if let Some(ref focused) = self.focused_app_id.clone() {
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(Topic::CloseApp(focused.clone()));
-                    }
-                }
-                iced::Task::none()
-            }
-            ShortcutAction::Cycle => iced::Task::done(Msg::CycleTabs { back: false }),
-            ShortcutAction::ShowWorkspace(index) => {
-                self.show_workspace(index);
-                iced::Task::none()
-            }
-            ShortcutAction::SendToWorkspace(index) => {
-                self.send_focused_to_workspace(index);
-                iced::Task::none()
-            }
-            ShortcutAction::StepWorkspace { back } => {
-                self.step_workspace(back);
-                iced::Task::none()
-            }
-            ShortcutAction::ScreenshotFull => {
-                self.arm_screenshot_handoff();
-                crate::screenshot::full()
-            }
-            ShortcutAction::ScreenshotRegion => iced::Task::done(Msg::OpenSelection),
-            ShortcutAction::ScreenshotWindow => {
-                let Some(app_id) = self.focused_app_id.clone() else {
-                    self.menubar
-                        .push_toast("Screenshot failed: no focused window");
-                    let toast_gen = self.menubar.toast_generation;
-                    return iced::Task::perform(
-                        tokio::time::sleep(Duration::from_secs(5)),
-                        move |_| Msg::ToastExpire(toast_gen),
-                    );
-                };
-                let title = self.focused_window_id.and_then(|wid| {
-                    self.known_windows
-                        .iter()
-                        .find(|w| w.window_id == wid)
-                        .map(|w| w.title.clone())
-                });
-                self.arm_screenshot_handoff();
-                crate::screenshot::window(app_id, title)
-            }
-            ShortcutAction::Zone(zone) => self.snap_focused_zone(zone),
+            ShortcutAction::System(crate::bindings::Act::Shortcuts) => iced::Task::none(),
+            ShortcutAction::System(act) => self.run_act(act),
             ShortcutAction::Menu { app_id, action_id } => {
                 iced::Task::done(Msg::MenuAction { app_id, action_id })
             }
@@ -1630,6 +1597,10 @@ impl Shell {
 
     /// Build the RegisteredChords payload for the current overlay + focused app.
     fn build_registered_chords(&self) -> Vec<RegisteredChord> {
+        // Settings is waiting for a key: grab nothing, so it gets it.
+        if self.keys.capturing {
+            return Vec::new();
+        }
         let source = self.shell_key_chords();
         let mut chords: Vec<RegisteredChord> = Vec::with_capacity(source.len() * 2 + 2);
         for c in &source {
@@ -1693,59 +1664,28 @@ impl Shell {
         });
     }
 
-    /// Build the list of chords the shell wants River to grab.
+    /// Build the list of chords the shell wants River to grab: every
+    /// system key now (`crate::bindings`), and the focused app's Super
+    /// menu keys.
     pub fn shell_key_chords(&self) -> Vec<KeyChord> {
-        // Shell-own menu bindings (meta-bound items only; Exit Sola has none).
-        let mut bindings: Vec<KeyChord> = self
-            .menus
-            .key_bindings_for(Self::APP_ID)
-            .into_iter()
-            .filter(|b| b.meta)
-            .collect();
+        let mut bindings = self.keys.chords();
 
         // Focused app's menu shortcuts (meta-bound only, only while focused so
         // River doesn't grab them globally when other clients have focus).
         // Not while the launcher or the shortcuts overlay is up: their field
         // has the keyboard, and Super+V / C / X / A must reach it (the modal
-        // eats a grabbed chord).
+        // eats a grabbed chord). Its Window menu items are system actions,
+        // whose keys are already in.
         let modal = self.launcher.active || self.shortcuts.active;
         if let Some(focused) = self.focused_app_id.as_deref().filter(|_| !modal) {
             if focused != Self::APP_ID {
                 bindings.extend(
                     self.menus
-                        .key_bindings_for(focused)
+                        .app_key_bindings(focused)
                         .into_iter()
                         .filter(|b| b.meta),
                 );
             }
-        }
-
-        // Fixed shell chords.
-        bindings.push(KeyCode::TAB.meta()); // Meta+Tab → next workspace
-        bindings.push(KeyCode::TAB.meta().shift()); // Meta+Shift+Tab → previous workspace
-        bindings.push(KeyCode::GRAVE.meta()); // Meta+` → next tab in the bar
-        bindings.push(KeyCode::GRAVE.meta_shift()); // Meta+Shift+` → previous tab
-        bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
-        bindings.push(KeyCode::K.meta()); // Meta+K → keyboard shortcuts (Omarchy)
-        bindings.push(KeyCode::Q.meta()); // Meta+Q → close focused app
-        bindings.push(KeyCode::H.meta()); // Meta+H → hide focused app
-        // Workspaces: Meta+1…9 show, Meta+Ctrl+1…9 send the focused window
-        // (Meta+(Shift+)Tab steps, above).
-        for key in crate::keys::WORKSPACE_KEYS {
-            bindings.push(key.meta());
-            bindings.push(key.meta().ctrl());
-        }
-        // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
-        bindings.push(KeyCode::KEY_3.meta_shift());
-        bindings.push(KeyCode::KEY_4.meta_shift());
-        bindings.push(KeyCode::KEY_5.meta_shift());
-
-        // Meta+Numpad zones a window.
-        for &raw in crate::zoning::ZONING_KEYCODES {
-            bindings.push(KeyChord {
-                keycode: KeyCode::from(raw),
-                ..KeyCode::TAB.meta()
-            });
         }
 
         bindings.sort_by_key(|b| (b.keycode.raw(), b.meta, b.alt, b.ctrl, b.shift));
@@ -2331,6 +2271,14 @@ impl Shell {
     fn dispatch_msg(&mut self, msg: Msg) -> iced::Task<Msg> {
         match msg {
             Msg::Bus(arc) => self.handle_bus(&arc),
+            Msg::KeyCaptureExpire(generation) => {
+                if generation == self.key_capture_gen && self.keys.capturing {
+                    tracing::warn!("key capture timed out; grabbing keys again");
+                    self.keys.capturing = false;
+                    self.emit_registered_chords();
+                }
+                iced::Task::none()
+            }
             Msg::WindowOpened(kind, id) => {
                 *self.overlay_id_mut(kind) = Some(id);
                 self.on_overlay_mapped(kind)
@@ -2571,7 +2519,7 @@ impl Shell {
                     .focused_app_id
                     .as_deref()
                     .map(|id| self.effective_app_menu(id));
-                self.shortcuts.rebuild(menu.as_ref());
+                self.shortcuts.rebuild(menu.as_ref(), &self.keys);
                 self.shortcuts.active = true;
                 self.emit_composition();
                 self.emit_registered_chords();
@@ -3197,6 +3145,8 @@ mod pending_launch_tests {
             window_id_by_key: HashMap::new(),
             last_composition: Vec::new(),
             last_registered_chords: Vec::new(),
+            keys: crate::bindings::Bindings::default(),
+            key_capture_gen: 0,
             applications: ApplicationsConfig {
                 apps: crate::builtins::builtin_apps(),
             },
@@ -3259,6 +3209,7 @@ mod pending_launch_tests {
 #[cfg(test)]
 mod hide_tests {
     use super::*;
+    use sola_core::KeyCode;
     use sola_bus::topics::MenuItem;
 
     fn win(id: u32, app: &str, title: &str) -> Window {
@@ -3324,6 +3275,8 @@ mod hide_tests {
             window_id_by_key,
             last_composition: Vec::new(),
             last_registered_chords: Vec::new(),
+            keys: crate::bindings::Bindings::default(),
+            key_capture_gen: 0,
             applications: ApplicationsConfig {
                 apps: crate::builtins::builtin_apps(),
             },
@@ -3428,9 +3381,10 @@ mod hide_tests {
                 .any(|c| c.keycode == KeyCode::L && c.meta && !c.shift && !c.ctrl && !c.alt),
             "Super+L (the flower menu's Lock Screen) must be a registered shell chord"
         );
-        let chord = KeyCode::L.meta();
-        let action = shell.menus.lookup_shortcut(&chord, Shell::APP_ID);
-        assert_eq!(action.map(|a| a.action_id), Some(crate::lock::ACTION_LOCK.to_string()));
+        assert_eq!(
+            shell.keys.act_for(&KeyCode::L.meta()),
+            Some(crate::bindings::Act::Lock)
+        );
     }
 
     #[test]

@@ -96,7 +96,11 @@ mod tests {
         // The frozen list differs from this build's order only by the
         // removed CustomTheme. A kind added after the freeze is missing
         // from it, and a bus from before names never sees it.
-        let now: Vec<&str> = TopicKind::ALL.iter().map(|k| k.as_str()).collect();
+        let now: Vec<&str> = TopicKind::ALL
+            .iter()
+            .map(|k| k.as_str())
+            .filter(|n| NUMBERED.contains(n))
+            .collect();
         let frozen: Vec<&str> = NUMBERED.iter().copied().filter(|n| *n != "CustomTheme").collect();
         assert_eq!(frozen, now);
         assert_eq!(NUMBERED.iter().position(|n| *n == "CustomTheme"), Some(50));
