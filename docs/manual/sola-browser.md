@@ -72,7 +72,7 @@ to another browser.
 
 | From | What happens |
 |------|--------------|
-| A link clicked in Terminal, Projects, Mail, Calendar, or Bots | `sola_core::open_url`: the address goes to the running Browser over `chrome.sock`, or starts `/bin/sola-browser` with it |
+| A link clicked in Terminal, Projects, Mail, Calendar, or Bots | `sola_core::open_url`: the address goes to the running Browser over `chrome.sock`; with none running, `/bin/sola-browser --open <url>` has the session start the Browser and hands it the address, so the Browser is tracked and comes back when the desk restarts |
 | `solactl open <url>` | The same; an image path goes to Paint and an `.ics` file to Calendar instead |
 | The launcher's Browser field | The same |
 | Bus `OpenUrl` | A running Browser opens the page; the shell starts Browser only when it is not running |

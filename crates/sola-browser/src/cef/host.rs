@@ -460,9 +460,13 @@ pub fn stop_all_profile_engines() {
 fn stop_profile_engine(profile_id: &str) {
     let sock = profiles::engine_sock_path(profile_id);
     let pid_path = profiles::engine_pid_path(profile_id);
+    // The pid file outlives its helper (a reboot, a crash): by now its pid
+    // may be any process — once it was Terminal, once Projects. Only wait
+    // on, or signal, this profile's helper.
     let pid = fs::read_to_string(&pid_path)
         .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok());
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .filter(|&pid| is_helper_of(pid, profile_id));
     if let Ok(mut stream) = UnixStream::connect(&sock) {
         match ipc::write_msg(&mut stream, &ToEngine::Shutdown) {
             Ok(()) => {
@@ -472,7 +476,7 @@ fn stop_profile_engine(profile_id: &str) {
         }
     }
     if let Some(pid) = pid {
-        if wait_pid_gone(pid, Duration::from_secs(6)) {
+        if helper_gone(pid, profile_id, Duration::from_secs(6)) {
             tracing::info!(%profile_id, pid, "engine helper exited");
         } else {
             tracing::warn!(%profile_id, pid, "engine helper still up — SIGTERM");
@@ -480,7 +484,7 @@ fn stop_profile_engine(profile_id: &str) {
                 .arg("-TERM")
                 .arg(pid.to_string())
                 .status();
-            let _ = wait_pid_gone(pid, Duration::from_secs(2));
+            let _ = helper_gone(pid, profile_id, Duration::from_secs(2));
         }
     }
     let _ = fs::remove_file(&sock);
@@ -505,18 +509,8 @@ fn is_helper_of(pid: u32, profile_id: &str) -> bool {
 /// Wait for a previous helper of this profile to finish shutting down;
 /// SIGTERM it if it takes too long.
 fn await_helper_exit(pid: u32, profile_id: &str) {
-    let gone = |timeout: Duration| {
-        let start = Instant::now();
-        while start.elapsed() < timeout {
-            if !is_helper_of(pid, profile_id) {
-                return true;
-            }
-            thread::sleep(Duration::from_millis(40));
-        }
-        !is_helper_of(pid, profile_id)
-    };
     tracing::info!(%profile_id, pid, "engine helper: waiting for the previous helper to exit");
-    if gone(Duration::from_secs(5)) {
+    if helper_gone(pid, profile_id, Duration::from_secs(5)) {
         return;
     }
     tracing::warn!(%profile_id, pid, "engine helper: previous helper still up — SIGTERM");
@@ -524,20 +518,21 @@ fn await_helper_exit(pid: u32, profile_id: &str) {
         .arg("-TERM")
         .arg(pid.to_string())
         .status();
-    if !gone(Duration::from_secs(3)) {
+    if !helper_gone(pid, profile_id, Duration::from_secs(3)) {
         tracing::error!(%profile_id, pid, "engine helper: previous helper did not exit; CEF may refuse to start");
     }
 }
 
-fn wait_pid_gone(pid: u32, timeout: Duration) -> bool {
+/// Wait up to `timeout` for `pid` to stop being `profile_id`'s helper.
+fn helper_gone(pid: u32, profile_id: &str, timeout: Duration) -> bool {
     let start = Instant::now();
     while start.elapsed() < timeout {
-        if !Path::new(&format!("/proc/{pid}")).exists() {
+        if !is_helper_of(pid, profile_id) {
             return true;
         }
         thread::sleep(Duration::from_millis(40));
     }
-    !Path::new(&format!("/proc/{pid}")).exists()
+    !is_helper_of(pid, profile_id)
 }
 
 /// Kill leftover iced fleet windows (`--parked`) and **orphan** helpers.
@@ -791,5 +786,40 @@ mod id_range_tests {
             assert_eq!(base, tab_id_base(id), "stable");
         }
         assert_ne!(tab_id_base("primary"), tab_id_base("work"));
+    }
+}
+
+#[cfg(test)]
+mod helper_pid_tests {
+    use super::*;
+
+    /// A stale `engine.pid` naming any other process (pid reuse after a
+    /// reboot) is not a helper: nothing waits on it or signals it.
+    #[test]
+    fn a_reused_pid_is_not_a_helper() {
+        assert!(!is_helper_of(std::process::id(), "p"));
+        let mut other = std::process::Command::new("sleep").arg("5").spawn().unwrap();
+        assert!(!is_helper_of(other.id(), "p"));
+        let _ = other.kill();
+        let _ = other.wait();
+    }
+
+    #[test]
+    fn a_helper_is_known_by_its_engine_and_profile_args() {
+        let mut helper = std::process::Command::new("sh")
+            // A second command keeps `sh` from exec-ing `sleep` in its place.
+            .args(["-c", "sleep 5; true", "--engine", "--profile=p"])
+            .spawn()
+            .unwrap();
+        // Just after exec its cmdline reads empty for a moment.
+        let start = Instant::now();
+        while !is_helper_of(helper.id(), "p") && start.elapsed() < Duration::from_secs(2) {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(is_helper_of(helper.id(), "p"));
+        assert!(!is_helper_of(helper.id(), "q"));
+        let _ = helper.kill();
+        let _ = helper.wait();
+        assert!(helper_gone(helper.id(), "p", Duration::from_millis(100)));
     }
 }

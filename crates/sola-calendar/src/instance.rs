@@ -50,11 +50,16 @@ pub fn claim() -> Claim {
     }
 }
 
+/// A calendar holds the socket. Writing nothing, the connect is a probe.
+pub fn live() -> bool {
+    UnixStream::connect(lock_path()).is_ok()
+}
+
 /// Files named on the command line, absolute (`file://` stripped).
 pub fn launch_paths() -> Vec<PathBuf> {
     std::env::args()
         .skip(1)
-        .filter(|a| !a.trim().is_empty())
+        .filter(|a| !a.trim().is_empty() && a != sola_core::opener::OPEN_FLAG)
         .map(|a| {
             let p = PathBuf::from(a.strip_prefix("file://").unwrap_or(&a));
             if p.is_absolute() {

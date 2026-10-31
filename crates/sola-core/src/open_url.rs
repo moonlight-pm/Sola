@@ -12,13 +12,13 @@
 //! fallback.
 //!
 //! When sola-browser is already running, [`open`] first writes the URL to
-//! `chrome.sock` (the iced singleton). Only if that fails do we spawn a
-//! new process.
+//! `chrome.sock` (the iced singleton). Only if that fails does it start
+//! `sola-browser --open <url>` ([`crate::opener`]), which has the session
+//! start the browser and hands it the URL.
 
 use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::time::Duration;
 
 /// Env override for the sola-browser binary (defaults to
@@ -46,14 +46,7 @@ pub fn open(uri: &str) -> Result<(), String> {
             crate::paths::bin_path("sola-browser").display()
         )
     })?;
-    Command::new(&bin)
-        .arg(&uri)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("spawn {}: {e}", bin.display()))?;
-    Ok(())
+    crate::opener::spawn(&bin, &uri)
 }
 
 /// If `s` is a local file path, return an absolute `file://` URL.
