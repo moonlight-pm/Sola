@@ -599,13 +599,18 @@ launcher's Projects chooser does this from **On another computer…**.
 Its sessions run there, in that computer's own Projects tmux (socket
 `sola-ws`, the one its own Projects uses), reached over ssh: a Projects
 restart, or losing the network, leaves them running, and the windows
-attach them again. Here such a session's id is `<id>@<computer>`. While
-the computer has a session open here, Projects keeps a connection there of
-its own (the link) that brings the hooks of agents it started back: marks,
-islands, desk cards and `pane.wait` work as here. The first link installs
-the same agent hooks there (Claude's `settings.json`, Codex's
-`hooks.json`, Grok's `sola-status.json`; scripts in
-`~/.config/sola/remote/`). `pane.send`, `pane.read` and `tab.exec` reach
+attach them again. Here such a session's id is `<id>@<computer>`.
+
+Status lives on the computer a session runs on: its agents' hooks append
+their events to that computer's hook log
+(`~/.local/state/sola/projects/hooks.log`), and every Projects watching any
+of its sessions follows that log — this computer's by reading it, another
+computer's over a connection of its own (the link, `ssh … tail -F`). So
+marks, islands, desk cards and `pane.wait` work on every computer that has
+the session open, whichever one started it; looking at or answering an
+island on one lets it go on all. The first link installs the same agent
+hooks there (Claude's `settings.json`, Codex's `hooks.json`, Grok's
+`sola-status.json`; scripts in `~/.config/sola/remote/`). `pane.send`, `pane.read` and `tab.exec` reach
 its panes; a lost session whose Grok or Claude transcript is still there
 resumes.
 
@@ -613,8 +618,7 @@ Sessions opened from another computer before 2026-10-30 lived on a socket
 of their own there (`sola-ws-remote`); they are still found and attached
 until they end, and nothing new is made there. A session's ssh may ask
 for a password in its window. The link and the listing never ask: they
-need a key or an agent that logs you in, tmux there, and curl there for
-marks.
+need a key or an agent that logs you in, and tmux and base64 there.
 
 - The connection drops: the window says **Can't reach** the computer,
   with ssh's reason, and **Reconnect**. The session there is left alone,

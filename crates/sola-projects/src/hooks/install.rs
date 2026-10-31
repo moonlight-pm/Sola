@@ -44,7 +44,6 @@ const CLAUDE_EVENTS: &[&str] = &[
 pub struct HookPaths {
     pub grok_hooks_dir: PathBuf,
     pub script_path: PathBuf,
-    pub socket_path: PathBuf,
     pub codex_hooks_json: PathBuf,
     pub codex_script_path: PathBuf,
     pub claude_settings_json: PathBuf,
@@ -69,7 +68,6 @@ impl HookPaths {
         Self {
             grok_hooks_dir: grok_root.join("hooks"),
             script_path: cfg.join(SCRIPT_NAME),
-            socket_path: sola_core::env::runtime_dir().join("sola-ws-hooks.sock"),
             codex_hooks_json: codex_root.join("hooks.json"),
             codex_script_path: cfg.join(CODEX_SCRIPT_NAME),
             claude_settings_json: claude_root.join("settings.json"),
@@ -81,14 +79,12 @@ impl HookPaths {
 impl HookPaths {
     /// Where hooks go on another computer: the agents' homes there, and
     /// our scripts in `~/.config/sola/remote/` (a Sola there keeps its own
-    /// in `projects/`; both post to `$SOLA_WS_HOOKS_SOCK`). `socket_path`
-    /// is that computer's end of the link's hook socket.
-    pub fn remote(r: &crate::machine::Remote, socket_path: PathBuf) -> Self {
+    /// in `projects/`; both append to that computer's hook log).
+    pub fn remote(r: &crate::machine::Remote) -> Self {
         let cfg = r.home.join(".config/sola/remote");
         Self {
             grok_hooks_dir: r.grok_home.join("hooks"),
             script_path: cfg.join(SCRIPT_NAME),
-            socket_path,
             codex_hooks_json: r.codex_home.join("hooks.json"),
             codex_script_path: cfg.join(CODEX_SCRIPT_NAME),
             claude_settings_json: r.claude_home.join("settings.json"),
@@ -272,8 +268,12 @@ fn orca_hook_path(hooks_dir: &Path) -> PathBuf {
 }
 
 fn hook_script(agent: &str) -> String {
-    // Drain stdin first (the CLI closes the pipe). Fail-open if the app is down.
-    // Codex Stop expects JSON or empty stdout — never leak curl text.
+    // Drain stdin first (the CLI closes the pipe). Fail-open: no output (a
+    // Codex Stop hook wants JSON or nothing on stdout), exit 0. The event
+    // goes to this computer's hook log, for every computer watching its
+    // sessions ([`super::log`]): one line, the payload in base64, written
+    // under a lock and never as an argument (a tool's input can be
+    // megabytes). Past 8 MiB the log starts again.
     format!(
         r#"#!/bin/sh
 payload=$({{ command -p cat 2>/dev/null || cat; }})
@@ -282,22 +282,22 @@ if [ -z "$payload" ]; then
 fi
 # Pane id may be missing: Codex runs the session in a shared app-server
 # whose env is whichever pane started the daemon. The payload cwd is enough
-# for Projects to retarget. An empty header is fine.
+# for Projects to retarget.
 pane="${{SOLA_PANE_ID:-}}"
-sock="${{SOLA_WS_HOOKS_SOCK:-}}"
-if [ -z "$sock" ]; then
-  sock="${{XDG_RUNTIME_DIR:-/tmp}}/sola-ws-hooks.sock"
+log="$HOME/{rel}"
+mkdir -p "${{log%/*}}" 2>/dev/null || exit 0
+if [ "$(wc -c < "$log" 2>/dev/null || echo 0)" -gt 8388608 ]; then
+  mv -f "$log" "$log.1" 2>/dev/null
 fi
-if [ ! -S "$sock" ]; then
-  exit 0
-fi
-printf '%s' "$payload" | curl -sS --unix-socket "$sock" -X POST "http://localhost/hook/{agent}" \
-  --connect-timeout 0.5 --max-time 1.5 \
-  -H "Content-Type: application/json" \
-  -H "X-Sola-Pane-Id: ${{pane}}" \
-  --data-binary @- >/dev/null 2>&1 || true
+{{
+  command -v flock >/dev/null 2>&1 && flock 9
+  printf '%s\t%s\t' "{agent}" "$pane"
+  printf '%s' "$payload" | base64 | tr -d '\n'
+  printf '\n'
+}} 9>>"$log" >&9 2>/dev/null
 exit 0
-"#
+"#,
+        rel = super::log::REL,
     )
 }
 
@@ -341,6 +341,45 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[test]
+    fn the_hook_script_appends_its_event_to_the_log() {
+        let (paths, root) = tmp_paths();
+        fs::create_dir_all(root.join("bin")).unwrap();
+        let script = root.join("bin").join("hook.sh");
+        fs::write(&script, hook_script("claude")).unwrap();
+        // A payload far past an argument's limit, and one with newlines.
+        let big = format!(r#"{{"hook_event_name":"PreToolUse","x":"{}"}}"#, "a".repeat(300_000));
+        for (pane, payload) in [("ws-main", big.as_str()), ("", "{\"a\":\n1}")] {
+            let mut child = std::process::Command::new("sh")
+                .arg(&script)
+                .env("HOME", &root)
+                .env("SOLA_PANE_ID", pane)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            use std::io::Write;
+            child.stdin.take().unwrap().write_all(payload.as_bytes()).unwrap();
+            let out = child.wait_with_output().unwrap();
+            assert!(out.status.success());
+            assert!(out.stdout.is_empty(), "a hook prints nothing");
+        }
+        let log = fs::read_to_string(root.join(super::super::log::REL)).unwrap();
+        let lines: Vec<&str> = log.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let decode = |l: &str| {
+            use base64::Engine;
+            let b64 = l.splitn(3, '\t').nth(2).unwrap();
+            String::from_utf8(base64::engine::general_purpose::STANDARD.decode(b64).unwrap()).unwrap()
+        };
+        assert!(lines[0].starts_with("claude\tws-main\t"));
+        assert_eq!(decode(lines[0]), big);
+        assert!(lines[1].starts_with("claude\t\t"));
+        assert_eq!(decode(lines[1]), "{\"a\":\n1}");
+        let _ = paths;
+        let _ = fs::remove_dir_all(&root);
+    }
+
     fn tmp_paths() -> (HookPaths, PathBuf) {
         let n = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -350,7 +389,6 @@ mod tests {
         let paths = HookPaths {
             grok_hooks_dir: root.join("hooks"),
             script_path: root.join("bin").join(SCRIPT_NAME),
-            socket_path: root.join("sola-ws-hooks.sock"),
             codex_hooks_json: root.join("codex").join("hooks.json"),
             codex_script_path: root.join("bin").join(CODEX_SCRIPT_NAME),
             claude_settings_json: root.join("claude").join("settings.json"),

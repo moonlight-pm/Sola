@@ -162,7 +162,6 @@ struct App {
     /// A window per session, each a tab in the shell's tab bar.
     windows: windows::SessionWindows,
     pane_status: HashMap<String, status::PaneStatus>,
-    hook_sock: String,
     /// Previous pane id if we renamed a *path-matched* orphan onto `ws-main`.
     adopted_from: Option<String>,
     spawn: cards::SpawnDraft,
@@ -179,9 +178,8 @@ struct App {
     /// Panes on another computer whose ssh ended with their session out
     /// of reach, and why. Their tab says so and offers to reconnect.
     remote_down: HashMap<String, String>,
-    /// Each host's link ([`link`]), and its hook socket here.
+    /// Each host's link ([`link`]).
     links: HashMap<String, link::Link>,
-    link_socks: HashMap<String, PathBuf>,
     /// Remote panes waiting for their link to attach.
     remote_pending: HashSet<String>,
     /// Hosts whose status tick is out, and when each last went out.
@@ -228,6 +226,12 @@ enum Msg {
     PaneFocused(String),
     Ignore,
     Hook(hooks::Incoming),
+    /// Another computer (or this one) looked at session `pane` (its id on
+    /// `host`): its island goes here too.
+    Seen {
+        host: Option<String>,
+        pane: String,
+    },
     /// Read a session's screen for its island (the prompt's choices, or a
     /// body), a moment after it began to need you.
     IslandScan(String),
@@ -390,7 +394,7 @@ fn remote_exit_task(pane: String, host: String, lived: Duration) -> Task<Msg> {
 
 impl App {
     fn boot() -> (Self, Task<Msg>) {
-        let hook_paths = hooks::start();
+        hooks::start();
         let _ = sola_terminal::osc9999::sender();
         let catalog = catalog::load();
         let selected = catalog
@@ -433,7 +437,6 @@ impl App {
             float: sola_kit::FloatState::new(APP_ID),
             windows: windows::SessionWindows::new(APP_ID),
             pane_status,
-            hook_sock: hook_paths.socket_path.to_string_lossy().into_owned(),
             adopted_from,
             spawn: cards::SpawnDraft::default(),
             add: cards::AddDraft::default(),
@@ -444,7 +447,6 @@ impl App {
             islands: islands::Islands::default(),
             remote_down: HashMap::new(),
             links: HashMap::new(),
-            link_socks: HashMap::new(),
             remote_pending: HashSet::new(),
             remote_busy: HashSet::new(),
             remote_ticked: HashMap::new(),
@@ -509,7 +511,10 @@ impl App {
             emulator::output_subscription().map(Msg::PtyOutput),
             emulator::exit_subscription().map(Msg::PtyExit),
             emulator::title_subscription().map(|(id, t)| Msg::Title(id, t)),
-            hooks::subscription().map(Msg::Hook),
+            hooks::subscription().map(|e| match e {
+                hooks::Event::Hook(incoming) => Msg::Hook(incoming),
+                hooks::Event::Seen { host, pane } => Msg::Seen { host, pane },
+            }),
             link::subscription().map(Msg::Link),
             sola_kit::call_subscription().map(Msg::Call),
             sola_terminal::osc9999::subscription().map(|(id, payload)| Msg::Osc(id, payload)),
@@ -582,6 +587,11 @@ impl App {
                 self.sync_row(&id);
                 self.maybe_toast_status(&id, prev, now, unconfirmed);
                 self.flush_waits();
+                Task::none()
+            }
+            Msg::Seen { host, pane } => {
+                let key = catalog::key_for(&pane, host.as_deref());
+                self.islands.answer(&key);
                 Task::none()
             }
             Msg::IslandScan(id) => self.scan_island(&id),
@@ -1259,12 +1269,7 @@ impl App {
         let term = em.term();
         let cursor = em.cursor_snap();
 
-        let hook_sock = self.hook_sock.clone();
-        let env = [
-            ("SOLA_PANE_ID", id),
-            ("SOLA_WS_HOOKS_SOCK", hook_sock.as_str()),
-            (catalog::SOLA_WS_PATH, cwd.as_str()),
-        ];
+        let env = [("SOLA_PANE_ID", id), (catalog::SOLA_WS_PATH, cwd.as_str())];
         let new_session = !tmux::has_session(&tmux_session);
         let backend = match PtyBackend::spawn_or_attach_with_env(
             id,
@@ -1351,16 +1356,16 @@ impl App {
                 )
             })
             .collect();
-        let leaves: Vec<hooks::server::HookLeaf<'_>> = owned
+        let leaves: Vec<hooks::event::HookLeaf<'_>> = owned
             .iter()
-            .map(|(id, path, agent, session)| hooks::server::HookLeaf {
+            .map(|(id, path, agent, session)| hooks::event::HookLeaf {
                 id,
                 path,
                 agent: agent.as_deref(),
                 session_id: session.as_deref(),
             })
             .collect();
-        hooks::server::resolve_hook_target(
+        hooks::event::resolve_hook_target(
             header.as_deref(),
             header_path.as_deref(),
             incoming.cwd.as_deref().map(std::path::Path::new),
@@ -1630,7 +1635,10 @@ impl App {
             let (project, name) = self.island_place(&pane);
             place.insert(pane, (project.unwrap_or_default(), name));
         }
-        self.islands.sync(&looked, &place, &known);
+        for pane in self.islands.sync(&looked, &place, &known) {
+            // Looked at here: every computer watching it lets it go.
+            self.announce_seen(&pane);
+        }
         Task::batch(scans.into_iter().map(|id| island_scan_later(id, ISLAND_SCAN_MS)))
     }
 
@@ -1696,6 +1704,8 @@ impl App {
     /// its tab pulled up.
     fn on_island_action(&mut self, a: AgentIslandAction) -> Task<Msg> {
         let pane = a.key;
+        // Answered or pulled up here: every computer lets it go.
+        self.announce_seen(&pane);
         match a.action {
             IslandAction::Show => {
                 self.islands.answer(&pane);

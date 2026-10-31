@@ -149,29 +149,30 @@ impl App {
         if matches!(self.links.get(host), Some(Link::Up { .. } | Link::Connecting)) {
             return;
         }
-        let sock = match self.link_socks.get(host) {
-            Some(s) => s.clone(),
-            None => match crate::hooks::listen_host(host) {
-                Ok(s) => {
-                    self.link_socks.insert(host.to_string(), s.clone());
-                    s
-                }
-                Err(e) => {
-                    tracing::error!(%host, "hook socket for its link: {e}");
-                    self.links.insert(
-                        host.to_string(),
-                        Link::Down {
-                            why: format!("hook socket: {e}"),
-                            since: Instant::now(),
-                        },
-                    );
-                    return;
-                }
-            },
-        };
         tracing::info!(%host, "linking");
         self.links.insert(host.to_string(), Link::Connecting);
-        link::spawn(host.to_string(), sock);
+        link::spawn(host.to_string());
+    }
+
+    /// Say on session `pane`'s computer that it was looked at (its hook
+    /// log, [`crate::hooks::log`]): every other computer watching it lets
+    /// its island go too.
+    pub(crate) fn announce_seen(&self, pane: &str) {
+        let id = catalog::bare_id(pane).to_string();
+        let Some(host) = self.tab_for_pane(pane).and_then(|w| w.host.clone()) else {
+            crate::hooks::log::append_seen_local(&id);
+            return;
+        };
+        let Ok(m) = self.machine_for(Some(&host)) else {
+            return;
+        };
+        std::thread::spawn(move || {
+            let line = crate::hooks::log::seen_line(&id);
+            let append = format!("cat >> \"$HOME/{}\"", crate::hooks::log::REL);
+            if let Err(e) = m.run(None, &[], &["sh", "-c", &append], Some(line.as_bytes())) {
+                tracing::warn!(%host, session = %id, "could not say it was seen there: {e}");
+            }
+        });
     }
 
     /// Unlink a host no project is on any more.
@@ -377,10 +378,8 @@ impl App {
             emulator::title_sender(),
         );
         let em = Emulator::new(cols, rows, listener);
-        let hook_sock = link::remote_socket(r).to_string_lossy().into_owned();
         let env = [
             ("SOLA_PANE_ID", catalog::bare_id(id)),
-            ("SOLA_WS_HOOKS_SOCK", hook_sock.as_str()),
             (catalog::SOLA_WS_PATH, cwd),
         ];
         let opts = self.session_options(id);

@@ -1,10 +1,7 @@
-//! Unix-socket hook receiver. HTTP POST over UDS, or a bare JSON object.
+//! A hook event: what an agent's hook said, read off its computer's hook
+//! log ([`super::log`]), and which session it lands on.
 
-use std::io::{Read, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
-use std::sync::mpsc;
-use std::time::Duration;
 
 use serde_json::Value;
 
@@ -12,15 +9,15 @@ use super::map::{self, MappedHook};
 
 #[derive(Debug, Clone)]
 pub struct Incoming {
-    /// The computer it came from (the link socket it reached); `None`:
-    /// this one.
+    /// The computer it came from (whose hook log it was read off);
+    /// `None`: this one.
     pub host: Option<String>,
     pub pane_id: String,
     pub agent: String,
     pub mapped: MappedHook,
     /// Session cwd from the hook payload, when the CLI sent one.
     /// Codex's app-server daemon inherits whichever pane started it, so
-    /// `X-Sola-Pane-Id` can name the wrong tab. Callers retarget
+    /// its `SOLA_PANE_ID` can name the wrong session. Callers retarget
     /// when this path disagrees with that pane.
     pub cwd: Option<String>,
     /// What the hook says the session asks (its island's title and body).
@@ -29,133 +26,10 @@ pub struct Incoming {
     pub transcript: Option<String>,
 }
 
-pub fn bind(path: &Path) -> std::io::Result<UnixListener> {
-    let _ = std::fs::remove_file(path);
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let listener = UnixListener::bind(path)?;
-    // World-readable socket in XDG_RUNTIME_DIR; Grok hooks run as the user.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-    }
-    Ok(listener)
-}
-
-pub fn serve(listener: UnixListener, tx: mpsc::Sender<Incoming>, host: Option<String>) {
-    let _ = listener.set_nonblocking(false);
-    for stream in listener.incoming() {
-        let Ok(mut stream) = stream else {
-            continue;
-        };
-        let _ = stream.set_read_timeout(Some(Duration::from_millis(1500)));
-        match read_request(&mut stream) {
-            Ok(Some(mut incoming)) => {
-                incoming.host = host.clone();
-                let _ = tx.send(incoming);
-                let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
-            }
-            Ok(None) => {
-                let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n");
-            }
-            Err(_) => {
-                let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
-            }
-        }
-    }
-}
-
-pub fn read_request(stream: &mut UnixStream) -> std::io::Result<Option<Incoming>> {
-    let mut buf = Vec::new();
-    let mut tmp = [0u8; 4096];
-    loop {
-        let n = stream.read(&mut tmp)?;
-        if n == 0 {
-            break;
-        }
-        buf.extend_from_slice(&tmp[..n]);
-        if buf.len() > 256 * 1024 {
-            break;
-        }
-        if looks_complete(&buf) {
-            break;
-        }
-    }
-    parse_buf(&buf)
-}
-
-fn looks_complete(buf: &[u8]) -> bool {
-    if buf.starts_with(b"{") {
-        return serde_json::from_slice::<Value>(buf).is_ok();
-    }
-    let Some(idx) = find_headers_end(buf) else {
-        return false;
-    };
-    let headers = std::str::from_utf8(&buf[..idx]).unwrap_or("");
-    let len = content_length(headers).unwrap_or(0);
-    buf.len() >= idx + 4 + len
-}
-
-fn find_headers_end(buf: &[u8]) -> Option<usize> {
-    buf.windows(4).position(|w| w == b"\r\n\r\n")
-}
-
-fn content_length(headers: &str) -> Option<usize> {
-    for line in headers.lines() {
-        let lower = line.to_ascii_lowercase();
-        if let Some(rest) = lower.strip_prefix("content-length:") {
-            return rest.trim().parse().ok();
-        }
-    }
-    None
-}
-
-fn header_value<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
-    let want = name.to_ascii_lowercase();
-    for line in headers.lines() {
-        if let Some((k, v)) = line.split_once(':') {
-            if k.trim().eq_ignore_ascii_case(&want) {
-                return Some(v.trim());
-            }
-        }
-    }
-    None
-}
-
-pub fn parse_buf(buf: &[u8]) -> std::io::Result<Option<Incoming>> {
-    if buf.is_empty() {
-        return Ok(None);
-    }
-    if buf[0] == b'{' {
-        return incoming_from_json(None, None, buf);
-    }
-    let Some(idx) = find_headers_end(buf) else {
-        return Ok(None);
-    };
-    let headers = std::str::from_utf8(&buf[..idx])
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    let pane = header_value(headers, "X-Sola-Pane-Id").map(str::to_string);
-    let agent = agent_from_request_line(headers);
-    let body = &buf[idx + 4..];
-    incoming_from_json(pane, agent, body)
-}
-
-fn agent_from_request_line(headers: &str) -> Option<String> {
-    let line = headers.lines().next().unwrap_or("");
-    if line.contains("/hook/claude") {
-        Some("claude".into())
-    } else if line.contains("/hook/codex") {
-        Some("codex".into())
-    } else if line.contains("/hook/grok") {
-        Some("grok".into())
-    } else {
-        None
-    }
-}
-
-fn incoming_from_json(
+/// The event in hook payload `body`: `pane_header` is the hook's
+/// `SOLA_PANE_ID` (else the payload's `paneId`), `path_agent` the script's
+/// agent. `Ok(None)`: nothing to place or map.
+pub fn from_json(
     pane_header: Option<String>,
     path_agent: Option<String>,
     body: &[u8],
@@ -283,14 +157,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_http_post() {
+    fn parses_a_grok_event() {
         let body = br#"{"hookEventName":"UserPromptSubmit","prompt":"hi"}"#;
-        let req = format!(
-            "POST /hook/grok HTTP/1.1\r\nX-Sola-Pane-Id: pane-1\r\nContent-Length: {}\r\n\r\n{}",
-            body.len(),
-            std::str::from_utf8(body).unwrap()
-        );
-        let got = parse_buf(req.as_bytes()).unwrap().unwrap();
+        let got = from_json(Some("pane-1".into()), Some("grok".into()), body)
+            .unwrap()
+            .unwrap();
         assert_eq!(got.pane_id, "pane-1");
         assert_eq!(got.agent, "grok");
         assert_eq!(got.mapped.status, Some(crate::status::AgentStatus::Working));
@@ -298,14 +169,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_claude_http_post() {
+    fn parses_a_claude_event() {
         let body = br#"{"hook_event_name":"Stop","session_id":"sid","cwd":"/src/app"}"#;
-        let req = format!(
-            "POST /hook/claude HTTP/1.1\r\nX-Sola-Pane-Id: pane-k\r\nContent-Length: {}\r\n\r\n{}",
-            body.len(),
-            std::str::from_utf8(body).unwrap()
-        );
-        let got = parse_buf(req.as_bytes()).unwrap().unwrap();
+        let got = from_json(Some("pane-k".into()), Some("claude".into()), body)
+            .unwrap()
+            .unwrap();
         assert_eq!(got.pane_id, "pane-k");
         assert_eq!(got.agent, "claude");
         assert_eq!(got.mapped.status, Some(crate::status::AgentStatus::Done));
@@ -313,14 +181,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_codex_http_post() {
+    fn parses_a_codex_event() {
         let body = br#"{"hook_event_name":"PermissionRequest"}"#;
-        let req = format!(
-            "POST /hook/codex HTTP/1.1\r\nX-Sola-Pane-Id: pane-c\r\nContent-Length: {}\r\n\r\n{}",
-            body.len(),
-            std::str::from_utf8(body).unwrap()
-        );
-        let got = parse_buf(req.as_bytes()).unwrap().unwrap();
+        let got = from_json(Some("pane-c".into()), Some("codex".into()), body)
+            .unwrap()
+            .unwrap();
         assert_eq!(got.pane_id, "pane-c");
         assert_eq!(got.agent, "codex");
         assert_eq!(got.mapped.status, Some(crate::status::AgentStatus::Waiting));
@@ -330,12 +195,7 @@ mod tests {
     fn parses_codex_cwd_without_pane_header() {
         let body =
             br#"{"hookEventName":"UserPromptSubmit","cwd":"/src/rimworld","sessionId":"s1"}"#;
-        let req = format!(
-            "POST /hook/codex HTTP/1.1\r\nContent-Length: {}\r\n\r\n{}",
-            body.len(),
-            std::str::from_utf8(body).unwrap()
-        );
-        let got = parse_buf(req.as_bytes()).unwrap().unwrap();
+        let got = from_json(None, Some("codex".into()), body).unwrap().unwrap();
         assert!(got.pane_id.is_empty());
         assert_eq!(got.cwd.as_deref(), Some("/src/rimworld"));
         assert_eq!(got.agent, "codex");
@@ -399,7 +259,7 @@ mod tests {
     #[test]
     fn parses_bare_json_envelope() {
         let raw = br#"{"paneId":"p2","hookEventName":"Stop"}"#;
-        let got = parse_buf(raw).unwrap().unwrap();
+        let got = from_json(None, None, raw).unwrap().unwrap();
         assert_eq!(got.pane_id, "p2");
         assert_eq!(got.agent, "grok");
         assert_eq!(got.mapped.status, Some(crate::status::AgentStatus::Done));

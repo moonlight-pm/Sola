@@ -63,9 +63,17 @@ So the next step is the core: `App` holds session windows keyed by
 
 ## Slice 2 — status on the host
 
-Hooks set `@sola-status` in their own session; a control-mode client per
-host subscribes; islands on every desk with the session open; the link,
-forwarded hook sockets and hooks server removed.
+- [x] Hooks append to their computer's hook log (`hooks/log.rs`, the script
+  in `hooks/install.rs`: base64 under `flock`, never an argument — tested
+  with a 300 KB payload; rotated at 8 MiB).
+- [x] This computer follows its own log (`log::follow_local`, a thread;
+  rotation followed); a link follows another's (`ssh::follow` +
+  `tail -n0 -F`), events tagged with their host.
+- [x] Seen shared: `islands.sync` / an island action → `announce_seen` →
+  `seen\t<id>\t` in that host's log → `Msg::Seen` everywhere.
+- [x] Hooks server, its sockets, `SOLA_WS_HOOKS_SOCK`, `ssh::forward` gone.
+- [ ] Smoke: an agent on novus marks and islands on canto; seen on one
+  clears both; a Codex hook outside its session still placed by cwd.
 
 ## Slice 3 — mirrors
 

@@ -99,19 +99,24 @@ goes.
 
 ### Status lives on the host
 
-- **Hooks write into their own session.** A hook runs inside the pane, so it
-  sets `@sola-status` (and the agent's session id) with plain `tmux set-option`
-  and updates the session's file. No socket, no `curl`, no reverse link.
-- **Viewers watch each host with one tmux control-mode client** (`tmux -L
-  sola-ws -C`, `ignore-size,no-output`): locally direct, remotely over the
-  shared ssh ControlMaster. It subscribes to one format over every session
-  (`#{S:…@sola-status…}`) and gets `%sessions-changed`. Status pushes to every
-  viewer at once (tmux checks subscriptions about once a second).
+*(As built, 2026-10-30 — changed from tmux options: a hook's payload can be
+megabytes (a tool's input), and a Codex hook can run outside its session.)*
+
+- **Hooks append to their computer's hook log**
+  (`~/.local/state/sola/projects/hooks.log`): one line per event,
+  `<agent>\t<SOLA_PANE_ID>\t<base64 payload>`, under `flock`, rotated at
+  8 MiB. No socket, no `curl`, no reverse link.
+- **Viewers follow each host's log**: this computer's by reading the file,
+  another's with one `ssh host tail -F` per host (the link). Each event goes
+  through the same mapping and placing as before (`SOLA_PANE_ID`, else the
+  payload's cwd), tagged with its host. Status reaches every viewer at once.
+- **Seen is shared:** a viewer that looks at or answers an island appends
+  `seen\t<id>\t`; every viewer lets that island go.
 - What still needs a look goes on the existing per-host tick through
   `Machine`: presence from `ps`, Codex rollouts, `×N`, gone worktrees, now for
   every host a viewer has a window on.
-- Retired: the hooks server and its sockets, the per-host `ssh -N -R` link, the
-  boot adopt / quarantine (`bind_session`): a session says what it is.
+- Retired: the hooks server and its sockets, the per-host `ssh -N -R`
+  forward. (The boot adopt / quarantine of local sessions stays for now.)
 
 ### Windows
 
@@ -203,8 +208,9 @@ canto's output windows are going to be much smaller."
    chooser lists a host's sessions and opens one. **Done when:** a session
    started on novus opens from canto, both type in it, the session follows the
    desk in use, and closing canto's window leaves it running on novus.
-2. **Status on the host.** Hooks → tmux options; control-mode watch per host;
-   islands on every desk with that session open; link and hooks server
+2. **Status on the host.** Hooks → the host's hook log; viewers follow it
+   (here by reading, elsewhere by `ssh tail -F`); islands on every desk with
+   that session open, seen shared; hooks server and the reverse forward
    removed.
 3. **Mirrors.** A viewer that does not hold the size scales the session to
    fit; Watch (read-only).
