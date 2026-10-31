@@ -46,6 +46,7 @@ mod float_clip;
 pub mod form;
 pub mod icon;
 pub mod json;
+pub mod menu_sheet;
 pub mod popover;
 pub mod prose;
 pub mod readable;

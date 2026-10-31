@@ -265,6 +265,18 @@ impl Bindings {
         keys::key_of(&self.resolved, SYSTEM, id)
     }
 
+    /// A kit shared action's key now (`common`: Copy, Paste, …), as apps
+    /// show it; its default until an app has declared them.
+    pub fn common_key(&self, action: &str) -> Option<KeyChord> {
+        if self.others.contains_key(keys::COMMON) {
+            return keys::key_of(&self.resolved, keys::COMMON, action);
+        }
+        keys::COMMON_ACTIONS
+            .iter()
+            .find(|(id, ..)| *id == action)
+            .map(|(.., key)| *key)
+    }
+
     /// The system action a chord runs.
     pub fn act_for(&self, chord: &KeyChord) -> Option<Act> {
         self.actions

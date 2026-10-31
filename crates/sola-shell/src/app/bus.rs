@@ -67,6 +67,7 @@ impl Shell {
                 self.on_windows(w);
                 self.resolve_pending_launch_if_window();
                 self.flush_calendar_event();
+                self.desk_window_gone();
                 Task::none()
             }
             Topic::SetAppMenu(m) => {
@@ -158,6 +159,7 @@ impl Shell {
                 Task::none()
             }
             Topic::MenuAction(a) => self.on_titlebar_menu_action(a),
+            Topic::DeskMenuOpen(open) => self.on_desk_menu_open(open),
             Topic::IdleFade(f) => {
                 // Retracted (sola-river gone): in sight.
                 let out = message.sticky && f.out;
@@ -1333,6 +1335,11 @@ impl Shell {
             .iter()
             .any(|w| w.window_id == e.window_id);
         if !is_app_window {
+            return;
+        }
+        self.last_clicked_window = Some(e.window_id);
+        // The right press that opened the desk menu, come in after it.
+        if self.desk_opening_click(e.window_id) {
             return;
         }
 
