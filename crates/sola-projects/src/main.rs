@@ -79,9 +79,6 @@ fn now_millis() -> u128 {
 const TMUX_SOCKET: &str = "sola-ws";
 const TMUX_UNIT: &str = "sola-ws-tmux.service";
 const TMUX_PREFIX: &str = "sws-";
-/// What a worktree flag on `tab.*` gets: Projects makes none.
-const NO_WORKTREES: &str =
-    "Projects makes no worktrees: a session starts in its project's folder and makes its own";
 /// Started with no project open, Projects waits this long for one, then
 /// quits.
 const IDLE_QUIT_AFTER: Duration = Duration::from_secs(20);
@@ -1877,9 +1874,6 @@ impl App {
                 let Some(project) = param_str(params, "project") else {
                     return (Err("missing project".into()), Task::none());
                 };
-                if param_str(params, "branch").is_some() || param_str(params, "base-branch").is_some() {
-                    return (Err(NO_WORKTREES.into()), Task::none());
-                }
                 let name = param_str(params, "name").unwrap_or_default();
                 match self.cli_spawn(
                     &project,
@@ -1902,9 +1896,6 @@ impl App {
                 let Some(ws) = param_str(params, "tab") else {
                     return (Err("missing tab".into()), Task::none());
                 };
-                if param_bool(params, "worktree") || param_bool(params, "force") {
-                    return (Err(NO_WORKTREES.into()), Task::none());
-                }
                 match catalog::resolve_tab(&self.tabs, &ws).map(|w| w.id.clone()) {
                     // Reply first; teardown on the next tick so solactl
                     // (maybe running in the session we are about to end)
@@ -1934,8 +1925,6 @@ impl App {
                         &q,
                         params.get("name").and_then(|v| v.as_str()),
                         params.get("title").and_then(|v| v.as_str()),
-                        params.get("branch").and_then(|v| v.as_str()),
-                        param_before(params, "before"),
                     ),
                     Task::none(),
                 )
@@ -2077,22 +2066,13 @@ impl App {
     }
 
     /// `tab.set`: a session's name (unique in its project here) and
-    /// title. Its id and its tmux stay; worktrees and the order of windows
-    /// are not Projects' to set.
+    /// title. Its id and its tmux stay.
     fn cli_set(
         &mut self,
         q: &str,
         name: Option<&str>,
         title: Option<&str>,
-        branch: Option<&str>,
-        before: Option<Option<String>>,
     ) -> Result<serde_json::Value, String> {
-        if branch.is_some() {
-            return Err(NO_WORKTREES.into());
-        }
-        if before.is_some() {
-            return Err("windows are ordered in the shell's tab bar (drag the row)".into());
-        }
         let id = catalog::resolve_tab(&self.tabs, q)?.id.clone();
         if let Some(raw) = name {
             let raw = raw.trim();
@@ -2887,16 +2867,6 @@ fn param_str(params: &serde_json::Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-}
-
-/// `None` = key omitted. `Some(None)` = empty / `end` (append).
-fn param_before(params: &serde_json::Value, key: &str) -> Option<Option<String>> {
-    let raw = params.get(key)?.as_str()?.trim();
-    if raw.is_empty() || raw.eq_ignore_ascii_case("end") {
-        Some(None)
-    } else {
-        Some(Some(raw.to_string()))
-    }
 }
 
 fn param_bool(params: &serde_json::Value, key: &str) -> bool {

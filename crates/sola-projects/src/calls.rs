@@ -15,12 +15,12 @@ pub const WAIT_DEFAULT_SECS: u64 = 300;
 
 pub fn methods() -> Vec<MethodSpec> {
     vec![
-        method("ps", "Project → tab → state table", &[]),
+        method("ps", "Project → session → state table (the sessions open here)", &[]),
         method("project.list", "List projects", &[]),
         method_ms(
             "project.open",
-            "Bring a project's window up (its workspace shows), opening it if closed (it lands in the showing workspace); a folder that is not a project yet is added first. \
-             With --host, the folder is on that computer: its tabs run there, in tmux over ssh",
+            "Open a project's sessions here, each in its own window: those running on its computer (whichever computer started them), else a new main session; a folder that is not a project yet is added first. \
+             With --host, the folder is on that computer: its sessions run there, in tmux over ssh",
             &[
                 req(
                     "path",
@@ -34,46 +34,21 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "project.close",
-            "Close a project as its window's close does: the window goes, its tabs' sessions end (tmux killed, here or on its computer), and it stays closed until opened again",
+            "Close a project's windows here. Its sessions keep running where they are (tab.rm ends one)",
             &[req_s("project", Some('p'), "Project id or name")],
         ),
         method(
-            "project.startup",
-            "Get or set the project spawn script",
-            &[
-                opt_s("project", Some('p'), "Project id or name"),
-                opt_s(
-                    "script",
-                    None,
-                    "Set the script; omit to read. Empty clears.",
-                ),
-            ],
-        ),
-        method(
             "tab.list",
-            "List tabs",
+            "List the sessions open here",
             &[opt_s("project", Some('p'), "Project id or name")],
         ),
         method_ms(
             "tab.spawn",
-            "Open a sibling tab: a new worktree, or the project root (--root)",
+            "Start a session in a project's folder, in its own window (Projects makes no worktree: a session makes its own when its work needs one)",
             &[
                 req_s("project", Some('p'), "Project id or name"),
-                req_s(
-                    "name",
-                    Some('n'),
-                    ".worktrees/ slug, or the tab name with --root (default label)",
-                ),
-                arg(
-                    "root",
-                    false,
-                    ArgType::Bool,
-                    None,
-                    "No worktree: open in the project root on its branch (usually master)",
-                ),
-                opt_s("branch", Some('b'), "Git branch (default: same as name)"),
-                opt_s("base-branch", None, "Start-point (default: HEAD)"),
-                opt_s("title", None, "Tab label (default: name)"),
+                opt_s("name", Some('n'), "Session name, unique in its project here (default: the next number)"),
+                opt_s("title", None, "Label (default: name)"),
                 opt_s("agent", Some('a'), "grok, codex, or claude"),
                 opt_s("prompt", None, "First-turn prompt (implies grok)"),
                 opt(
@@ -82,71 +57,39 @@ pub fn methods() -> Vec<MethodSpec> {
                     ArgType::Path,
                     "Read prompt from this file",
                 ),
-                opt_s("parent", None, "Parent tab, pane, or path"),
+                opt_s("parent", None, "Parent session, pane, or path"),
                 flag(
                     "select",
                     's',
-                    "Focus the new tab (CLI default is background)",
+                    "Bring its window up (CLI default is behind)",
                 ),
             ],
             SPAWN_TIMEOUT_MS,
         ),
         method(
             "tab.rm",
-            "Unregister a tab and kill its tmux session",
-            &[
-                req_s("tab", Some('t'), "Tab id or name"),
-                arg(
-                    "worktree",
-                    false,
-                    ArgType::Bool,
-                    None,
-                    "Also git worktree remove the checkout (worktree tabs only)",
-                ),
-                flag(
-                    "force",
-                    'f',
-                    "Force git worktree remove (dirty / toss). Needs --worktree.",
-                ),
-            ],
+            "End a session: its tmux killed where it runs, for every computer watching it. Its folder and worktrees stay",
+            &[req_s("tab", Some('t'), "Session id or name")],
         ),
         method(
             "tab.select",
-            "Show a tab's project window and select the tab",
-            &[req_s("tab", Some('t'), "Tab id or name")],
+            "Bring a session's window up",
+            &[req_s("tab", Some('t'), "Session id or name")],
         ),
         method(
             "tab.set",
-            "Set tab name, title, and/or branch",
+            "Set a session's name and/or title",
             &[
-                req_s("tab", Some('t'), "Tab id or name"),
-                opt_s(
-                    "name",
-                    Some('n'),
-                    ".worktrees/<name> folder; git worktree move. The label uses this when title is empty",
-                ),
-                opt_s(
-                    "title",
-                    None,
-                    "Tab label; empty clears (falls back to name)",
-                ),
-                opt_s(
-                    "branch",
-                    Some('b'),
-                    "Rename this checkout's git branch (does not move the folder)",
-                ),
-                opt_s(
-                    "before",
-                    None,
-                    "Top-bar order: sit in front of this tab (same project); `end` = last",
-                ),
+                req_s("tab", Some('t'), "Session id or name"),
+                opt_s("name", Some('n'), "Session name, unique in its project here"),
+                opt_s("title", None, "Label; empty clears (falls back to name)"),
             ],
         ),
         method_ms(
             "tab.exec",
-            "Start or brief Grok, Codex, or Claude in an existing tab",
+            "Start or brief Grok, Codex, or Claude in an existing session",
             &[
-                req_s("tab", Some('t'), "Tab id or name"),
+                req_s("tab", Some('t'), "Session id or name"),
                 opt_s("agent", Some('a'), "grok, codex, or claude (default grok)"),
                 opt_s("prompt", None, "Prompt to send or pass as argv"),
                 opt(
@@ -282,7 +225,6 @@ mod tests {
             "project.list",
             "project.open",
             "project.close",
-            "project.startup",
             "tab.list",
             "tab.spawn",
             "tab.rm",
@@ -303,23 +245,18 @@ mod tests {
             .unwrap();
         assert_eq!(spawn.timeout_ms, Some(SPAWN_TIMEOUT_MS));
         assert!(spawn.args.iter().any(|a| a.name == "prompt-file"));
-        assert!(spawn.args.iter().any(|a| a.name == "base-branch"));
-        assert!(spawn.args.iter().any(|a| a.name == "branch"));
-        let root = spawn.args.iter().find(|a| a.name == "root").unwrap();
-        assert!(matches!(root.ty, ArgType::Bool));
-        assert!(!root.required);
+        // Projects makes no worktrees (sessions anywhere, 2026-10-30).
+        for gone in ["root", "branch", "base-branch"] {
+            assert!(spawn.args.iter().all(|a| a.name != gone), "{gone}");
+        }
+        assert!(spawn.args.iter().any(|a| a.name == "name" && !a.required));
         let select = spawn.args.iter().find(|a| a.name == "select").unwrap();
         assert!(matches!(select.ty, ArgType::Bool));
         assert!(!select.required);
         let rm = methods.iter().find(|m| m.name == "tab.rm").unwrap();
-        assert!(rm.args.iter().any(|a| a.name == "worktree"));
-        let force = rm.args.iter().find(|a| a.name == "force").unwrap();
-        assert!(matches!(force.ty, ArgType::Bool));
-        assert!(!force.required);
+        assert_eq!(rm.args.len(), 1);
         let set = methods.iter().find(|m| m.name == "tab.set").unwrap();
-        assert!(set.args.iter().any(|a| a.name == "name"));
-        assert!(set.args.iter().any(|a| a.name == "title"));
-        assert!(set.args.iter().any(|a| a.name == "branch"));
-        assert!(set.args.iter().any(|a| a.name == "before"));
+        let names: Vec<&str> = set.args.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["tab", "name", "title"]);
     }
 }
