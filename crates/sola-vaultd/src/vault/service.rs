@@ -260,9 +260,11 @@ impl VaultService {
     /// One decrypted item. A failure other than "no such id" keeps its
     /// message instead of reading "not found".
     pub async fn cipher(&self, id: &str) -> Result<CipherView> {
+        super::write::cipher_id(id)?;
         self.pm().vault().ciphers().get(id).await.map_err(|e| {
             let msg = e.to_string();
-            if msg.to_lowercase().contains("not found") {
+            // The SDK's `ItemNotFoundError` (its error type is private).
+            if msg.to_lowercase().contains("does not exist") {
                 not_found()
             } else {
                 warn!(%id, error = %msg, "vault: item open failed");
@@ -311,6 +313,15 @@ impl VaultService {
                 .ok_or_else(|| internal("Bitwarden saved the item but sent no id."))?,
         };
         Ok(id)
+    }
+}
+
+impl Drop for VaultService {
+    /// Locking: clear the key store outright, whoever else still holds
+    /// the client.
+    fn drop(&mut self) {
+        self.built.pm.0.internal.get_key_store().clear();
+        self.built.tokens.clear();
     }
 }
 

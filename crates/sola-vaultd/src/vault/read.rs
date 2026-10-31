@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use bitwarden_vault::{CipherType, CipherView};
+use bitwarden_vault::{CipherRepromptType, CipherType, CipherView};
 use sola_vault_proto::{
     DeliverField, ErrorCode, FillMaterial, IdentityFill, ItemKind, ItemRecord, ItemSummary, TotpSpec,
     UriEntry,
@@ -159,9 +159,19 @@ pub async fn fill(svc: &VaultService, id: &str, url: &str, with_code: bool) -> R
 
 /// One value of an item, for a delivery into another app's field. A
 /// password is delivered even when the account may not view it, as
-/// Bitwarden fills one.
+/// Bitwarden fills one. An item that asks for the master password first
+/// (re-prompt) is not delivered: the desk menu cannot ask.
 pub async fn value(svc: &VaultService, id: &str, field: &DeliverField) -> Result<Zeroizing<String>> {
     let view = svc.cipher(id).await?;
+    if view.reprompt == CipherRepromptType::Password {
+        return Err(err(
+            ErrorCode::Denied,
+            "This item asks for your master password — open it in Vault.",
+        ));
+    }
+    if view.deleted_date.is_some() {
+        return Err(err(ErrorCode::Invalid, "This item is in the trash."));
+    }
     let missing = || err(ErrorCode::NotFound, "This item has no such value.");
     let login = view.login.as_ref();
     let value = match field {

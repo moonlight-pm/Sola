@@ -213,14 +213,16 @@ impl Vault {
         }
     }
 
+    /// The idle lock's minutes (0 reads as off: it would lock at once).
+    fn idle_minutes(&self) -> Option<u32> {
+        self.settings.idle_lock_minutes.filter(|m| *m > 0)
+    }
+
     /// The next time [`Self::tick`] has something to look at.
     fn next_wake(&self) -> Option<Instant> {
         let mut wake = self.pending.as_ref().map(|p| p.since + PENDING_TTL);
         if matches!(self.account, Account::Unlocked(_)) {
-            let idle = self
-                .settings
-                .idle_lock_minutes
-                .and_then(|m| self.idle.deadline(m));
+            let idle = self.idle_minutes().and_then(|m| self.idle.deadline(m));
             let screen = self.settings.lock_on_screen_lock.then_some(self.next_screen_poll);
             for t in [idle, screen].into_iter().flatten() {
                 wake = Some(wake.map_or(t, |w| w.min(t)));
@@ -239,7 +241,7 @@ impl Vault {
         if !matches!(self.account, Account::Unlocked(_)) {
             return;
         }
-        if let Some(m) = self.settings.idle_lock_minutes {
+        if let Some(m) = self.idle_minutes() {
             if self.idle.deadline(m).is_some_and(|d| now >= d) {
                 self.lock("idle");
                 return;

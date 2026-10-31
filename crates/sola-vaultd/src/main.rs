@@ -38,16 +38,17 @@ use tracing::{error, info, warn};
 
 fn main() {
     sola_core::log::init("sola-vaultd");
+    let socket = sola_vault_proto::socket_path();
+    if server::live(&socket) {
+        error!(path = %socket.display(), "vault: another sola-vaultd is answering; not starting");
+        std::process::exit(1);
+    }
+    // Before anything secret is read.
     harden::apply();
 
     let dir = paths::state_dir();
     if let Err(e) = paths::ensure_private_dir(&dir) {
         error!(dir = %dir.display(), error = %e, "vault: state dir not made");
-        std::process::exit(1);
-    }
-    let socket = sola_vault_proto::socket_path();
-    if server::live(&socket) {
-        error!(path = %socket.display(), "vault: another sola-vaultd is answering; not starting");
         std::process::exit(1);
     }
     let roots = peer::roots();

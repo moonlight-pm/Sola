@@ -26,13 +26,13 @@ pub fn methods() -> Vec<MethodSpec> {
         method("sync", "Sync the vault with Bitwarden", &[], Some(SYNC_TIMEOUT_MS)),
         method(
             "open",
-            "Show an item in Vault",
+            "Open Vault, at an item when given its id",
             &[ArgSpec {
                 name: "id".into(),
                 long: Some("id".into()),
                 short: Some('i'),
                 ty: ArgType::String,
-                required: true,
+                required: false,
                 help: "The item's id".into(),
             }],
             None,
@@ -76,20 +76,23 @@ fn dispatch(
                 Err(_) => reply.err("the vault stopped"),
             }
         }
-        "open" => match params.get("id").and_then(|v| v.as_str()).and_then(item_id) {
-            Some(id) => {
-                let command = format!("{} --item {id}", sola_core::paths::bin_path("sola-vault").display());
-                let launch = Topic::LaunchApp(LaunchAppPayload {
-                    app_id: "sola-vault".into(),
-                    command,
-                });
-                if bus_out.send(launch).is_err() {
-                    return reply.err("the bus is away");
-                }
-                reply.ok(json!({ "opened": id }))
+        "open" => {
+            let id = match params.get("id").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+                None => None,
+                Some(raw) => match item_id(raw) {
+                    Some(id) => Some(id),
+                    None => return reply.err("id: not an item's id"),
+                },
+            };
+            let launch = Topic::LaunchApp(LaunchAppPayload {
+                app_id: "sola-vault".into(),
+                command: open_command(id.as_deref()),
+            });
+            if bus_out.send(launch).is_err() {
+                return reply.err("the bus is away");
             }
-            None => reply.err("id required: an item's id"),
-        },
+            reply.ok(json!({ "opened": id }))
+        }
         other => reply.err(format!("unknown method {other}")),
     }
 }
@@ -106,6 +109,15 @@ fn status_json(s: &Status) -> serde_json::Value {
         "sync_error": s.sync_error,
         "items": s.items,
     })
+}
+
+/// `sola-vault`, at item `id` when given (`--item <id>`).
+fn open_command(id: Option<&str>) -> String {
+    let bin = sola_core::paths::bin_path("sola-vault");
+    match id {
+        Some(id) => format!("{} --item {id}", bin.display()),
+        None => bin.display().to_string(),
+    }
 }
 
 /// An item id is a UUID; nothing else goes into a command line.
@@ -144,6 +156,8 @@ mod tests {
         );
         assert_eq!(item_id("x; rm -rf ~"), None);
         assert_eq!(item_id("11111111-1111-1111-1111-11111111111 --x"), None);
+        assert!(open_command(Some("x")).ends_with("sola-vault --item x"));
+        assert!(open_command(None).ends_with("sola-vault"));
     }
 
     #[test]

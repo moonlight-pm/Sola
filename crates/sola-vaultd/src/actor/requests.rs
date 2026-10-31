@@ -148,17 +148,17 @@ impl Vault {
             }
             Request::CreateFolder { name } => {
                 let id = folders::create(svc, &name).await?;
-                self.saved(Vec::new()).await;
+                self.folders_saved().await;
                 Ok(Reply::Saved { id })
             }
             Request::RenameFolder { id, name } => {
                 folders::rename(svc, &id, &name).await?;
-                self.saved(Vec::new()).await;
+                self.folders_saved().await;
                 Ok(Reply::Done)
             }
             Request::DeleteFolder { id } => {
                 folders::delete(svc, &id).await?;
-                self.saved(Vec::new()).await;
+                self.folders_saved().await;
                 Ok(Reply::Done)
             }
             other => {
@@ -187,6 +187,13 @@ impl Vault {
         if let Err(e) = self.sync_with(ids).await {
             tracing::warn!(error = %e, "vault: saved, but the sync after failed");
         }
+    }
+
+    /// After a folder write: sync, and say the folders changed (the SDK
+    /// stored the folder already, so the sync alone would not see it).
+    async fn folders_saved(&mut self) {
+        self.saved(Vec::new()).await;
+        self.event(sola_vault_proto::Event::Folders);
     }
 
     fn redeem(&mut self, ticket: &str, peer: &Peer) -> Result<Reply> {

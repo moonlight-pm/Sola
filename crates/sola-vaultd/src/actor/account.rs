@@ -158,11 +158,11 @@ impl Vault {
     }
 }
 
-/// A self-hosted server's URL must be an http(s) URL with a host.
+/// A self-hosted server's URL must be an https URL with a host (the SDK
+/// refuses plain http in a release build).
 fn check_server(server: &Server) -> Result<()> {
     if let Server::SelfHosted { url } = server {
-        let ok = url::Url::parse(url.trim())
-            .is_ok_and(|u| matches!(u.scheme(), "https" | "http") && u.host_str().is_some());
+        let ok = url::Url::parse(url.trim()).is_ok_and(|u| u.scheme() == "https" && u.host_str().is_some());
         if !ok {
             return Err(err(ErrorCode::Invalid, "The server must be an https:// address."));
         }
@@ -180,5 +180,6 @@ mod tests {
         assert!(check_server(&Server::SelfHosted { url: "https://vault.example.com".into() }).is_ok());
         assert!(check_server(&Server::SelfHosted { url: "vault.example.com".into() }).is_err());
         assert!(check_server(&Server::SelfHosted { url: "file:///etc".into() }).is_err());
+        assert!(check_server(&Server::SelfHosted { url: "http://vault.lan".into() }).is_err());
     }
 }
