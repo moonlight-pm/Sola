@@ -8781,6 +8781,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-vault"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "iced",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "sola-vault-proto",
+ "tracing",
+ "wl-clipboard-rs",
+ "zeroize",
+]
+
+[[package]]
 name = "sola-vault-proto"
 version = "0.1.0"
 dependencies = [

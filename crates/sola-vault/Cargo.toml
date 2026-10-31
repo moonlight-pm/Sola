@@ -1,0 +1,24 @@
+[package]
+name = "sola-vault"
+version.workspace = true
+edition.workspace = true
+description = "Vault: Sola's Bitwarden client, a kit app on the vault daemon (sola-vaultd)"
+
+[[bin]]
+name = "sola-vault"
+path = "src/main.rs"
+
+[dependencies]
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+sola-vault-proto = { path = "../sola-vault-proto" }
+
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg"] }
+
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+tracing = "0.1"
+zeroize = "1"
+# Clearing a copied secret after the clipboard time, through data-control
+# (the window need not have focus). The kit already builds this version.
+wl-clipboard-rs = "0.9"
