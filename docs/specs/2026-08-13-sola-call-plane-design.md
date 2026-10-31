@@ -2,6 +2,7 @@
 
 **Date:** 2026-08-13  
 **Status:** **Frozen** — infrastructure + compositor/session + kit helper; observer + monitor inspector on master (`monitor-polish` merged 2026-08-21)  
+**Renamed (2026-10-31):** the `session` owner is `desk` (`solactl desk launch|close`); the body below uses the old name.  
 **Related:** [bus freeze](2026-04-09-sola-bus-design.md); Workspaces freeze (other worktree, evidence only); [architecture](../architecture.md); **D3** confirm-policy in [open-questions](../open-questions.md)
 
 ## Intent

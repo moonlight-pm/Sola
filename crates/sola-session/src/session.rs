@@ -195,6 +195,18 @@ impl Session {
             );
             return;
         }
+        // At boot this can run before the compositor answers. An app started
+        // with no display to run on (Steam) exits, and leaves the session;
+        // the apps wait for one instead, as those that went with a display do.
+        if display::live().is_none() {
+            info!(count = plan.len(), "session restore: no compositor yet — starting the apps once one answers");
+            self.lost.extend(plan.into_iter().map(|app| Lost {
+                app_id: app.app_id,
+                command: app.command,
+                display: None,
+            }));
+            return;
+        }
         info!(count = plan.len(), "session restore: relaunching apps");
         for app in plan {
             self.launch(LaunchAppPayload {
@@ -786,9 +798,9 @@ pub fn run() {
 
     connect_and_subscribe(&mut session.bus);
     session.call_rx = Some(sola_call::start_provider(
-        sola_call::methods::OWNER_SESSION,
+        sola_call::methods::OWNER_DESK,
         "sola-session",
-        sola_call::methods::session_methods(),
+        sola_call::methods::desk_methods(),
     ));
 
     // Relaunch last session's apps (once, before the steady-state loop).

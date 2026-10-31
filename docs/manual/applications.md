@@ -3,7 +3,7 @@
 Sola's own applications are Iced programs on sola-kit. Each is its own
 process, follows the theme, and is started by the
 [session manager](session.md): from the launcher (Super+Space), from the
-shell, or with `solactl session launch <app_id>`. On Oath their programs
+shell, or with `solactl desk launch <app_id>`. On Oath their programs
 are in `/bin`.
 
 Each application window has a titlebar with its application's menus: the

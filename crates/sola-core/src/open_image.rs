@@ -6,15 +6,14 @@
 //! - `solactl open` (xdg-open / MIME path when pointed here)
 //! - file managers via `sola-paint.desktop`
 //!
-//! Spawns `/opt/sola/bin/sola-paint <path>` detached. Override the binary
-//! with `SOLA_PAINT`. No other image-app fallback.
+//! Spawns `sola-paint --open <path>` detached ([`crate::opener`]). Override
+//! the binary with `SOLA_PAINT`. No other image-app fallback.
 //!
 //! A second spawn of sola-paint hands off via bus `Topic::OpenImage`
 //! (`app_id = sola-paint`) and exits. Screenshots target sola-preview
 //! instead (they set `OpenImage.app_id`).
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 /// Env override for the sola-paint binary (defaults to `sola-paint` in
 /// [`crate::paths::bin_dir`]).
@@ -55,14 +54,7 @@ pub fn open(path: &str) -> Result<(), String> {
             default_sola_paint().display()
         )
     })?;
-    Command::new(&bin)
-        .arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("spawn {}: {e}", bin.display()))?;
-    Ok(())
+    crate::opener::spawn(&bin, path)
 }
 
 /// Best-effort open: log failures, never panic.

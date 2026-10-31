@@ -41,6 +41,7 @@ pub mod float;
 pub mod fonts;
 pub mod keys;
 pub mod menu;
+pub mod opener;
 pub mod tabs;
 pub mod theme;
 

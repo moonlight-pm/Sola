@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::profiles;
 
@@ -179,39 +179,17 @@ pub fn chrome_is_live() -> bool {
     sock_is_live(&chrome_sock_path())
 }
 
-/// How long `--app` waits for the browser it asked the session for.
-const BROWSER_START_WAIT: Duration = Duration::from_secs(20);
-
-/// `--app <id>` with no browser up: have the session start the browser as
-/// itself, then hand it the app once it listens. The session then tracks,
-/// restores and closes the browser as the browser — were this process the
-/// browser, closing the web app would stop every page and app with it, and
-/// the next login would start `--app <id>` instead. False when there is no
-/// session to ask, or the browser did not come up (this process goes on
-/// to claim the chrome itself).
-pub fn start_browser_for_app(app_id: &str) -> bool {
-    use sola_bus::topics::{LaunchAppPayload, Topic};
-    let mut bus = sola_bus::BusClient::new();
-    if bus.connect().is_err() {
-        return false;
-    }
-    let command = sola_core::paths::bin_path("sola-browser").display().to_string();
-    let launch = Topic::LaunchApp(LaunchAppPayload {
-        app_id: "sola-browser".into(),
-        command,
-    });
-    if bus.emit(launch).is_err() {
-        return false;
-    }
-    let deadline = Instant::now() + BROWSER_START_WAIT;
-    while Instant::now() < deadline {
-        if chrome_is_live() {
-            return handoff_app(app_id).is_ok();
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    tracing::warn!(%app_id, "the session's browser did not come up — starting here");
-    false
+/// `--app <id>` or `--open <url>` with no browser up: have the session
+/// start the browser as itself, then `hand` it the app or the URL once it
+/// listens. The session then tracks, restores and closes the browser as
+/// the browser — were this process the browser, it would run outside the
+/// session (an opener's launch: not brought back when the desk restarts)
+/// or as the web app (closing it would stop every page and app with it,
+/// and the next login would start `--app <id>` instead). False when there
+/// is no session to ask, or the browser did not come up (this process goes
+/// on to claim the chrome itself).
+pub fn start_browser_then(hand: impl FnOnce() -> Result<(), String>) -> bool {
+    sola_kit::opener::start("sola-browser", |_| chrome_is_live()) && hand().is_ok()
 }
 
 fn sock_is_live(sock: &std::path::Path) -> bool {

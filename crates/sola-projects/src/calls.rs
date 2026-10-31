@@ -40,16 +40,16 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "project.close",
-            "Close a project's windows here. Its sessions keep running where they are (tab.rm ends one)",
+            "Close a project's windows here. Its sessions keep running where they are (session.end ends one)",
             &[req_s("project", Some('p'), "Project id or name")],
         ),
         method(
-            "tab.list",
+            "session.list",
             "List the sessions open here",
             &[opt_s("project", Some('p'), "Project id or name")],
         ),
         method_ms(
-            "tab.spawn",
+            "session.new",
             "Start a session in a project's folder, in its own window (Projects makes no worktree: a session makes its own when its work needs one)",
             &[
                 req_s("project", Some('p'), "Project id or name"),
@@ -73,29 +73,29 @@ pub fn methods() -> Vec<MethodSpec> {
             SPAWN_TIMEOUT_MS,
         ),
         method(
-            "tab.rm",
+            "session.end",
             "End a session: its tmux killed where it runs, for every computer watching it. Its folder and worktrees stay",
-            &[req_s("tab", Some('t'), "Session id or name")],
+            &[req_s("session", Some('s'), "Session id or name")],
         ),
         method(
-            "tab.select",
+            "session.select",
             "Bring a session's window up",
-            &[req_s("tab", Some('t'), "Session id or name")],
+            &[req_s("session", Some('s'), "Session id or name")],
         ),
         method(
-            "tab.set",
+            "session.set",
             "Set a session's name and/or title",
             &[
-                req_s("tab", Some('t'), "Session id or name"),
+                req_s("session", Some('s'), "Session id or name"),
                 opt_s("name", Some('n'), "Session name, unique in its project here"),
                 opt_s("title", None, "Label; empty clears (falls back to name)"),
             ],
         ),
         method_ms(
-            "tab.exec",
+            "session.exec",
             "Start or brief Grok, Codex, or Claude in an existing session",
             &[
-                req_s("tab", Some('t'), "Session id or name"),
+                req_s("session", Some('s'), "Session id or name"),
                 opt_s("agent", Some('a'), "grok, codex, or claude (default grok)"),
                 opt_s("prompt", None, "Prompt to send or pass as argv"),
                 opt(
@@ -109,14 +109,14 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "pane.list",
-            "List panes in a tab",
-            &[opt_s("tab", Some('t'), "Tab id or name")],
+            "List a session's panes",
+            &[opt_s("session", Some('s'), "Session id or name")],
         ),
         method(
             "pane.send",
             "Paste into a pane (bracketed; Enter optional)",
             &[
-                opt_s("pane", None, "Tab / pane id"),
+                opt_s("pane", None, "Session / pane id"),
                 req_s("text", Some('t'), "Text to paste"),
                 flag("enter", 'e', "Submit after the paste"),
             ],
@@ -125,7 +125,7 @@ pub fn methods() -> Vec<MethodSpec> {
             "pane.read",
             "Read pane scrollback",
             &[
-                opt_s("pane", None, "Tab / pane id"),
+                opt_s("pane", None, "Session / pane id"),
                 opt("lines", Some('l'), ArgType::Int, "Last N lines"),
             ],
         ),
@@ -133,7 +133,7 @@ pub fn methods() -> Vec<MethodSpec> {
             "pane.wait",
             "Wait until a pane reaches a status",
             &[
-                opt_s("pane", None, "Tab / pane id"),
+                opt_s("pane", None, "Session / pane id"),
                 opt_s(
                     "status",
                     Some('s'),
@@ -151,12 +151,12 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "whoami",
-            "Resolve this pane / path to a tab",
+            "Resolve this pane / path to its session",
             &[
                 opt_s(
                     "pane",
                     None,
-                    "Pane or tab id (default: $SOLA_PANE_ID)",
+                    "Pane or session id (default: $SOLA_PANE_ID)",
                 ),
                 opt(
                     "path",
@@ -232,12 +232,12 @@ mod tests {
             "project.open",
             "window.navigate",
             "project.close",
-            "tab.list",
-            "tab.spawn",
-            "tab.rm",
-            "tab.select",
-            "tab.set",
-            "tab.exec",
+            "session.list",
+            "session.new",
+            "session.end",
+            "session.select",
+            "session.set",
+            "session.exec",
             "pane.list",
             "pane.send",
             "pane.read",
@@ -248,7 +248,7 @@ mod tests {
         }
         let spawn = methods
             .iter()
-            .find(|m| m.name == "tab.spawn")
+            .find(|m| m.name == "session.new")
             .unwrap();
         assert_eq!(spawn.timeout_ms, Some(SPAWN_TIMEOUT_MS));
         assert!(spawn.args.iter().any(|a| a.name == "prompt-file"));
@@ -260,10 +260,10 @@ mod tests {
         let select = spawn.args.iter().find(|a| a.name == "select").unwrap();
         assert!(matches!(select.ty, ArgType::Bool));
         assert!(!select.required);
-        let rm = methods.iter().find(|m| m.name == "tab.rm").unwrap();
+        let rm = methods.iter().find(|m| m.name == "session.end").unwrap();
         assert_eq!(rm.args.len(), 1);
-        let set = methods.iter().find(|m| m.name == "tab.set").unwrap();
+        let set = methods.iter().find(|m| m.name == "session.set").unwrap();
         let names: Vec<&str> = set.args.iter().map(|a| a.name.as_str()).collect();
-        assert_eq!(names, ["tab", "name", "title"]);
+        assert_eq!(names, ["session", "name", "title"]);
     }
 }

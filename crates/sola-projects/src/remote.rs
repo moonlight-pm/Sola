@@ -567,8 +567,8 @@ impl App {
                 });
                 Some(Task::none())
             }
-            "tab.exec" => {
-                let q = crate::param_str(params, "tab")?;
+            "session.exec" => {
+                let q = crate::param_str(params, "session")?;
                 let ws = catalog::resolve_tab(&self.tabs, &q).ok()?;
                 ws.host.as_ref()?;
                 let ws_id = ws.id.clone();
@@ -584,7 +584,7 @@ impl App {
         }
     }
 
-    /// `tab.exec` on a remote tab, as [`App::cli_exec`] does here.
+    /// `session.exec` on a remote session, as [`App::cli_exec`] does here.
     fn remote_exec(
         &mut self,
         ws_id: String,
@@ -635,7 +635,7 @@ impl App {
                 };
                 match done {
                     Ok(()) => reply.ok(serde_json::json!({
-                        "tab": ws_id, "pane": pane, "started": false, "sent": sent,
+                        "session": ws_id, "pane": pane, "started": false, "sent": sent,
                     })),
                     Err(e) => reply.err(e),
                 }
@@ -680,14 +680,14 @@ impl App {
         let task = if alive {
             let attach = self.attach_pane(&pane, &[]);
             let line = cli::agent_shell_line(&agent, prompt.as_deref());
-            self.tmux_job(&pane, "tab.exec", move |t| t.send_prompt(&line, true));
+            self.tmux_job(&pane, "session.exec", move |t| t.send_prompt(&line, true));
             attach
         } else {
             let args = cli::agent_argv(&agent, prompt.as_deref());
             let refs: Vec<&str> = args.iter().map(String::as_str).collect();
             self.attach_pane(&pane, &refs)
         };
-        reply.ok(serde_json::json!({ "tab": tab, "pane": pane, "started": true, "sent": false }));
+        reply.ok(serde_json::json!({ "session": tab, "pane": pane, "started": true, "sent": false }));
         task
     }
 

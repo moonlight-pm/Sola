@@ -6,12 +6,11 @@
 //! - mail attachment **Open**
 //! - `solactl open` (xdg-open / MIME path via `sola-calendar.desktop`)
 //!
-//! Spawns `paths::bin_path("sola-calendar") <path>` detached. A running
+//! Spawns `sola-calendar --open <path>` detached ([`crate::opener`]). A running
 //! calendar keeps its window: the new process hands the path over and
 //! exits. Calendar drafts the event; you pick the calendar and save.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 use crate::open_image::strip_file_url;
 
@@ -45,14 +44,7 @@ pub fn open(path: &str) -> Result<(), String> {
     if !bin.is_file() {
         return Err(format!("sola-calendar not found at {}", bin.display()));
     }
-    Command::new(&bin)
-        .arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("spawn {}: {e}", bin.display()))?;
-    Ok(())
+    crate::opener::spawn(&bin, path)
 }
 
 /// Best-effort open: log failures, never panic.
