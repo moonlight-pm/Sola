@@ -646,8 +646,19 @@ running. `kind` is `main` (the project's main session), `folder` (the main
 session of a non-git project), or `root` (any other).
 
 `pane.list` and `whoami` include `session_id` when that pane's Grok or
-Claude owner session is known. Use it with `grok -r` or `claude --resume`
-after a reboot loses tmux.
+Claude owner session is known.
+
+### After a reboot
+
+Sessions come back by themselves. Each has a record on the computer it
+runs on (`~/.config/sola/projects/sessions/<id>.json`: its project, name,
+title, folder, and the agent in it with that agent's session). Any session
+recorded there whose tmux is gone is made again, in its folder, with its
+agent resumed (`claude --resume`, `grok -r`) when its transcript is still
+there, else a shell: when Projects starts, when any computer's Projects
+connects to that computer, and at boot (`sola-projects --restore`). Ending
+a session (End Session…, `tab.rm`), or its shell exiting, removes its
+record.
 
 ### Panes
 

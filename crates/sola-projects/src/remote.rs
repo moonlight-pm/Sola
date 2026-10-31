@@ -199,32 +199,26 @@ impl App {
                     link::stop(pid);
                     return Task::none();
                 }
+                let machine = Machine::Remote(remote);
                 self.links.insert(
                     host.clone(),
                     Link::Up {
-                        machine: Machine::Remote(remote),
+                        machine: machine.clone(),
                         pid,
                     },
                 );
-                // Panes that waited for it, or said it was out of reach.
-                let waiting: Vec<String> = self
-                    .remote_pending
-                    .iter()
-                    .chain(self.remote_down.keys())
-                    .filter(|p| self.host_of_pane(p).as_deref() == Some(host.as_str()))
-                    .cloned()
-                    .collect();
-                let mut tasks: Vec<Task<Msg>> = waiting.iter().map(|p| self.attach_pane(p, &[])).collect();
-                // Its projects' roots: git checkouts, or folders.
-                let roots: Vec<String> = self
-                    .tabs
-                    .iter()
-                    .filter(|w| w.host.as_deref() == Some(host.as_str()))
-                    .filter(|w| matches!(w.kind, catalog::Kind::Main | catalog::Kind::Folder))
-                    .map(|w| w.id.clone())
-                    .collect();
-                tasks.extend(roots.iter().map(|id| self.learn_remote_root(id)));
-                Task::batch(tasks)
+                // Its sessions a reboot took come back first (any
+                // computer linking it brings them back), then attach.
+                Task::perform(
+                    async move {
+                        let h = host.clone();
+                        let made = tokio::task::spawn_blocking(move || crate::records::restore(&machine))
+                            .await
+                            .unwrap_or_default();
+                        (h, made)
+                    },
+                    |(host, made)| Msg::HostRestored { host, made },
+                )
             }
             LinkEvent::Failed { host, why } => {
                 self.down(&host, why);
@@ -237,6 +231,33 @@ impl App {
                 Task::none()
             }
         }
+    }
+
+    /// `host`'s sessions are back (those a reboot took): attach the panes
+    /// that waited for it.
+    pub(crate) fn on_host_restored(&mut self, host: String, made: Vec<String>) -> Task<Msg> {
+        if !made.is_empty() {
+            tracing::info!(%host, count = made.len(), "restored sessions there");
+        }
+        // Panes that waited for it, or said it was out of reach.
+        let waiting: Vec<String> = self
+            .remote_pending
+            .iter()
+            .chain(self.remote_down.keys())
+            .filter(|p| self.host_of_pane(p).as_deref() == Some(host.as_str()))
+            .cloned()
+            .collect();
+        let mut tasks: Vec<Task<Msg>> = waiting.iter().map(|p| self.attach_pane(p, &[])).collect();
+        // Its projects' roots: git checkouts, or folders.
+        let roots: Vec<String> = self
+            .tabs
+            .iter()
+            .filter(|w| w.host.as_deref() == Some(host.as_str()))
+            .filter(|w| matches!(w.kind, catalog::Kind::Main | catalog::Kind::Folder))
+            .map(|w| w.id.clone())
+            .collect();
+        tasks.extend(roots.iter().map(|id| self.learn_remote_root(id)));
+        Task::batch(tasks)
     }
 
     fn down(&mut self, host: &str, why: String) {
@@ -321,8 +342,12 @@ impl App {
                     .insert(pane, "The session is there, but would not attach.".into());
                 Task::none()
             }
-            // Its window stays, offering Start new shell.
+            // Its shell ended there, its computer up: not coming back.
             Ok(false) => {
+                if let Some(host) = self.host_of_pane(&pane) {
+                    let id = catalog::bare_id(&pane).to_string();
+                    std::thread::spawn(move || crate::records::remove(Some(&host), &id));
+                }
                 if let Some(st) = self.pane_status.get_mut(&pane) {
                     *st = PaneStatus::default();
                 }
@@ -407,6 +432,7 @@ impl App {
             }
         };
         tracing::info!(pane = %id, host = %r.host, %cwd, "attaching remote pane");
+        self.save_record(id, false);
         backend.resize_client(cols, rows);
         backend.sigwinch();
         self.runtimes.insert(

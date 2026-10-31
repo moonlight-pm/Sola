@@ -42,6 +42,7 @@ mod machine;
 mod menu;
 mod paths;
 mod presence;
+mod records;
 mod remote;
 mod sessions;
 mod spawn;
@@ -92,6 +93,15 @@ const DEFAULT_WINDOW: iced::Size = iced::Size::new(1100.0, 720.0);
 const DEFAULT_ROWS: u16 = 24;
 
 fn main() -> iced::Result {
+    // At boot, with no desk: bring this computer's sessions back, then go
+    // ([`records`]). Before `startup`, which waits for Wayland.
+    if std::env::args().any(|a| a == "--restore") {
+        sola_core::log::init(APP_ID);
+        tmux::configure(TMUX_SOCKET, TMUX_UNIT, TMUX_PREFIX);
+        let made = records::restore(&Machine::Local);
+        tracing::info!(count = made.len(), "restored sessions at boot");
+        return Ok(());
+    }
     startup(APP_ID);
 
     // One Projects: a second launch asks the running one to show its
@@ -262,6 +272,11 @@ enum Msg {
         /// Open this session alone (its id there), not all of them.
         only: Option<String>,
     },
+    /// A host's sessions a reboot took are back ([`records::restore`]).
+    HostRestored {
+        host: String,
+        made: Vec<String>,
+    },
     /// A resumable remote pane's attach, planned off the UI thread.
     RemoteAttach {
         pane: String,
@@ -299,9 +314,17 @@ struct DetachedPane {
 }
 
 impl DetachedPane {
+    /// Ended on purpose: its record goes too, so a reboot does not bring
+    /// it back ([`records`]).
+    fn forget_record(&self) {
+        let id = self.session.strip_prefix(TMUX_PREFIX).unwrap_or(&self.session);
+        records::remove(self.host.as_deref(), id);
+    }
+
     /// [`Self::close`], waiting until a remote session is gone too (call it
     /// off the UI thread).
     fn close_blocking(self) {
+        self.forget_record();
         match self.host.clone() {
             None => self.close(),
             Some(host) => {
@@ -455,6 +478,12 @@ impl App {
         };
         app.link_hosts();
         app.sync_all_rows();
+        // This computer's sessions that a reboot took, back before the
+        // windows attach (one may be another computer's, not open here).
+        let made = records::restore(&Machine::Local);
+        if !made.is_empty() {
+            tracing::info!(count = made.len(), "restored sessions");
+        }
         let windows = app.open_all_windows();
         // Nothing open: stay a moment for the launcher's `project.open`
         // (it starts Projects, then asks), then quit.
@@ -574,7 +603,10 @@ impl App {
                     .filter(|w| w.host.is_none())
                     .map(|w| w.path.clone());
                 let st = self.pane_status.entry(id.clone()).or_default();
+                let owner_before = (st.agent.clone(), st.owner_session.clone());
                 st.apply_hook(&incoming);
+                let owner_changed = st.owner_session.is_some()
+                    && (st.agent.clone(), st.owner_session.clone()) != owner_before;
                 if incoming.mapped.compacted || incoming.mapped.session_id.is_some() {
                     if let Some(cwd) = cwd.as_deref() {
                         st.refresh_compaction(&Machine::Local, cwd);
@@ -586,6 +618,10 @@ impl App {
                 let now = st.status;
                 let unconfirmed = st.restored_unconfirmed;
                 status::persist_all(&self.pane_status);
+                // Its agent's session is what a reboot resumes.
+                if owner_changed {
+                    self.save_record(&id, true);
+                }
                 self.sync_row(&id);
                 self.maybe_toast_status(&id, prev, now, unconfirmed);
                 self.flush_waits();
@@ -742,6 +778,8 @@ impl App {
                     st.tool = None;
                     st.owner_session = None;
                 }
+                // Its shell ended here, its computer up: not coming back.
+                records::remove(None, catalog::bare_id(&id));
                 // Its window stays, offering Start new shell.
                 self.pane_grids.remove(&id);
                 self.sync_row(&id);
@@ -759,6 +797,7 @@ impl App {
             Msg::Link(ev) => self.on_link(ev),
             Msg::RemoteTick { host, panes } => self.on_remote_tick(host, panes),
             Msg::RemoteAttach { pane, exec } => self.attach_planned(&pane, exec),
+            Msg::HostRestored { host, made } => self.on_host_restored(host, made),
             Msg::HostSessions { project, found, only } => self.on_host_sessions(&project, found, only),
             Msg::RemoteExec {
                 tab,
@@ -1295,6 +1334,11 @@ impl App {
         if new_session {
             sessions::stamp(&tmux_session, &self.session_options(id));
         }
+        if let Some(rec) = self.record_of(id) {
+            if let Err(e) = records::ensure(&Machine::Local, &rec) {
+                tracing::warn!(pane = %id, "its record: {e}");
+            }
+        }
         // Another computer may watch it too: its size follows whoever
         // typed last, not this window alone.
         tmux::follow_latest(&tmux_session);
@@ -1310,6 +1354,74 @@ impl App {
         );
         self.resize_all_panes();
         Task::none()
+    }
+
+    /// Session `id` renamed: what it says it is, there (its options and
+    /// its record), for every computer that lists it.
+    fn restamp(&self, id: &str) {
+        let opts = self.session_options(id);
+        match self.tab_for_pane(id).and_then(|w| w.host.clone()) {
+            None => sessions::stamp(&catalog::session_name(id), &opts),
+            Some(host) => {
+                let target = format!("={}:", catalog::session_name(id));
+                std::thread::spawn(move || {
+                    let mut argv: Vec<String> = vec!["tmux".into(), "-L".into(), TMUX_SOCKET.into()];
+                    for (i, (k, v)) in opts.into_iter().enumerate() {
+                        if i > 0 {
+                            argv.push(";".into());
+                        }
+                        argv.extend(["set-option".into(), "-t".into(), target.clone(), k, v]);
+                    }
+                    let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+                    let script = sola_core::ssh::argv_script(None, &[], &refs);
+                    if let Err(e) = sola_core::ssh::run(sola_core::ssh::batch(&host, &script), None) {
+                        tracing::warn!(%host, "renaming the session there: {e}");
+                    }
+                });
+            }
+        }
+        self.save_record(id, true);
+    }
+
+    /// Session `id`'s record ([`records`]) from its row and its status.
+    fn record_of(&self, id: &str) -> Option<records::Record> {
+        let tab = self.tab_for_pane(id)?;
+        let root = catalog::find_project(&self.projects, &tab.project_id)
+            .map_or_else(|| tab.path.clone(), |p| p.root.clone());
+        Some(records::of(
+            catalog::bare_id(id),
+            &root,
+            &tab.name,
+            tab.title.as_deref(),
+            cli::kind_str(tab.kind),
+            &tab.path,
+            self.pane_status.get(id),
+        ))
+    }
+
+    /// Write session `id`'s record where it runs (off the UI thread for
+    /// another computer): `overwrite` when its agent changed, else only
+    /// when it has none.
+    fn save_record(&self, id: &str, overwrite: bool) {
+        let Some(rec) = self.record_of(id) else {
+            return;
+        };
+        let host = self.tab_for_pane(id).and_then(|w| w.host.clone());
+        let m = match self.machine_for(host.as_deref()) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        let job = move || {
+            let done = if overwrite { records::write(&m, &rec) } else { records::ensure(&m, &rec) };
+            if let Err(e) = done {
+                tracing::warn!(host = ?m.host(), session = %rec.id, "its record: {e}");
+            }
+        };
+        if host.is_some() {
+            std::thread::spawn(job);
+        } else {
+            job();
+        }
     }
 
     /// What session `id` says it is, for any computer that lists it
@@ -2110,6 +2222,7 @@ impl App {
             }
         }
         self.persist_catalog();
+        self.restamp(&id);
         let ws = catalog::resolve_tab(&self.tabs, &id)?;
         Ok(cli::tab_json(ws, Some(&self.selected)))
     }

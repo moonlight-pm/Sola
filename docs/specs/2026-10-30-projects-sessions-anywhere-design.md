@@ -86,13 +86,17 @@ alternatively other sessions could tell them to start." So both:
 - **At boot.** A headless restore (`sola-projects --restore`: no window, the
   same code the app uses) starts every session whose file is there and whose
   tmux is not, resuming its agent (`claude --resume` / `grok -r`) when its
-  transcript is on disk. On Oath it runs once at boot as `home` (an Oath
-  `svc`, work with the Oath tab), so a computer with no desk (buccina) brings
-  its sessions back too. Projects also runs it when it starts.
-- **On request.** Anything may start a stopped session: a viewer opening it,
-  or another session on any computer (`solactl projects session.start --host H
-  --session S`). A host with no Sola (tmux only) gets this one: the viewer
-  does the start over ssh, as remote attach does today.
+  transcript is on disk. On Oath it runs once at boot as `home`
+  (`svc:sola-sessions`, Oath's desk profile), so a computer with no desk
+  brings its sessions back too. Projects also runs it when it starts.
+- **On request.** *(As built: no separate verb.)* Any computer that links
+  the host — opening a project there, or a window of one of its sessions —
+  runs the same restore there over ssh first, so a host with no Sola (tmux
+  only) gets its sessions back that way too.
+- The file: `~/.config/sola/projects/sessions/<id>.json` (project, name,
+  title, kind, folder, agent, agent session). Written when a session is made
+  or first attached, rewritten when its agent's session changes or it is
+  renamed, removed when it is ended or its shell exits with its computer up.
 
 `SOLA_PANE_ID` and `SOLA_WS_PATH` stay in the environment; `SOLA_WS_HOOKS_SOCK`
 goes.
@@ -215,8 +219,8 @@ canto's output windows are going to be much smaller."
 3. **Mirrors — not doing** (Joshua, 2026-10-30: "keep it working like it
    currently does … the scaling will just look silly"): the window not
    holding the size shows the session as tmux draws it.
-4. **Reboot.** `sola-projects --restore` at boot (Oath `svc`, with the Oath
-   tab) and at Projects start; `session.start` from anywhere.
+4. **Reboot.** `sola-projects --restore` at boot (Oath `svc`), at Projects
+   start, and on every link to a host.
 5. **CLI** `tab.*` → `session.*` with the manual (`solactl.md`) in the same
    change.
 

@@ -85,8 +85,23 @@ shows the session as tmux draws it (padded or cut) until you type in it.
 
 ## Slice 4 — reboot
 
-`sola-projects --restore` (headless) at Projects start and at boot (Oath
-`svc`, with the Oath tab); `session.start` from anywhere.
+- [x] A record per session on its computer
+  (`~/.config/sola/projects/sessions/<id>.json`, `records.rs`): written
+  when a session is made or first attached (never over another's),
+  rewritten when a hook says its agent's session changed or it is renamed
+  (its tmux options too), removed when it is ended (End Session, `tab.rm`)
+  or its shell exits with its computer up.
+- [x] `records::restore`: every recorded session whose tmux is gone, made
+  detached as it was (folder, env, options), its agent resumed when its
+  transcript is there. Runs at Projects start (this computer), when a link
+  comes up (that computer — any computer opening a project there brings
+  its sessions back), and headless: `sola-projects --restore` (before
+  `startup`, no Wayland). Tried on novus with a throwaway record.
+- [ ] At boot on Oath: `svc:sola-sessions` in the desk profile —
+  `exec ["/bin/sola-projects","--restore"]`, `restart never`, `user home`,
+  `wants ["svc:sola-tmux-ws"]` (Oath's to add).
+- Not done: `session.start` as its own verb (opening a project on a
+  computer, or linking it, brings its sessions back).
 
 ## Slice 5 — CLI
 
