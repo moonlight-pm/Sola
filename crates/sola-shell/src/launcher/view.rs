@@ -331,7 +331,7 @@ fn web_rows<'a>(shell: &'a Shell, chooser: &'a WebChooser) -> Vec<Element<'a, Ms
 }
 
 /// The chooser's rows: each folder of `~/Projects` (open ones say where),
-/// then New.
+/// its sessions under it, then New.
 fn chooser_rows<'a>(shell: &'a Shell, chooser: &'a Chooser) -> Vec<Element<'a, Msg>> {
     let selected = shell.launcher.selected;
     chooser
@@ -339,6 +339,16 @@ fn chooser_rows<'a>(shell: &'a Shell, chooser: &'a Chooser) -> Vec<Element<'a, M
         .into_iter()
         .enumerate()
         .map(|(i, r)| {
+            if let Row::Session(_, s) = r {
+                let session = &chooser.sessions[s];
+                // Its window here is keyed by its id, `@host` from elsewhere.
+                let key = match &chooser.host {
+                    Some(h) => format!("{}@{h}", session.id),
+                    None => session.id.clone(),
+                };
+                let note = shell.project_workspace(&key).map(|ws| format!("Open on {ws}"));
+                return pick_row_at(shell, i, i == selected, SESSION_INDENT, "lucide/terminal", session.label(), note);
+            }
             let (icon_name, label, note): (&str, String, Option<String>) = match r {
                 Row::Folder(f) => {
                     let folder = &chooser.folders[f];
@@ -370,6 +380,7 @@ fn chooser_rows<'a>(shell: &'a Shell, chooser: &'a Chooser) -> Vec<Element<'a, M
                     ("lucide/folder-plus", label, None)
                 }
                 Row::Remote => ("lucide/monitor", "On another computer…".into(), None),
+                Row::Session(..) => unreachable!("drawn above"),
             };
             pick_row(shell, i, i == selected, icon_name, label, note)
         })
@@ -408,11 +419,27 @@ fn host_rows<'a>(shell: &'a Shell, hosts: &'a Hosts) -> Vec<Element<'a, Msg>> {
     out
 }
 
+/// How far a session's row sits in from its folder's.
+const SESSION_INDENT: f32 = 22.0;
+
 /// A pickable chooser row: an icon, a label, and a note at the right.
 fn pick_row<'a>(
     shell: &'a Shell,
     i: usize,
     selected: bool,
+    icon_name: &str,
+    label: String,
+    note: Option<String>,
+) -> Element<'a, Msg> {
+    pick_row_at(shell, i, selected, 0.0, icon_name, label, note)
+}
+
+/// [`pick_row`], in `indent` from the left.
+fn pick_row_at<'a>(
+    shell: &'a Shell,
+    i: usize,
+    selected: bool,
+    indent: f32,
     icon_name: &str,
     label: String,
     note: Option<String>,
@@ -434,7 +461,7 @@ fn pick_row<'a>(
         .padding(Padding {
             top: lp,
             bottom: lp,
-            left: lp + 4.0,
+            left: lp + 4.0 + indent,
             right: lp + 8.0,
         })
         .width(Length::Fill)

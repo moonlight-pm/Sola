@@ -105,7 +105,7 @@ its environment.
 | `$XDG_RUNTIME_DIR/sola-bus` | The bus |
 | `$XDG_RUNTIME_DIR/sola-call` | The call plane (mode 0600) |
 | `$XDG_RUNTIME_DIR/sola-bots` | `sola-botsd`'s HTTP API |
-| `$XDG_RUNTIME_DIR/sola-ws-hooks.sock` | Projects' agent hooks; `sola-ws-hooks-<host>.sock` for each computer a project runs on |
+| `~/.local/state/sola/projects/hooks.log` | Projects' agent hooks: each computer's agents append their events; every Projects watching its sessions follows it |
 | `$XDG_RUNTIME_DIR/sola-ssh/` | Projects' shared ssh connections |
 | `$XDG_RUNTIME_DIR/sola/` | Single-instance sockets: `terminal.sock`, `projects.sock`, `paint.lock.sock`, `design.sock`, `calendar.sock` |
 

@@ -438,27 +438,31 @@ impl Islands {
         self.needs.keys().cloned().collect()
     }
 
-    /// A need you look at is seen: its tab shows in the focused window and
-    /// the desk is not idle-fading (`looked_at`, from the caller). It stays
-    /// seen until the session moves on.
-    pub fn mark_seen(&mut self, looked_at: &HashMap<String, bool>) {
+    /// A need you look at is seen: its window has the keyboard and the
+    /// desk is not idle-fading (`looked_at`, from the caller). It stays
+    /// seen until the session moves on. Returns the panes it just saw.
+    pub fn mark_seen(&mut self, looked_at: &HashMap<String, bool>) -> Vec<String> {
+        let mut now_seen = Vec::new();
         for (pane, need) in &mut self.needs {
-            if looked_at.get(pane).copied().unwrap_or(false) {
+            if !need.seen && looked_at.get(pane).copied().unwrap_or(false) {
                 need.seen = true;
+                now_seen.push(pane.clone());
             }
         }
+        now_seen
     }
 
     /// Send the islands: one per need not seen ([`Self::mark_seen`] first);
     /// `place` names a pane `(project, session)`. `known` are every pane's
-    /// ids: on the first sync, their islands of a previous run go.
+    /// ids: on the first sync, their islands of a previous run go. Returns
+    /// the panes looked at just now (for other computers to hear).
     pub fn sync(
         &mut self,
         looked_at: &HashMap<String, bool>,
         place: &HashMap<String, (String, String)>,
         known: &[String],
-    ) {
-        self.mark_seen(looked_at);
+    ) -> Vec<String> {
+        let now_seen = self.mark_seen(looked_at);
         let mut want: HashMap<String, AgentIsland> = HashMap::new();
         for (pane, need) in &self.needs {
             if need.seen {
@@ -481,7 +485,7 @@ impl Islands {
             );
         }
         let Ok(mut bus) = sola_kit::app::bus().lock() else {
-            return;
+            return now_seen;
         };
         if !self.primed {
             self.primed = true;
@@ -510,6 +514,7 @@ impl Islands {
                 self.sent.insert(pane, island);
             }
         }
+        now_seen
     }
 }
 

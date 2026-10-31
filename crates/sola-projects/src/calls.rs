@@ -29,6 +29,7 @@ pub fn methods() -> Vec<MethodSpec> {
                     "Folder path (`~` ok); with --host, its full path there",
                 ),
                 opt_s("host", None, "The computer it is on (an ssh host); omit for this one"),
+                opt_s("session", None, "Open this session alone (its id there, e.g. ws-main)"),
             ],
             ADD_TIMEOUT_MS,
         ),

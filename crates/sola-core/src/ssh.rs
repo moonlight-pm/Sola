@@ -99,11 +99,11 @@ pub fn batch(host: &str, script: &str) -> Command {
     cmd
 }
 
-/// `ssh -N` to `host`, forwarding the socket `remote` there to `local`
-/// here. A connection of its own, not the shared one, so the forward lives
-/// exactly as long as this does; it ends if the forward is refused. Never
-/// prompts.
-pub fn forward(host: &str, remote: &str, local: &str) -> Command {
+/// A long-running `script` on `host` on a connection of its own (not the
+/// shared one, which may be closed under it), kept alive and never asking
+/// for anything: its output is streamed (Projects follows a computer's hook
+/// log with it).
+pub fn follow(host: &str, script: &str) -> Command {
     let mut cmd = Command::new("ssh");
     cmd.args([
         "-o",
@@ -114,13 +114,10 @@ pub fn forward(host: &str, remote: &str, local: &str) -> Command {
         "BatchMode=yes",
         "-o",
         "StrictHostKeyChecking=accept-new",
-        "-o",
-        "ExitOnForwardFailure=yes",
     ])
     .args(ALIVE)
-    .args(["-o", CONNECT_TIMEOUT, "-N", "-T", "-R"])
-    .arg(format!("{remote}:{local}"))
-    .args(["--", host]);
+    .args(["-o", CONNECT_TIMEOUT, "-T", "--", host])
+    .arg(sh_word(script));
     cmd
 }
 
