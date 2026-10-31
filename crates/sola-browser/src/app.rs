@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 use iced::widget::{
     Shader, Space, button, column, container, mouse_area, row, stack, text,
 };
+#[cfg(feature = "bitwarden")]
+use iced::widget::text_editor;
 use iced::{Alignment, Element, Event, Length, Padding, Subscription, Task, event, keyboard, mouse};
 use sola_kit::components::badge::{self, Tone as BadgeTone};
 use sola_kit::components::button as kit_button;
@@ -25,9 +27,13 @@ use sola_kit::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 
 use sola_kit::components::style::{chrome_surface, PAD_CONTROL_SM, RADIUS_MD};
 use sola_kit::components::text_input::text_input;
+#[cfg(feature = "bitwarden")]
+use sola_kit::components::text_input::{MenuEdit, MenuEdited};
 use sola_kit::components::toolbar as kit_toolbar;
 use sola_kit::components::{DividerColors, MenuItem, field, horizontal_divider, menu_at};
 
+#[cfg(feature = "bitwarden")]
+use crate::engine::FrameScope;
 use crate::engine::{
     Cmd, EditCmd, Engine, FrameSlot, NavCmd, PageContext, PageMenusHandle, TabId, TabInfo,
     TabsHandle,
@@ -37,10 +43,10 @@ use crate::session::{self, SessionTab};
 #[cfg(feature = "bitwarden")]
 use crate::vault::{
     CustomDraft, ItemDraft, ItemFilter, ItemKind, ItemRecord, ItemSummary, MatchSummary,
-    PasskeyCandidate, PasskeyPageRequest, TwoFactorKind, VaultCmd, VaultEvent, VaultHandle,
-    VaultStatus, apex_domain, create_account_hint, fill_card_script, fill_credentials_script,
-    fill_credentials_script_ex, fill_identity_script, fill_totp_script, filter_items,
-    generate_password, totp_remaining_secs,
+    PasskeyCandidate, PasskeyPageRequest, TwoFactorKind, UriDraft, VaultCmd, VaultEvent,
+    VaultHandle, VaultStatus, apex_domain, create_account_hint, fill_card_script,
+    fill_credentials_script, fill_credentials_script_ex, fill_identity_script, fill_totp_script,
+    filter_items, generate_password, totp_remaining_secs,
 };
 #[cfg(feature = "bitwarden")]
 use zeroize::Zeroize;
@@ -167,6 +173,12 @@ pub enum Msg {
     /// Clipboard paste targeted at the open vault form (⌘V via Edit menu).
     #[cfg(feature = "bitwarden")]
     VaultClipboardPaste(Option<String>),
+    /// Edit-menu result on the focused vault input (`None`: none had focus).
+    #[cfg(feature = "bitwarden")]
+    VaultMenuEdited(MenuEdit, Option<MenuEdited>),
+    /// Edit-menu command for the focused notes editor.
+    #[cfg(feature = "bitwarden")]
+    VaultNotesMenuEdit(MenuEdit),
     WindowReady(Option<iced::window::Id>),
     /// A page window opened, resized, gained focus, or was asked to close.
     PageWindow(iced::window::Id, iced::window::Event),
@@ -210,6 +222,14 @@ pub enum Msg {
     VaultLogout,
     VaultVerifyOtp,
     VaultResendEmailCode,
+    /// Two-step login: switch from the authenticator to an emailed code.
+    VaultUseEmailCode,
+    #[cfg(feature = "bitwarden")]
+    VaultRepromptPassword(String),
+    #[cfg(feature = "bitwarden")]
+    VaultRepromptSubmit,
+    #[cfg(feature = "bitwarden")]
+    VaultRepromptCancel,
     VaultPanelClose,
     /// Pick a vault match and fill the active page.
     #[cfg(feature = "bitwarden")]
@@ -254,7 +274,7 @@ pub enum Msg {
     #[cfg(feature = "bitwarden")]
     VaultEditName(String),
     #[cfg(feature = "bitwarden")]
-    VaultEditNotes(String),
+    VaultEditNotes(text_editor::Action),
     #[cfg(feature = "bitwarden")]
     VaultEditRow {
         key: String,
@@ -369,6 +389,10 @@ struct NavHold {
 
 const NAV_HOLD_MS: u128 = 400;
 
+/// Opening the vault panel syncs when the last sync is older than this.
+#[cfg(feature = "bitwarden")]
+const VAULT_STALE: Duration = Duration::from_secs(300);
+
 /// Which form the vault panel shows.
 #[cfg(feature = "bitwarden")]
 #[derive(Debug, Clone, Default)]
@@ -394,15 +418,35 @@ enum VaultPanelPhase {
     ItemEdit,
 }
 
+/// What a master-password re-prompt unlocks once the password checks out.
+#[cfg(feature = "bitwarden")]
+#[derive(Debug, Clone)]
+enum RepromptFor {
+    Open(String),
+    Fill(String),
+    PasskeyPick(String),
+}
+
+#[cfg(feature = "bitwarden")]
+impl RepromptFor {
+    fn cipher_id(&self) -> &str {
+        match self {
+            Self::Open(id) | Self::Fill(id) | Self::PasskeyPick(id) => id,
+        }
+    }
+}
+
 /// In-flight WebAuthn get() / create() waiting for the user.
 #[cfg(feature = "bitwarden")]
 #[derive(Debug, Clone)]
 struct PendingPasskey {
     req: PasskeyPageRequest,
-    /// Extra page promise ids for the same origin/RP (duplicate
-    /// delivery or a same-ceremony retry). Resolved together so the
-    /// site does not see "Superseded" / NotAllowedError mid-pick.
-    extra_ids: Vec<u64>,
+    /// The same site asking again while the picker is open (Gemini
+    /// Exchange retries). Settled with `req` so the site does not see
+    /// "Superseded" / NotAllowedError mid-pick.
+    extra: Vec<PasskeyPageRequest>,
+    /// The asking tab's origin then; the request ends if the tab leaves it.
+    page_origin: Option<String>,
     candidates: Vec<PasskeyCandidate>,
     loading: bool,
     error: Option<String>,
@@ -410,35 +454,13 @@ struct PendingPasskey {
 
 #[cfg(feature = "bitwarden")]
 impl PendingPasskey {
-    fn all_ids(&self) -> Vec<u64> {
-        let mut ids = Vec::with_capacity(1 + self.extra_ids.len());
-        ids.push(self.req.id);
-        for id in &self.extra_ids {
-            if !ids.contains(id) {
-                ids.push(*id);
-            }
-        }
-        ids
+    fn requests(&self) -> impl Iterator<Item = &PasskeyPageRequest> {
+        std::iter::once(&self.req).chain(&self.extra)
     }
 
     fn is_create(&self) -> bool {
         self.req.is_create()
     }
-}
-
-/// Where shell Edit → Paste (⌘V) should land while the vault panel is open.
-#[cfg(feature = "bitwarden")]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum VaultPasteTarget {
-    #[default]
-    Email,
-    Password,
-    Otp,
-    CreateUsername,
-    CreatePassword,
-    CreateUrl,
-    /// A field on the item-edit form (`vault_edit_focus` names it).
-    Edit,
 }
 
 /// Browser chrome application state, generic over the web engine.
@@ -560,9 +582,17 @@ pub struct App<E: Engine> {
     vault_pending_password: Option<String>,
     #[cfg(feature = "bitwarden")]
     vault_otp: String,
-    /// Last vault field that received input — targets ⌘V paste from Edit menu.
+    /// Re-prompt in progress, its password field, and the items it has
+    /// opened while the panel stays open.
     #[cfg(feature = "bitwarden")]
-    vault_paste_target: VaultPasteTarget,
+    vault_reprompt: Option<RepromptFor>,
+    #[cfg(feature = "bitwarden")]
+    vault_reprompt_password: String,
+    #[cfg(feature = "bitwarden")]
+    vault_reprompt_ok: HashSet<String>,
+    /// The second factors this account offers (switch between them).
+    #[cfg(feature = "bitwarden")]
+    vault_two_factor_kinds: Vec<TwoFactorKind>,
     #[cfg(feature = "bitwarden")]
     vault_error: Option<String>,
     #[cfg(feature = "bitwarden")]
@@ -586,6 +616,17 @@ pub struct App<E: Engine> {
     vault_items: Vec<ItemSummary>,
     #[cfg(feature = "bitwarden")]
     vault_items_loading: bool,
+    /// Last good sync, the one in flight, and why the last one failed
+    /// (shown in the panel until a sync succeeds).
+    /// Ciphers in the vault that failed to decrypt.
+    #[cfg(feature = "bitwarden")]
+    vault_unreadable: usize,
+    #[cfg(feature = "bitwarden")]
+    vault_synced_at: Option<Instant>,
+    #[cfg(feature = "bitwarden")]
+    vault_syncing: bool,
+    #[cfg(feature = "bitwarden")]
+    vault_sync_error: Option<String>,
     #[cfg(feature = "bitwarden")]
     vault_items_url: String,
     #[cfg(feature = "bitwarden")]
@@ -601,9 +642,9 @@ pub struct App<E: Engine> {
     /// Live edit buffer while `VaultPanelPhase::ItemEdit`.
     #[cfg(feature = "bitwarden")]
     vault_edit: Option<ItemDraft>,
-    /// Which edit field last received input (⌘V target).
+    /// The edit form's notes (multi-line; `vault_edit.notes` follows it).
     #[cfg(feature = "bitwarden")]
-    vault_edit_focus: String,
+    vault_edit_notes: text_editor::Content,
     #[cfg(feature = "bitwarden")]
     vault_revealed: HashSet<String>,
     #[cfg(feature = "bitwarden")]
@@ -622,6 +663,13 @@ pub struct App<E: Engine> {
     vault_create_password: String,
     #[cfg(feature = "bitwarden")]
     vault_create_url: String,
+    /// Where the fill the worker is preparing goes (the tab it was asked
+    /// from, while that tab stays on the origin it had then).
+    #[cfg(feature = "bitwarden")]
+    vault_fill_target: Option<(TabId, String)>,
+    /// Chrome's id for the next page passkey request.
+    #[cfg(feature = "bitwarden")]
+    passkey_seq: u64,
     /// Waiting for `__sola_vault_fill__` after a create.
     #[cfg(feature = "bitwarden")]
     vault_awaiting_fill: bool,
@@ -736,7 +784,13 @@ impl<E: Engine> App<E> {
             #[cfg(feature = "bitwarden")]
             vault_otp: String::new(),
             #[cfg(feature = "bitwarden")]
-            vault_paste_target: VaultPasteTarget::Email,
+            vault_reprompt: None,
+            #[cfg(feature = "bitwarden")]
+            vault_reprompt_password: String::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_reprompt_ok: HashSet::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_two_factor_kinds: Vec::new(),
             #[cfg(feature = "bitwarden")]
             vault_error: None,
             #[cfg(feature = "bitwarden")]
@@ -759,6 +813,14 @@ impl<E: Engine> App<E> {
             #[cfg(feature = "bitwarden")]
             vault_items_loading: false,
             #[cfg(feature = "bitwarden")]
+            vault_unreadable: 0,
+            #[cfg(feature = "bitwarden")]
+            vault_synced_at: None,
+            #[cfg(feature = "bitwarden")]
+            vault_syncing: false,
+            #[cfg(feature = "bitwarden")]
+            vault_sync_error: None,
+            #[cfg(feature = "bitwarden")]
             vault_items_url: String::new(),
             #[cfg(feature = "bitwarden")]
             vault_search: String::new(),
@@ -773,7 +835,7 @@ impl<E: Engine> App<E> {
             #[cfg(feature = "bitwarden")]
             vault_edit: None,
             #[cfg(feature = "bitwarden")]
-            vault_edit_focus: String::new(),
+            vault_edit_notes: text_editor::Content::new(),
             #[cfg(feature = "bitwarden")]
             vault_revealed: HashSet::new(),
             #[cfg(feature = "bitwarden")]
@@ -790,6 +852,10 @@ impl<E: Engine> App<E> {
             vault_create_password: String::new(),
             #[cfg(feature = "bitwarden")]
             vault_create_url: String::new(),
+            #[cfg(feature = "bitwarden")]
+            vault_fill_target: None,
+            #[cfg(feature = "bitwarden")]
+            passkey_seq: 0,
             #[cfg(feature = "bitwarden")]
             vault_awaiting_fill: false,
             #[cfg(feature = "bitwarden")]
@@ -818,7 +884,6 @@ impl<E: Engine> App<E> {
         {
             if let Some(email) = crate::vault::VaultPrefs::load_email() {
                 app.vault_email = email;
-                app.vault_paste_target = VaultPasteTarget::Password;
             }
         }
         let seed: Vec<(String, String)> = app
@@ -1001,12 +1066,16 @@ impl<E: Engine> App<E> {
         self.vault_panel_open = open;
         // Subscription Tab handling reads this (fn-pointer listen_with).
         VAULT_PANEL_OPEN.store(open, Ordering::Relaxed);
-        // Do **not** clear form / 2FA / pending password on dismiss — accidental
-        // close must restore the same state when the lock icon is clicked again.
+        // Do **not** clear form / 2FA / pending password / an unsaved edit on
+        // dismiss — accidental close (or a click on the page to copy from it)
+        // must restore the same state when the vault icon is clicked again.
         if open {
             self.set_downloads_panel_open(false);
-        } else {
+        } else if !matches!(self.vault_phase, VaultPanelPhase::ItemEdit) {
             self.clear_vault_item();
+            self.vault_reprompt = None;
+            self.vault_reprompt_password.zeroize();
+            self.vault_reprompt_ok.clear();
         }
     }
 
@@ -1045,6 +1114,20 @@ impl<E: Engine> App<E> {
         self.vault.send(VaultCmd::Matches { url });
     }
 
+    /// Pull the vault from Bitwarden when it is older than [`VAULT_STALE`]
+    /// (or always, `force`). Edits made elsewhere show up without a restart.
+    #[cfg(feature = "bitwarden")]
+    fn sync_vault(&mut self, force: bool) {
+        let stale = self
+            .vault_synced_at
+            .is_none_or(|t| t.elapsed() >= VAULT_STALE);
+        if self.vault_syncing || !self.vault_status.unlocked || !(force || stale) {
+            return;
+        }
+        self.vault_syncing = true;
+        self.vault.send(VaultCmd::Sync);
+    }
+
     /// All vault items for the unified panel (and the contextual toolbar icon).
     #[cfg(feature = "bitwarden")]
     fn request_vault_items(&mut self) {
@@ -1068,7 +1151,7 @@ impl<E: Engine> App<E> {
         self.vault_item_loading = false;
         self.vault_item_id = None;
         self.vault_edit = None;
-        self.vault_edit_focus.clear();
+        self.vault_edit_notes = text_editor::Content::new();
         self.vault_revealed.clear();
         if matches!(
             self.vault_phase,
@@ -1101,9 +1184,9 @@ impl<E: Engine> App<E> {
             self.vault_error = Some("This item cannot be edited.".into());
             return;
         }
-        self.vault_edit = Some(ItemDraft::from_record(item));
-        self.vault_edit_focus = "name".into();
-        self.vault_paste_target = VaultPasteTarget::Edit;
+        let draft = ItemDraft::from_record(item);
+        self.vault_edit_notes = text_editor::Content::with_text(&draft.notes);
+        self.vault_edit = Some(draft);
         self.vault_error = None;
         self.vault_phase = VaultPanelPhase::ItemEdit;
     }
@@ -1111,7 +1194,7 @@ impl<E: Engine> App<E> {
     #[cfg(feature = "bitwarden")]
     fn cancel_item_edit(&mut self) {
         self.vault_edit = None;
-        self.vault_edit_focus.clear();
+        self.vault_edit_notes = text_editor::Content::new();
         self.vault_busy = false;
         self.vault_error = None;
         if self.vault_item.is_some() {
@@ -1138,36 +1221,127 @@ impl<E: Engine> App<E> {
         self.vault.send(VaultCmd::UpdateItem { draft });
     }
 
+    /// Run an Edit menu command on the focused vault input, at its caret
+    /// (the shell grabs the Super chords, so the input never sees them).
     #[cfg(feature = "bitwarden")]
-    fn apply_vault_edit_paste(&mut self, text: String) {
-        let Some(draft) = self.vault_edit.as_mut() else {
-            return;
+    fn vault_menu_edit(&self, edit: MenuEdit) -> Task<Msg> {
+        sola_kit::components::text_input::edit_focused(edit.clone())
+            .map(move |done| Msg::VaultMenuEdited(edit.clone(), done))
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn on_vault_menu_edited(&mut self, edit: MenuEdit, done: Option<MenuEdited>) -> Task<Msg> {
+        let Some(done) = done else {
+            // No line input has focus: the notes editor, if it does.
+            if self.vault_edit.is_none() {
+                return Task::none();
+            }
+            return iced::widget::operation::is_focused(vault_edit_field_id("notes")).map(
+                move |focused| {
+                    if focused {
+                        Msg::VaultNotesMenuEdit(edit.clone())
+                    } else {
+                        Msg::Noop
+                    }
+                },
+            );
         };
-        let focus = self.vault_edit_focus.clone();
-        if focus == "name" {
-            draft.name = text;
-        } else if focus == "notes" {
-            draft.notes = text;
-        } else if let Some(rest) = focus.strip_prefix("uri:") {
-            if let Ok(i) = rest.parse::<usize>() {
-                if let Some(u) = draft.uris.get_mut(i) {
-                    *u = text;
-                }
-            }
-        } else if let Some(rest) = focus.strip_prefix("custom-name:") {
-            if let Ok(i) = rest.parse::<usize>() {
-                if let Some(c) = draft.custom.get_mut(i) {
-                    c.name = text;
-                }
-            }
-        } else if let Some(rest) = focus.strip_prefix("custom:") {
-            if let Ok(i) = rest.parse::<usize>() {
-                if let Some(c) = draft.custom.get_mut(i) {
-                    c.value = text;
-                }
+        if let (Some(id), Some(value)) = (done.id.as_ref(), done.value) {
+            self.set_vault_field(id, value);
+        }
+        match done.copied.filter(|t| !t.is_empty()) {
+            Some(t) => iced::clipboard::write(t),
+            None => Task::none(),
+        }
+    }
+
+    /// Store an Edit-menu result in the vault field whose input has `id`.
+    #[cfg(feature = "bitwarden")]
+    fn set_vault_field(&mut self, id: &iced::widget::Id, value: String) {
+        let slot = if *id == vault_email_id() {
+            &mut self.vault_email
+        } else if *id == vault_password_id() {
+            &mut self.vault_password
+        } else if *id == vault_otp_id() {
+            &mut self.vault_otp
+        } else if *id == vault_reprompt_id() {
+            &mut self.vault_reprompt_password
+        } else if *id == vault_search_id() {
+            &mut self.vault_search
+        } else if *id == vault_create_username_id() {
+            &mut self.vault_create_username
+        } else if *id == vault_create_password_id() {
+            &mut self.vault_create_password
+        } else if *id == vault_create_url_id() {
+            &mut self.vault_create_url
+        } else if let Some(draft) = self.vault_edit.as_mut() {
+            let edit_id = |key: &str| *id == vault_edit_field_id(key);
+            if edit_id("name") {
+                &mut draft.name
+            } else if let Some(row) = draft.rows.iter_mut().find(|r| edit_id(&r.key)) {
+                &mut row.value
+            } else if let Some((_, uri)) = draft
+                .uris
+                .iter_mut()
+                .enumerate()
+                .find(|(i, _)| edit_id(&format!("uri:{i}")))
+            {
+                &mut uri.value
+            } else if let Some((_, c)) = draft
+                .custom
+                .iter_mut()
+                .enumerate()
+                .find(|(i, _)| edit_id(&format!("custom-name:{i}")))
+            {
+                &mut c.name
+            } else if let Some((_, c)) = draft
+                .custom
+                .iter_mut()
+                .enumerate()
+                .find(|(i, _)| edit_id(&format!("custom:{i}")))
+            {
+                &mut c.value
+            } else {
+                return;
             }
         } else {
-            draft.set_row(&focus, text);
+            return;
+        };
+        *slot = value;
+    }
+
+    /// Edit menu on the notes editor (multi-line: paste keeps line breaks).
+    #[cfg(feature = "bitwarden")]
+    fn vault_notes_menu_edit(&mut self, edit: MenuEdit) -> Task<Msg> {
+        let selection = self.vault_edit_notes.selection().filter(|s| !s.is_empty());
+        let (action, copied) = match edit {
+            MenuEdit::Paste(t) => (
+                Some(text_editor::Action::Edit(text_editor::Edit::Paste(
+                    std::sync::Arc::new(t),
+                ))),
+                None,
+            ),
+            MenuEdit::SelectAll => (Some(text_editor::Action::SelectAll), None),
+            MenuEdit::Copy => (None, selection),
+            MenuEdit::Cut => (
+                selection
+                    .is_some()
+                    .then_some(text_editor::Action::Edit(text_editor::Edit::Delete)),
+                selection,
+            ),
+        };
+        if let Some(action) = action.filter(|_| !self.vault_busy) {
+            self.edit_vault_notes(action);
+        }
+        copied.map(iced::clipboard::write).unwrap_or_else(Task::none)
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn edit_vault_notes(&mut self, action: text_editor::Action) {
+        let edits = action.is_edit();
+        self.vault_edit_notes.perform(action);
+        if let Some(d) = self.vault_edit.as_mut().filter(|_| edits) {
+            d.notes = self.vault_edit_notes.text();
         }
     }
 
@@ -1176,33 +1350,82 @@ impl<E: Engine> App<E> {
         if self.vault_busy || !self.vault_status.unlocked {
             return Task::none();
         }
+        if self.reprompt_needed(&id) {
+            return self.ask_reprompt(RepromptFor::Fill(id));
+        }
         let kind = self
             .vault_item
             .as_ref()
             .filter(|r| r.id == id)
             .map(|r| r.kind)
             .or_else(|| self.vault_items.iter().find(|i| i.id == id).map(|i| i.kind));
-        match kind {
-            Some(ItemKind::Login) => {
-                self.vault_busy = true;
-                self.vault_error = None;
-                self.vault.send(VaultCmd::Fill { id });
-            }
-            Some(ItemKind::Card) => {
-                self.vault_busy = true;
-                self.vault_error = None;
-                self.vault.send(VaultCmd::FillCard { id });
-            }
-            Some(ItemKind::Identity) => {
-                self.vault_busy = true;
-                self.vault_error = None;
-                self.vault.send(VaultCmd::FillIdentity { id });
-            }
+        let cmd = match kind {
+            Some(ItemKind::Login) => VaultCmd::Fill { id },
+            Some(ItemKind::Card) => VaultCmd::FillCard { id },
+            Some(ItemKind::Identity) => VaultCmd::FillIdentity { id },
             _ => {
                 self.open_vault_item(id);
+                return Task::none();
             }
+        };
+        if !self.aim_vault_fill() {
+            self.vault_error = Some("This page can't be filled.".into());
+            return Task::none();
         }
+        self.vault_busy = true;
+        self.vault_error = None;
+        self.vault.send(cmd);
         Task::none()
+    }
+
+    /// Bitwarden's "master password re-prompt" is on for this cipher and
+    /// it has not been answered while the panel has been open.
+    #[cfg(feature = "bitwarden")]
+    fn reprompt_needed(&self, id: &str) -> bool {
+        if self.vault_reprompt_ok.contains(id) {
+            return false;
+        }
+        self.vault_items.iter().any(|i| i.id == id && i.reprompt)
+            || self
+                .pending_passkey
+                .as_ref()
+                .is_some_and(|p| p.candidates.iter().any(|c| c.cipher_id == id && c.reprompt))
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn ask_reprompt(&mut self, then: RepromptFor) -> Task<Msg> {
+        self.vault_reprompt = Some(then);
+        self.vault_reprompt_password.zeroize();
+        self.vault_error = None;
+        iced::widget::operation::focus(vault_reprompt_id())
+    }
+
+    /// Pin the coming fill to the active tab and its current origin.
+    #[cfg(feature = "bitwarden")]
+    fn aim_vault_fill(&mut self) -> bool {
+        self.vault_fill_target = self.active_tab_info().and_then(|t| {
+            crate::vault::origin_of(&t.url)
+                .filter(|_| t.url != BLANK_URL)
+                .map(|origin| (t.id, origin))
+        });
+        self.vault_fill_target.is_some()
+    }
+
+    /// Send a fill script to the tab it was asked for, in the frames
+    /// `scope` picks for that origin (see [`FrameScope`]).
+    #[cfg(feature = "bitwarden")]
+    fn send_vault_fill(&mut self, script: String, scope: impl FnOnce(String) -> FrameScope) -> bool {
+        let Some((tab, origin)) = self.vault_fill_target.take() else {
+            return false;
+        };
+        let _ = self.cmd_tx.send(Cmd::Target {
+            tab,
+            cmd: Box::new(Cmd::EvaluateJsIn {
+                scope: scope(origin),
+                script,
+            }),
+        });
+        true
     }
 
     #[cfg(feature = "bitwarden")]
@@ -1220,9 +1443,7 @@ impl<E: Engine> App<E> {
         self.vault_busy = false;
         self.vault_awaiting_fill = false;
         self.vault_awaiting_fill_ticks = 0;
-        crate::vault::passkey_bridge::drain_fill_results();
         self.vault_phase = VaultPanelPhase::CreateLogin;
-        self.vault_paste_target = VaultPasteTarget::CreateUsername;
     }
 
     #[cfg(feature = "bitwarden")]
@@ -1241,6 +1462,7 @@ impl<E: Engine> App<E> {
             let apex = apex_domain(&uri);
             if apex.is_empty() { uri.clone() } else { apex }
         };
+        self.aim_vault_fill();
         self.vault_busy = true;
         self.vault_error = None;
         self.vault.send(VaultCmd::CreateLogin {
@@ -1256,7 +1478,6 @@ impl<E: Engine> App<E> {
         self.vault_awaiting_fill = false;
         self.vault_awaiting_fill_ticks = 0;
         self.vault_busy = false;
-        crate::vault::passkey_bridge::drain_fill_results();
         if found_fields {
             self.set_vault_panel_open(false);
             self.vault_phase = VaultPanelPhase::Credentials;
@@ -1282,11 +1503,6 @@ impl<E: Engine> App<E> {
         self.vault_phase = VaultPanelPhase::Credentials;
         self.vault_error = None;
         self.vault_busy = false;
-        self.vault_paste_target = if self.vault_email.trim().is_empty() {
-            VaultPasteTarget::Email
-        } else {
-            VaultPasteTarget::Password
-        };
     }
 
     #[cfg(feature = "bitwarden")]
@@ -1479,7 +1695,11 @@ impl<E: Engine> App<E> {
                     let open = !self.vault_panel_open;
                     self.set_vault_panel_open(open);
                     if open {
-                        self.vault_error = None;
+                        // An edit keeps its message (a save that failed while
+                        // the panel was closed).
+                        if !matches!(self.vault_phase, VaultPanelPhase::ItemEdit) {
+                            self.vault_error = None;
+                        }
                         if self.vault_status.unlocked {
                             if !matches!(
                                 self.vault_phase,
@@ -1492,11 +1712,11 @@ impl<E: Engine> App<E> {
                             ) {
                                 self.vault_phase = VaultPanelPhase::Credentials;
                             }
+                            self.sync_vault(false);
                             self.request_vault_items();
                             return iced::widget::operation::focus(vault_search_id());
                         }
                         if !self.vault_email.trim().is_empty() {
-                            self.vault_paste_target = VaultPasteTarget::Password;
                             return iced::widget::operation::focus(vault_password_id());
                         }
                         return iced::widget::operation::focus(vault_email_id());
@@ -1516,7 +1736,35 @@ impl<E: Engine> App<E> {
                 if !self.vault_status.unlocked {
                     return Task::none();
                 }
+                if self.reprompt_needed(&id) {
+                    return self.ask_reprompt(RepromptFor::Open(id));
+                }
                 self.open_vault_item(id);
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultRepromptPassword(s) => {
+                self.vault_reprompt_password = s;
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultRepromptSubmit => {
+                if self.vault_busy || self.vault_reprompt.is_none() {
+                    return Task::none();
+                }
+                if self.vault_reprompt_password.is_empty() {
+                    self.vault_error = Some("Enter your master password.".into());
+                    return Task::none();
+                }
+                self.vault_busy = true;
+                self.vault_error = None;
+                self.vault.send(VaultCmd::VerifyMasterPassword {
+                    password: self.vault_reprompt_password.clone(),
+                });
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultRepromptCancel => {
+                self.vault_reprompt = None;
+                self.vault_reprompt_password.zeroize();
+                self.vault_error = None;
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultItemBack => {
@@ -1546,6 +1794,8 @@ impl<E: Engine> App<E> {
                 if self.vault_busy || !self.vault_status.unlocked {
                     return Task::none();
                 }
+                // Copied either way; filled only where there is a page.
+                self.aim_vault_fill();
                 self.vault_busy = true;
                 self.vault_error = None;
                 self.totp_copy_next = true;
@@ -1557,6 +1807,9 @@ impl<E: Engine> App<E> {
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultPasskeyPick(cipher_id) => {
+                if self.reprompt_needed(&cipher_id) {
+                    return self.ask_reprompt(RepromptFor::PasskeyPick(cipher_id));
+                }
                 self.confirm_passkey_pick(cipher_id);
             }
             #[cfg(feature = "bitwarden")]
@@ -1573,6 +1826,7 @@ impl<E: Engine> App<E> {
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultRefreshMatches => {
+                self.sync_vault(true);
                 self.request_vault_items();
             }
             #[cfg(feature = "bitwarden")]
@@ -1606,17 +1860,14 @@ impl<E: Engine> App<E> {
             #[cfg(feature = "bitwarden")]
             Msg::VaultCreateUsername(s) => {
                 self.vault_create_username = s;
-                self.vault_paste_target = VaultPasteTarget::CreateUsername;
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultCreatePassword(s) => {
                 self.vault_create_password = s;
-                self.vault_paste_target = VaultPasteTarget::CreatePassword;
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultCreateUrl(s) => {
                 self.vault_create_url = s;
-                self.vault_paste_target = VaultPasteTarget::CreateUrl;
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultCreateRegenerate => {
@@ -1642,42 +1893,35 @@ impl<E: Engine> App<E> {
                 if let Some(d) = self.vault_edit.as_mut() {
                     d.name = s;
                 }
-                self.vault_edit_focus = "name".into();
-                self.vault_paste_target = VaultPasteTarget::Edit;
             }
             #[cfg(feature = "bitwarden")]
-            Msg::VaultEditNotes(s) => {
-                if let Some(d) = self.vault_edit.as_mut() {
-                    d.notes = s;
-                }
-                self.vault_edit_focus = "notes".into();
-                self.vault_paste_target = VaultPasteTarget::Edit;
+            Msg::VaultEditNotes(action) => {
+                self.edit_vault_notes(action);
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultEditRow { key, value } => {
                 if let Some(d) = self.vault_edit.as_mut() {
                     d.set_row(&key, value);
                 }
-                self.vault_edit_focus = key;
-                self.vault_paste_target = VaultPasteTarget::Edit;
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultEditUri { index, value } => {
                 if let Some(d) = self.vault_edit.as_mut() {
                     if let Some(u) = d.uris.get_mut(index) {
-                        *u = value;
+                        u.value = value;
                     }
                 }
-                self.vault_edit_focus = format!("uri:{index}");
-                self.vault_paste_target = VaultPasteTarget::Edit;
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultEditAddUri => {
                 if let Some(d) = self.vault_edit.as_mut() {
-                    d.uris.push(String::new());
-                    self.vault_edit_focus = format!("uri:{}", d.uris.len().saturating_sub(1));
+                    d.uris.push(UriDraft {
+                        index: None,
+                        value: String::new(),
+                    });
+                    let key = format!("uri:{}", d.uris.len() - 1);
+                    return iced::widget::operation::focus(vault_edit_field_id(&key));
                 }
-                self.vault_paste_target = VaultPasteTarget::Edit;
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultEditRemoveUri(index) => {
@@ -1694,8 +1938,6 @@ impl<E: Engine> App<E> {
                         c.name = value;
                     }
                 }
-                self.vault_edit_focus = format!("custom-name:{index}");
-                self.vault_paste_target = VaultPasteTarget::Edit;
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultEditCustomValue { index, value } => {
@@ -1704,8 +1946,6 @@ impl<E: Engine> App<E> {
                         c.value = value;
                     }
                 }
-                self.vault_edit_focus = format!("custom:{index}");
-                self.vault_paste_target = VaultPasteTarget::Edit;
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultEditAddCustom => {
@@ -1716,10 +1956,9 @@ impl<E: Engine> App<E> {
                         value: String::new(),
                         hidden: false,
                     });
-                    self.vault_edit_focus =
-                        format!("custom-name:{}", d.custom.len().saturating_sub(1));
+                    let key = format!("custom-name:{}", d.custom.len() - 1);
+                    return iced::widget::operation::focus(vault_edit_field_id(&key));
                 }
-                self.vault_paste_target = VaultPasteTarget::Edit;
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultEditRemoveCustom(index) => {
@@ -1741,21 +1980,18 @@ impl<E: Engine> App<E> {
                 #[cfg(feature = "bitwarden")]
                 {
                     self.vault_email = s;
-                    self.vault_paste_target = VaultPasteTarget::Email;
                 }
             }
             Msg::VaultPassword(s) => {
                 #[cfg(feature = "bitwarden")]
                 {
                     self.vault_password = s;
-                    self.vault_paste_target = VaultPasteTarget::Password;
                 }
             }
             Msg::VaultOtp(s) => {
                 #[cfg(feature = "bitwarden")]
                 {
                     self.vault_otp = s;
-                    self.vault_paste_target = VaultPasteTarget::Otp;
                 }
             }
             Msg::VaultLogin => {
@@ -1830,8 +2066,21 @@ impl<E: Engine> App<E> {
                         password,
                         token,
                         kind,
-                        remember: true,
                     });
+                }
+            }
+            Msg::VaultUseEmailCode => {
+                #[cfg(feature = "bitwarden")]
+                {
+                    let VaultPanelPhase::TwoFactor { email_hint, .. } = &self.vault_phase else {
+                        return Task::none();
+                    };
+                    self.vault_phase = VaultPanelPhase::TwoFactor {
+                        kind: TwoFactorKind::Email,
+                        email_hint: email_hint.clone(),
+                    };
+                    self.vault_otp.clear();
+                    return self.update_msg(Msg::VaultResendEmailCode);
                 }
             }
             Msg::VaultResendEmailCode => {
@@ -2257,20 +2506,12 @@ impl<E: Engine> App<E> {
                         }
                         self.handle_vault_event(ev);
                     }
-                    // WebAuthn intercepts from CEF console → vault passkey sign.
-                    while let Some(req) = crate::vault::passkey_bridge::try_recv() {
-                        self.dispatch_passkey_request(req);
-                    }
                     if self.vault_awaiting_fill {
-                        if let Some(found) = crate::vault::passkey_bridge::try_recv_fill() {
-                            self.finish_create_fill(found);
-                        } else {
-                            self.vault_awaiting_fill_ticks =
-                                self.vault_awaiting_fill_ticks.saturating_add(1);
-                            // 250ms tick × 8 ≈ 2s — page never reported.
-                            if self.vault_awaiting_fill_ticks >= 8 {
-                                self.finish_create_fill(true);
-                            }
+                        self.vault_awaiting_fill_ticks =
+                            self.vault_awaiting_fill_ticks.saturating_add(1);
+                        // 250ms tick × 8 ≈ 2s — page never reported.
+                        if self.vault_awaiting_fill_ticks >= 8 {
+                            self.finish_create_fill(true);
                         }
                     }
                     if self.vault_status.unlocked {
@@ -2373,14 +2614,9 @@ impl<E: Engine> App<E> {
                         .drain(..)
                         .collect();
                     for ev in pks {
-                        self.dispatch_passkey_request(crate::vault::PasskeyPageRequest {
-                            id: ev.id,
-                            action: ev.action,
-                            origin: ev.origin,
-                            rp_id: ev.rp_id,
-                            public_key_json: ev.public_key_json,
-                        });
+                        self.on_vault_page_event(ev);
                     }
+                    self.end_passkey_if_page_left();
                 }
                 // ⌘-click / target=_blank: helper found a URL; chrome owns the id.
                 let bg: Vec<crate::engine::ChromeTabRequest> = self
@@ -2548,52 +2784,10 @@ impl<E: Engine> App<E> {
                     tracing::debug!(?cmd, "edit → vault panel");
                     return match cmd {
                         EditCmd::Paste => iced::clipboard::read().map(Msg::VaultClipboardPaste),
-                        EditCmd::SelectAll => match self.vault_paste_target {
-                            VaultPasteTarget::Email => {
-                                iced::widget::operation::focus(vault_email_id())
-                            }
-                            VaultPasteTarget::Password => {
-                                iced::widget::operation::focus(vault_password_id())
-                            }
-                            VaultPasteTarget::Otp => iced::widget::operation::focus(vault_otp_id()),
-                            VaultPasteTarget::CreateUsername => {
-                                iced::widget::operation::focus(vault_create_username_id())
-                            }
-                            VaultPasteTarget::CreatePassword => {
-                                iced::widget::operation::focus(vault_create_password_id())
-                            }
-                            VaultPasteTarget::CreateUrl => {
-                                iced::widget::operation::focus(vault_create_url_id())
-                            }
-                            VaultPasteTarget::Edit => iced::widget::operation::focus(
-                                vault_edit_field_id(&self.vault_edit_focus),
-                            ),
-                        },
-                        EditCmd::Copy => {
-                            let raw = match self.vault_paste_target {
-                                VaultPasteTarget::Email => self.vault_email.clone(),
-                                VaultPasteTarget::Password => return Task::none(),
-                                VaultPasteTarget::Otp => self.vault_otp.clone(),
-                                VaultPasteTarget::CreateUsername => {
-                                    self.vault_create_username.clone()
-                                }
-                                VaultPasteTarget::CreatePassword => {
-                                    self.vault_create_password.clone()
-                                }
-                                VaultPasteTarget::CreateUrl => self.vault_create_url.clone(),
-                                VaultPasteTarget::Edit => match self.vault_edit.as_ref() {
-                                    Some(d) if self.vault_edit_focus == "name" => d.name.clone(),
-                                    Some(d) if self.vault_edit_focus == "notes" => d.notes.clone(),
-                                    Some(d) => d.row_value(&self.vault_edit_focus).to_string(),
-                                    None => return Task::none(),
-                                },
-                            };
-                            match crate::util::usable_clipboard_text(Some(raw)) {
-                                Some(t) => iced::clipboard::write(t),
-                                None => Task::none(),
-                            }
-                        }
-                        EditCmd::Cut | EditCmd::Undo | EditCmd::Redo => Task::none(),
+                        EditCmd::Copy => self.vault_menu_edit(MenuEdit::Copy),
+                        EditCmd::Cut => self.vault_menu_edit(MenuEdit::Cut),
+                        EditCmd::SelectAll => self.vault_menu_edit(MenuEdit::SelectAll),
+                        EditCmd::Undo | EditCmd::Redo => Task::none(),
                     };
                 }
                 if url_bar_focused {
@@ -2669,48 +2863,22 @@ impl<E: Engine> App<E> {
             }
             #[cfg(feature = "bitwarden")]
             Msg::VaultClipboardPaste(text) => {
-                let Some(cleaned) = crate::util::usable_clipboard_text(text) else {
+                let Some(text) = crate::util::usable_clipboard_text(text) else {
                     return Task::none();
                 };
-                match self.vault_phase {
-                    VaultPanelPhase::TwoFactor { .. } => {
-                        self.vault_otp = cleaned.chars().filter(|c| !c.is_whitespace()).collect();
-                        self.vault_paste_target = VaultPasteTarget::Otp;
-                    }
-                    VaultPanelPhase::Credentials => match self.vault_paste_target {
-                        VaultPasteTarget::Email => {
-                            self.vault_email = cleaned.clone();
-                            self.vault_paste_target = VaultPasteTarget::Email;
-                        }
-                        VaultPasteTarget::Password | VaultPasteTarget::Otp => {
-                            self.vault_password = cleaned.clone();
-                            self.vault_paste_target = VaultPasteTarget::Password;
-                        }
-                        _ => {}
-                    },
-                    VaultPanelPhase::CreateLogin => match self.vault_paste_target {
-                        VaultPasteTarget::CreatePassword => {
-                            self.vault_create_password = cleaned.clone();
-                        }
-                        VaultPasteTarget::CreateUrl => {
-                            self.vault_create_url = cleaned.clone();
-                        }
-                        _ => {
-                            self.vault_create_username = cleaned.clone();
-                            self.vault_paste_target = VaultPasteTarget::CreateUsername;
-                        }
-                    },
-                    VaultPanelPhase::ItemEdit => {
-                        self.apply_vault_edit_paste(cleaned.clone());
-                    }
-                    VaultPanelPhase::PasskeyPick
-                    | VaultPanelPhase::PasskeyCreate
-                    | VaultPanelPhase::CreateSaved
-                    | VaultPanelPhase::ItemDetail => {
-                        return Task::none();
-                    }
-                }
-                return iced::clipboard::write(cleaned);
+                // Restore: smithay receive can drop the original offer.
+                return Task::batch([
+                    self.vault_menu_edit(MenuEdit::Paste(text.clone())),
+                    iced::clipboard::write(text),
+                ]);
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultMenuEdited(edit, done) => {
+                return self.on_vault_menu_edited(edit, done);
+            }
+            #[cfg(feature = "bitwarden")]
+            Msg::VaultNotesMenuEdit(edit) => {
+                return self.vault_notes_menu_edit(edit);
             }
         }
         Task::none()
@@ -3773,13 +3941,39 @@ impl<E: Engine> App<E> {
                 self.reset_vault_form_keep_email();
                 self.request_vault_items();
             }
+            VaultEvent::MasterPasswordChecked(res) => {
+                self.vault_busy = false;
+                self.vault_reprompt_password.zeroize();
+                match res {
+                    Ok(true) => {
+                        let Some(then) = self.vault_reprompt.take() else {
+                            return;
+                        };
+                        self.vault_reprompt_ok.insert(then.cipher_id().to_string());
+                        match then {
+                            RepromptFor::Open(id) => self.open_vault_item(id),
+                            RepromptFor::Fill(id) => {
+                                let _ = self.fill_vault_item(id);
+                            }
+                            RepromptFor::PasskeyPick(id) => self.confirm_passkey_pick(id),
+                        }
+                    }
+                    Ok(false) => self.vault_error = Some("Wrong master password.".into()),
+                    Err(message) => self.vault_error = Some(message),
+                }
+            }
             VaultEvent::LoggedOut => {
+                self.vault_reprompt = None;
+                self.vault_reprompt_ok.clear();
+                self.vault_synced_at = None;
+                self.vault_syncing = false;
+                self.vault_sync_error = None;
                 self.vault_items.clear();
                 self.vault_matches.clear();
                 self.vault_item = None;
                 self.vault_item_id = None;
                 self.vault_edit = None;
-                self.vault_edit_focus.clear();
+                self.vault_edit_notes = text_editor::Content::new();
                 self.vault_search.clear();
                 self.vault_filter = ItemFilter::All;
                 self.vault_revealed.clear();
@@ -3788,11 +3982,12 @@ impl<E: Engine> App<E> {
             }
             VaultEvent::LoginNeedsTwoFactor {
                 email,
+                kinds,
                 preferred,
                 email_hint,
                 email_sent,
-                ..
             } => {
+                self.vault_two_factor_kinds = kinds;
                 tracing::info!(
                     ?preferred,
                     email_sent,
@@ -3805,7 +4000,6 @@ impl<E: Engine> App<E> {
                     kind: preferred,
                     email_hint,
                 };
-                self.vault_paste_target = VaultPasteTarget::Otp;
                 // Subtitle covers email/TOTP instructions; keep error clear.
                 let _ = email_sent;
                 self.vault_error = None;
@@ -3825,6 +4019,9 @@ impl<E: Engine> App<E> {
             }
             VaultEvent::SyncOk { full } => {
                 tracing::info!(full, "vault: sync ok");
+                self.vault_syncing = false;
+                self.vault_synced_at = Some(Instant::now());
+                self.vault_sync_error = None;
                 if self.vault_status.unlocked {
                     self.request_vault_items();
                     if self.vault_panel_open
@@ -3841,18 +4038,26 @@ impl<E: Engine> App<E> {
             }
             VaultEvent::SyncFailed { message } => {
                 tracing::warn!(%message, "vault: sync failed");
-                if self.vault_panel_open && self.vault_status.unlocked {
-                    self.vault_error = Some(format!("Signed in, but sync failed: {message}"));
-                }
+                self.vault_syncing = false;
+                self.vault_sync_error = Some(message);
             }
             VaultEvent::Matches(list) => {
                 self.vault_matches_loading = false;
-                tracing::info!(n = list.len(), url = %self.vault_matches_url, "vault: matches");
+                tracing::info!(
+                    n = list.len(),
+                    host = %crate::vault::log_host(&self.vault_matches_url),
+                    "vault: matches"
+                );
                 self.vault_matches = list;
             }
-            VaultEvent::Items(list) => {
+            VaultEvent::Items { list, unreadable } => {
                 self.vault_items_loading = false;
-                tracing::info!(n = list.len(), url = %self.vault_items_url, "vault: items");
+                self.vault_unreadable = unreadable;
+                tracing::debug!(
+                    n = list.len(),
+                    host = %crate::vault::log_host(&self.vault_items_url),
+                    "vault: items"
+                );
                 self.vault_items = list;
             }
             VaultEvent::ItemReady(item) => {
@@ -3868,22 +4073,18 @@ impl<E: Engine> App<E> {
             VaultEvent::ItemUpdated(item) => {
                 self.vault_busy = false;
                 self.vault_edit = None;
-                self.vault_edit_focus.clear();
+                self.vault_edit_notes = text_editor::Content::new();
                 self.vault_item_id = Some(item.id.clone());
                 self.vault_item = Some(item);
                 self.vault_phase = VaultPanelPhase::ItemDetail;
                 self.request_vault_items();
             }
-            VaultEvent::Totp(list) => {
-                let _ = list;
-            }
-            VaultEvent::Cards(list) => {
-                let _ = list;
-            }
             VaultEvent::TotpFillReady { code } => {
                 self.vault_busy = false;
-                let script = fill_totp_script(&code);
-                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                self.send_vault_fill(fill_totp_script(&code), |origin| FrameScope::Site {
+                    origin,
+                    uris: Vec::new(),
+                });
                 if self.totp_copy_next {
                     self.totp_copy_next = false;
                     self.pending_totp_clipboard = Some(code);
@@ -3891,10 +4092,13 @@ impl<E: Engine> App<E> {
                 } else {
                     tracing::info!("vault: totp fill injected");
                 }
+                // As the other fills: out of the way so the form can submit.
+                self.set_vault_panel_open(false);
             }
             VaultEvent::FillReady {
                 mut username,
                 mut password,
+                uris,
             } => {
                 self.vault_busy = false;
                 let script = fill_credentials_script(username.as_deref(), password.as_deref());
@@ -3904,7 +4108,8 @@ impl<E: Engine> App<E> {
                 if let Some(ref mut u) = username {
                     u.zeroize();
                 }
-                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                // A login form in a same-site iframe (its own website).
+                self.send_vault_fill(script, |origin| FrameScope::Site { origin, uris });
                 tracing::info!("vault: fill injected into active page");
                 // Close panel so the user can submit the form immediately.
                 self.set_vault_panel_open(false);
@@ -3932,7 +4137,8 @@ impl<E: Engine> App<E> {
                 if let Some(ref mut c) = code {
                     c.zeroize();
                 }
-                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                // Payment fields often live in the processor's iframes.
+                self.send_vault_fill(script, |origin| FrameScope::Page { origin });
                 tracing::info!("vault: card fill injected into active page");
                 self.set_vault_panel_open(false);
             }
@@ -3967,7 +4173,10 @@ impl<E: Engine> App<E> {
                 if let Some(ref mut s) = material.license_number {
                     s.zeroize();
                 }
-                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+                self.send_vault_fill(script, |origin| FrameScope::Site {
+                    origin,
+                    uris: Vec::new(),
+                });
                 tracing::info!("vault: identity fill injected into active page");
                 self.set_vault_panel_open(false);
             }
@@ -3976,8 +4185,7 @@ impl<E: Engine> App<E> {
                 mut username,
                 mut password,
             } => {
-                crate::vault::passkey_bridge::drain_fill_results();
-                let script =
+                        let script =
                     fill_credentials_script_ex(username.as_deref(), password.as_deref(), true);
                 if let Some(ref mut p) = password {
                     p.zeroize();
@@ -3986,9 +4194,17 @@ impl<E: Engine> App<E> {
                     u.zeroize();
                 }
                 self.vault_create_password.clear();
+                let sent = self.send_vault_fill(script, |origin| FrameScope::Site {
+                    origin,
+                    uris: Vec::new(),
+                });
+                if !sent {
+                    // Saved; nowhere to fill.
+                    self.finish_create_fill(false);
+                    return;
+                }
                 self.vault_awaiting_fill = true;
                 self.vault_awaiting_fill_ticks = 0;
-                let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
                 tracing::info!("vault: created login — fill injected");
             }
             VaultEvent::PasskeyCandidates { req_id, candidates } => {
@@ -4013,48 +4229,32 @@ impl<E: Engine> App<E> {
                 payload,
             } => {
                 self.vault_busy = false;
-                // Clear pending only if this is the current ceremony
-                // (primary id or a coalesced extra).
-                let ids = self
+                // Only the request still waiting: a late answer (the user
+                // cancelled, the page timed out or left) goes nowhere.
+                let Some(pending) = self
                     .pending_passkey
-                    .as_ref()
-                    .filter(|p| p.all_ids().contains(&req_id))
-                    .map(|p| p.all_ids());
-                let keep_create = !ok
-                    && self
-                        .pending_passkey
-                        .as_ref()
-                        .is_some_and(|p| p.is_create() && p.all_ids().contains(&req_id));
-                if keep_create {
-                    if let Some(pending) = self.pending_passkey.as_mut() {
-                        pending.error = Some(payload.clone());
-                    }
+                    .as_mut()
+                    .filter(|p| p.req.id == req_id)
+                else {
+                    tracing::info!(req_id, ok, "vault: passkey result for an ended request — dropped");
+                    return;
+                };
+                if !ok && pending.is_create() {
+                    pending.error = Some(payload.clone());
                     if self.vault_panel_open {
                         self.vault_error = Some(payload.clone());
                     }
                     tracing::warn!(req_id, error = %payload, "vault: passkey create failed — panel stays open");
-                } else if let Some(ids) = ids {
-                    self.pending_passkey = None;
-                    if matches!(
-                        self.vault_phase,
-                        VaultPanelPhase::PasskeyPick | VaultPanelPhase::PasskeyCreate
-                    ) {
-                        self.vault_phase = VaultPanelPhase::Credentials;
-                        self.set_vault_panel_open(false);
-                    }
-                    let script = crate::vault::resolve_webauthn_scripts(&ids, ok, &payload);
-                    let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
-                    if ok {
-                        tracing::info!(req_id, "vault: passkey response injected");
-                    } else {
-                        tracing::warn!(req_id, error = %payload, "vault: passkey response error injected");
-                    }
+                    return;
+                }
+                if let Some(pending) = self.pending_passkey.take() {
+                    self.settle_passkey(&pending, ok, &payload);
+                }
+                self.end_passkey_phase();
+                if ok {
+                    tracing::info!(req_id, "vault: passkey response sent to the page");
                 } else {
-                    let script = crate::vault::resolve_webauthn_script(req_id, ok, &payload);
-                    let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
-                    if !ok && self.vault_panel_open {
-                        self.vault_error = Some(payload);
-                    }
+                    tracing::warn!(req_id, error = %payload, "vault: passkey error sent to the page");
                 }
             }
             VaultEvent::Error { message } => {
@@ -4063,7 +4263,7 @@ impl<E: Engine> App<E> {
                 self.vault_matches_loading = false;
                 self.vault_items_loading = false;
                 self.vault_item_loading = false;
-                if self.vault_panel_open {
+                if self.vault_panel_open || self.vault_edit.is_some() {
                     self.vault_error = Some(message);
                 }
             }
@@ -4073,49 +4273,47 @@ impl<E: Engine> App<E> {
     /// Page asked for a passkey: open the vault panel picker (or unlock first).
     #[cfg(feature = "bitwarden")]
     fn dispatch_passkey_request(&mut self, req: PasskeyPageRequest) {
-        // Same click can arrive more than once (console + leftover
-        // beacon, helper IPC fan-out). Same origin/RP also retries
-        // while the picker is open (Gemini Exchange). Rejecting those
-        // as "Superseded" makes the page show failure before a pick.
+        // The same site also retries while the picker is open (Gemini
+        // Exchange). Rejecting those as "Superseded" makes the page show
+        // failure before a pick.
         if let Some(cur) = self.pending_passkey.as_mut() {
-            let same_site = cur.req.origin == req.origin
+            if cur.req.origin == req.origin
                 && cur.req.action == req.action
-                && (cur.req.rp_id == req.rp_id || cur.req.rp_id.is_empty() || req.rp_id.is_empty());
-            if same_site {
-                if cur.req.id != req.id && !cur.extra_ids.contains(&req.id) {
-                    tracing::info!(
-                        keep_id = cur.req.id,
-                        extra_id = req.id,
-                        origin = %req.origin,
-                        "vault: coalescing passkey request (same site)"
-                    );
-                    cur.extra_ids.push(req.id);
-                }
+                && cur.req.rp_id == req.rp_id
+            {
+                tracing::info!(
+                    keep_id = cur.req.id,
+                    extra_id = req.id,
+                    origin = %req.origin,
+                    "vault: coalescing passkey request (same site)"
+                );
+                cur.extra.push(req);
                 return;
             }
         }
-        // Different site: replace any prior pending request.
+        // Different site: answer the old request, then take this one.
         if let Some(old) = self.pending_passkey.take() {
-            let script = crate::vault::resolve_webauthn_scripts(
-                &old.all_ids(),
-                false,
-                "Superseded by another passkey request.",
-            );
-            let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+            self.settle_passkey(&old, false, "Superseded by another passkey request.");
         }
 
         let create = req.is_create();
         tracing::info!(
             req_id = req.id,
+            tab = req.tab.0,
             origin = %req.origin,
             rp_id = %req.rp_id,
             action = %req.action,
             "vault: page requested passkey — opening panel"
         );
-
+        let page_origin = self
+            .cached_tabs
+            .iter()
+            .find(|t| t.id == req.tab)
+            .and_then(|t| crate::vault::origin_of(&t.url));
         self.pending_passkey = Some(PendingPasskey {
             req,
-            extra_ids: Vec::new(),
+            extra: Vec::new(),
+            page_origin,
             candidates: Vec::new(),
             loading: create,
             error: None,
@@ -4140,6 +4338,90 @@ impl<E: Engine> App<E> {
         }
     }
 
+    /// Vault traffic a page sent (through its helper).
+    #[cfg(feature = "bitwarden")]
+    fn on_vault_page_event(&mut self, ev: crate::cef::ipc::VaultPageEvent) {
+        use crate::cef::ipc::VaultPageEvent;
+        match ev {
+            VaultPageEvent::WebAuthn(ev) if ev.action == "cancel" => {
+                self.page_dropped_passkey(TabId(ev.tab), &ev.nonce);
+            }
+            VaultPageEvent::WebAuthn(ev) => {
+                self.passkey_seq += 1;
+                let req = PasskeyPageRequest::new(self.passkey_seq, ev);
+                self.dispatch_passkey_request(req);
+            }
+            VaultPageEvent::Filled { found, .. } => {
+                if self.vault_awaiting_fill {
+                    self.finish_create_fill(found);
+                }
+            }
+        }
+    }
+
+    /// Answer every page request of `pending`, each in its own frame.
+    #[cfg(feature = "bitwarden")]
+    fn settle_passkey(&self, pending: &PendingPasskey, ok: bool, payload: &str) {
+        for req in pending.requests() {
+            let _ = self.cmd_tx.send(Cmd::Target {
+                tab: req.tab,
+                cmd: Box::new(Cmd::EvaluateJsIn {
+                    scope: FrameScope::Frame(req.frame.clone()),
+                    script: req.resolve_script(ok, payload),
+                }),
+            });
+        }
+    }
+
+    /// The page stopped waiting for its request `nonce` (its timeout).
+    #[cfg(feature = "bitwarden")]
+    fn page_dropped_passkey(&mut self, tab: TabId, nonce: &str) {
+        let Some(p) = self.pending_passkey.as_mut() else {
+            return;
+        };
+        p.extra.retain(|r| r.tab != tab || r.nonce != nonce);
+        if p.req.tab == tab && p.req.nonce == nonce {
+            tracing::info!(req_id = p.req.id, "vault: the page stopped waiting for its passkey");
+            self.cancel_pending_passkey("The site stopped waiting.");
+        }
+    }
+
+    /// The asking tab closed or left the site: nothing to answer any more.
+    #[cfg(feature = "bitwarden")]
+    fn end_passkey_if_page_left(&mut self) {
+        let Some(p) = self.pending_passkey.as_ref() else {
+            return;
+        };
+        if !self.engine_tabs_seen {
+            return;
+        }
+        // Only for a tab chrome knew when it asked (`page_origin`).
+        let Some(asked_on) = p.page_origin.as_deref() else {
+            return;
+        };
+        let left = match self.cached_tabs.iter().find(|t| t.id == p.req.tab) {
+            None => true,
+            Some(t) => crate::vault::origin_of(&t.url).as_deref() != Some(asked_on),
+        };
+        if left {
+            tracing::info!(req_id = p.req.id, "vault: passkey page went away — request ended");
+            self.pending_passkey = None;
+            self.end_passkey_phase();
+        }
+    }
+
+    #[cfg(feature = "bitwarden")]
+    fn end_passkey_phase(&mut self) {
+        if matches!(
+            self.vault_phase,
+            VaultPanelPhase::PasskeyPick | VaultPanelPhase::PasskeyCreate
+        ) {
+            self.vault_phase = VaultPanelPhase::Credentials;
+            self.set_vault_panel_open(false);
+        }
+        self.vault_busy = false;
+    }
+
     #[cfg(feature = "bitwarden")]
     fn request_passkey_candidates(&mut self) {
         let Some(pending) = self.pending_passkey.as_mut() else {
@@ -4147,19 +4429,11 @@ impl<E: Engine> App<E> {
         };
         pending.loading = true;
         pending.error = None;
-        let mut rp_id = pending.req.rp_id.clone();
-        if rp_id.is_empty() {
-            if let Some(host) = pending
-                .req
-                .origin
-                .strip_prefix("https://")
-                .or_else(|| pending.req.origin.strip_prefix("http://"))
-            {
-                rp_id = host.split('/').next().unwrap_or(host).to_string();
-            }
-        }
-        let req_id = pending.req.id;
-        self.vault.send(VaultCmd::PasskeyList { req_id, rp_id });
+        self.vault.send(VaultCmd::PasskeyList {
+            req_id: pending.req.id,
+            rp_id: pending.req.rp_id.clone(),
+            public_key_json: pending.req.public_key_json.clone(),
+        });
     }
 
     #[cfg(feature = "bitwarden")]
@@ -4224,17 +4498,9 @@ impl<E: Engine> App<E> {
     #[cfg(feature = "bitwarden")]
     fn cancel_pending_passkey(&mut self, reason: &str) {
         if let Some(pending) = self.pending_passkey.take() {
-            let script = crate::vault::resolve_webauthn_scripts(&pending.all_ids(), false, reason);
-            let _ = self.cmd_tx.send(Cmd::EvaluateJs(script));
+            self.settle_passkey(&pending, false, reason);
         }
-        if matches!(
-            self.vault_phase,
-            VaultPanelPhase::PasskeyPick | VaultPanelPhase::PasskeyCreate
-        ) {
-            self.vault_phase = VaultPanelPhase::Credentials;
-            self.set_vault_panel_open(false);
-        }
-        self.vault_busy = false;
+        self.end_passkey_phase();
     }
 
     fn drain_notify_ipc(&mut self) {
@@ -4936,6 +5202,22 @@ impl<E: Engine> App<E> {
         if !host_hint.is_empty() && q.is_empty() {
             col = col.push(soft(host_hint));
         }
+        if let Some(err) = self.vault_sync_error.as_ref() {
+            col = col.push(
+                text(format!("Couldn't sync with Bitwarden ({err}). Refresh to retry."))
+                    .size(12)
+                    .style(|theme: &iced::Theme| iced::widget::text::Style {
+                        color: Some(theme.extended_palette().danger.base.color),
+                    }),
+            );
+        }
+        if self.vault_unreadable > 0 {
+            let n = self.vault_unreadable;
+            col = col.push(soft_sm(format!(
+                "{n} item{} couldn't be decrypted (an organization key may not have loaded).",
+                if n == 1 { "" } else { "s" }
+            )));
+        }
         if let Some(err) = self.vault_error.as_ref() {
             col = col.push(text(err.clone()).size(12).style(|theme: &iced::Theme| {
                 iced::widget::text::Style {
@@ -5215,6 +5497,29 @@ impl<E: Engine> App<E> {
             .align_y(Alignment::Center);
             fields = fields.push(totp_row);
         }
+        if let Some(raw) = item.unreadable_totp() {
+            let key = crate::vault::RecordField {
+                key: "totp".into(),
+                label: "Authenticator key".into(),
+                value: raw.to_string(),
+                hidden: true,
+                mono: true,
+            };
+            fields = fields.push(
+                column![
+                    self.view_vault_record_field(&key),
+                    text("Sola can't make codes from this key.")
+                        .size(11)
+                        .style(|theme: &iced::Theme| {
+                            let t = theme.extended_palette().background.base.text;
+                            iced::widget::text::Style {
+                                color: Some(iced::Color { a: 0.62, ..t }),
+                            }
+                        }),
+                ]
+                .spacing(2),
+            );
+        }
         if item.has_passkey {
             fields = fields.push(badge::badge("passkey", BadgeTone::Accent));
         }
@@ -5338,13 +5643,16 @@ impl<E: Engine> App<E> {
                 .on_input(Msg::VaultEditName)
                 .on_submit(Msg::VaultItemEditSave);
         }
-        let mut notes = text_input("Notes", &draft.notes)
+        // Multi-line: recovery codes and the like keep their line breaks.
+        let mut notes = text_editor(&self.vault_edit_notes)
             .id(vault_edit_field_id("notes"))
+            .placeholder("Notes")
             .size(13)
-            .style(sola_kit::components::text_input::style)
-            .width(Length::Fill);
+            .min_height(72.0)
+            .padding(sola_kit::components::text_input::DEFAULT_PADDING)
+            .style(vault_notes_style);
         if !busy {
-            notes = notes.on_input(Msg::VaultEditNotes);
+            notes = notes.on_action(Msg::VaultEditNotes);
         }
 
         let mut fields = column![field("Name", name, None, None)].spacing(SPACE_MD);
@@ -5389,7 +5697,7 @@ impl<E: Engine> App<E> {
 
         if matches!(draft.kind, ItemKind::Login) {
             for (i, uri) in draft.uris.iter().enumerate() {
-                let mut input = text_input("Website", uri)
+                let mut input = text_input("Website", &uri.value)
                     .id(vault_edit_field_id(&format!("uri:{i}")))
                     .size(13)
                     .style(sola_kit::components::text_input::style)
@@ -5527,6 +5835,65 @@ impl<E: Engine> App<E> {
         .into()
     }
 
+    /// Master-password re-prompt for an item that asks for it.
+    #[cfg(feature = "bitwarden")]
+    fn view_vault_reprompt(&self) -> Element<'_, Msg> {
+        use sola_kit::components::style::SPACE_SM;
+        let busy = self.vault_busy;
+        let name = self
+            .vault_reprompt
+            .as_ref()
+            .and_then(|r| {
+                let id = r.cipher_id();
+                self.vault_items
+                    .iter()
+                    .find(|i| i.id == id)
+                    .map(|i| i.name.clone())
+                    .or_else(|| {
+                        self.pending_passkey.as_ref().and_then(|p| {
+                            p.candidates.iter().find(|c| c.cipher_id == id).map(|c| c.name.clone())
+                        })
+                    })
+            })
+            .unwrap_or_else(|| "This item".into());
+        let mut password = text_input("Master password", &self.vault_reprompt_password)
+            .id(vault_reprompt_id())
+            .secure(true)
+            .size(13)
+            .style(sola_kit::components::text_input::style)
+            .width(Length::Fill);
+        if !busy {
+            password = password
+                .on_input(Msg::VaultRepromptPassword)
+                .on_submit(Msg::VaultRepromptSubmit);
+        }
+        let mut confirm = kit_button::labeled(
+            if busy { "Checking…" } else { "Continue" },
+            kit_button::primary,
+        );
+        if !busy {
+            confirm = confirm.on_press(Msg::VaultRepromptSubmit);
+        }
+        let cancel =
+            kit_button::labeled("Cancel", kit_button::ghost).on_press(Msg::VaultRepromptCancel);
+        let mut col = column![
+            text("Master password").size(15).font(sola_kit::fonts::ui_medium()),
+            text(format!("{name} asks for your master password.")).size(12),
+            password,
+        ]
+        .spacing(SPACE_SM)
+        .width(Length::Fixed(300.0));
+        if let Some(err) = self.vault_error.as_ref() {
+            col = col.push(text(err.clone()).size(12).style(|theme: &iced::Theme| {
+                iced::widget::text::Style {
+                    color: Some(theme.extended_palette().danger.base.color),
+                }
+            }));
+        }
+        col.push(row![confirm, cancel].spacing(SPACE_SM).align_y(Alignment::Center))
+            .into()
+    }
+
     /// Bitwarden panel anchored top-right under the toolbar vault icon.
     #[cfg(feature = "bitwarden")]
     fn view_vault_panel(&self) -> Element<'_, Msg> {
@@ -5570,7 +5937,9 @@ impl<E: Engine> App<E> {
                 .as_ref()
                 .is_some_and(|p| !p.is_create() && self.vault_status.unlocked);
 
-        let body: Element<'_, Msg> = if passkey_create {
+        let body: Element<'_, Msg> = if self.vault_reprompt.is_some() {
+            self.view_vault_reprompt()
+        } else if passkey_create {
             let title = text("Save a passkey")
                 .size(15)
                 .font(sola_kit::fonts::ui_medium());
@@ -6016,6 +6385,15 @@ impl<E: Engine> App<E> {
                     }
 
                     let mut actions = row![verify_btn].spacing(SPACE_SM);
+                    if *kind == TwoFactorKind::Authenticator
+                        && self.vault_two_factor_kinds.contains(&TwoFactorKind::Email)
+                    {
+                        let mut email = kit_button::labeled("Email a code", kit_button::ghost);
+                        if !busy {
+                            email = email.on_press(Msg::VaultUseEmailCode);
+                        }
+                        actions = actions.push(email);
+                    }
                     if show_resend {
                         let mut resend = kit_button::labeled("Resend", kit_button::ghost);
                         if !busy {
@@ -6418,7 +6796,9 @@ impl<E: Engine> App<E> {
                 && self
                     .vault_item
                     .as_ref()
-                    .is_some_and(|i| i.totp_secret.is_some())
+                    .is_some_and(|i| {
+                        i.totp_secret.is_some() && i.unreadable_totp().is_none()
+                    })
             {
                 return true;
             }
@@ -6575,8 +6955,8 @@ fn page_host_hint(page_url: &str) -> String {
         .and_then(|u| u.host_str().map(|h| h.to_string()))
         .map(|h| format!("For {h}"))
         .unwrap_or_else(|| {
-            let short = if page_url.len() > 36 {
-                format!("{}…", &page_url[..35])
+            let short = if page_url.chars().count() > 36 {
+                format!("{}…", page_url.chars().take(35).collect::<String>())
             } else {
                 page_url.to_string()
             };
@@ -6804,6 +7184,11 @@ fn vault_otp_id() -> iced::widget::Id {
 }
 
 #[cfg(feature = "bitwarden")]
+fn vault_reprompt_id() -> iced::widget::Id {
+    iced::widget::Id::new("sola-browser-vault-reprompt")
+}
+
+#[cfg(feature = "bitwarden")]
 fn vault_create_username_id() -> iced::widget::Id {
     iced::widget::Id::new("sola-browser-vault-create-username")
 }
@@ -6816,6 +7201,28 @@ fn vault_create_password_id() -> iced::widget::Id {
 #[cfg(feature = "bitwarden")]
 fn vault_create_url_id() -> iced::widget::Id {
     iced::widget::Id::new("sola-browser-vault-create-url")
+}
+
+/// The kit text field's look on the edit form's notes editor.
+#[cfg(feature = "bitwarden")]
+fn vault_notes_style(theme: &iced::Theme, status: text_editor::Status) -> text_editor::Style {
+    use sola_kit::components::text_input::Status as Field;
+    let field = sola_kit::components::text_input::style(
+        theme,
+        match status {
+            text_editor::Status::Active => Field::Active,
+            text_editor::Status::Hovered => Field::Hovered,
+            text_editor::Status::Focused { is_hovered } => Field::Focused { is_hovered },
+            text_editor::Status::Disabled => Field::Disabled,
+        },
+    );
+    text_editor::Style {
+        background: field.background,
+        border: field.border,
+        placeholder: field.placeholder,
+        value: field.value,
+        selection: field.selection,
+    }
 }
 
 #[cfg(feature = "bitwarden")]

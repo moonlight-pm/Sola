@@ -31,8 +31,6 @@ use super::client::{LoginOutcome, TwoFactorKind};
 use super::org_crypto::OrgCryptoSyncHandler;
 use super::sync_cipher::CipherSyncHandler;
 
-/// Same stable id the SDK password login uses (see bitwarden-core PasswordTokenRequest).
-const DEVICE_ID: &str = "b86dd6ab-4265-4ddf-a7f1-eb28d5677f33";
 const CLIENT_ID: &str = "web";
 
 /// Access token cell used by the SDK middleware after custom login.
@@ -155,11 +153,12 @@ enum RawLogin {
     NeedsNewDeviceOtp {
         email_hint: Option<String>,
     },
-    /// Standard email two-step login — complete with twoFactorToken.
-    NeedsEmailTwoFactor {
+    /// Two-step login with the providers we can complete (twoFactorToken).
+    NeedsTwoFactor {
+        authenticator: bool,
+        email: bool,
         email_hint: Option<String>,
     },
-    NeedsAuthenticator,
     Failed {
         message: String,
     },
@@ -236,6 +235,7 @@ impl IdentityLogin<'_> {
                 // Reuse master key when salt/kdf match prelogin; only re-derive
                 // if the unlock payload disagrees (rare).
                 let t3 = Instant::now();
+                let wrapped_user_key = unlock.master_key_wrapped_user_key.to_string();
                 let user_key = if crypto_email.eq_ignore_ascii_case(email.trim())
                     && unlock.kdf == kdf
                 {
@@ -289,6 +289,7 @@ impl IdentityLogin<'_> {
                     kdf: unlock.kdf.clone(),
                     salt: crypto_email,
                     user_id: user_id.to_string(),
+                    wrapped_user_key: Some(wrapped_user_key),
                 });
 
                 password.zeroize();
@@ -316,31 +317,37 @@ impl IdentityLogin<'_> {
                     email_sent: true,
                 })
             }
-            RawLogin::NeedsEmailTwoFactor { email_hint } => {
+            RawLogin::NeedsTwoFactor {
+                authenticator,
+                email,
+                email_hint,
+            } => {
                 password.zeroize();
                 if completing_2fa {
-                    return Err(
-                        "Invalid or expired verification code. Use the latest email or Resend."
-                            .into(),
-                    );
+                    return Err(if email {
+                        "Invalid or expired code. Check it, or use the latest email."
+                    } else {
+                        "Invalid authenticator code. Try again."
+                    }
+                    .into());
                 }
+                // An authenticator needs no round trip, and with more than
+                // one provider Bitwarden emails no code until asked (chrome
+                // offers "Email a code instead"). Email alone is sent by
+                // the server with this response.
+                let kinds: Vec<TwoFactorKind> = [
+                    authenticator.then_some(TwoFactorKind::Authenticator),
+                    email.then_some(TwoFactorKind::Email),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                let preferred = kinds[0];
                 Ok(LoginOutcome::NeedsTwoFactor {
-                    kinds: vec![TwoFactorKind::Email],
-                    preferred: TwoFactorKind::Email,
+                    kinds,
+                    preferred,
                     email_hint,
-                    email_sent: true,
-                })
-            }
-            RawLogin::NeedsAuthenticator => {
-                password.zeroize();
-                if completing_2fa {
-                    return Err("Invalid authenticator code. Try again.".into());
-                }
-                Ok(LoginOutcome::NeedsTwoFactor {
-                    kinds: vec![TwoFactorKind::Authenticator],
-                    preferred: TwoFactorKind::Authenticator,
-                    email_hint: None,
-                    email_sent: false,
+                    email_sent: preferred == TwoFactorKind::Email,
                 })
             }
             RawLogin::Failed { message } => {
@@ -376,12 +383,10 @@ impl IdentityLogin<'_> {
             api.identity_config.base_path.trim_end_matches('/')
         );
 
-        // Match SDK password login: ChromeBrowser + fixed device id + "firefox".
         // New-device protection uses `newDeviceOtp` (official clients).
         // Standard two-step login uses twoFactorToken + twoFactorProvider.
         let mut two_factor_token = None;
         let mut two_factor_provider = None;
-        let mut two_factor_remember = None;
         let mut new_device_otp = None;
 
         if let Some((kind, token)) = &self.otp {
@@ -397,7 +402,6 @@ impl IdentityLogin<'_> {
                     info!(token_len = token.len(), "vault: identity token + email 2FA");
                     two_factor_token = Some(token.clone());
                     two_factor_provider = Some(1u8);
-                    two_factor_remember = Some(true);
                 }
                 TwoFactorKind::Authenticator => {
                     info!(
@@ -406,7 +410,6 @@ impl IdentityLogin<'_> {
                     );
                     two_factor_token = Some(token.clone());
                     two_factor_provider = Some(0u8);
-                    two_factor_remember = Some(true);
                 }
             }
         } else {
@@ -434,9 +437,6 @@ impl IdentityLogin<'_> {
             #[serde(rename = "twoFactorProvider")]
             #[serde(skip_serializing_if = "Option::is_none")]
             two_factor_provider: Option<u8>,
-            #[serde(rename = "twoFactorRemember")]
-            #[serde(skip_serializing_if = "Option::is_none")]
-            two_factor_remember: Option<bool>,
             /// New device login protection (NOT the same as email 2FA).
             #[serde(rename = "newDeviceOtp")]
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -447,14 +447,15 @@ impl IdentityLogin<'_> {
             scope: "api offline_access".into(),
             client_id: CLIENT_ID.into(),
             device_type: DeviceType::ChromeBrowser as u8,
-            device_identifier: DEVICE_ID.into(),
-            device_name: "firefox".into(),
+            // Per install (not the SDK's shared id); the first login on
+            // it asks for the new-device email code once.
+            device_identifier: super::prefs::VaultPrefs::device_id(),
+            device_name: "Sola Browser".into(),
             grant_type: "password".into(),
             email: self.email.clone(),
             master_password_hash: password_hash.into(),
             two_factor_token,
             two_factor_provider,
-            two_factor_remember,
             new_device_otp,
         };
 
@@ -484,8 +485,13 @@ impl IdentityLogin<'_> {
             .await
             .map_err(|e| format!("identity body: {e}"))?;
 
-        let log_body = redact_secrets(&body);
-        warn!(status, body = %log_body, "vault: identity /connect/token response");
+        if !(200..300).contains(&status) {
+            warn!(
+                status,
+                error = %token_error_summary(&body),
+                "vault: identity /connect/token refused"
+            );
+        }
 
         Ok(RawHttp { status, body })
     }
@@ -559,11 +565,30 @@ pub async fn apply_persisted_session(
     Ok(())
 }
 
+/// Why a token refresh failed.
+#[derive(Debug)]
+pub enum RefreshError {
+    /// Bitwarden refused the refresh token: the session is over.
+    Rejected(String),
+    /// Bitwarden could not be asked (offline, DNS, a 5xx): keep the
+    /// session and try again later.
+    Unreachable(String),
+}
+
+impl std::fmt::Display for RefreshError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Rejected(e) | Self::Unreachable(e) => f.write_str(e),
+        }
+    }
+}
+
 /// Exchange a refresh token for a new access (+ refresh) pair.
 pub async fn refresh_access_token(
     client: &Client,
     refresh_token: &str,
-) -> Result<(String, Option<String>), String> {
+) -> Result<(String, Option<String>), RefreshError> {
+    use RefreshError::{Rejected, Unreachable};
     use serde::Serialize;
 
     let api = client.internal.get_api_configurations();
@@ -584,7 +609,7 @@ pub async fn refresh_access_token(
         client_id: CLIENT_ID.into(),
         refresh_token: refresh_token.into(),
     })
-    .map_err(|e| format!("serialize refresh: {e}"))?;
+    .map_err(|e| Unreachable(format!("serialize refresh: {e}")))?;
 
     let resp = api
         .identity_config
@@ -599,24 +624,30 @@ pub async fn refresh_access_token(
         .body(body)
         .send()
         .await
-        .map_err(|e| format!("refresh http: {e}"))?;
+        .map_err(|e| Unreachable(format!("refresh http: {e}")))?;
 
     let status = resp.status().as_u16();
     let text = resp
         .text()
         .await
-        .map_err(|e| format!("refresh body: {e}"))?;
+        .map_err(|e| Unreachable(format!("refresh body: {e}")))?;
     if !(200..300).contains(&status) {
-        let redacted = redact_secrets(&text);
-        warn!(status, body = %redacted, "vault: refresh token failed");
-        return Err(format!("Session expired (HTTP {status}). Unlock again."));
+        warn!(status, error = %token_error_summary(&text), "vault: refresh token failed");
+        let msg = format!("Session expired (HTTP {status}). Unlock again.");
+        // 400 invalid_grant / 401: the token is dead. Anything else may pass.
+        return Err(if matches!(status, 400 | 401) {
+            Rejected(msg)
+        } else {
+            Unreachable(msg)
+        });
     }
-    let v: Value = serde_json::from_str(&text).map_err(|e| format!("refresh json: {e}"))?;
+    let v: Value =
+        serde_json::from_str(&text).map_err(|e| Unreachable(format!("refresh json: {e}")))?;
     let access = v
         .get("access_token")
         .or_else(|| v.get("accessToken"))
         .and_then(|x| x.as_str())
-        .ok_or_else(|| "refresh missing access_token".to_string())?
+        .ok_or_else(|| Unreachable("refresh missing access_token".to_string()))?
         .to_string();
     let refresh = v
         .get("refresh_token")
@@ -674,7 +705,11 @@ pub async fn resend_new_device_otp(
     let status = resp.status().as_u16();
     let text = resp.text().await.unwrap_or_default();
     if !(200..300).contains(&status) {
-        warn!(status, body = %text, "vault: resend new-device OTP failed");
+        warn!(
+            status,
+            error = %token_error_summary(&text),
+            "vault: resend new-device OTP failed"
+        );
         return Err(format!(
             "Could not resend code (HTTP {status}). Wait for the previous email or try again."
         ));
@@ -682,26 +717,24 @@ pub async fn resend_new_device_otp(
     Ok(())
 }
 
-fn redact_secrets(body: &str) -> String {
-    let mut v: Value = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return body.chars().take(500).collect(),
+/// The error fields of an identity response, for the log. Bodies are
+/// never logged whole: a success carries tokens, the encrypted user key,
+/// KDF and salt (enough to attack the master password offline), and a
+/// 2FA response can carry a remember-device token.
+fn token_error_summary(body: &str) -> String {
+    let Ok(v) = serde_json::from_str::<Value>(body) else {
+        return format!("<{} bytes, not json>", body.len());
     };
-    if let Some(obj) = v.as_object_mut() {
-        for k in [
-            "access_token",
-            "AccessToken",
-            "refresh_token",
-            "RefreshToken",
-            "Key",
-            "PrivateKey",
-        ] {
-            if obj.contains_key(k) {
-                obj.insert(k.to_string(), Value::String("[redacted]".into()));
-            }
+    let mut out = serde_json::Map::new();
+    for k in ["error", "error_description", "message", "TwoFactorProviders"] {
+        if let Some(x) = v.get(k) {
+            out.insert(k.into(), x.clone());
         }
     }
-    v.to_string()
+    if let Some(m) = v.pointer("/ErrorModel/Message") {
+        out.insert("ErrorModel.Message".into(), m.clone());
+    }
+    Value::Object(out).to_string()
 }
 
 fn parse_token_body(body: &str, status: u16) -> Result<RawLogin, String> {
@@ -767,12 +800,7 @@ fn parse_token_body(body: &str, status: u16) -> Result<RawLogin, String> {
             .map(|s| s.to_string());
         let has_email = providers.get("1").is_some() || email_hint.is_some();
         let has_auth = providers.get("0").is_some();
-        if has_email {
-            return Ok(RawLogin::NeedsEmailTwoFactor { email_hint });
-        }
-        if has_auth {
-            return Ok(RawLogin::NeedsAuthenticator);
-        }
+        return Ok(two_factor(has_auth, has_email, email_hint));
     }
 
     if let Some(arr) = v
@@ -786,12 +814,7 @@ fn parse_token_body(body: &str, status: u16) -> Result<RawLogin, String> {
         let has_auth = arr
             .iter()
             .any(|x| x.as_str() == Some("0") || x.as_i64() == Some(0));
-        if has_email {
-            return Ok(RawLogin::NeedsEmailTwoFactor { email_hint: None });
-        }
-        if has_auth {
-            return Ok(RawLogin::NeedsAuthenticator);
-        }
+        return Ok(two_factor(has_auth, has_email, None));
     }
 
     let message = v
@@ -808,6 +831,23 @@ fn parse_token_body(body: &str, status: u16) -> Result<RawLogin, String> {
     }
 
     Ok(RawLogin::Failed { message })
+}
+
+/// The two-step login we can complete, or why not.
+fn two_factor(authenticator: bool, email: bool, email_hint: Option<String>) -> RawLogin {
+    if authenticator || email {
+        RawLogin::NeedsTwoFactor {
+            authenticator,
+            email,
+            email_hint,
+        }
+    } else {
+        RawLogin::Failed {
+            message: "This account's two-step login (security key, Duo or YubiKey) isn't \
+                      supported here yet. Add an authenticator app or email codes in Bitwarden."
+                .into(),
+        }
+    }
 }
 
 fn extract_unlock_data(v: &Value) -> Option<MasterPasswordUnlockData> {

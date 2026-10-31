@@ -21,7 +21,8 @@ use zeroize::Zeroize;
 
 use super::edit::{ItemDraft, apply_draft};
 use super::identity::{
-    IdentityLogin, TokenCell, apply_persisted_session, build_pm_client, refresh_access_token,
+    IdentityLogin, RefreshError, TokenCell, apply_persisted_session, build_pm_client,
+    refresh_access_token,
 };
 use super::item::{
     IdentityFillMaterial, ItemRecord, ItemSummary, record_from_view, summary_from_view,
@@ -50,26 +51,6 @@ pub struct MatchSummary {
     pub last_used: i64,
 }
 
-/// One card for the picker (no PAN / CVV).
-#[derive(Debug, Clone)]
-pub struct CardSummary {
-    pub id: String,
-    pub name: String,
-    pub brand: Option<String>,
-    /// Last 4 (Amex last 5) for the subtitle only.
-    pub last4: Option<String>,
-    /// Display expiry (`MM/YY`) when both parts exist.
-    pub exp: Option<String>,
-    pub last_used: i64,
-}
-
-impl CardSummary {
-    /// `Visa · •••• 1111` / `•••• 1111` / name-only fallback left to chrome.
-    pub fn subtitle(&self) -> String {
-        card_subtitle(self.brand.as_deref(), self.last4.as_deref())
-    }
-}
-
 /// Card fields for page fill — zeroize PAN / CVV on drop.
 #[derive(Debug, Clone)]
 pub struct CardFillMaterial {
@@ -81,24 +62,12 @@ pub struct CardFillMaterial {
     pub brand: Option<String>,
 }
 
-/// One authenticator (TOTP) login for the picker. `code` is the current
-/// token; chrome recomputes remaining seconds from [`Self::period`].
-/// Only URI-matching logins are listed (same rule as fill-login).
-#[derive(Debug, Clone)]
-pub struct TotpSummary {
-    pub id: String,
-    pub name: String,
-    pub username: Option<String>,
-    pub code: String,
-    pub period: u32,
-    pub last_used: i64,
-}
-
 /// Credentials for page fill — zeroize on drop.
 #[derive(Debug, Clone)]
 pub struct FillMaterial {
     pub username: Option<String>,
     pub password: Option<String>,
+    pub uris: Vec<crate::engine::SiteUri>,
 }
 
 impl Drop for FillMaterial {
@@ -153,10 +122,11 @@ pub enum LoginOutcome {
 pub enum VaultError {
     #[error("not logged in")]
     NotLoggedIn,
+    /// Bitwarden refused the refresh token; the worker logs out.
+    #[error("Bitwarden ended this session. Unlock again.")]
+    SessionEnded,
     #[error("vault is locked")]
     Locked,
-    #[error("login failed")]
-    LoginFailed,
     #[error("cipher not found")]
     NotFound,
     #[error("{0}")]
@@ -209,6 +179,8 @@ pub struct VaultService {
     tokens: Arc<TokenCell>,
     email: Option<String>,
     session_authenticated: bool,
+    /// Bitwarden refused the refresh token during the last command.
+    ended: std::sync::atomic::AtomicBool,
 }
 
 impl VaultService {
@@ -232,6 +204,7 @@ impl VaultService {
             tokens,
             email: None,
             session_authenticated: false,
+            ended: Default::default(),
         }
     }
 
@@ -261,7 +234,6 @@ impl VaultService {
         mut password: String,
         token: String,
         kind: TwoFactorKind,
-        _remember: bool,
     ) -> Result<LoginOutcome, VaultError> {
         let outcome = self
             .login_inner(email, password.clone(), Some((kind, token)))
@@ -364,10 +336,14 @@ impl VaultService {
                     }
                     persist::save(&sess);
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "vault: session refresh failed — clearing");
+                Err(RefreshError::Rejected(e)) => {
+                    tracing::warn!(error = %e, "vault: session refresh refused — clearing");
                     persist::clear();
                     return Ok(false);
+                }
+                Err(RefreshError::Unreachable(e)) => {
+                    // The keys are local: unlock now, refresh on the next sync.
+                    tracing::warn!(error = %e, "vault: session refresh unreachable — restoring anyway");
                 }
             }
         }
@@ -381,6 +357,29 @@ impl VaultService {
         self.session_authenticated = true;
         tracing::info!(email = %sess.email, "vault: session restored");
         Ok(true)
+    }
+
+    /// Master-password re-prompt: does `password` unwrap this account's
+    /// user key? (Runs the account's KDF; nothing is stored or sent.)
+    pub fn verify_master_password(&self, password: &str) -> Result<bool, VaultError> {
+        let sess = persist::load().ok_or(VaultError::NotLoggedIn)?;
+        let Some(wrapped) = sess.wrapped_user_key.as_deref() else {
+            return Err(VaultError::Other(
+                "Log out and unlock again once to use master-password re-prompt.".into(),
+            ));
+        };
+        let wrapped: bitwarden_crypto::EncString = wrapped
+            .parse()
+            .map_err(|e| VaultError::Other(format!("stored key: {e}")))?;
+        let key = bitwarden_crypto::MasterKey::derive(password, &sess.salt, &sess.kdf)
+            .map_err(|e| VaultError::Other(format!("master key: {e}")))?;
+        Ok(key.decrypt_user_key(wrapped).is_ok())
+    }
+
+    /// Bitwarden refused this session's refresh token (since last asked).
+    pub fn take_session_ended(&self) -> bool {
+        self.ended
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Drop tokens, keys, and the on-disk session. Next use is a full login.
@@ -416,7 +415,13 @@ impl VaultService {
                 }
                 Ok(())
             }
-            Err(e) => Err(VaultError::Login(e)),
+            Err(RefreshError::Rejected(e)) => {
+                tracing::warn!(error = %e, "vault: refresh token refused");
+                self.ended
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                Err(VaultError::SessionEnded)
+            }
+            Err(RefreshError::Unreachable(e)) => Err(VaultError::Sync(e)),
         }
     }
 
@@ -425,7 +430,7 @@ impl VaultService {
         if !self.session_authenticated {
             return Err(VaultError::NotLoggedIn);
         }
-        let _ = self.ensure_fresh_token().await;
+        self.ensure_fresh_token().await?;
         // Must use the SyncClient that still has handlers registered —
         // not `self.client.sync()` which builds a fresh empty one.
         self.sync
@@ -438,12 +443,7 @@ impl VaultService {
     }
 
     pub async fn matches_for_url(&self, page_url: &str) -> Result<Vec<MatchSummary>, VaultError> {
-        if !self.session_authenticated {
-            return Err(VaultError::NotLoggedIn);
-        }
-        if !self.client.is_unlocked() {
-            return Err(VaultError::Locked);
-        }
+        self.require_unlocked()?;
 
         let listed = self
             .client
@@ -488,10 +488,34 @@ impl VaultService {
             personal = n_ok.saturating_sub(n_org),
             decrypt_fail = n_fail,
             matches = out.len(),
-            %page_url,
+            host = %super::match_uri::log_host(page_url),
             "vault: match scan"
         );
         Ok(out)
+    }
+
+    fn require_unlocked(&self) -> Result<(), VaultError> {
+        if !self.session_authenticated {
+            return Err(VaultError::NotLoggedIn);
+        }
+        if !self.client.is_unlocked() {
+            return Err(VaultError::Locked);
+        }
+        Ok(())
+    }
+
+    /// One decrypted cipher. A failure other than "no such id" (a key or
+    /// decrypt error) keeps its message instead of reading "not found".
+    pub(crate) async fn cipher(&self, id: &str) -> Result<CipherView, VaultError> {
+        self.client.vault().ciphers().get(id).await.map_err(|e| {
+            let msg = e.to_string();
+            if msg.to_lowercase().contains("not found") {
+                VaultError::NotFound
+            } else {
+                tracing::warn!(%id, error = %msg, "vault: cipher open failed");
+                VaultError::Other(format!("Could not open this item: {msg}"))
+            }
+        })
     }
 
     /// Unlocked session ready for fill / passkey.
@@ -500,104 +524,27 @@ impl VaultService {
     }
 
     pub async fn fill_fields(&self, cipher_id: &str) -> Result<FillMaterial, VaultError> {
-        if !self.session_authenticated {
-            return Err(VaultError::NotLoggedIn);
-        }
-        if !self.client.is_unlocked() {
-            return Err(VaultError::Locked);
-        }
+        self.require_unlocked()?;
 
-        let view = self
-            .client
-            .vault()
-            .ciphers()
-            .get(cipher_id)
-            .await
-            .map_err(|_| VaultError::NotFound)?;
+        let view = self.cipher(cipher_id).await?;
 
         let login = view.login.ok_or(VaultError::NotFound)?;
+        let uris = login
+            .uris
+            .iter()
+            .flatten()
+            .filter_map(|u| Some(super::scope::site_uri(u.uri.as_deref()?, u.r#match)))
+            .collect();
         Ok(FillMaterial {
             username: login.username,
             password: login.password,
+            uris,
         })
     }
 
-    /// Every non-deleted card (cards rarely have URIs — list all).
-    pub async fn list_cards(&self) -> Result<Vec<CardSummary>, VaultError> {
-        if !self.session_authenticated {
-            return Err(VaultError::NotLoggedIn);
-        }
-        if !self.client.is_unlocked() {
-            return Err(VaultError::Locked);
-        }
-
-        let listed = self
-            .client
-            .vault()
-            .ciphers()
-            .get_all()
-            .await
-            .map_err(|e| VaultError::Other(e.to_string()))?;
-
-        let mru = super::prefs::VaultPrefs::last_used_map();
-        let mut out = Vec::new();
-        for view in listed.successes {
-            if let Some(summary) = card_summary_if_card(&view, &mru) {
-                out.push(summary);
-            }
-        }
-        out.sort_by(|a, b| b.last_used.cmp(&a.last_used).then(a.name.cmp(&b.name)));
-        tracing::info!(n = out.len(), "vault: card list");
-        Ok(out)
-    }
-
-    /// URI-matching logins that have a TOTP secret, most recently used first.
-    pub async fn list_totp(&self, page_url: &str) -> Result<Vec<TotpSummary>, VaultError> {
-        if !self.session_authenticated {
-            return Err(VaultError::NotLoggedIn);
-        }
-        if !self.client.is_unlocked() {
-            return Err(VaultError::Locked);
-        }
-
-        let listed = self
-            .client
-            .vault()
-            .ciphers()
-            .get_all()
-            .await
-            .map_err(|e| VaultError::Other(e.to_string()))?;
-
-        let mru = super::prefs::VaultPrefs::last_used_map();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let mut out = Vec::new();
-        for view in listed.successes {
-            if let Some(summary) = totp_summary_if_login(&view, page_url, &mru, now) {
-                out.push(summary);
-            }
-        }
-        out.sort_by(|a, b| b.last_used.cmp(&a.last_used).then(a.name.cmp(&b.name)));
-        tracing::info!(n = out.len(), %page_url, "vault: totp list");
-        Ok(out)
-    }
-
     pub async fn fill_totp(&self, cipher_id: &str) -> Result<String, VaultError> {
-        if !self.session_authenticated {
-            return Err(VaultError::NotLoggedIn);
-        }
-        if !self.client.is_unlocked() {
-            return Err(VaultError::Locked);
-        }
-        let view = self
-            .client
-            .vault()
-            .ciphers()
-            .get(cipher_id)
-            .await
-            .map_err(|_| VaultError::NotFound)?;
+        self.require_unlocked()?;
+        let view = self.cipher(cipher_id).await?;
         let login = view.login.ok_or(VaultError::NotFound)?;
         let raw = login
             .totp
@@ -612,20 +559,9 @@ impl VaultService {
     }
 
     pub async fn fill_card(&self, cipher_id: &str) -> Result<CardFillMaterial, VaultError> {
-        if !self.session_authenticated {
-            return Err(VaultError::NotLoggedIn);
-        }
-        if !self.client.is_unlocked() {
-            return Err(VaultError::Locked);
-        }
+        self.require_unlocked()?;
 
-        let view = self
-            .client
-            .vault()
-            .ciphers()
-            .get(cipher_id)
-            .await
-            .map_err(|_| VaultError::NotFound)?;
+        let view = self.cipher(cipher_id).await?;
 
         if view.r#type != CipherType::Card {
             return Err(VaultError::NotFound);
@@ -642,13 +578,10 @@ impl VaultService {
     }
 
     /// Every non-deleted, non-archived cipher as a list row (no secrets).
-    pub async fn list_items(&self, page_url: &str) -> Result<Vec<ItemSummary>, VaultError> {
-        if !self.session_authenticated {
-            return Err(VaultError::NotLoggedIn);
-        }
-        if !self.client.is_unlocked() {
-            return Err(VaultError::Locked);
-        }
+    /// The list, and how many ciphers could not be decrypted (shown, so
+    /// items never vanish without a word).
+    pub async fn list_items(&self, page_url: &str) -> Result<(Vec<ItemSummary>, usize), VaultError> {
+        self.require_unlocked()?;
 
         let version = self
             .client
@@ -688,42 +621,24 @@ impl VaultService {
         if n_fail > 0 {
             tracing::warn!(n = n_fail, "vault: some ciphers failed to decrypt");
         }
-        tracing::info!(n = out.len(), %page_url, "vault: item list");
-        Ok(out)
+        tracing::debug!(
+            n = out.len(),
+            host = %super::match_uri::log_host(page_url),
+            "vault: item list"
+        );
+        Ok((out, n_fail))
     }
 
     /// Full decrypted record for the item view.
     pub async fn get_item(&self, cipher_id: &str) -> Result<ItemRecord, VaultError> {
-        if !self.session_authenticated {
-            return Err(VaultError::NotLoggedIn);
-        }
-        if !self.client.is_unlocked() {
-            return Err(VaultError::Locked);
-        }
-        let view = self
-            .client
-            .vault()
-            .ciphers()
-            .get(cipher_id)
-            .await
-            .map_err(|_| VaultError::NotFound)?;
+        self.require_unlocked()?;
+        let view = self.cipher(cipher_id).await?;
         record_from_view(view).ok_or(VaultError::NotFound)
     }
 
     pub async fn fill_identity(&self, cipher_id: &str) -> Result<IdentityFillMaterial, VaultError> {
-        if !self.session_authenticated {
-            return Err(VaultError::NotLoggedIn);
-        }
-        if !self.client.is_unlocked() {
-            return Err(VaultError::Locked);
-        }
-        let view = self
-            .client
-            .vault()
-            .ciphers()
-            .get(cipher_id)
-            .await
-            .map_err(|_| VaultError::NotFound)?;
+        self.require_unlocked()?;
+        let view = self.cipher(cipher_id).await?;
         if view.r#type != CipherType::Identity {
             return Err(VaultError::NotFound);
         }
@@ -739,12 +654,7 @@ impl VaultService {
         password: Option<String>,
         uri: Option<String>,
     ) -> Result<(Option<String>, FillMaterial), VaultError> {
-        if !self.session_authenticated {
-            return Err(VaultError::NotLoggedIn);
-        }
-        if !self.client.is_unlocked() {
-            return Err(VaultError::Locked);
-        }
+        self.require_unlocked()?;
 
         let view = new_login_view(name, username.clone(), password.clone(), uri);
         let ctx = {
@@ -754,31 +664,27 @@ impl VaultService {
         .map_err(|e| VaultError::Other(format!("encrypt login: {e}")))?;
         let id = self.persist_encryption_context(ctx).await?;
 
-        Ok((id, FillMaterial { username, password }))
+        Ok((
+            id,
+            FillMaterial {
+                username,
+                password,
+                uris: Vec::new(),
+            },
+        ))
     }
 
     /// Apply a chrome edit onto the live cipher, PUT, then sync.
     pub async fn update_item(&self, draft: ItemDraft) -> Result<ItemRecord, VaultError> {
-        if !self.session_authenticated {
-            return Err(VaultError::NotLoggedIn);
-        }
-        if !self.client.is_unlocked() {
-            return Err(VaultError::Locked);
-        }
+        self.require_unlocked()?;
 
-        if let Err(e) = self.sync().await {
-            tracing::warn!(error = %e, "vault: sync before edit failed");
+        match self.sync().await {
+            Err(VaultError::SessionEnded) => return Err(VaultError::SessionEnded),
+            Err(e) => tracing::warn!(error = %e, "vault: sync before edit failed"),
+            Ok(_) => {}
         }
-        let mut view = self
-            .client
-            .vault()
-            .ciphers()
-            .get(&draft.id)
-            .await
-            .map_err(|_| VaultError::NotFound)?;
-        let revision = view.revision_date;
+        let mut view = self.cipher(&draft.id).await?;
         apply_draft(&mut view, &draft).map_err(VaultError::Other)?;
-        view.revision_date = revision;
         let record = record_from_view(view.clone()).ok_or(VaultError::NotFound)?;
         let ctx = {
             // `get` above ran at version 1 so checksum-less URIs are still
@@ -796,13 +702,9 @@ impl VaultService {
         &self,
         ctx: EncryptionContext,
     ) -> Result<Option<String>, VaultError> {
-        if !self.session_authenticated {
-            return Err(VaultError::NotLoggedIn);
-        }
-        if !self.client.is_unlocked() {
-            return Err(VaultError::Locked);
-        }
+        self.require_unlocked()?;
 
+        self.ensure_fresh_token().await?;
         let existing_id = ctx.cipher.id;
         let blob = ctx.cipher.data.is_some();
         let req: CipherRequestModel = ctx.into();
@@ -846,7 +748,8 @@ pub(crate) fn persist_conflict(op: &str, e: impl std::fmt::Display) -> VaultErro
             "Bitwarden rejected this save (client too old for the item format). Retry after a Sola browser update."
                 .into(),
         )
-    } else if lower.contains("outdated")
+    } else if lower.contains("out of date")
+        || lower.contains("outdated")
         || lower.contains("revision")
         || (lower.contains("version") && lower.contains("old"))
     {
@@ -942,7 +845,7 @@ fn match_summary_if_login(
     if view.r#type != CipherType::Login {
         return None;
     }
-    if view.deleted_date.is_some() {
+    if view.deleted_date.is_some() || view.archived_date.is_some() {
         return None;
     }
     let login = view.login.as_ref()?;
@@ -971,16 +874,7 @@ fn match_summary_if_login(
         .map(|c| !c.is_empty())
         .unwrap_or(false);
 
-    let bw_used = view.local_data.as_ref().and_then(|ld| {
-        let v = serde_json::to_value(ld).ok()?;
-        v.get("lastUsedDate")?.as_i64()
-    });
-    let ours = mru.get(&id).copied();
-    let last_used = ours
-        .into_iter()
-        .chain(bw_used)
-        .max()
-        .unwrap_or_else(|| view.revision_date.timestamp());
+    let last_used = super::item::cipher_last_used(view, &id, mru);
 
     Some(MatchSummary {
         id,
@@ -990,82 +884,6 @@ fn match_summary_if_login(
         has_passkey,
         last_used,
     })
-}
-
-fn card_summary_if_card(
-    view: &CipherView,
-    mru: &std::collections::HashMap<String, i64>,
-) -> Option<CardSummary> {
-    if view.r#type != CipherType::Card {
-        return None;
-    }
-    if view.deleted_date.is_some() {
-        return None;
-    }
-    let card = view.card.as_ref()?;
-    let id = view.id.map(|id| id.to_string()).unwrap_or_default();
-    if id.is_empty() {
-        return None;
-    }
-    let last_used = cipher_last_used(view, &id, mru);
-    Some(CardSummary {
-        id,
-        name: view.name.clone(),
-        brand: card.brand.clone(),
-        last4: card_last4(card.number.as_deref()),
-        exp: card_exp_display(card.exp_month.as_deref(), card.exp_year.as_deref()),
-        last_used,
-    })
-}
-
-fn totp_summary_if_login(
-    view: &CipherView,
-    page_url: &str,
-    mru: &std::collections::HashMap<String, i64>,
-    now: u64,
-) -> Option<TotpSummary> {
-    if view.r#type != CipherType::Login || view.deleted_date.is_some() {
-        return None;
-    }
-    let login = view.login.as_ref()?;
-    let raw = login.totp.as_deref().filter(|s| !s.is_empty())?;
-    let spec = super::totp::TotpSpec::parse(raw)?;
-    let uris = login.uris.as_ref()?;
-    if !uris.iter().any(|u| {
-        u.uri
-            .as_ref()
-            .is_some_and(|uri| uri_matches(page_url, uri, u.r#match))
-    }) {
-        return None;
-    }
-    let id = view.id.map(|id| id.to_string()).unwrap_or_default();
-    if id.is_empty() {
-        return None;
-    }
-    Some(TotpSummary {
-        id: id.clone(),
-        name: view.name.clone(),
-        username: login.username.clone(),
-        code: spec.code_at(now),
-        period: spec.period,
-        last_used: cipher_last_used(view, &id, mru),
-    })
-}
-
-fn cipher_last_used(
-    view: &CipherView,
-    id: &str,
-    mru: &std::collections::HashMap<String, i64>,
-) -> i64 {
-    let bw_used = view.local_data.as_ref().and_then(|ld| {
-        let v = serde_json::to_value(ld).ok()?;
-        v.get("lastUsedDate")?.as_i64()
-    });
-    let ours = mru.get(id).copied();
-    ours.into_iter()
-        .chain(bw_used)
-        .max()
-        .unwrap_or_else(|| view.revision_date.timestamp())
 }
 
 /// Last 4 digits, or 5 for Amex (34/37). None if the PAN is too short.
@@ -1182,6 +1000,12 @@ mod tests {
         let e = persist_conflict("update item", "Cipher revisionDate is outdated.");
         let s = e.to_string();
         assert!(s.contains("newer copy"), "{s}");
+        // Bitwarden's own wording (CipherService.ValidateCipherLastKnownRevisionDate).
+        let e = persist_conflict(
+            "update item",
+            r#"400: {"message":"The cipher you are updating is out of date. Please save your work, sync your vault, and try again."}"#,
+        );
+        assert!(e.to_string().contains("newer copy"), "{e}");
         let e = persist_conflict("update item", "the version is old");
         assert!(e.to_string().contains("newer copy"));
         let e = persist_conflict("update item", "network down");

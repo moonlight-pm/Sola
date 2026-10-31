@@ -38,6 +38,8 @@ bitwarden = [
     "dep:chrono",
     "dep:hmac",
     "dep:sha1",
+    "dep:public-suffix",
+    "dep:regex",
 ]
 
 [dependencies]
@@ -87,6 +89,10 @@ getrandom = { version = "0.2", optional = true }
 chrono = { version = "0.4", optional = true }
 hmac = { version = "0.12", optional = true }
 sha1 = { version = "0.10", optional = true }
+# Vault URI matching: the public suffix list passkey-rs already ships (same
+# rev as bitwarden-fido's), and the linear-time regex for stored patterns.
+public-suffix = { git = "https://github.com/bitwarden/passkey-rs", rev = "043279e92e2eb5f509bf87eb7fa50987fd377e32", optional = true }
+regex = { version = "1", optional = true }
 
 [build-dependencies]
 # No bindgen, no pkg-config — CEF is the only system dep and it

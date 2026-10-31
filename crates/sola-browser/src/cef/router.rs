@@ -818,7 +818,19 @@ fn handle_from(
             crate::chrome_wake::wake();
         }
         FromEngine::WebAuthn(ev) => {
-            shared.passkeys.lock().unwrap().push(ev);
+            shared
+                .passkeys
+                .lock()
+                .unwrap()
+                .push(crate::cef::ipc::VaultPageEvent::WebAuthn(ev));
+            crate::chrome_wake::wake();
+        }
+        FromEngine::VaultFilled { tab, found } => {
+            shared
+                .passkeys
+                .lock()
+                .unwrap()
+                .push(crate::cef::ipc::VaultPageEvent::Filled { tab, found });
             crate::chrome_wake::wake();
         }
         FromEngine::PageContext(ctx) => {
@@ -976,6 +988,7 @@ fn to_wire(cmd: Cmd<CefEngine>) -> Option<ToEngine> {
             bytes,
         }),
         Cmd::EvaluateJs(s) => Some(ToEngine::EvaluateJs(s)),
+        Cmd::EvaluateJsIn { scope, script } => Some(ToEngine::EvaluateJsIn { scope, script }),
         Cmd::OpenTab { id, url, title } => Some(ToEngine::OpenTab {
             id: id.0,
             url,
