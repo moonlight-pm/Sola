@@ -581,11 +581,7 @@ impl<E: Engine> App<E> {
             return;
         }
         let url = self.vault_page_url();
-        let v = &mut self.vault;
-        v.list.url = url.clone();
-        v.list.loading = true;
-        let page = (!url.is_empty()).then(|| url.clone());
-        v.ask(Ask::Items { url }, Request::List { url: page });
+        self.vault.ask_list(url);
     }
 
     /// The list as the sheet shows it now.
@@ -720,7 +716,7 @@ impl<E: Engine> App<E> {
         };
         v.error = None;
         v.more = false;
-        v.ask(Ask::Record { id: item.clone() }, Request::Get { id: item });
+        v.ask_record(item);
         Task::none()
     }
 

@@ -43,9 +43,9 @@ pub(crate) enum Ask {
     Sync,
     /// The re-prompt's master password.
     Verify,
-    /// The list, for the page at `url`.
-    Items { url: String },
-    Record { id: String },
+    /// The list, for the page at `url`; only the latest (`seq`) counts.
+    Items { url: String, seq: u64 },
+    Record { id: String, seq: u64 },
     Draft { id: String },
     Save,
     /// A new login, filled into `Aim`'s page once saved.
@@ -340,6 +340,10 @@ pub(crate) struct Vault {
     pub awaiting_fill: Option<Instant>,
     pub clip: Option<Clip>,
     clip_generation: u64,
+    /// The latest list and record asked for: an older answer that comes
+    /// in late is dropped.
+    list_seq: u64,
+    record_seq: u64,
 }
 
 /// For `listen_with` (a fn pointer): the sheet is up and has the keys.
@@ -375,6 +379,8 @@ impl Vault {
             awaiting_fill: None,
             clip: None,
             clip_generation: 0,
+            list_seq: 0,
+            record_seq: 0,
         }
     }
 
@@ -439,6 +445,31 @@ impl Vault {
         if matches!(self.screen, Screen::Record | Screen::Edit) {
             self.screen = Screen::Browse;
         }
+    }
+
+    /// Ask for the list for `url` (empty: no page).
+    pub(crate) fn ask_list(&mut self, url: String) {
+        self.list_seq += 1;
+        self.list.url = url.clone();
+        self.list.loading = true;
+        let page = (!url.is_empty()).then(|| url.clone());
+        let seq = self.list_seq;
+        self.ask(Ask::Items { url, seq }, sola_vault_proto::Request::List { url: page });
+    }
+
+    /// Ask for record `id`.
+    pub(crate) fn ask_record(&mut self, id: String) {
+        self.record_seq += 1;
+        let seq = self.record_seq;
+        self.ask(Ask::Record { id: id.clone(), seq }, sola_vault_proto::Request::Get { id });
+    }
+
+    pub fn latest_list(&self, seq: u64) -> bool {
+        seq == self.list_seq
+    }
+
+    pub fn latest_record(&self, seq: u64) -> bool {
+        seq == self.record_seq
     }
 
     pub fn next_passkey_id(&mut self) -> u64 {

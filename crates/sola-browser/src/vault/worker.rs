@@ -121,3 +121,87 @@ fn events_loop<A>(tx: Sender<VaultEvent<A>>) {
         wait = (wait * 2).min(RETRY_MAX);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::time::Instant;
+
+    use sola_vault_proto::{Envelope, Response, Status};
+
+    use super::*;
+
+    /// A daemon that answers Hello and Status, and on Subscribe pushes
+    /// one ItemsChanged.
+    fn serve(conn: UnixStream) {
+        let mut out = conn.try_clone().unwrap();
+        for line in BufReader::new(conn).lines() {
+            let Ok(line) = line else { return };
+            let env: Envelope<Request> = serde_json::from_str(&line).unwrap();
+            let (reply, then) = match env.body {
+                Request::Hello { version, .. } => (Reply::Hello { version }, None),
+                Request::Status => (
+                    Reply::Status(Status {
+                        signed_in: true,
+                        email: "ana@example.com".into(),
+                        ..Status::default()
+                    }),
+                    None,
+                ),
+                Request::Subscribe => (
+                    Reply::Done,
+                    Some(Event::ItemsChanged {
+                        ids: vec!["x".into()],
+                    }),
+                ),
+                _ => (Reply::Done, None),
+            };
+            let answer = Envelope {
+                id: env.id,
+                body: Response::Ok(reply),
+            };
+            writeln!(out, "{}", serde_json::to_string(&answer).unwrap()).unwrap();
+            if let Some(ev) = then {
+                writeln!(out, "{}", serde_json::to_string(&ev).unwrap()).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn asks_the_daemon_and_hears_its_events() {
+        let dir = std::env::temp_dir().join(format!("sola-vault-worker-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // SAFETY: no other test in this crate reads XDG_RUNTIME_DIR.
+        unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
+        let socket = proto::socket_path();
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).unwrap();
+        thread::spawn(move || {
+            for conn in listener.incoming().flatten() {
+                thread::spawn(move || serve(conn));
+            }
+        });
+
+        let vault: VaultHandle<u32> = VaultHandle::spawn();
+        vault.ask(7, Request::Status);
+        let (mut connected, mut changed, mut answered) = (false, false, false);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !(connected && changed && answered) && Instant::now() < deadline {
+            match vault.try_recv() {
+                Some(VaultEvent::Connected(true)) => connected = true,
+                Some(VaultEvent::Daemon(Event::ItemsChanged { ids })) => {
+                    changed = ids == ["x"];
+                }
+                Some(VaultEvent::Answer(7, Ok(Reply::Status(s)))) => {
+                    answered = s.signed_in && s.email == "ana@example.com";
+                }
+                Some(other) => panic!("unexpected {other:?}"),
+                None => thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        let _ = std::fs::remove_file(&socket);
+        let _ = std::fs::remove_dir(&dir);
+        assert!(connected && changed && answered, "{connected} {changed} {answered}");
+    }
+}

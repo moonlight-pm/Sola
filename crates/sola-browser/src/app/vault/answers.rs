@@ -69,10 +69,10 @@ impl<E: Engine> App<E> {
             Event::ItemsChanged { ids } => {
                 if self.vault.unlocked() {
                     self.vault_list();
-                    let v = &self.vault;
+                    let v = &mut self.vault;
                     let shown = v.record.id.clone().filter(|r| ids.contains(r));
                     if let Some(item) = shown.filter(|_| v.screen == Screen::Record) {
-                        v.ask(Ask::Record { id: item.clone() }, Request::Get { id: item });
+                        v.ask_record(item);
                     }
                 }
                 Task::none()
@@ -192,8 +192,8 @@ impl<E: Engine> App<E> {
                     }
                 };
             }
-            (Ask::Items { url }, Reply::Items { items, unreadable }) => {
-                if url != v.list.url {
+            (Ask::Items { url, seq }, Reply::Items { items, unreadable }) => {
+                if !v.latest_list(seq) {
                     return Task::none();
                 }
                 v.list.loading = false;
@@ -205,8 +205,11 @@ impl<E: Engine> App<E> {
                 let len = super::rows::rows(&v.list.items, mode, v.list.kind, &v.list.query).len();
                 v.list.chosen = v.list.chosen.min(len.saturating_sub(1));
             }
-            (Ask::Record { id: item }, Reply::Item(record)) => {
-                if v.record.id.as_deref() == Some(item.as_str()) && v.screen == Screen::Record {
+            (Ask::Record { id: item, seq }, Reply::Item(record)) => {
+                if v.latest_record(seq)
+                    && v.record.id.as_deref() == Some(item.as_str())
+                    && v.screen == Screen::Record
+                {
                     v.record.loading = false;
                     v.record.item = Some(record);
                 }
@@ -229,7 +232,7 @@ impl<E: Engine> App<E> {
                 v.screen = Screen::Record;
                 v.record.id = Some(item.clone());
                 v.record.loading = true;
-                v.ask(Ask::Record { id: item.clone() }, Request::Get { id: item });
+                v.ask_record(item);
                 self.vault_list();
             }
             (Ask::Create(aim), Reply::Saved { id: item }) => {
@@ -307,8 +310,9 @@ impl<E: Engine> App<E> {
         }
         match ask {
             Ask::Status | Ask::Settings | Ask::Sync => {}
-            Ask::Items { url } if url == v.list.url => v.list.loading = false,
+            Ask::Items { seq, .. } if v.latest_list(seq) => v.list.loading = false,
             Ask::Items { .. } => {}
+            Ask::Record { seq, .. } if !v.latest_record(seq) => {}
             Ask::Record { .. } => {
                 v.record.loading = false;
                 v.error = Some(e.message);
