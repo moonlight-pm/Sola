@@ -1,6 +1,9 @@
 mod adopted;
 mod display;
+mod quit;
 mod session;
+mod tag;
+mod watch;
 
 use tracing::info;
 
