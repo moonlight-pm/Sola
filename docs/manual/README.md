@@ -18,14 +18,14 @@ two lists the same).
 | [The call plane](call.md) | `sola-call`: owners and methods, the wire format, timeouts, observers, MCP |
 | [Compositor](compositor.md) | rivulet and `sola-river`: windows, focus, zones and workspaces, frames, the background picture, the idle fade, outputs, screenshots, input |
 | [Session manager](session.md) | `sola-session`: launching, tracking, and closing applications; opening URLs and files |
-| [Shell](sola-shell.md) | `sola-shell`: the top row, agent islands, the bar, workspaces, zones, the launcher, keyboard shortcuts |
+| [Shell](sola-shell.md) | `sola-shell`: the top row, agent islands, the bar, workspaces, zones, the right-click menu, the launcher, keyboard shortcuts |
 | [Theme and toolkit](theme.md) | `sola-kit` and the theme protocol: palette tokens, font roles, live updates, Appearance and the picture's colors |
 | [solactl](solactl.md) | The command line: every command, method, and flag |
 | [Applications](applications.md) | The applications, one line each, with links to their notes; which ship in the Oath packages |
 
 Application notes — kept here, linked from the Applications chapter, not on
 the page: [Browser](sola-browser.md), [Mail](sola-mail.md),
-[Calendar](sola-calendar.md), [Paint](sola-paint.md), [Preview](sola-preview.md), [Web apps](web-apps.md), [Design](sola-design.md),
+[Calendar](sola-calendar.md), [Vault](sola-vault.md), [Paint](sola-paint.md), [Preview](sola-preview.md), [Web apps](web-apps.md), [Design](sola-design.md),
 [Monitor](sola-monitor.md), [Scope](sola-scope.md),
 [KVM](sola-kvm-operator.md), [Fonts](distribution.md). They follow the same
 rules.

@@ -4,7 +4,8 @@ Browser is Sola's web browser. It is one program, `sola-browser`, in
 Oath's `pkg:sola-browser`: Sola's own chrome, built with iced, around
 Chromium's engine, CEF 156, which renders each page off-screen on the CPU
 in a helper process. The chrome has the location bar, find, downloads,
-the page's dialogs, and a Bitwarden vault. Browser also hosts
+the page's dialogs, and a panel onto your Bitwarden vault, which
+[Vault](sola-vault.md)'s service holds. Browser also hosts
 [web apps](web-apps.md).
 
 ## Windows
@@ -35,8 +36,9 @@ right, the page's title, or its address while it has none.
   session and reopens each under the showing workspace's profile.
 - ⌘-click (or Ctrl-click) a link to open it in a page window behind the
   current one, right after it in the bar. Several in a row keep the order
-  you opened them. **Open Link in New Tab** in the page menu also opens
-  the link behind.
+  you opened them.
+- **Open Link in New Window** in the right-click menu opens the link in a
+  new page window in front, focused.
 - A `target=_blank` link, or a page's `window.open` (database consoles,
   SSH terminals, a call's popup), opens a page window in front, focused,
   right after the page that opened it. Browser never opens a window of
@@ -118,8 +120,9 @@ without reloading.
 | HTTP Basic / Digest sign-ins | `~/.local/share/sola/browser/profiles/<uuid>/http-auth.json` (age-encrypted) |
 | Downloads list (shared) | `~/.local/share/sola/browser/shared/downloads.json` |
 | Visit history (shared) | `~/.local/share/sola/browser/shared/history.json` |
-| Vault email (shared) | `~/.config/sola/browser/vault.json` |
-| Vault session (shared) | `~/.local/share/sola/browser/vault-session.json` (age-encrypted) |
+
+The vault belongs to no profile: one account serves every profile, and
+its files are Vault's ([Vault](sola-vault.md#files)).
 
 The engine uses Chromium's **basic** password store, so cookie encryption
 works without a desktop keyring. When Browser starts, it asks engine
@@ -196,17 +199,31 @@ Steam store trailers included, plays.
 
 ## Page menu
 
-Right-click the page for Sola's menu (Chromium's own does not show):
+Right-click a page for the desk's right-click menu, which the Shell draws
+([Shell](sola-shell.md#the-right-click-menu)); Chromium's own menu does
+not show. The page's rows come first:
 
 - on a picture, **Use as Desktop Background**;
-- on a link, **Open Link in New Tab** (a page window behind) and **Copy
-  Link Address**;
-- in a field, **Cut** and **Copy** with a selection, and **Paste**; with
-  a selection elsewhere, **Copy**;
-- **Back**, **Forward**, **Reload**;
-- **Open Developer Tools** and **Inspect Element**;
+- on a link, **Open Link in New Window** (a page window in front) and
+  **Copy Link**;
+- **Back** (⌘←) and **Forward** (⌘→), dimmed with no page that way, and
+  **Reload** (⌘R);
+- **Inspect Element** and **Developer Tools** (⌘⌥I);
 - on an `http` or `https` page, **Wrap This Page…** (see
   [Web apps](web-apps.md)).
+
+Then the Edit rows: **Cut** with a selection in a field, **Copy** with a
+selection, and **Paste** and **Select All** in a field; never Cut or Copy
+out of a password field. In a field, **Vault ▸** offers the page's logins
+first: **Fill** fills the whole login as the vault panel does, and
+**Username**, **Password**, and **One-time code** go in at the field's
+caret. Chromium does not say which fields are passwords: Browser tells
+one only when something in it is selected (it reads as dots), so in an
+empty password field Vault ▸ offers the username too. The Shell gets the
+page's address without its query or fragment, to find its logins.
+
+Browser's own fields (the location bar, the vault panel's fields) get the
+menu every Sola text field gets.
 
 ### Use as Desktop Background
 
@@ -228,8 +245,8 @@ page's window, not in a window of its own. Drag the hairline to resize it.
 Choose the action again to close it. One page has it at a time; it shows
 while that page is the active page.
 
-- Browser → **Developer Tools** (⌘⌥I), or **Open Developer Tools** in the
-  page menu: the console.
+- Browser → **Developer Tools** (⌘⌥I), or **Developer Tools** in the
+  right-click menu: the console.
 - **Inspect Element**: the elements panel, with the node under the
   pointer selected.
 
@@ -302,66 +319,136 @@ saves the credentials for that host and realm in this profile
 uses them without asking. If the server rejects them, the dialog comes
 back with the username filled in. **Cancel** stops the load.
 
-## Bitwarden vault
+## The vault
 
-The vault is built in (the `bitwarden` feature, on by default; Oath's
-package has it). The **vault** button in the top bar is one control.
-Locked, it is a lock; unlocked, a key. It becomes a shield when this page
-has a login with an authenticator code, and a fingerprint during a
-passkey request. While its panel is open, the button has the accent wash.
+The **vault** button in the top bar opens the vault panel, a sheet under
+the button. Browser holds no keys and no Bitwarden library: the panel
+asks [Vault](sola-vault.md)'s service, `sola-vaultd`, for everything it
+shows, and does the page's part, the fills and passkeys. Signing in,
+unlocking, and locking are the vault's, not Browser's: unlock it here and
+Vault and the right-click menu are unlocked too.
 
-- **Unlock** with your Bitwarden email and master password (and the
-  two-step code when the account asks). The same panel then shows the
-  vault. The vault stays unlocked across restarts until you **Log out**.
-  **Log out** on the unlocked card wipes the tokens, keys, and session
-  file; the email stays, so the next unlock is filled in.
-- **Browse** searches every item you can decrypt (personal plus every
-  organization after unlock and sync): logins, cards, identities, notes,
-  SSH keys, and the rest. Type chips filter. Logins whose website matches
-  the current page are suggested first; **Fill** on one fills the
-  username and password and closes the panel. Click a row to open the
-  **record**.
-- **Record** shows the whole item: usernames, passwords (reveal and copy),
-  websites, card number and CVC, identity fields, notes, custom fields,
-  SSH keys, and a live authenticator code with its countdown. **Fill** on
-  a login, card, or identity fills the page. The authenticator's **Fill**
-  copies the code and tries to fill a code field. Copying does not close
-  the panel.
-- **Create login** is the **+** on the unlocked card. The username is the
-  last one you used, selected so typing replaces it. The password is a
-  fresh 16-character generated one (shown; **Regenerate** for another).
-  The URL is the page's domain (`google.com`, no `https://`). **Create**
-  or Enter writes the item to your **personal** vault **first**, then
-  fills every username and password field on the page (the confirm field
-  too). If the page has no fields yet, the item is still saved.
-- **Edit** is on the record, next to **Fill**. Name, login, card,
-  identity, note, SSH, bank, license, and passport fields, websites,
-  notes, and custom fields can be changed. **Save** writes the item;
-  **Cancel** returns to the record. Passkeys stay attached; they are not
-  edited here. Organization items you cannot write have no **Edit**.
-  License and passport dates are `YYYY-MM-DD`. Items cannot be deleted
-  here.
-- **Passkeys, signing in:** when a site calls WebAuthn
-  `navigator.credentials.get`, the vault panel opens (unlock first if
-  needed) with the **passkeys saved for that site**; pick one to finish
-  signing in. Browser installs this in every frame before the page's own
-  scripts run (Google sign-in, for one), so the page cannot reach
-  Chromium's own passkey sheet, which cannot show off-screen. Repeated
-  requests from the same site stay one picker.
-- **Passkeys, saving:** when a site calls `navigator.credentials.create`,
-  the vault panel opens (unlock first if needed) with **Save a passkey**.
-  Saving makes a new Bitwarden login for the site (named for its domain,
-  with the username the site asked for), or attaches the passkey to one
-  of the logins listed for the page.
+The button is a lock while the vault is locked, signed out, or its
+service is not running; a key while it is unlocked; a fingerprint while a
+site waits for a passkey. It stays pressed while the panel is up. A click
+on the page closes the panel; a sign-in, a two-step code, or an unsaved
+edit waits there for the next open.
 
-Bitwarden's master-password key derivation is slow on purpose (600,000
-PBKDF2 iterations unless the account says otherwise), so unlocking takes
-a moment in a release build, Oath's package included, and much longer in
-a debug build.
+### Before it opens
 
-The unlocked session is `~/.local/share/sola/browser/vault-session.json`,
-age-encrypted with `~/.config/sola/key`, mode 0600. **Log out** deletes
-it.
+- **The service is not running**: "Vault isn't running", and **Try
+  again**.
+- **Signed out**: the sign-in form, as in Vault: **Email**, **Master
+  password**, and **Server** (bitwarden.com, bitwarden.eu, or
+  Self-hosted with its address). Then the second step, if the account has
+  one: an authenticator code in six boxes, which the sixth digit sends
+  (**Email a code instead** when the account has email codes), or an
+  emailed code (**Send it again**). See
+  [Signing in](sola-vault.md#signing-in).
+- **Locked**: **Master password** and **Unlock**. **Use another account**
+  signs the account out at once.
+
+### The list
+
+On a page with logins of its own, the panel opens on them under **On
+this site**, the most recently used first; **All items ›** shows the
+whole vault. A site with none says **No logins for this site**, with **New
+login for this site**. On a page with no site, or past the site's logins,
+the panel lists every item: **Recently used** (five), then **A–Z**, with
+the kinds **All**, **Logins**, **Cards**, **Identities**, and **Notes**
+above. Typing in **Search vault** searches every item, the page's own
+first, with a count.
+
+- On a site's login, a click or Return **fills** it, and the arrow at its
+  right opens it. Anywhere else, a click or Return opens the item.
+- ↑ and ↓ choose a row; ↓ past the site's last login goes on into the
+  whole vault. → opens the chosen item.
+- When the last sync failed, a line says so, with **Retry**. Opening the
+  panel syncs when the last sync is more than five minutes old.
+
+The head names the page's site (or says **Vault**) and has **+** for a
+new login and **···**: **Sync now** with when it last synced, **New
+login…**, **Open Vault**, **Log out**, and the account's email. **Log
+out** signs the account out, as Vault's **Sign Out** does, without
+asking. The foot says when the vault synced and who is signed in.
+
+### A record
+
+An item's record has its fields in groups, label over value: secrets as
+dots until shown, **Copy** on every field, **Open** on a website (a page
+window in front), the one-time code large with its ring and **Copy**,
+passkeys, custom fields, and notes; then when it was edited and last
+used. **Fill** at the foot (Return) fills a login; a card has **Fill
+card** and an identity **Fill identity**. The pencil edits the item, when
+your account may. **···** adds **Open in Vault**: Vault comes forward on
+the item, starting if it is not running, and the panel closes.
+
+A value copied from the panel leaves the clipboard after Vault's
+clipboard time, if nothing was copied since
+([Settings](sola-vault.md#settings)).
+
+### Filling a page
+
+**Fill** asks the service for the item, for the page's address. The
+service gives a login only to a page one of its websites matches
+("This login is not for this page."). Browser then runs the fill in the
+frames that may have it, while the page stays on the origin it had:
+
+- **A login**: its username and password into the page's frames of the
+  same origin, and into frames one of its websites matches (a sign-in form
+  in another site's frame gets nothing). A login with a one-time code also
+  puts the code into the page's code field, if it has one, and copies it
+  (Vault → Settings → **Filling a login copies its code**, on at first);
+  the code leaves the clipboard after the clipboard time.
+- **A card**: the card's fields, in every frame of the page, since
+  payment forms live in the payment processor's frames.
+- **An identity**: name, address, email, phone, and numbers, in the
+  page's frames of the same origin.
+
+Filling closes the panel. An item that asks for your master password asks
+first, in the panel; the answer holds while the panel stays open. The
+right-click menu's **Fill** does the same as the panel's, without opening
+it ([Page menu](#page-menu)).
+
+### Editing and new logins
+
+- **The pencil** turns the record into fields: the name, the kind's
+  fields (a password has **Generate**, for a new 16-character one; dates
+  as `YYYY-MM-DD`; a card's month as `MM` and year as `YYYY` or `YY`),
+  websites with their match type, custom fields (**Add field**), and
+  notes. A dot marks what changed, and **Save** writes only that; a
+  changed password goes to the login's history. **Cancel** or Escape goes
+  back. Trash, folders, favorites, and moving items are Vault's.
+- **+** (or **New login…**) makes a login for the page: **Username**
+  (empty), **Password** (a generated 16-character one, shown, with
+  **Generate** for another), and **Website** (the page's host, without
+  `www.`). **Save and fill** (or **Save**, off a page) writes it to your
+  own vault, named for the site's domain, and then fills every username
+  and password field on the page, the confirm field too. A page with no
+  such fields keeps the panel open: "The login is saved. This page had no
+  username or password field to fill." A login needs a password.
+
+### Passkeys
+
+- **Signing in**: when a site calls WebAuthn `navigator.credentials.get`,
+  the panel opens (on the sign-in or unlock form first, if needed) on
+  the passkeys saved for that site ("Sign in to github.com with a
+  passkey").
+  Pick one, or press Return, to finish signing in. Escape or **Cancel**
+  hands the page its error, so it can offer another way in. Browser puts
+  this in every frame before the page's own scripts run (Google sign-in,
+  for one), so pages never reach Chromium's own passkey sheet, which
+  cannot show off-screen.
+- **Saving**: when a site calls `navigator.credentials.create`, the panel
+  opens on "Save a passkey for github.com". **Add it to a login here**
+  lists the site's logins; **Save as a new login** makes a login named
+  for the site, with the username the site gave.
+
+The same site asking again while the panel is up stays one request. A
+request ends when its page leaves the site, and the foot says how long
+the site still waits. The service checks the site's relying-party id
+against the frame's own origin and signs; the passkey's private key never
+leaves it.
 
 ## Copy, paste, and click
 
@@ -419,7 +506,11 @@ Browser → **Wrap This Page…** has no key.
 
 - No Save As, no choice of download folder, no "show in folder", and no
   deleting a downloaded file from the list.
-- The page menu has no Save Image or Copy Image.
+- The right-click menu has no Save Image or Copy Image.
+- The vault panel does not trash, restore, or delete items, or change
+  their folders and favorites; Vault does
+  ([Vault](sola-vault.md#the-window)). Its edit cannot add a hidden
+  custom field.
 - Back-and-forward history is per page; there is no history window
   beyond the location bar's matches.
 - Pages' icons show nowhere (a web app takes its icon from one).

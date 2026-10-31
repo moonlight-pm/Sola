@@ -84,9 +84,12 @@ sign-in stays).
 
 ## Limits
 
-- An app's window has no location bar, no right-click menu, no find bar,
-  no vault or downloads button, and no Developer Tools. **Open in
-  Browser** for those.
+- An app's window has no location bar, no find bar, no vault or
+  downloads button, and no Developer Tools. **Open in Browser** for
+  those. A right-click opens the page's right-click menu
+  ([Browser](sola-browser.md#page-menu)) without **Wrap This Page…**; its
+  **Inspect Element** and **Developer Tools** rows show nothing in an
+  app's window.
 - The app always runs on the profile it was wrapped from; it cannot move
   to another.
 - Clicking a sign-in button that leaves the site ("Sign in with Google")
