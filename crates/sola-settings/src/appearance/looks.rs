@@ -230,9 +230,10 @@ pub(super) fn colors(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
         page::group(rows),
         Some(
             "Windows, the tab bar and the top row take a tint and an accent from \
-             one of the picture's colors (its swatch is beside the name); their \
-             lightness stays the same. Strength is how much of that color the \
-             tint takes. Off, or with no picture: the greys."
+             one of the picture's colors, or a complement of one when it has \
+             fewer than three (the swatch is beside the name); their lightness \
+             stays the same. Strength is how much of that color the tint takes. \
+             Off, or with no picture: the greys."
                 .into(),
         ),
     )
