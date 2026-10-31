@@ -1,8 +1,14 @@
 # Vault — Sola's Bitwarden client, a desk service, and the right-click menu
 
 **Date:** 2026-10-31  
-**Status:** **Draft** — a proposal to agree in shape. Decisions V1–V7 below
-are Joshua's; nothing is built.  
+**Status:** **Agreed in shape** 2026-10-31 (Joshua: "All your
+recommendations sound good. Don't worry about stopgaps. We'll get this done
+today."). V1–V7 decided as proposed. Slices 1–5 built the same day on branch
+`vault` (`sola-vault-proto`, `sola-vaultd`, `sola-vault`, the browser on
+the service with the canvas's look, the desk menu in the shell, the kit,
+terminal and Projects); not applied yet. Not built: import, attachment
+download, the launcher's vault search, the SSH agent, Mail passwords from
+the vault (slice 6).  
 **Related:** [vault panel](2026-08-28-sola-browser-vault-panel-design.md);
 [item edit](2026-09-11-sola-browser-vault-item-edit-design.md);
 [browser agent control](2026-09-11-sola-browser-agent-control-design.md)
@@ -183,9 +189,9 @@ machine has to assume. So:
   separation would be agents running as another user; that is outside
   this design.
 
-## Decisions (ask) — V1–V7
+## Decided — V1–V7 (Joshua, 2026-10-31: as proposed)
 
-| | Question | Proposal |
+| | Question | Decision |
 |--|--|--|
 | V1 | **How long an unlock lasts, and what is on disk.** Today the decrypted key sits in a file any process of yours can read. | Keep the key **in memory only**: one unlock per boot (the daemon rarely restarts), plus lock after an idle time you set and when the screen locks (on by default). The file goes. |
 | V2 | **Agents and the vault.** | Agents never read a value (as the browser spec already says). In v1 they cannot trigger a fill either; that waits for D3. |
@@ -211,6 +217,29 @@ machine has to assume. So:
    terminal's session, a page's fields.
 6. **Further:** launcher search, the screen lock, the SSH agent, Mail
    passwords, organizations, attachments, import / export.
+
+## As built: the contracts
+
+- **Socket protocol:** `crates/sola-vault-proto` — the types (summaries,
+  records, drafts, fill material, settings, server), `Request` / `Reply` /
+  `Event`, and a blocking `Client`. JSON lines, `{"id","body"}`; additive
+  only.
+- **Unlock (V1):** the daemon keeps on disk only what Bitwarden's clients
+  keep for a locked account — the email, server, KDF and salt, tokens, and
+  the user key *as the master key wraps it* (age-encrypted with the desk key
+  besides). The decrypted user key lives in memory only. After a restart the
+  vault is signed in and locked; one master password unlocks it, with no
+  round trip. The browser's `vault-session.json` is migrated without its
+  `user_key_b64` and deleted.
+- **Bus:** `VaultState` (sticky), `DeskMenuOpen` (app → shell),
+  `DeskMenuPick` (shell → app), in `sola-bus` topics. A new topic needs the
+  bus host from the same build, so the first apply moves `pkg:sola`.
+- **The desk menu in a field:** the kit's text input opens the menu on a
+  right-click itself (it knows editable, secret, selection) and applies the
+  pick itself — Edit, or a vault value it redeems — so every kit app's fields
+  get it without app code. An app adds its own rows for its own surfaces
+  (a page, a terminal) with `sola_kit::desk_menu`. No in-window fallback:
+  with the shell away, a right-click does nothing.
 
 ## Open technical questions
 

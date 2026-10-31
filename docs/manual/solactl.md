@@ -29,6 +29,7 @@ solactl projects [METHOD [ARGS…]]
 solactl browser [METHOD [ARGS…]]
 solactl bots [METHOD [ARGS…]]
 solactl design [METHOD [ARGS…]]
+solactl vault [status|lock|sync|open [-i ID]]
 solactl OWNER [METHOD [ARGS…]]       # any live owner, by owner or app id
 solactl mcp [--owner OWNER]…
 solactl logs [APP] [-f]
@@ -43,7 +44,7 @@ solactl help [COMMAND…]
 | Command | Goes through | Needs |
 |---|---|---|
 | `compositor`, `desk` | Call plane; flags compiled into `solactl` | `sola-call` and the owner; `--help` needs nothing |
-| `projects`, `browser`, `bots`, `design`, any other name | Call plane; flags read from the owner's advertised methods | `sola-call` and the owner, also for help |
+| `projects`, `browser`, `bots`, `design`, `vault`, any other name | Call plane; flags read from the owner's advertised methods | `sola-call` and the owner, also for help |
 | `mcp` | Call plane | `sola-call`; tools appear as owners do |
 | `emit`, `background` | Bus | `sola-bus` (the picture is drawn by `sola-river`) |
 | `logs` | Files in Sola's log directory | nothing |
@@ -119,8 +120,8 @@ against it, and `design canvas.new` makes its canvas in it by default.
 
 ## Live-owner commands
 
-`solactl projects`, `browser`, `bots`, and `design`, and `solactl NAME`
-for any other owner, take their methods and flags from what the running
+`solactl projects`, `browser`, `bots`, `design`, `vault`, and
+`solactl NAME` for any other owner take their methods and flags from what the running
 owner advertises ([The call plane](call.md#methods-and-arguments)). The
 sections below list each owner's methods as they are advertised today.
 
@@ -134,10 +135,12 @@ sections below list each owner's methods as they are advertised today.
 | `projects` | `sola-projects` | `sola-projects` | While **Projects** is open | [Projects](#projects-solactl-projects) |
 | `browser` | `sola-browser` | `sola-browser` | While the **Browser** is open | [Browser](#browser-solactl-browser) |
 | `design` | `sola-design` | `sola-design` | While **Design** is open | [Design](#design-solactl-design) |
+| `vault` | `sola-vaultd` | `sola-vaultd` | While the vault service runs | [Vault](#vault-solactl-vault) |
 
-No other application offers methods: Calendar, Mail, Settings, Paint, and
-the Shell have none. The Shell's desktop workspaces have no `solactl`
-command; `solactl workspaces` is read as an owner name and fails with
+No other application offers methods: Calendar, Mail, Settings, Paint,
+Vault (the app; its service is `vault`), and the Shell have none. The
+Shell's desktop workspaces have no `solactl` command;
+`solactl workspaces` is read as an owner name and fails with
 `workspaces is not running` (status 3).
 
 `compositor` and `desk` have compiled commands, but they are live
@@ -1037,6 +1040,29 @@ that is not on screen, it frames the canvas for when the human opens it.
 Boards are served over http from the project root (`/` = the project
 folder; a canvas `root` is looked in first), not `file://`. There is no raw
 `eval` on this plane.
+
+## Vault (`solactl vault`)
+
+Owner `vault`, process `sola-vaultd`, the vault service Oath runs as
+`svc:sola-vault` ([Vault](sola-vault.md)). It fails with `vault is not
+running` while the service is down. No method returns an item or a value:
+an agent can see the vault's state, lock it, sync it, and open Vault, and
+nothing more.
+
+```text
+solactl vault                        # list methods
+solactl vault status
+solactl vault lock
+solactl vault sync
+solactl vault open [-i ID]
+```
+
+| Method | Does | Reply |
+|---|---|---|
+| `status` | The vault's state | `{"signed_in", "unlocked", "email", "server", "synced_at", "syncing", "sync_error", "items"}`; `server` is `bitwarden.com`, `bitwarden.eu`, or the self-hosted host |
+| `lock` | Locks the vault now | The status |
+| `sync` | Syncs with Bitwarden; fails when the vault is locked or signed out, or the sync fails. Deadline 120 s | The status |
+| `open` | Starts Vault, or brings it forward, on item `-i`, `--id` (a UUID), or on its list without one | `{"opened": ID}` (`null` without one); `id: not an item's id` for anything that is not a UUID |
 
 ## MCP (`solactl mcp`)
 

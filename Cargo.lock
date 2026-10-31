@@ -8353,22 +8353,9 @@ dependencies = [
 name = "sola-browser"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "base64 0.22.1",
  "bincode",
- "bitwarden-api-api",
- "bitwarden-core",
- "bitwarden-crypto",
- "bitwarden-crypto-sync-handler",
- "bitwarden-fido",
- "bitwarden-pm",
- "bitwarden-state",
- "bitwarden-sync",
- "bitwarden-vault",
  "cef",
- "chrono",
- "getrandom 0.2.17",
- "hmac 0.12.1",
  "iced",
  "iced_futures",
  "image",
@@ -8377,14 +8364,11 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
- "serde_qs 0.13.0",
- "sha1 0.10.7",
- "sha2 0.10.9",
  "sola-bus",
  "sola-call",
  "sola-core",
  "sola-kit",
- "thiserror 2.0.19",
+ "sola-vault-proto",
  "tokio",
  "tracing",
  "url",
@@ -8513,12 +8497,14 @@ dependencies = [
  "sola-call",
  "sola-core",
  "sola-open",
+ "sola-vault-proto",
  "tracing",
  "ttf-parser",
  "unicode-segmentation",
  "wayland-client",
  "wayland-protocols-wlr",
  "wl-clipboard-rs",
+ "zeroize",
 ]
 
 [[package]]
@@ -8771,6 +8757,7 @@ dependencies = [
  "sola-call",
  "sola-core",
  "sola-kit",
+ "sola-vault-proto",
  "tokio",
  "tracing",
  "zbus",
@@ -8793,6 +8780,70 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "sola-vault"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "iced",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "sola-vault-proto",
+ "tracing",
+ "wl-clipboard-rs",
+ "zeroize",
+]
+
+[[package]]
+name = "sola-vault-proto"
+version = "0.1.0"
+dependencies = [
+ "hmac 0.12.1",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
+ "zeroize",
+]
+
+[[package]]
+name = "sola-vaultd"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "bitwarden-api-api",
+ "bitwarden-collections",
+ "bitwarden-core",
+ "bitwarden-crypto",
+ "bitwarden-crypto-sync-handler",
+ "bitwarden-exporters",
+ "bitwarden-fido",
+ "bitwarden-generators",
+ "bitwarden-pm",
+ "bitwarden-state",
+ "bitwarden-sync",
+ "bitwarden-vault",
+ "chrono",
+ "getrandom 0.2.17",
+ "libc",
+ "public-suffix",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_qs 0.13.0",
+ "sha2 0.10.9",
+ "sola-bus",
+ "sola-call",
+ "sola-core",
+ "sola-vault-proto",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+ "zeroize",
 ]
 
 [[package]]

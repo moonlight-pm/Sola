@@ -148,6 +148,9 @@ pub const PACKAGES: &[Package] = &[
     app("sola-mail", &["sola-mail"], &[]),
     app("sola-settings", &["sola-settings"], &[]),
     app("sola-bots", &["sola-bots", "sola-botsd"], &[]),
+    // Vault and its daemon (`svc:sola-vault` runs `sola-vaultd`): moving
+    // it restarts the vault only.
+    app("sola-vault", &["sola-vault", "sola-vaultd"], &[]),
     Package {
         name: "sola-browser",
         bins: &["sola-browser"],

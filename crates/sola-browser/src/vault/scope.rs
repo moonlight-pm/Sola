@@ -2,7 +2,7 @@
 //! which passkey rpId a frame may ask for. Both are decided from the URL
 //! of the frame itself (helper side), never from what the page says.
 
-use bitwarden_vault::UriMatchType;
+use sola_vault_proto::UriMatch;
 use url::Url;
 
 use super::match_uri::{registrable_domain, uri_matches};
@@ -15,22 +15,30 @@ pub fn origin_of(url: &str) -> Option<String> {
     origin.is_tuple().then(|| origin.ascii_serialization())
 }
 
-/// A login website for [`crate::engine::FrameScope::Site`].
-pub fn site_uri(uri: &str, match_type: Option<UriMatchType>) -> SiteUri {
+/// A login website for [`crate::engine::FrameScope::Site`]. The match
+/// type travels as Bitwarden's number (`UriMatchType`).
+pub fn site_uri(uri: &str, match_type: Option<UriMatch>) -> SiteUri {
     SiteUri {
         uri: uri.to_string(),
-        match_type: match_type.map(|m| m as u8),
+        match_type: match_type.map(|m| match m {
+            UriMatch::Domain => 0,
+            UriMatch::Host => 1,
+            UriMatch::StartsWith => 2,
+            UriMatch::Exact => 3,
+            UriMatch::RegularExpression => 4,
+            UriMatch::Never => 5,
+        }),
     }
 }
 
-fn match_type(code: Option<u8>) -> Option<UriMatchType> {
+fn match_type(code: Option<u8>) -> Option<UriMatch> {
     Some(match code? {
-        0 => UriMatchType::Domain,
-        1 => UriMatchType::Host,
-        2 => UriMatchType::StartsWith,
-        3 => UriMatchType::Exact,
-        4 => UriMatchType::RegularExpression,
-        _ => UriMatchType::Never,
+        0 => UriMatch::Domain,
+        1 => UriMatch::Host,
+        2 => UriMatch::StartsWith,
+        3 => UriMatch::Exact,
+        4 => UriMatch::RegularExpression,
+        _ => UriMatch::Never,
     })
 }
 
@@ -86,12 +94,20 @@ mod tests {
 
     #[test]
     fn fill_reaches_same_origin_and_matching_frames_only() {
-        let uris = [site_uri("https://idmsa.apple.com", Some(UriMatchType::Host))];
+        let uris = [site_uri("https://idmsa.apple.com", Some(UriMatch::Host))];
         let origin = "https://www.icloud.com";
         assert!(frame_in_site(origin, &uris, "https://www.icloud.com/frame"));
         assert!(frame_in_site(origin, &uris, "https://idmsa.apple.com/auth"));
         assert!(!frame_in_site(origin, &uris, "https://ads.example.net/x"));
         assert!(!frame_in_site(origin, &[], "https://icloud.com/"));
+    }
+
+    #[test]
+    fn match_types_survive_the_trip_to_the_helper() {
+        for m in UriMatch::all() {
+            assert_eq!(match_type(site_uri("a.com", Some(m)).match_type), Some(m));
+        }
+        assert_eq!(match_type(site_uri("a.com", None).match_type), None);
     }
 
     #[test]

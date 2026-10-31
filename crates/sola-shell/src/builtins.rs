@@ -104,6 +104,14 @@ pub fn builtin_apps() -> Vec<Application> {
             ..Default::default()
         },
         Application {
+            // The desk menu's Sign in / Unlock bring it forward.
+            app_id: "sola-vault".into(),
+            label: "Vault".into(),
+            command: kit_command("sola-vault"),
+            icon: "lucide/key-round".into(),
+            ..Default::default()
+        },
+        Application {
             app_id: "sola-design".into(),
             label: "Design".into(),
             command: kit_command("sola-design"),

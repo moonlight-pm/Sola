@@ -24,6 +24,7 @@ const NIX_DIR: &str = "/opt/sola/nix";
 const INSTALL_RESTART_ORDER: &[&str] = &[
     "sola-bus",
     "sola-call",
+    "sola-vaultd",
     "sola-botsd",
     "sola-river",
     "sola-shell",

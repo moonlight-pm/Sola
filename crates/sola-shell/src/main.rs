@@ -16,6 +16,7 @@ mod handlers;
 pub mod calendar;
 pub mod chrome;
 pub mod components;
+pub mod desk_menu;
 pub mod keys;
 pub mod launcher;
 mod lock;
