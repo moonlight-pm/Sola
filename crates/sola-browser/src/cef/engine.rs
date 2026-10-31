@@ -865,7 +865,10 @@ cef::wrap_render_process_handler! {
             let Some(ctx) = context else { return };
             eval_v8_context(ctx, &crate::paste_js::clipboard_bridge_script());
             #[cfg(feature = "bitwarden")]
-            eval_v8_context(ctx, crate::vault::inject_webauthn_intercept_script());
+            {
+                install_vault_post(ctx);
+                eval_v8_context(ctx, crate::vault::inject_webauthn_intercept_script());
+            }
         }
     }
 }
@@ -1692,31 +1695,21 @@ cef::wrap_display_handler! {
 
             #[cfg(feature = "bitwarden")]
             {
-                if let Some(origin) = msg.strip_prefix("__sola_webauthn_installed__") {
-                    tracing::info!(origin = %origin, "webauthn hook installed in frame");
-                    return 1;
-                }
-                const PREFIX: &str = "__sola_webauthn__";
-                if let Some(rest) = msg.strip_prefix(PREFIX) {
-                    // Credential assembly breadcrumb from the polyfill.
-                    if let Some(detail) = rest.strip_prefix("_cred__") {
-                        tracing::info!(%detail, "webauthn page credential assembled");
-                        return 1;
-                    }
-                    handle_webauthn_payload(rest);
-                    return 1; // suppress console noise
-                }
-                if let Some(detail) = msg.strip_prefix("__sola_webauthn_cred__") {
-                    tracing::info!(detail = %detail.trim(), "webauthn page credential assembled");
-                    return 1;
-                }
                 if let Some(detail) = msg.strip_prefix("__sola_webauthn_resolve_err__") {
                     tracing::warn!(detail = %detail.trim(), "webauthn page resolve failed");
                     return 1;
                 }
                 if let Some(rest) = msg.strip_prefix("__sola_vault_fill__:") {
-                    let found = rest.trim().starts_with('1');
-                    crate::vault::passkey_bridge::push_fill_result(found);
+                    // Only decides chrome's "saved, no fields" note; a page
+                    // faking it changes nothing else.
+                    let state = cef_state();
+                    let tab = browser
+                        .as_deref()
+                        .and_then(|b| tab_id_by_browser_id(&state, b.identifier()));
+                    if let (Some(tab), Some(tx)) = (tab, &state.ipc_events) {
+                        let found = rest.trim().starts_with('1');
+                        let _ = tx.send(crate::cef::ipc::FromEngine::VaultFilled { tab: tab.0, found });
+                    }
                     return 1;
                 }
             }
@@ -1886,111 +1879,197 @@ fn handle_notify_perm(browser: Option<&cef::Browser>, raw: &str) {
     }
 }
 
+/// Name of the window function the WebAuthn hook calls, and of the
+/// process message it becomes.
 #[cfg(feature = "bitwarden")]
-fn handle_webauthn_payload(raw: &str) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
-        tracing::warn!(payload = %raw, "webauthn: payload not json");
+const VAULT_POST: &str = "__solaVaultPost";
+
+/// Give a new frame `window.__solaVaultPost(json)`: a native function that
+/// sends `json` to the browser process as a message *from this frame*, so
+/// the helper learns the frame (and its real origin) from CEF, not from
+/// the page's words.
+#[cfg(feature = "bitwarden")]
+fn install_vault_post(ctx: &mut cef::V8Context) {
+    use cef::sys::cef_v8_propertyattribute_t as Attr;
+    if ctx.is_valid() == 0 || ctx.enter() == 0 {
+        return;
+    }
+    let name = cef::CefString::from(VAULT_POST);
+    let mut handler = VaultPostHandler::new();
+    if let (Some(global), Some(mut post)) = (
+        ctx.global(),
+        cef::v8_value_create_function(Some(&name), Some(&mut handler)),
+    ) {
+        let attrs = Attr::V8_PROPERTY_ATTRIBUTE_READONLY
+            | Attr::V8_PROPERTY_ATTRIBUTE_DONTENUM
+            | Attr::V8_PROPERTY_ATTRIBUTE_DONTDELETE;
+        global.set_value_bykey(Some(&name), Some(&mut post), attrs.into());
+    }
+    ctx.exit();
+}
+
+#[cfg(feature = "bitwarden")]
+cef::wrap_v8_handler! {
+    struct VaultPostHandler {}
+
+    impl V8Handler {
+        fn execute(
+            &self,
+            _name: Option<&cef::CefString>,
+            _object: Option<&mut cef::V8Value>,
+            arguments: Option<&[Option<cef::V8Value>]>,
+            _retval: Option<&mut Option<cef::V8Value>>,
+            _exception: Option<&mut cef::CefString>,
+        ) -> ::std::os::raw::c_int {
+            let Some(arg) = arguments.and_then(|a| a.first()).and_then(|a| a.as_ref()) else {
+                return 1;
+            };
+            if arg.is_string() == 0 {
+                return 1;
+            }
+            let json = cef::CefString::from(&arg.string_value());
+            let Some(frame) = cef::v8_context_get_current_context().and_then(|c| c.frame()) else {
+                return 1;
+            };
+            let name = cef::CefString::from(VAULT_POST);
+            let Some(mut msg) = cef::process_message_create(Some(&name)) else {
+                return 1;
+            };
+            if let Some(args) = msg.argument_list() {
+                args.set_string(0, Some(&json));
+            }
+            frame.send_process_message(cef::ProcessId::BROWSER, Some(&mut msg));
+            1
+        }
+    }
+}
+
+/// A frame's `__solaVaultPost` message (browser process). The origin is
+/// the sending frame's; an rpId it may not use is refused on the spot.
+#[cfg(feature = "bitwarden")]
+fn handle_vault_post(browser: &cef::Browser, frame: &cef::Frame, raw: &str) {
+    use cef::ImplFrame;
+    let state = cef_state();
+    let Some(tab) = tab_id_by_browser_id(&state, browser.identifier()) else {
         return;
     };
-    let id = v.get("id").and_then(|x| x.as_u64()).unwrap_or(0);
-    let action = v
-        .get("action")
-        .and_then(|x| x.as_str())
-        .unwrap_or("get")
-        .to_string();
-    let origin = v
-        .get("origin")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_string();
-    let rp_id = v
-        .get("rpId")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_string();
-    let public_key_json = v
-        .get("publicKey")
-        .cloned()
-        .map(|pk| pk.to_string())
-        .unwrap_or_else(|| "{}".into());
-    // One emit per (id, origin). Console + leftover beacon used to
-    // fan the same click into chrome several times.
-    thread_local! {
-        static LAST: std::cell::RefCell<Option<(u64, String)>> =
-            std::cell::RefCell::new(None);
-    }
-    let dup = LAST.with(|last| {
-        let mut last = last.borrow_mut();
-        if last.as_ref().is_some_and(|(i, o)| *i == id && *o == origin) {
-            true
-        } else {
-            *last = Some((id, origin.clone()));
-            false
-        }
-    });
-    if dup {
-        tracing::debug!(id, %origin, "webauthn intercept duplicate dropped");
+    let frame_id = cef_string_userfree_display(&frame.identifier());
+    let url = cef_string_userfree_display(&frame.url());
+    let Some(origin) = crate::vault::origin_of(&url) else {
+        tracing::warn!("webauthn: request from a frame with no origin");
+        return;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
+        tracing::warn!(len = raw.len(), "webauthn: request not json");
+        return;
+    };
+    let field = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let nonce = field("nonce");
+    if nonce.is_empty() || nonce.len() > 64 {
         return;
     }
-    tracing::info!(id, %origin, %rp_id, %action, "webauthn intercept from page");
+    let action = field("action");
+    if !matches!(action.as_str(), "get" | "create" | "cancel") {
+        return;
+    }
+    let mut rp_id = field("rpId");
+    if rp_id.is_empty() {
+        rp_id = url::Url::parse(&origin)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+            .unwrap_or_default();
+    }
+    if action != "cancel" && !crate::vault::rp_id_allowed(&origin, &rp_id) {
+        tracing::warn!(%origin, %rp_id, "webauthn: rpId not allowed for this frame — refused");
+        let script = crate::vault::resolve_webauthn_script(&nonce, false, "SecurityError");
+        frame.execute_java_script(Some(&script.as_str().into()), None, 0);
+        return;
+    }
+    let public_key_json = v
+        .get("publicKey")
+        .map(|pk| pk.to_string())
+        .unwrap_or_else(|| "{}".into());
+    tracing::info!(tab = tab.0, %origin, %rp_id, %action, "webauthn request from page");
     let ev = crate::cef::ipc::WebAuthnEvent {
-        id,
+        tab: tab.0,
+        frame: frame_id,
+        nonce,
         action,
         origin,
         rp_id,
         public_key_json,
     };
-    if let Some(tx) = &cef_state().ipc_events {
+    if let Some(tx) = &state.ipc_events {
         let _ = tx.send(crate::cef::ipc::FromEngine::WebAuthn(ev));
     }
 }
 
-const WEBAUTHN_BEACON: &str = "https://sola.invalid/__sola_webauthn__?";
-
-fn take_webauthn_beacon(url: &str) -> Option<String> {
-    let rest = url.strip_prefix(WEBAUTHN_BEACON)?;
-    Some(percent_decode(rest))
-}
-
-fn percent_decode(s: &str) -> String {
-    let mut out = Vec::with_capacity(s.len());
-    let b = s.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            let hex = &s[i + 1..i + 3];
-            if let Ok(v) = u8::from_str_radix(hex, 16) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
-        } else if b[i] == b'+' {
-            out.push(b' ');
-            i += 1;
-            continue;
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
+/// Once in each frame (the identifier list includes the main frame).
 fn eval_js_all_frames(browser: &cef::Browser, script: &str) {
     use cef::ImplBrowser;
     let code: cef::CefString = script.into();
-    if let Some(frame) = browser.main_frame() {
-        frame.execute_java_script(Some(&code), None, 0);
-    }
-    if let Some(frame) = browser.focused_frame() {
-        frame.execute_java_script(Some(&code), None, 0);
-    }
     let mut ids = cef::CefStringList::new();
     browser.frame_identifiers(Some(&mut ids));
+    let mut ran = false;
     for id in ids {
         let ident = cef::CefString::from(id.as_str());
         if let Some(frame) = browser.frame_by_identifier(Some(&ident)) {
             frame.execute_java_script(Some(&code), None, 0);
+            ran = true;
         }
+    }
+    if !ran {
+        if let Some(frame) = browser.main_frame() {
+            frame.execute_java_script(Some(&code), None, 0);
+        }
+    }
+}
+
+/// Run `script` only in the frames `scope` allows (see [`FrameScope`]).
+fn eval_js_scoped(browser: &cef::Browser, scope: &crate::engine::FrameScope, script: &str) {
+    use crate::engine::FrameScope;
+    let code: cef::CefString = script.into();
+    match scope {
+        FrameScope::Frame(id) => {
+            let ident = cef::CefString::from(id.as_str());
+            match browser.frame_by_identifier(Some(&ident)) {
+                Some(frame) => frame.execute_java_script(Some(&code), None, 0),
+                None => tracing::debug!(%id, "scoped eval: frame gone"),
+            }
+        }
+        #[cfg(feature = "bitwarden")]
+        FrameScope::Site { .. } | FrameScope::Page { .. } => {
+            let (origin, uris, any_frame) = match scope {
+                FrameScope::Site { origin, uris } => (origin, uris.as_slice(), false),
+                FrameScope::Page { origin } => (origin, &[][..], true),
+                FrameScope::Frame(_) => unreachable!(),
+            };
+            let main_url = browser
+                .main_frame()
+                .map(|f| cef_string_userfree_display(&f.url()))
+                .unwrap_or_default();
+            if crate::vault::origin_of(&main_url).as_deref() != Some(origin.as_str()) {
+                tracing::warn!(%origin, "vault fill dropped: the page left the site");
+                return;
+            }
+            let mut ids = cef::CefStringList::new();
+            browser.frame_identifiers(Some(&mut ids));
+            let mut n = 0;
+            for id in ids {
+                let ident = cef::CefString::from(id.as_str());
+                let Some(frame) = browser.frame_by_identifier(Some(&ident)) else {
+                    continue;
+                };
+                let url = cef_string_userfree_display(&frame.url());
+                if any_frame || crate::vault::frame_in_site(origin, uris, &url) {
+                    frame.execute_java_script(Some(&code), None, 0);
+                    n += 1;
+                }
+            }
+            tracing::debug!(frames = n, "vault fill evaluated");
+        }
+        #[cfg(not(feature = "bitwarden"))]
+        FrameScope::Site { .. } | FrameScope::Page { .. } => {}
     }
 }
 
@@ -2275,12 +2354,6 @@ cef::wrap_request_handler! {
             let Some(req) = request else { return 0 };
             use cef::ImplRequest;
             let url = cef_string_userfree_display(&req.url());
-            if let Some(payload) = take_webauthn_beacon(&url) {
-                tracing::info!(len = payload.len(), "webauthn beacon (browse)");
-                #[cfg(feature = "bitwarden")]
-                handle_webauthn_payload(&payload);
-                return 1;
-            }
             // A web app's window: a link the user follows to another site
             // opens as a browser page. Redirects stay in the window.
             let main = frame.is_some_and(|f| f.is_main() != 0);
@@ -3107,6 +3180,30 @@ cef::wrap_client! {
             Some(self.render_handler.clone())
         }
 
+        fn on_process_message_received(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            frame: Option<&mut cef::Frame>,
+            _source_process: cef::ProcessId,
+            message: Option<&mut cef::ProcessMessage>,
+        ) -> ::std::os::raw::c_int {
+            #[cfg(feature = "bitwarden")]
+            if let (Some(browser), Some(frame), Some(message)) = (browser, frame, message) {
+                use cef::{ImplListValue, ImplProcessMessage};
+                if cef::CefString::from(&message.name()).to_string() == VAULT_POST {
+                    let raw = message
+                        .argument_list()
+                        .map(|a| cef_string_userfree_display(&a.string(0)))
+                        .unwrap_or_default();
+                    handle_vault_post(browser, frame, &raw);
+                    return 1;
+                }
+            }
+            #[cfg(not(feature = "bitwarden"))]
+            let _ = (browser, frame, message);
+            0
+        }
+
         fn life_span_handler(&self) -> Option<cef::LifeSpanHandler> {
             Some(self.life_span_handler.clone())
         }
@@ -3771,6 +3868,11 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 if let Some(host) = tab.browser.host() {
                     host.stop_finding(clear as _);
                 }
+            }
+        }
+        Cmd::EvaluateJsIn { scope, script } => {
+            if let Some(tab) = active_tab(state) {
+                eval_js_scoped(&tab.browser, &scope, &script);
             }
         }
         Cmd::EvaluateJs(script) => {

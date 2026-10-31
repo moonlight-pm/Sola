@@ -334,6 +334,7 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             bytes,
         },
         ToEngine::EvaluateJs(s) => Cmd::EvaluateJs(s),
+        ToEngine::EvaluateJsIn { scope, script } => Cmd::EvaluateJsIn { scope, script },
         ToEngine::OpenTab { id, url, title } => Cmd::OpenTab {
             id: TabId(id),
             url,

@@ -23,6 +23,9 @@ fields, TOTP), and fill from there. Not three exclusive widgets
 | Create | **+** still creates a personal login (existing create-login freeze). |
 | Edit | **Edit** on the item record (see [item edit](2026-09-11-sola-browser-vault-item-edit-design.md)). |
 | Passkeys | Unchanged: get picker / create confirm take over the same panel. |
+| Re-prompt | An item with Bitwarden's master-password re-prompt asks for the master password before it opens, fills, or signs a passkey; once per item while the panel stays open (2026-10-31). |
+| Freshness | Opening the panel syncs when the last sync is over 5 minutes old; **Refresh** syncs. A failed sync stays on the panel until one succeeds; items that could not be decrypted are counted there (2026-10-31). |
+| Where fills go | The tab the fill was asked from, only while it is on the same origin; its same-origin frames and frames the login's websites match (cards: every frame, for payment iframes). Never another site's iframe (2026-10-31). |
 | Out of this slice | Create card/identity/note; generator tab; Bitwarden Send; folders/collections as first-class nav; always-show-cards/identities-in-autofill setting. |
 
 ## Search (not Lunr)

@@ -8372,6 +8372,8 @@ dependencies = [
  "iced",
  "iced_futures",
  "image",
+ "public-suffix",
+ "regex",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

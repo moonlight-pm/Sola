@@ -112,6 +112,8 @@ pub struct ItemSummary {
     pub has_passkey: bool,
     /// Login URI matches the active page (autofill suggestions).
     pub uri_match: bool,
+    /// Bitwarden "master password re-prompt": ask before opening or filling.
+    pub reprompt: bool,
     /// Lowercased haystack for in-chrome search (notes + usernames + URIs + …).
     search: String,
 }
@@ -146,7 +148,8 @@ pub struct ItemRecord {
     pub name: String,
     pub notes: Option<String>,
     pub fields: Vec<RecordField>,
-    /// Raw Bitwarden TOTP string (`otpauth://` or secret) when present.
+    /// Raw Bitwarden TOTP string (`otpauth://` or secret) when present,
+    /// whether or not [`TotpSpec`] can read it.
     pub totp_secret: Option<String>,
     pub totp_period: u32,
     pub has_passkey: bool,
@@ -165,6 +168,14 @@ impl ItemRecord {
         let raw = self.totp_secret.as_deref()?;
         let spec = TotpSpec::parse(raw)?;
         Some((spec.code_at(unix_secs), spec.period))
+    }
+
+    /// A stored authenticator key we cannot make codes from (another
+    /// algorithm, Steam, a typo). Shown as-is so it is never invisible.
+    pub fn unreadable_totp(&self) -> Option<&str> {
+        self.totp_secret
+            .as_deref()
+            .filter(|raw| TotpSpec::parse(raw).is_none())
     }
 }
 
@@ -287,6 +298,7 @@ pub fn summary_from_view(
         has_totp,
         has_passkey,
         uri_match,
+        reprompt: view.reprompt == bitwarden_vault::CipherRepromptType::Password,
         search,
     })
 }
@@ -350,11 +362,13 @@ pub fn record_from_view(view: CipherView) -> Option<ItemRecord> {
                     .fido2_credentials
                     .as_ref()
                     .is_some_and(|c| !c.is_empty());
-                if let Some(raw) = login.totp.as_deref().filter(|s| !s.is_empty()) {
+                // Kept even when we cannot make codes from it, so the
+                // record shows it and the edit form carries it.
+                if let Some(raw) = login.totp.as_deref().filter(|s| !s.trim().is_empty()) {
                     if let Some(spec) = TotpSpec::parse(raw) {
                         totp_period = spec.period;
-                        totp_secret = Some(raw.to_string());
                     }
+                    totp_secret = Some(raw.to_string());
                 }
             }
         }
@@ -1129,10 +1143,15 @@ fn host_of(uri: &str) -> Option<String> {
         })
 }
 
-fn cipher_last_used(view: &CipherView, id: &str, mru: &HashMap<String, i64>) -> i64 {
+/// Unix seconds this cipher was last used: our fill / passkey clock, then
+/// Bitwarden's local last-used date, else its revision.
+pub(super) fn cipher_last_used(view: &CipherView, id: &str, mru: &HashMap<String, i64>) -> i64 {
+    // `LocalDataView` keeps its fields private; it serializes the date as
+    // RFC 3339.
     let bw_used = view.local_data.as_ref().and_then(|ld| {
         let v = serde_json::to_value(ld).ok()?;
-        v.get("lastUsedDate")?.as_i64()
+        let at = v.get("lastUsedDate")?.as_str()?;
+        Some(chrono::DateTime::parse_from_rfc3339(at).ok()?.timestamp())
     });
     let ours = mru.get(id).copied();
     ours.into_iter()
@@ -1161,6 +1180,7 @@ mod tests {
             has_totp: false,
             has_passkey: false,
             uri_match,
+            reprompt: false,
             search: search.to_lowercase(),
         }
     }

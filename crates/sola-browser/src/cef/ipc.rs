@@ -38,6 +38,10 @@ pub enum ToEngine {
         bytes: Vec<u8>,
     },
     EvaluateJs(String),
+    EvaluateJsIn {
+        scope: crate::engine::FrameScope,
+        script: String,
+    },
     OpenTab {
         id: u64,
         url: String,
@@ -171,6 +175,11 @@ pub enum FromEngine {
     },
     Download(DownloadEvent),
     WebAuthn(WebAuthnEvent),
+    /// A vault fill script in `tab` reported whether it found fields.
+    VaultFilled {
+        tab: u64,
+        found: bool,
+    },
     /// Page right-click — chrome shows the kit context menu.
     PageContext(PageContext),
     /// ⌘-click / `target=_blank` / `window.open` without features: chrome
@@ -198,13 +207,29 @@ pub enum FromEngine {
 }
 
 /// Helper → chrome WebAuthn intercept (page lives in the engine process).
+///
+/// `origin`, `tab` and `frame` come from the frame that sent the request
+/// (a renderer process message), never from the page's own JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebAuthnEvent {
-    pub id: u64,
+    pub tab: u64,
+    /// CEF frame identifier: the answer is evaluated in this frame only.
+    pub frame: String,
+    /// The page's random id for this request (its promise key).
+    pub nonce: String,
+    /// `get`, `create`, or `cancel` (the page stopped waiting).
     pub action: String,
     pub origin: String,
     pub rp_id: String,
     pub public_key_json: String,
+}
+
+/// Vault traffic from a page, queued for chrome.
+#[derive(Debug, Clone)]
+pub enum VaultPageEvent {
+    WebAuthn(WebAuthnEvent),
+    /// A login fill script reported whether it found fields.
+    Filled { tab: u64, found: bool },
 }
 
 /// One download update from a helper. `id` is CEF's per-process download id.
@@ -492,7 +517,9 @@ mod tests {
         write_msg(
             &mut a,
             &FromEngine::WebAuthn(WebAuthnEvent {
-                id: 9,
+                tab: 9,
+                frame: "4-1".into(),
+                nonce: "n0nce".into(),
                 action: "get".into(),
                 origin: "https://exchange.gemini.com".into(),
                 rp_id: "gemini.com".into(),
@@ -503,7 +530,8 @@ mod tests {
         let got: FromEngine = read_msg(&mut b).unwrap();
         match got {
             FromEngine::WebAuthn(ev) => {
-                assert_eq!(ev.id, 9);
+                assert_eq!(ev.tab, 9);
+                assert_eq!(ev.nonce, "n0nce");
                 assert_eq!(ev.rp_id, "gemini.com");
             }
             other => panic!("{other:?}"),
