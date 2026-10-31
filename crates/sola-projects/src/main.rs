@@ -28,7 +28,7 @@ use sola_terminal::input::{self, Mods};
 use sola_terminal::pty::PtyBackend;
 use sola_terminal::state::{self as term_state, PaneRuntime};
 use sola_terminal::term_view::{self, CellMetrics, Palette};
-use sola_terminal::{extkeys, links, remote as rtmux, tmux};
+use sola_terminal::{desk, extkeys, links, remote as rtmux, tmux};
 
 mod bar;
 mod calls;
@@ -235,6 +235,8 @@ struct App {
     /// Hosts whose status tick is out, and when each last went out.
     remote_busy: HashSet<String>,
     remote_ticked: HashMap<String, Instant>,
+    /// The desk menu open on a session's pane.
+    desk: desk::PaneMenu,
 }
 
 struct PendingWait {
@@ -269,6 +271,16 @@ enum Msg {
     OpenUrl(String),
     WheelToPty(String, Vec<u8>),
     Pasted(Option<String>),
+    /// A right-click on a pane (its id, the point in its window): the desk
+    /// menu.
+    DeskMenu(String, iced::Point),
+    /// The desk menu's Paste: the clipboard's text for the pane.
+    DeskPaste(String, Option<String>),
+    /// A vault value redeemed for the pane: typed into its session.
+    DeskInsert(
+        String,
+        Result<sola_kit::desk_menu::Secret, sola_kit::desk_menu::VaultError>,
+    ),
     BlinkTick,
     Window(window::Id, window::Event),
     TitleDrag(window::Id),
@@ -528,6 +540,7 @@ impl App {
             remote_pending: HashSet::new(),
             remote_busy: HashSet::new(),
             remote_ticked: HashMap::new(),
+            desk: desk::PaneMenu::default(),
         };
         app.link_hosts();
         app.sync_all_rows();
@@ -906,6 +919,31 @@ impl App {
                 Task::none()
             }
             Msg::Pasted(text) => self.on_pasted(text),
+            Msg::DeskMenu(pane, at) => {
+                if let Some(rt) = self.runtimes.get(&pane) {
+                    self.desk.open(&pane, at, &rt.emulator.term());
+                }
+                Task::none()
+            }
+            Msg::DeskPaste(pane, text) => {
+                if let (Some(text), Some(rt)) = (text, self.runtimes.get(&pane)) {
+                    let mode = { *rt.emulator.term().lock().mode() };
+                    rt.backend.write(&input::paste(&text, mode));
+                }
+                Task::none()
+            }
+            Msg::DeskInsert(pane, value) => {
+                match (value, self.runtimes.get(&pane)) {
+                    // As typed, not a bracketed paste: a password prompt
+                    // takes keys.
+                    (Ok(value), Some(rt)) => rt.backend.write(value.as_str().as_bytes()),
+                    (Ok(_), None) => tracing::warn!(%pane, "desk menu: the pane went away"),
+                    (Err(e), _) => {
+                        tracing::warn!(%pane, code = ?e.code, "desk menu: the vault value did not come")
+                    }
+                }
+                Task::none()
+            }
         }
     }
 
@@ -1226,6 +1264,10 @@ impl App {
         if is_self_quit(m, APP_ID) {
             return iced::exit();
         }
+        // The desk menu's answer for a pane.
+        if let Some((pane, pick)) = self.desk.answer(m) {
+            return self.on_desk_pick(pane, pick);
+        }
         if let Some(Topic::MenuAction(p)) = Topic::parse(m) {
             if p.app_id == APP_ID {
                 return match p.action_id.as_str() {
@@ -1289,6 +1331,10 @@ impl App {
                     on_wheel_pty: Box::new({
                         let pid = pane_id.to_string();
                         move |bytes| Msg::WheelToPty(pid.clone(), bytes)
+                    }),
+                    on_desk_menu: Box::new({
+                        let pid = pane_id.to_string();
+                        move |at| Msg::DeskMenu(pid.clone(), at)
                     }),
                 };
                 canvas(view).width(Length::Fill).height(Length::Fill).into()
@@ -2878,6 +2924,28 @@ impl App {
         let text = { rt.emulator.term().lock().selection_to_string() };
         match text {
             Some(s) if !s.is_empty() => iced::clipboard::write(s),
+            _ => Task::none(),
+        }
+    }
+
+    /// What was picked in a pane's desk menu.
+    fn on_desk_pick(&mut self, pane: String, pick: sola_kit::desk_menu::DeskPick) -> Task<Msg> {
+        use sola_kit::desk_menu::{self as desk_menu, DeskPick};
+        match pick {
+            DeskPick::Action(id) if id == desk::COPY => {
+                let Some(rt) = self.runtimes.get(&pane) else {
+                    return Task::none();
+                };
+                match rt.emulator.term().lock().selection_to_string() {
+                    Some(s) if !s.is_empty() => desk_menu::copy(s),
+                    _ => Task::none(),
+                }
+            }
+            DeskPick::Action(id) if id == desk::PASTE => {
+                desk_menu::paste_task().map(move |text| Msg::DeskPaste(pane.clone(), text))
+            }
+            DeskPick::VaultInsert { ticket } => desk_menu::redeem_task(ticket)
+                .map(move |value| Msg::DeskInsert(pane.clone(), value)),
             _ => Task::none(),
         }
     }

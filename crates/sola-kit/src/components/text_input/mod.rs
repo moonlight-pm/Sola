@@ -11,6 +11,9 @@
 //! - **Edit menu:** [`edit_focused`] (`menu_edit.rs`) — the one behavior
 //!   stock iced can't give: the menu's Paste / Cut / Copy / Select All at
 //!   the caret, since the shell grabs their Super chords.
+//! - **Desk menu:** a right-click asks the shell for it and the field
+//!   applies the pick (`desk.rs`, [`crate::desk_menu`]): Edit, or a vault
+//!   value at the caret.
 //! - **Future:** try stock `iced::widget::text_input` + `Catalog` style; delete
 //!   this fork if behavior parity holds. Until then, consumers should import
 //!   kit’s path and treat the API as stable.
@@ -45,6 +48,7 @@
 //!     }
 //! }
 //! ```
+mod desk;
 mod editor;
 mod menu_edit;
 mod value;
@@ -680,6 +684,10 @@ where
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
+        // The desk menu's pick comes in with whatever event is next (the
+        // app's update for it redraws every window).
+        self.desk_apply(state::<Renderer>(tree), layout, renderer, clipboard, shell);
+
         let update_cache = |state, value| {
             replace_paragraph(
                 renderer,
@@ -791,6 +799,9 @@ where
 
                     shell.capture_event();
                 }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                self.desk_press(state::<Renderer>(tree), layout, cursor, shell);
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerLifted { .. })
@@ -1413,6 +1424,8 @@ pub struct State<P: text::Paragraph> {
     last_click: Option<mouse::Click>,
     cursor: Cursor,
     keyboard_modifiers: keyboard::Modifiers,
+    /// The desk menu this field opened, until its pick is applied.
+    desk: Option<u64>,
     // TODO: Add stateful horizontal scrolling offset
 }
 

@@ -29,7 +29,7 @@ use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::color::Colors;
-use alacritty_terminal::term::{RenderableContent, Term};
+use alacritty_terminal::term::{RenderableContent, Term, TermMode};
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor, Rgb};
 
 use crate::emulator::{self, CursorSnap, Listener};
@@ -500,6 +500,11 @@ pub struct TermView<'a, Message> {
     /// wheel event, so it captures the pane id rather than being a plain
     /// message like `on_scroll`.
     pub on_wheel_pty: Box<dyn Fn(Vec<u8>) -> Message + 'a>,
+    /// Builds the message that asks for the desk menu at a right-click,
+    /// at the click in the window's logical pixels (`sola_kit::desk_menu`).
+    /// Not while the program in the pane reports the mouse: the click is
+    /// its own then.
+    pub on_desk_menu: Box<dyn Fn(Point) -> Message + 'a>,
 }
 
 #[derive(Default)]
@@ -541,6 +546,12 @@ const LINK_DRAG_SLOP_PX: f32 = 4.0;
 fn extends_selection(shift: bool, has_selection: bool) -> bool {
     shift && has_selection
 }
+/// Whether a right-click opens the desk menu: only while the program in the
+/// pane has not asked for mouse reports.
+pub fn opens_desk_menu(mode: TermMode) -> bool {
+    !mode.intersects(TermMode::MOUSE_MODE)
+}
+
 /// Selection granularity for a fresh left-press, by click count: single =
 /// character range, double = word (alacritty's semantic selection, which is
 /// word-boundary aware — it stops at the configured separators, so it grabs a
@@ -738,6 +749,18 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                     }
                     Some(canvas::Action::publish(self.on_select.clone()).and_capture())
                 }
+            }
+            mouse::Event::ButtonPressed(mouse::Button::Right) => {
+                let local = cursor.position_in(bounds)?;
+                let mode = *self.term.lock().mode();
+                if !opens_desk_menu(mode) {
+                    return None;
+                }
+                // The window's point: the kit frame saw the press first.
+                let at = sola_kit::desk_menu::pointer()
+                    .or_else(|| cursor.position())
+                    .unwrap_or(Point::new(bounds.x + local.x, bounds.y + local.y));
+                Some(canvas::Action::publish((self.on_desk_menu)(at)).and_capture())
             }
             mouse::Event::WheelScrolled { delta } => {
                 // Require the pointer over the grid so the event still falls
@@ -1194,6 +1217,14 @@ fn draw_selection_cells(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_desk_menu_waits_while_the_program_has_the_mouse() {
+        assert!(opens_desk_menu(TermMode::default()));
+        assert!(!opens_desk_menu(TermMode::MOUSE_REPORT_CLICK));
+        assert!(!opens_desk_menu(TermMode::MOUSE_DRAG | TermMode::SGR_MOUSE));
+        assert!(opens_desk_menu(TermMode::SGR_MOUSE | TermMode::BRACKETED_PASTE));
+    }
+
     use super::*;
 
     #[test]
