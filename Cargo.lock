@@ -6322,6 +6322,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-vaultd"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "bitwarden-api-api",
+ "bitwarden-collections",
+ "bitwarden-core",
+ "bitwarden-crypto",
+ "bitwarden-crypto-sync-handler",
+ "bitwarden-exporters",
+ "bitwarden-fido",
+ "bitwarden-generators",
+ "bitwarden-pm",
+ "bitwarden-state",
+ "bitwarden-sync",
+ "bitwarden-vault",
+ "chrono",
+ "getrandom 0.2.17",
+ "libc",
+ "public-suffix",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_qs 0.13.0",
+ "sha2 0.10.9",
+ "sola-bus",
+ "sola-call",
+ "sola-core",
+ "sola-vault-proto",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "solactl"
 version = "0.1.0"
 dependencies = [
