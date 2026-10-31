@@ -55,6 +55,8 @@ pub enum VaultMsg {
     // The list
     Search(String),
     Kind(Kind),
+    /// The list scrolled: its offset and the height that shows.
+    ListScrolled { y: f32, h: f32 },
     /// Past the site's logins: the whole vault.
     ShowAll,
     Fill(String),
@@ -144,8 +146,8 @@ impl<E: Engine> App<E> {
                 v.error = None;
                 v.ask(Ask::Status, Request::Status);
             }
-            VaultMsg::Up => self.vault_step(false),
-            VaultMsg::Down => self.vault_step(true),
+            VaultMsg::Up => return self.vault_step(false),
+            VaultMsg::Down => return self.vault_step(true),
             VaultMsg::Right => {
                 if v.gate() == Gate::Open && v.screen == Screen::Browse && v.list.query.is_empty() {
                     if let Some(id) = self.vault_chosen() {
@@ -224,6 +226,7 @@ impl<E: Engine> App<E> {
             VaultMsg::RevealPassword => v.forms.reveal = !v.forms.reveal,
             VaultMsg::OtherAccount => {
                 v.forms.clear_secrets();
+                v.forms.email.clear();
                 v.busy = true;
                 v.ask(Ask::Logout, Request::Logout);
             }
@@ -235,6 +238,10 @@ impl<E: Engine> App<E> {
             VaultMsg::Kind(k) => {
                 v.list.kind = k;
                 v.list.chosen = 0;
+            }
+            VaultMsg::ListScrolled { y, h } => {
+                v.list.scroll_y = y;
+                v.list.view_h = h;
             }
             VaultMsg::ShowAll => {
                 v.list.whole = true;
@@ -414,6 +421,7 @@ impl<E: Engine> App<E> {
             VaultMsg::NewPassword(s) => {
                 if let Some(c) = v.create.as_mut() {
                     c.password = s;
+                    c.generated = false;
                 }
             }
             VaultMsg::NewWebsite(s) => {
@@ -518,10 +526,12 @@ impl<E: Engine> App<E> {
                 if stale {
                     v.ask(Ask::Sync, Request::Sync { force: false });
                 }
-                if !matches!(
-                    v.screen,
-                    Screen::PasskeyPick | Screen::PasskeyCreate | Screen::Edit | Screen::Create
-                ) {
+                let keep = match v.screen {
+                    Screen::PasskeyPick | Screen::PasskeyCreate => v.passkey.is_some(),
+                    Screen::Edit | Screen::Create => true,
+                    _ => false,
+                };
+                if !keep {
                     v.screen = Screen::Browse;
                 }
                 self.vault_list();
@@ -594,7 +604,8 @@ impl<E: Engine> App<E> {
     }
 
     /// ↑ / ↓: move the chosen row; past the site's last, the whole vault.
-    fn vault_step(&mut self, down: bool) {
+    /// The list scrolls to keep it in view.
+    fn vault_step(&mut self, down: bool) -> Task<Msg> {
         let mode = self.vault_mode();
         let v = &mut self.vault;
         let len = match v.screen {
@@ -603,7 +614,7 @@ impl<E: Engine> App<E> {
             }
             Screen::PasskeyPick => v.passkey.as_ref().map_or(0, |p| p.candidates.len()),
             Screen::PasskeyCreate => v.site_logins.len(),
-            _ => return,
+            _ => return Task::none(),
         };
         let chosen = &mut v.list.chosen;
         if down {
@@ -612,6 +623,7 @@ impl<E: Engine> App<E> {
             } else if v.screen == Screen::Browse && matches!(mode, Mode::Site | Mode::NoneHere) {
                 v.list.whole = true;
                 v.list.chosen = 0;
+                return iced::widget::operation::scroll_to(id("list"), offset(0.0));
             }
         } else if *chosen > 0 {
             *chosen -= 1;
@@ -620,6 +632,25 @@ impl<E: Engine> App<E> {
             let site = rows::site(&v.list.items).len();
             v.list.chosen = site.saturating_sub(1);
         }
+        if v.screen != Screen::Browse {
+            return Task::none();
+        }
+        let mode = self.vault_mode();
+        let v = &self.vault;
+        let listed = rows::rows(&v.list.items, mode, v.list.kind, &v.list.query);
+        let (top, bottom) = rows::span(&listed, v.list.chosen);
+        let (y, h) = (v.list.scroll_y, v.list.view_h);
+        if h <= 0.0 {
+            return Task::none();
+        }
+        let to = if top < y {
+            top
+        } else if bottom > y + h {
+            bottom - h
+        } else {
+            return Task::none();
+        };
+        iced::widget::operation::scroll_to(id("list"), offset(to.max(0.0)))
     }
 
     /// Enter with no field taking it: the sheet's one action.
@@ -778,6 +809,7 @@ impl<E: Engine> App<E> {
             username: String::new(),
             password: String::new(),
             website: super::page_host(&url).unwrap_or_default(),
+            generated: false,
         });
         v.screen = Screen::Create;
         v.error = None;
@@ -847,4 +879,9 @@ pub(super) const MATCHES: [Option<UriMatch>; 7] = [
 /// `None` is the account's default, Domain.
 pub(super) fn match_label(m: Option<UriMatch>) -> &'static str {
     m.map_or("Default", UriMatch::label)
+}
+
+/// A vertical scroll position for the list.
+fn offset(y: f32) -> iced::widget::scrollable::AbsoluteOffset {
+    iced::widget::scrollable::AbsoluteOffset { x: 0.0, y }
 }

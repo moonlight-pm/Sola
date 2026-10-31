@@ -1278,7 +1278,9 @@ impl<E: Engine> App<E> {
                     }
                 }
                 #[cfg(feature = "vault")]
-                self.drain_vault_page_events();
+                let vault_pages = self.drain_vault_page_events();
+                #[cfg(not(feature = "vault"))]
+                let vault_pages = Task::none();
                 // ⌘-click / target=_blank: helper found a URL; chrome owns the id.
                 let bg: Vec<crate::engine::ChromeTabRequest> = self
                     .engine
@@ -1315,7 +1317,7 @@ impl<E: Engine> App<E> {
                 // The engine's own clipboard can't reach Wayland; iced's can.
                 let clip = self.take_page_clipboard();
                 let agent = self.drain_agent();
-                return Task::batch([clip, vault, js_dlg, http_auth, agent, launched]);
+                return Task::batch([clip, vault, vault_pages, js_dlg, http_auth, agent, launched]);
             }
             Msg::Bus(message) => {
                 self.windows.update(&message);

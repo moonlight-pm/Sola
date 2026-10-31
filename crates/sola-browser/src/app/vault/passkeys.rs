@@ -12,7 +12,7 @@ use crate::vault::{PasskeyPageRequest, origin_of};
 
 impl<E: Engine> App<E> {
     /// What pages sent through their helpers since the last wake.
-    pub(crate) fn drain_vault_page_events(&mut self) {
+    pub(crate) fn drain_vault_page_events(&mut self) -> Task<Msg> {
         use crate::cef::ipc::VaultPageEvent;
         let events: Vec<_> = self
             .engine
@@ -21,6 +21,7 @@ impl<E: Engine> App<E> {
             .unwrap()
             .drain(..)
             .collect();
+        let mut focus = Task::none();
         for ev in events {
             match ev {
                 VaultPageEvent::WebAuthn(ev) if ev.action == "cancel" => {
@@ -28,16 +29,17 @@ impl<E: Engine> App<E> {
                 }
                 VaultPageEvent::WebAuthn(ev) => {
                     let id = self.vault.next_passkey_id();
-                    self.passkey_requested(PasskeyPageRequest::new(id, ev));
+                    focus = self.passkey_requested(PasskeyPageRequest::new(id, ev));
                 }
                 VaultPageEvent::Filled { found, .. } => self.vault_fill_reported(found),
             }
         }
         self.end_passkey_if_page_left();
+        focus
     }
 
     /// A page asked: open the sheet on it (unlock first if need be).
-    fn passkey_requested(&mut self, req: PasskeyPageRequest) {
+    fn passkey_requested(&mut self, req: PasskeyPageRequest) -> Task<Msg> {
         // The same site asking again while the sheet is up: answer both
         // with the one pick, so the page does not fail mid-pick.
         if let Some(cur) = self.vault.passkey.as_mut() {
@@ -47,7 +49,7 @@ impl<E: Engine> App<E> {
             {
                 tracing::info!(keep = cur.req.id, extra = req.id, "vault: the same passkey request again");
                 cur.extra.push(req);
-                return;
+                return Task::none();
             }
         }
         if let Some(old) = self.vault.passkey.take() {
@@ -66,6 +68,10 @@ impl<E: Engine> App<E> {
             .find(|t| t.id == req.tab)
             .and_then(|t| origin_of(&t.url));
         let create = req.is_create();
+        let timeout = serde_json::from_str::<serde_json::Value>(&req.public_key_json)
+            .ok()
+            .and_then(|pk| pk.get("timeout")?.as_u64())
+            .map(std::time::Duration::from_millis);
         let v = &mut self.vault;
         v.passkey = Some(PendingPasskey {
             req,
@@ -74,6 +80,7 @@ impl<E: Engine> App<E> {
             candidates: Vec::new(),
             loading: true,
             error: None,
+            timeout,
         });
         v.error = None;
         v.reprompt = None;
@@ -84,8 +91,11 @@ impl<E: Engine> App<E> {
         };
         v.list.chosen = 0;
         self.set_vault_open(true);
-        if self.vault.unlocked() {
-            let _ = self.passkey_continue();
+        match self.vault.gate() {
+            super::Gate::Open => self.passkey_continue(),
+            super::Gate::Locked => iced::widget::operation::focus(super::view::id("unlock")),
+            super::Gate::SignIn => iced::widget::operation::focus(super::view::id("email")),
+            _ => Task::none(),
         }
     }
 

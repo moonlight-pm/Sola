@@ -65,7 +65,18 @@ impl<E: Engine> App<E> {
         for g in self.record_groups(item) {
             col = col.push(g);
         }
-        if let Some(meta) = rows::edited_label(item.revised.as_deref()) {
+        let used = v
+            .list
+            .items
+            .iter()
+            .find(|i| i.id == item.id)
+            .and_then(|i| rows::used_label(i.last_used, now_secs()));
+        let meta = [rows::edited_label(item.revised.as_deref()), used]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ");
+        if !meta.is_empty() {
             col = col.push(
                 container(label(meta, 11.0, ink3)).padding(Padding {
                     top: 2.0,

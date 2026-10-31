@@ -9,6 +9,12 @@ use sola_vault_proto::{ItemKind, ItemSummary};
 /// How many recently used items lead the whole vault.
 const RECENT: usize = 5;
 
+/// A row's height, a section heading's, and the gap between them (the
+/// sheet lays the list out with these; [`span`] finds a row by them).
+pub(crate) const ROW_H: f32 = 44.0;
+pub(crate) const CAPS_H: f32 = 26.0;
+pub(crate) const ROW_GAP: f32 = 2.0;
+
 /// The kind tabs over the whole vault.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Kind {
@@ -154,6 +160,26 @@ pub(crate) fn rows<'a>(
     }
 }
 
+/// Where row `i` sits in the list (top and bottom, logical px): each
+/// section's heading, then its rows, all a gap apart — as the sheet
+/// lays them out.
+pub(crate) fn span(rows: &[(Section, &ItemSummary)], i: usize) -> (f32, f32) {
+    const GAP: f32 = ROW_GAP;
+    let mut y = 0.0;
+    let mut section = None;
+    for (n, (sec, _)) in rows.iter().enumerate() {
+        if section != Some(*sec) && *sec != Section::Results {
+            y += CAPS_H + GAP;
+        }
+        section = Some(*sec);
+        if n == i {
+            return (y, y + ROW_H);
+        }
+        y += ROW_H + GAP;
+    }
+    (y, y)
+}
+
 /// Items the vault holds (trash not counted).
 pub(crate) fn count(items: &[ItemSummary]) -> usize {
     live(items).count()
@@ -204,6 +230,16 @@ fn ago_words(secs: u64) -> String {
     }
 }
 
+/// A passkey request's foot: how much longer the site waits.
+pub(crate) fn wait_words(secs: u64) -> String {
+    match secs {
+        0 => "The site stopped waiting".into(),
+        1..=59 => format!("The site waits {secs} more seconds"),
+        60..=119 => "The site waits 1 more minute".into(),
+        _ => format!("The site waits {} more minutes", secs / 60),
+    }
+}
+
 /// `Edited Oct 30` from an RFC 3339 time (the date part only).
 pub(crate) fn edited_label(revised: Option<&str>) -> Option<String> {
     let date = revised?.get(..10)?;
@@ -215,6 +251,19 @@ pub(crate) fn edited_label(revised: Option<&str>) -> Option<String> {
     let m: usize = month.parse().ok()?;
     let d: u32 = day.parse().ok()?;
     Some(format!("Edited {} {d}", MONTHS.get(m.checked_sub(1)?)?))
+}
+
+/// `Used today` from an item's last use (Unix seconds; 0 = never known).
+pub(crate) fn used_label(last_used: i64, now: u64) -> Option<String> {
+    if last_used <= 0 {
+        return None;
+    }
+    let days = now.saturating_sub(last_used as u64) / 86_400;
+    Some(match days {
+        0 => "Used today".into(),
+        1 => "Used yesterday".into(),
+        n => format!("Used {n} days ago"),
+    })
 }
 
 /// A stored website as a link to open: `github.com` → `https://github.com`.
@@ -314,6 +363,18 @@ mod tests {
     }
 
     #[test]
+    fn rows_sit_under_their_headings() {
+        let items = vec![
+            item("1", "B", ItemKind::Login, 9, false),
+            item("2", "A", ItemKind::Login, 0, false),
+        ];
+        let listed = rows(&items, Mode::Whole, Kind::All, "");
+        // Recent heading, B; A–Z heading, A.
+        assert_eq!(span(&listed, 0), (28.0, 72.0));
+        assert_eq!(span(&listed, 1), (28.0 + 46.0 + 28.0, 28.0 + 46.0 + 28.0 + 44.0));
+    }
+
+    #[test]
     fn search_puts_the_page_first() {
         let items = vec![
             item("1", "Google Cloud", ItemKind::Login, 0, false),
@@ -338,6 +399,12 @@ mod tests {
         assert_eq!(synced_label(None, 0, false), "Syncing…");
         assert_eq!(edited_label(Some("2026-10-30T12:00:00Z")).as_deref(), Some("Edited Oct 30"));
         assert_eq!(edited_label(Some("bad")), None);
+        assert_eq!(used_label(0, 100), None);
+        assert_eq!(used_label(1000, 1000 + 3600).as_deref(), Some("Used today"));
+        assert_eq!(used_label(1000, 1000 + 3 * 86_400).as_deref(), Some("Used 3 days ago"));
+        assert_eq!(wait_words(250), "The site waits 4 more minutes");
+        assert_eq!(wait_words(75), "The site waits 1 more minute");
+        assert_eq!(wait_words(9), "The site waits 9 more seconds");
     }
 
     #[test]

@@ -247,6 +247,7 @@ impl<E: Engine> App<E> {
             (Ask::Generate(Generated::NewLogin), Reply::Generated(mut password)) => {
                 if let Some(form) = v.create.as_mut() {
                     form.password = std::mem::take(&mut password);
+                    form.generated = true;
                 }
                 password.zeroize();
             }

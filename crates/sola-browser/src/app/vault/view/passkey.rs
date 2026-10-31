@@ -15,7 +15,7 @@ use crate::engine::Engine;
 use crate::vault::{create_account_hint, log_host};
 
 impl<E: Engine> App<E> {
-    fn passkey_head(&self, title: impl Fn(&str) -> String, sub: String) -> Head<'_> {
+    fn passkey_head(&self, title: impl Fn(&str) -> String, sub: Option<String>) -> Head<'_> {
         let host = self
             .vault
             .passkey
@@ -23,15 +23,16 @@ impl<E: Engine> App<E> {
             .map(|p| log_host(&p.req.origin))
             .filter(|h| !h.is_empty())
             .unwrap_or_else(|| "this site".into());
-        Head::new(title(&host))
-            .plate(parts::letter_plate(&host, 22.0))
-            .sub(sub)
-            .button(icon_button("x", 15, Some(VaultMsg::PasskeyCancel)))
+        let mut head = Head::new(title(&host)).plate(parts::letter_plate(&host, 22.0));
+        if let Some(sub) = sub {
+            head = head.sub(sub);
+        }
+        head.button(icon_button("x", 15, Some(VaultMsg::PasskeyCancel)))
     }
 
     pub(super) fn sheet_passkey_pick(&self) -> Sheet<'_> {
         let v = &self.vault;
-        let head = self.passkey_head(|h| format!("Sign in to {h}"), "with a passkey".into());
+        let head = self.passkey_head(|h| format!("Sign in to {h}"), Some("with a passkey".into()));
         let Some(p) = v.passkey.as_ref() else {
             return Sheet {
                 head,
@@ -84,7 +85,7 @@ impl<E: Engine> App<E> {
             if v.busy {
                 "Signing in…".into()
             } else {
-                "The site is waiting".into()
+                p.wait_line()
             },
             Some("Esc cancels".into()),
         );
@@ -107,7 +108,7 @@ impl<E: Engine> App<E> {
             .and_then(|p| create_account_hint(&p.req.public_key_json));
         let head = self.passkey_head(
             |h| format!("Save a passkey for {h}"),
-            account.map(|a| format!("for {a}")).unwrap_or_default(),
+            account.map(|a| format!("for {a}")),
         );
         let mut col = column![].spacing(parts::ROW_GAP).width(Length::Fill);
         let p_error = v.passkey.as_ref().and_then(|p| p.error.as_ref());

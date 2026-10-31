@@ -21,9 +21,7 @@ use super::super::rows;
 use super::super::update::VaultMsg;
 use crate::app::Msg;
 
-pub(crate) const ROW_H: f32 = 44.0;
-pub(crate) const ROW_GAP: f32 = 2.0;
-pub(crate) const CAPS_H: f32 = 26.0;
+pub(crate) use super::super::rows::{CAPS_H, ROW_GAP, ROW_H};
 
 pub(crate) fn msg(m: VaultMsg) -> Msg {
     Msg::Vault(m)

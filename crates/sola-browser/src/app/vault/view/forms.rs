@@ -257,7 +257,8 @@ impl<E: Engine> App<E> {
                         Some(VaultMsg::RevealField("new-password".into())),
                     ),
                 ],
-                Some("Generated: 16 characters, letters, digits and symbols."),
+                form.generated
+                    .then_some("Generated: 16 characters, letters, digits and symbols."),
             ),
             edit_field("Website", false, website, Vec::new(), None),
         ]));

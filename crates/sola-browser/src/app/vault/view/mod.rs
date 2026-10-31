@@ -141,6 +141,8 @@ impl<E: Engine> App<E> {
             .max_height(SHEET_MAX_H)
             .clip(true)
             .style(sheet_style);
+        // A click on the sheet stays on it (only the page around closes it).
+        let panel = mouse_area(panel).on_press(Msg::Noop);
         let backdrop = mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
             .on_press(msg(VaultMsg::Close));
         // Its right edge under the key button's (downloads sits right of it).
@@ -363,5 +365,6 @@ pub(crate) fn body<'a>(content: impl Into<Element<'a, Msg>>, padded: bool) -> El
     container(content).padding(pad).width(Length::Fill).into()
 }
 
-/// The list's room: what the sheet has left under head, search and foot.
-pub(crate) const LIST_MAX_H: f32 = SHEET_MAX_H - HEAD_H - FOOT_H - 30.0 - 8.0 - 8.0 - 30.0;
+/// The list's room: what the sheet has left under its head, the search
+/// (30 and a gap) and the foot, less the body's bottom pad.
+pub(crate) const LIST_MAX_H: f32 = SHEET_MAX_H - HEAD_H - FOOT_H - 30.0 - 8.0 - 8.0;

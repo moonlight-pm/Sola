@@ -224,6 +224,10 @@ pub(crate) struct List {
     pub chosen: usize,
     /// The whole vault, though the page has logins of its own.
     pub whole: bool,
+    /// Where the list is scrolled to, and how much of it shows (arrows
+    /// keep the chosen row in view).
+    pub scroll_y: f32,
+    pub view_h: f32,
 }
 
 /// The record on the sheet.
@@ -244,6 +248,8 @@ pub(crate) struct NewLogin {
     pub username: String,
     pub password: String,
     pub website: String,
+    /// The password is the one the generator made.
+    pub generated: bool,
 }
 
 impl Drop for NewLogin {
@@ -264,9 +270,19 @@ pub(crate) struct PendingPasskey {
     pub candidates: Vec<sola_vault_proto::PasskeyCandidate>,
     pub loading: bool,
     pub error: Option<String>,
+    /// How long the site said it waits (`publicKey.timeout`).
+    pub timeout: Option<std::time::Duration>,
 }
 
 impl PendingPasskey {
+    /// The foot's line: how much longer the site waits.
+    pub fn wait_line(&self) -> String {
+        match self.timeout {
+            Some(t) => rows::wait_words(t.saturating_sub(self.req.received.elapsed()).as_secs()),
+            None => "The site is waiting".into(),
+        }
+    }
+
     pub fn requests(&self) -> impl Iterator<Item = &PasskeyPageRequest> {
         std::iter::once(&self.req).chain(&self.extra)
     }
@@ -458,6 +474,9 @@ impl Vault {
     /// a copied mark, a new login's fill).
     pub fn needs_clock(&self) -> bool {
         if self.awaiting_fill.is_some() || self.record.copied.is_some() {
+            return true;
+        }
+        if self.open && self.passkey.is_some() {
             return true;
         }
         self.open

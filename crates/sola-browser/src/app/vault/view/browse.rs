@@ -189,16 +189,47 @@ impl<E: Engine> App<E> {
             };
             col = col.push(item_row(item, on, trailing, Some(press)));
         }
+        // Rows run under the scrollbar's lane only when there is one.
+        let room = self.list_room(mode);
+        let tall = super::super::rows::span(&listed, listed.len().saturating_sub(1)).1 > room;
         container(
             scroll::scrollable(col.padding(Padding {
-                right: if listed.len() > 8 { scroll::CLEARANCE } else { 0.0 },
+                right: if tall { scroll::CLEARANCE } else { 0.0 },
                 ..Padding::ZERO
             }))
             .id(id("list"))
+            .on_scroll(|vp| {
+                msg(VaultMsg::ListScrolled {
+                    y: vp.absolute_offset().y,
+                    h: vp.bounds().height,
+                })
+            })
             .width(Length::Fill),
         )
-        .max_height(LIST_MAX_H)
+        .max_height(room)
         .into()
+    }
+}
+
+impl<E: Engine> App<E> {
+    /// What the sheet has left for the list: 560 less the head, foot,
+    /// search, kind tabs and any notices above or below.
+    fn list_room(&self, mode: Mode) -> f32 {
+        let v = &self.vault;
+        let mut room = LIST_MAX_H;
+        if mode == Mode::Whole {
+            room -= 32.0;
+        }
+        if v.status.as_ref().is_some_and(|s| s.sync_error.is_some()) {
+            room -= 60.0;
+        }
+        if v.list.unreadable > 0 {
+            room -= 44.0;
+        }
+        if v.error.is_some() {
+            room -= 24.0;
+        }
+        room.max(3.0 * parts::ROW_H)
     }
 }
 
