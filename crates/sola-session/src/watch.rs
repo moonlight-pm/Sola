@@ -89,16 +89,39 @@ impl Owners {
     pub fn apps_with_windows(&mut self, windows: &[Window]) -> HashSet<String> {
         let live: HashSet<u32> = windows.iter().filter_map(|w| w.pid).collect();
         self.0.retain(|pid, _| live.contains(pid));
-        let mut apps = HashSet::new();
-        for w in windows {
-            apps.insert(w.app_id.clone());
-            if let Some(pid) = w.pid {
-                if let Some(owner) = self.0.entry(pid).or_insert_with(|| tag::owner(pid)) {
-                    apps.insert(owner.clone());
+        windows.iter().flat_map(|w| self.apps_of(w)).collect()
+    }
+
+    /// The apps `window` is a window of: its app id, and the app its
+    /// process carries the tag of.
+    pub fn apps_of(&mut self, window: &Window) -> Vec<String> {
+        let mut apps = vec![window.app_id.clone()];
+        if let Some(pid) = window.pid {
+            if let Some(owner) = self.0.entry(pid).or_insert_with(|| tag::owner(pid)) {
+                if *owner != window.app_id {
+                    apps.push(owner.clone());
                 }
             }
         }
         apps
+    }
+
+    /// The apps whose last window is `window_id`: asked to close it, they
+    /// quit (Steam, its window closed, starts its webhelper again and comes
+    /// back with an empty window).
+    pub fn last_window_of(&mut self, windows: &[Window], window_id: u32) -> Vec<String> {
+        let Some(closing) = windows.iter().find(|w| w.window_id == window_id) else {
+            return Vec::new();
+        };
+        let others: HashSet<String> = windows
+            .iter()
+            .filter(|w| w.window_id != window_id)
+            .flat_map(|w| self.apps_of(w))
+            .collect();
+        self.apps_of(closing)
+            .into_iter()
+            .filter(|app| !others.contains(app))
+            .collect()
     }
 }
 
@@ -137,6 +160,24 @@ mod tests {
         assert_eq!(app.due(t0 + FIRST_WINDOW), None);
         app.note(false, t0);
         assert!(app.due(t0 + GRACE).is_some());
+    }
+
+    fn window(id: u32, app_id: &str) -> Window {
+        Window {
+            window_id: id,
+            app_id: app_id.into(),
+            title: app_id.into(),
+            pid: None,
+        }
+    }
+
+    #[test]
+    fn closing_an_apps_last_window_is_closing_the_app() {
+        let mut owners = Owners::default();
+        let ws = [window(1, "steam"), window(2, "steam"), window(3, "sola-mail")];
+        assert!(owners.last_window_of(&ws, 1).is_empty(), "Steam has another");
+        assert_eq!(owners.last_window_of(&ws[1..], 2), ["steam"]);
+        assert!(owners.last_window_of(&ws, 9).is_empty(), "no such window");
     }
 
     #[test]

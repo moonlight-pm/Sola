@@ -7,6 +7,7 @@ use tracing::{info, warn};
 use sola_bus::BusClient;
 use sola_bus::topics::{
     LaunchAppPayload, LaunchResultPayload, SessionApp, Topic, TopicKind, UserAppExitedPayload,
+    Window,
 };
 
 /// How long `restore_session` drains startup replays (the persisted
@@ -73,6 +74,8 @@ pub struct Session {
     /// window (`crate::watch`).
     foreign: HashMap<String, Foreign>,
     owners: Owners,
+    /// The last live window list.
+    windows: Vec<Window>,
 }
 
 impl Session {
@@ -89,6 +92,7 @@ impl Session {
             adopted: Vec::new(),
             foreign: HashMap::new(),
             owners: Owners::default(),
+            windows: Vec::new(),
         }
     }
 
@@ -330,6 +334,7 @@ impl Session {
         match topic {
             Topic::LaunchApp(p) => self.launch(p),
             Topic::CloseApp(app_id) => self.close(&app_id),
+            Topic::CloseWindow(window_id) => self.close_foreign_window(window_id),
             Topic::Shutdown => {
                 self.shutdown_all_apps();
                 std::process::exit(0);
@@ -448,7 +453,7 @@ impl Session {
             Some(Topic::Windows(ws)) if msg.sticky => {
                 let open: HashSet<String> = ws.iter().map(|w| w.app_id.clone()).collect();
                 adopted::note_windows(&mut self.adopted, &open, Instant::now());
-                self.note_foreign_windows(&ws);
+                self.note_foreign_windows(ws);
             }
             Some(topic) => self.handle(topic),
             None => {}
@@ -759,6 +764,8 @@ fn restore_plan(
 const SESSION_TOPICS: &[TopicKind] = &[
     TopicKind::LaunchApp,
     TopicKind::CloseApp,
+    // A non-Sola app's last window closed from Sola quits it.
+    TopicKind::CloseWindow,
     TopicKind::Shutdown,
     // For session restore: the persisted open-app set plus the sticky
     // current-window list (to skip apps already running).

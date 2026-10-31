@@ -35,14 +35,29 @@ impl Session {
     }
 
     /// A live window list (not a retraction).
-    pub(super) fn note_foreign_windows(&mut self, windows: &[Window]) {
+    pub(super) fn note_foreign_windows(&mut self, windows: Vec<Window>) {
+        self.windows = windows;
         if self.foreign.is_empty() {
             return;
         }
-        let open = self.owners.apps_with_windows(windows);
+        let open = self.owners.apps_with_windows(&self.windows);
         let now = Instant::now();
         for (app_id, f) in self.foreign.iter_mut() {
             f.note(open.contains(app_id), now);
+        }
+    }
+
+    /// A window asked to close from Sola (the bar's ×, Super+W): closing
+    /// the last window of an app that isn't Sola's quits it, as its own
+    /// Quit would. Steam would otherwise start its webhelper again and come
+    /// back with an empty window.
+    pub(super) fn close_foreign_window(&mut self, window_id: u32) {
+        let apps = self.owners.last_window_of(&self.windows, window_id);
+        for app_id in apps {
+            if self.quit_foreign(&app_id, "its last window was closed") {
+                // Closed: not one to bring back next time.
+                self.emit_session_apps();
+            }
         }
     }
 

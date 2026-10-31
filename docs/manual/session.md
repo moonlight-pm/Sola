@@ -233,9 +233,14 @@ process, or the nearest process above it, carries the application's
 Steam stays while the game is open. Hidden windows and windows on other
 workspaces count.
 
+Closing the last window from Sola quits at once, without the 5 s: Steam
+answers a close from the compositor by starting its webhelper again, and
+its window comes back within a second, empty.
+
 | When | `sola-session` quits it |
 |---|---|
-| It had a window and has had none for 5 s: its own close button, the bar's ×, Super+W, its last window crashing | Yes |
+| Its last window is closed from Sola: the bar's ×, Super+W (`CloseWindow`) | Yes, at once |
+| It had a window and has had none for 5 s: its own close button, its last window crashing | Yes |
 | It has shown no window 2 minutes after it started | Yes |
 | `CloseApp`: Super+Q, the `close` call | Yes, at once |
 | **Exit Sola** | Yes, within the 6 s every application gets |
