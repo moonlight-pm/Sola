@@ -1634,17 +1634,10 @@ pub struct MailStatus {
 }
 
 define_topics! {
-    // TopicKind is postcard-encoded in Subscribe as a Vec. Inserting a
-    // variant *above* existing ones shifts discriminants (this broke
-    // Super+Tab). Append at the **end**.
-    //
-    // Appending is not enough against an *older bus host*: one unknown
-    // discriminant fails the whole Vec, the bus keeps the previous
-    // (empty) subscription, and the client is deaf (no OutputGeometry /
-    // Windows — shell never frames). `BusClient::subscribe` sends a
-    // prefix the prior generation can decode, then the full set. The
-    // host also skips unknown discriminants (`decode_subscribe_kinds`).
-    // Install `bus` in the same replace as any TopicKind growth.
+    // A subscription names its kinds (`crate::subscribe`), so adding or
+    // removing a kind renumbers nothing on the wire. Payloads are still
+    // postcard of their exact types: a changed payload needs the bus and
+    // its clients from one build.
     //
     // Window management list. Sticky: latest list from sola-river is
     // replayed to new subscribers.
@@ -1924,72 +1917,6 @@ define_topics! {
     ShowWindow(u32),
 }
 
-/// TopicKinds added after `MailStatus`. An older bus host cannot
-/// postcard-decode a Subscribe vec that includes these.
-pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
-    matches!(
-        kind,
-        TopicKind::AppNotification
-            | TopicKind::NotificationActivate
-            | TopicKind::CalendarConfig
-            | TopicKind::WindowParent
-            | TopicKind::TabLayout
-            | TopicKind::Tab
-            | TopicKind::TabWindow
-            | TopicKind::ShowTab
-            | TopicKind::TabActivity
-            | TopicKind::WindowChrome
-            | TopicKind::Workspaces
-            | TopicKind::WindowWorkspace
-            | TopicKind::CloseWindow
-            | TopicKind::CloseTab
-            | TopicKind::AgentIsland
-            | TopicKind::AgentIslandAction
-            | TopicKind::Background
-            | TopicKind::Appearance
-            | TopicKind::ThemeVariations
-            | TopicKind::IdleKeep
-            | TopicKind::IdleFade
-            | TopicKind::CalendarAgenda
-            | TopicKind::ShowWindow
-    )
-}
-
-/// Decode a Subscribe payload. Unknown trailing discriminants (a newer
-/// client talking to this bus) are skipped so the rest of the set still
-/// applies. Empty / totally foreign payloads error.
-pub fn decode_subscribe_kinds(msg: &crate::Message) -> std::io::Result<Vec<TopicKind>> {
-    match crate::topic::decode_payload::<Vec<TopicKind>>(msg) {
-        Ok(kinds) => Ok(kinds),
-        Err(_) => {
-            let raw: Vec<u32> = crate::topic::decode_payload(msg)?;
-            let mut kinds = Vec::new();
-            let mut unknown = 0u32;
-            for d in raw {
-                if let Some(k) = TopicKind::ALL.get(d as usize).copied() {
-                    kinds.push(k);
-                } else {
-                    unknown += 1;
-                }
-            }
-            if unknown > 0 {
-                tracing::warn!(
-                    unknown,
-                    kept = kinds.len(),
-                    "subscribe: skipped unknown TopicKind discriminants"
-                );
-            }
-            if kinds.is_empty() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "subscribe: no known TopicKind",
-                ));
-            }
-            Ok(kinds)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2053,7 +1980,6 @@ mod tests {
             Some(Topic::TabActivity(back)) => assert_eq!(back, activity),
             other => panic!("expected TabActivity, got {other:?}"),
         }
-        assert!(topic_kind_is_after_mail_status(TopicKind::TabActivity));
     }
 
     #[test]
@@ -2086,7 +2012,6 @@ mod tests {
             Some(Topic::AgentIslandAction(back)) => assert_eq!(back, act),
             other => panic!("expected AgentIslandAction, got {other:?}"),
         }
-        assert!(topic_kind_is_after_mail_status(TopicKind::AgentIsland));
     }
 
     #[test]
@@ -2101,7 +2026,6 @@ mod tests {
             Some(Topic::Background(back)) => assert_eq!(back, bg),
             other => panic!("expected Background, got {other:?}"),
         }
-        assert!(topic_kind_is_after_mail_status(TopicKind::Background));
         let look = Appearance {
             adapt_theme: true,
             strength: 40,
@@ -2113,7 +2037,6 @@ mod tests {
             Some(Topic::Appearance(back)) => assert_eq!(back, look),
             other => panic!("expected Appearance, got {other:?}"),
         }
-        assert!(topic_kind_is_after_mail_status(TopicKind::Appearance));
         // An Appearance saved before the fade settings reads with their
         // defaults.
         let old: Appearance = serde_yaml_ng::from_str("adapt_theme: true\nstrength: 30\n").unwrap();
@@ -2141,7 +2064,6 @@ mod tests {
             other => panic!("expected Appearance, got {other:?}"),
         }
         assert!(TopicKind::ThemeVariations.behavior().is_sticky());
-        assert!(topic_kind_is_after_mail_status(TopicKind::ThemeVariations));
         let keep = IdleKeep {
             x: 0,
             y: 0,
@@ -2153,14 +2075,12 @@ mod tests {
             other => panic!("expected IdleKeep, got {other:?}"),
         }
         assert!(TopicKind::IdleKeep.behavior().is_sticky());
-        assert!(topic_kind_is_after_mail_status(TopicKind::IdleKeep));
         let fade = IdleFade { fading: true, out: true };
         match Topic::parse(&Topic::IdleFade(fade).to_message()) {
             Some(Topic::IdleFade(back)) => assert_eq!(back, fade),
             other => panic!("expected IdleFade, got {other:?}"),
         }
         assert!(TopicKind::IdleFade.behavior().is_sticky());
-        assert!(topic_kind_is_after_mail_status(TopicKind::IdleFade));
     }
 
     #[test]
@@ -2184,7 +2104,6 @@ mod tests {
             other => panic!("expected CalendarAgenda, got {other:?}"),
         }
         assert!(TopicKind::CalendarAgenda.behavior().is_persistent());
-        assert!(topic_kind_is_after_mail_status(TopicKind::CalendarAgenda));
     }
 
     #[test]
@@ -2202,7 +2121,6 @@ mod tests {
             Some(Topic::WindowChrome(back)) => assert_eq!(back, chrome),
             other => panic!("expected WindowChrome, got {other:?}"),
         }
-        assert!(topic_kind_is_after_mail_status(TopicKind::WindowChrome));
     }
 
     #[test]
@@ -2310,27 +2228,6 @@ mod tests {
             TopicKind::NotificationActivate.as_str(),
             "NotificationActivate"
         );
-        assert!(topic_kind_is_after_mail_status(TopicKind::AppNotification));
-        assert!(!topic_kind_is_after_mail_status(TopicKind::MailStatus));
-        assert!(!topic_kind_is_after_mail_status(TopicKind::Windows));
-    }
-
-    #[test]
-    fn decode_subscribe_skips_unknown_discriminants() {
-        let mut raw: Vec<u32> = TopicKind::ALL
-            .iter()
-            .take(3)
-            .enumerate()
-            .map(|(i, _)| i as u32)
-            .collect();
-        raw.push(u32::MAX);
-        let msg = crate::Message::with_payload(
-            crate::CONTROL_SUBSCRIBE,
-            crate::topic::encode_payload(&raw),
-        );
-        let kinds = decode_subscribe_kinds(&msg).expect("kept known kinds");
-        assert_eq!(kinds.len(), 3);
-        assert_eq!(kinds[0], TopicKind::ALL[0]);
     }
 
     #[test]

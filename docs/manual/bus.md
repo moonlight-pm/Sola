@@ -52,26 +52,34 @@ Varints are postcard's unsigned varints (7 bits per byte, low bits first).
 | `keys` | list of strings | varint count, then each string | The values of the topic's key fields as text (`window_id` 42 is `"42"`); empty for unkeyed topics |
 
 Payloads are positional postcard with no field names, so a payload decodes
-only as the exact type it was encoded from, and every process on the bus
-must be built from the same `sola-bus` source. Only `Application` and
-`MailConfig` also accept older layouts.
+only as the exact type it was encoded from. A process built from another
+`sola-bus` source reads only the topics whose payloads kept their layout;
+only `Application` and `MailConfig` also accept older layouts. Keep every
+process on the bus on one build.
 
-Two topic names that start with `$` are instructions to the bus. It never
-forwards or answers them.
+Three topic names that start with `$` are instructions to the bus. It
+never forwards or answers them.
 
 | Topic | Payload | Effect |
 |---|---|---|
 | `$identify` | postcard string: the app id | Names this connection |
-| `$subscribe` | postcard list of `TopicKind` | Replaces this connection's subscription set |
+| `$subscribe-names` | postcard list of strings: topic names | Replaces this connection's subscription set |
+| `$subscribe` | postcard list of integers: topic numbers | The same, for a bus from before `$subscribe-names`; ignored from a connection that has sent `$subscribe-names` |
 
-A `TopicKind` travels as a varint: its index in the enum that `sola-bus`
-generates from the topic list. The generator orders kinds by retention
-(ephemeral, then sticky, then persistent) and, within each, puts kinds
-without a payload first, keeping source order otherwise. The index is
-therefore not the position in `topics.rs`, and adding a topic can renumber
-others. When the list does not decode, the bus reads it as plain integers,
-skips indices it does not know, and applies the rest; when nothing usable
-remains, the connection keeps its previous set.
+`$subscribe-names` names each kind as its messages do (`TabLayout`), so a
+bus and a client from different builds agree on what was asked for. The
+bus skips names it does not know, a newer client's topics, and applies the
+rest.
+
+`$subscribe` carries each kind as its index in a list frozen at the last
+build that sent only numbers (`subscribe::NUMBERED`, 64 names). That
+build's numbers were the kinds' order in the enum `sola-bus` generates,
+which groups them by retention, so adding a topic renumbered others; the
+frozen list keeps those numbers, including `CustomTheme`'s, a topic since
+removed. The bus skips numbers it cannot place and applies the rest; when
+nothing usable remains, the connection keeps its previous set. A kind
+added after the freeze has no number, and a bus from before names never
+receives a subscription to it.
 
 ## Connecting and identifying
 
@@ -100,10 +108,10 @@ Subscription is by kind only, with no filter on keys, payload, or source. A
 client subscribed to `MenuAction` receives every app's menu actions and
 keeps those whose `app_id` is its own.
 
-`BusClient::subscribe` sends two frames when the set mixes the kinds added
-after `MailStatus` (`AppNotification` through `ShowWindow`, 23 of them)
-with older ones: the set without the newer kinds, then the full set, which
-replaces the first.
+`BusClient::subscribe` sends two frames: `$subscribe-names`, then
+`$subscribe` with the kinds the frozen list has. A current bus applies the
+first and ignores the second; a bus from before names logs `broadcast
+dropping unknown topic` for the first and applies the second.
 
 ## Publishing
 
