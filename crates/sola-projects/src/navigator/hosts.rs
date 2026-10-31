@@ -1,15 +1,12 @@
-//! The Projects chooser's Remote stage: open a project on another computer
-//! (Joshua, 2026-10-28: "When i open projects through launcher, there
-//! should be a 'remote' option. This allows me to type in a hostname, and
-//! it should remember recently used. It will ssh there to get a list of
-//! projects to open.").
+//! The navigator's other computer (Joshua, 2026-10-28: "there should be a
+//! 'remote' option. This allows me to type in a hostname, and it should
+//! remember recently used. It will ssh there to get a list of projects to
+//! open.").
 //!
 //! The field takes a host (`name`, `user@name`, a `~/.ssh/config` alias);
 //! the rows are the hosts opened before, latest first, matching what is
 //! typed, then the typed one. Picking one lists that computer's
-//! `~/Projects` over ssh ([`list`]); the chooser then shows its folders,
-//! and picking one has Projects open it there (`project.open --host`):
-//! its tabs are tmux sessions on that computer.
+//! `~/Projects` and its sessions in one ssh call ([`list`]).
 
 use std::path::PathBuf;
 
@@ -36,8 +33,6 @@ pub struct Hosts {
     pub filtered: Vec<usize>,
     /// The query, trimmed.
     query: String,
-    /// Listing this host's projects (the rows wait for it).
-    pub connecting: Option<String>,
     /// Why the last host picked could not be listed.
     pub error: Option<String>,
 }
@@ -61,12 +56,8 @@ impl Hosts {
             .collect();
     }
 
-    /// The rows: matching recent hosts, then the typed one. None while
-    /// connecting.
+    /// The rows: matching recent hosts, then the typed one.
     pub fn rows(&self) -> Vec<HostRow> {
-        if self.connecting.is_some() {
-            return Vec::new();
-        }
         let mut rows: Vec<HostRow> = self.filtered.iter().map(|&i| HostRow::Recent(i)).collect();
         if self.typed().is_some() {
             rows.push(HostRow::Typed);
@@ -150,7 +141,7 @@ fn parse_listing(out: &str) -> Result<Listing, String> {
 /// existing one is used as it is. Waits on ssh.
 pub fn create(host: &str, root: &std::path::Path, name: &str) -> Result<PathBuf, String> {
     let host = ssh::check_host(host)?;
-    let name = super::projects::check_name(name)?;
+    let name = crate::catalog::check_project_name(name)?;
     let path = root.join(name);
     let script = ssh::argv_script(None, &[], &["mkdir", "-p", "--", &path.to_string_lossy()]);
     let out = ssh::run(ssh::batch(host, &script), None)?;
@@ -167,14 +158,22 @@ struct Recent {
 }
 
 fn recent_path() -> PathBuf {
+    crate::paths::config_dir().join("remote-hosts.json")
+}
+
+/// Where the shell's chooser kept them, until 2026-10-31.
+fn shell_recent_path() -> PathBuf {
     sola_core::config::sola_config_dir()
         .join("shell")
         .join("remote-hosts.json")
 }
 
-/// The hosts opened before, latest first.
+/// The hosts opened before, latest first (the shell's list until this one
+/// is written).
 pub fn load_recent() -> Vec<String> {
-    match sola_core::config::load_json_or_default::<Recent>(&recent_path()) {
+    let path = recent_path();
+    let path = if path.exists() { path } else { shell_recent_path() };
+    match sola_core::config::load_json_or_default::<Recent>(&path) {
         Ok(r) => r.hosts,
         Err(e) => {
             tracing::warn!("recent hosts: {e}");
@@ -215,8 +214,6 @@ mod tests {
         assert_eq!(h.host(HostRow::Typed), Some("nov"));
         h.apply_query(" novus ");
         assert_eq!(h.rows(), [HostRow::Recent(0)]);
-        h.connecting = Some("novus".into());
-        assert!(h.rows().is_empty());
     }
 
     #[test]

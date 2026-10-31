@@ -19,7 +19,7 @@ A launch arrives in one of two ways:
 
 | Path | Sent by | Command run |
 |---|---|---|
-| `LaunchApp {app_id, command}` on the bus | The shell (the launcher, its Projects chooser, and the clock's panel, which opens Calendar); a web app's `--app` process when no Browser is running | The one in the request |
+| `LaunchApp {app_id, command}` on the bus | The shell (the launcher — Projects included, when it is not running — and the clock's panel, which opens Calendar); a web app's `--app` process when no Browser is running | The one in the request |
 | The `launch` call: `solactl session launch <app_id> [--command CMD]` | You, scripts, agents | `--command`; else `/bin/<app_id>` if that file exists; else the app id itself |
 
 The call does not read the catalog: without `--command` it runs the

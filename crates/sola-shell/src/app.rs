@@ -26,7 +26,7 @@ use crate::zoning::ZoningState;
 pub mod adapt;
 pub mod agents;
 pub mod bus;
-pub mod chooser;
+pub mod projects;
 pub mod web;
 pub mod workspaces;
 pub mod zones;
@@ -161,29 +161,10 @@ pub enum Msg {
     /// Escape in the launcher: a stage back (naming → projects → apps),
     /// else close.
     LauncherEscape,
-    /// A row of the Projects chooser clicked.
+    /// A row of the Browser field clicked.
     LauncherPick(usize),
-    /// Projects' `project.list`, for the chooser's open marks: each
-    /// project's host (`None`: here), root, and what Projects says of it.
-    ProjectsKnown(
-        Result<
-            Vec<(
-                Option<String>,
-                std::path::PathBuf,
-                crate::launcher::projects::Known,
-            )>,
-            String,
-        >,
-    ),
-    /// New's folder made on a host (or why not).
-    RemoteCreated(String, Result<std::path::PathBuf, String>),
-    /// A host's `~/Projects`, listed over ssh for the chooser (or why not).
-    RemoteListed(
-        String,
-        Result<crate::launcher::remote::Listing, String>,
-    ),
-    /// Projects answered `project.open`.
-    ProjectOpened(Result<(), String>),
+    /// Projects answered `window.navigate` (the launcher's Projects row).
+    ProjectsWindow(Result<(), String>),
     /// Super+K / flower menu: show the keyboard-shortcuts overlay.
     OpenShortcuts,
     /// Dismiss the shortcuts overlay and restore prior focus.
@@ -1289,9 +1270,10 @@ impl Shell {
     /// A running app comes forward instead of starting again (Browser and
     /// Terminal open a new window); a composition-hidden one is unhidden.
     fn launch_from_launcher(&mut self, app_id: Option<&str>) -> iced::Task<Msg> {
-        // Projects opens a project, not another Projects: its chooser.
+        // Projects opens a window to pick a project in, not another
+        // Projects.
         if app_id == Some(crate::launcher::projects::APP_ID) {
-            return self.enter_projects_chooser();
+            return self.open_projects_window();
         }
         // Browser asks where to, not for a blank page.
         if app_id == Some(crate::launcher::web::APP_ID) {
@@ -2545,8 +2527,6 @@ impl Shell {
                 }
                 self.launcher.prior_focus = self.focused_window_id;
                 self.launcher.active = true;
-                self.launcher.chooser = None;
-                self.launcher.hosts = None;
                 self.launcher.web = None;
                 let apps = self.applications.clone();
                 self.launcher.apply_query(&apps, "");
@@ -2567,8 +2547,6 @@ impl Shell {
                     return iced::Task::none();
                 }
                 self.launcher.active = false;
-                self.launcher.chooser = None;
-                self.launcher.hosts = None;
                 self.launcher.web = None;
                 self.emit_composition();
                 self.emit_registered_chords();
@@ -2587,21 +2565,6 @@ impl Shell {
                     self.launcher.selected = 0;
                     return iced::Task::none();
                 }
-                if let Some(hosts) = self.launcher.hosts.as_mut() {
-                    hosts.apply_query(&text);
-                    hosts.error = None;
-                    self.launcher.query = text;
-                    self.launcher.selected = 0;
-                    return iced::Task::none();
-                }
-                if let Some(chooser) = self.launcher.chooser.as_mut() {
-                    if !chooser.naming {
-                        chooser.apply_query(&text);
-                    }
-                    self.launcher.query = text;
-                    self.launcher.selected = 0;
-                    return iced::Task::none();
-                }
                 let apps = self.applications.clone();
                 self.launcher.apply_query(&apps, &text);
                 iced::Task::none()
@@ -2616,11 +2579,9 @@ impl Shell {
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
-                let len = match (&self.launcher.web, &self.launcher.hosts, &self.launcher.chooser) {
-                    (Some(web), _, _) => web.rows().len(),
-                    (None, Some(hosts), _) => hosts.rows().len(),
-                    (None, None, Some(chooser)) => chooser.rows().len(),
-                    (None, None, None) => self.launcher.filtered_ids.len(),
+                let len = match &self.launcher.web {
+                    Some(web) => web.rows().len(),
+                    None => self.launcher.filtered_ids.len(),
                 };
                 if len == 0 {
                     return iced::Task::none();
@@ -2641,12 +2602,6 @@ impl Shell {
                 }
                 if self.launcher.web.is_some() {
                     return self.web_pick(self.launcher.selected);
-                }
-                if self.launcher.hosts.is_some() {
-                    return self.hosts_pick(self.launcher.selected);
-                }
-                if self.launcher.chooser.is_some() {
-                    return self.chooser_pick(self.launcher.selected);
                 }
                 let app_id = self
                     .launcher
@@ -2684,34 +2639,15 @@ impl Shell {
                     return iced::Task::none();
                 }
                 self.launcher.selected = i;
-                if self.launcher.web.is_some() {
-                    return self.web_pick(i);
+                match self.launcher.web.is_some() {
+                    true => self.web_pick(i),
+                    false => iced::Task::none(),
                 }
-                if self.launcher.hosts.is_some() {
-                    return self.hosts_pick(i);
-                }
-                self.chooser_pick(i)
             }
-            Msg::RemoteListed(host, listed) => self.on_remote_listed(host, listed),
-            Msg::RemoteCreated(host, made) => self.on_remote_created(host, made),
-            Msg::ProjectsKnown(known) => {
-                match (known, self.launcher.chooser.as_mut()) {
-                    (Ok(known), Some(chooser)) => {
-                        chooser.known = known
-                            .into_iter()
-                            .filter(|(host, _, _)| *host == chooser.host)
-                            .map(|(_, root, k)| (root, k))
-                            .collect()
-                    }
-                    (Err(e), _) => tracing::debug!(error = %e, "project chooser: project.list"),
-                    _ => {}
-                }
-                iced::Task::none()
-            }
-            Msg::ProjectOpened(Ok(())) => iced::Task::none(),
-            Msg::ProjectOpened(Err(e)) => {
-                tracing::warn!(error = %e, "project chooser: project.open");
-                self.chooser_toast(format!("Projects: {e}"))
+            Msg::ProjectsWindow(Ok(())) => iced::Task::none(),
+            Msg::ProjectsWindow(Err(e)) => {
+                tracing::warn!(error = %e, "launcher: Projects' window.navigate");
+                self.projects_toast(format!("Projects: {e}"))
             }
             Msg::RaiseMail => {
                 self.activate_mail();

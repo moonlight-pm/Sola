@@ -41,6 +41,7 @@ mod islands;
 mod link;
 mod machine;
 mod menu;
+mod navigator;
 mod paths;
 mod presence;
 mod records;
@@ -207,7 +208,11 @@ struct App {
     /// Previous pane id if we renamed a *path-matched* orphan onto `ws-main`.
     adopted_from: Option<String>,
     spawn: cards::SpawnDraft,
-    add: cards::AddDraft,
+    /// Navigator windows' state ([`navigator`]).
+    navigators: HashMap<window::Id, navigator::Navigator>,
+    /// The navigator that asked for a project: closed once its session's
+    /// window is up.
+    nav_handoff: Option<window::Id>,
     end: cards::EndDraft,
     /// One of the app's windows has keyboard focus (desk cards wait).
     window_focused: bool,
@@ -241,6 +246,17 @@ struct PendingWait {
     deadline: Instant,
 }
 
+/// What a navigator window hears.
+#[derive(Debug, Clone)]
+enum NavMsg {
+    Query(String),
+    Pick(usize),
+    /// A host's `~/Projects`, listed over ssh.
+    Listed(String, Result<navigator::hosts::Listing, String>),
+    /// A new folder made (its path, its host), or why not.
+    Made(Result<(PathBuf, Option<String>), String>),
+}
+
 #[derive(Debug, Clone)]
 enum Msg {
     Bus(Arc<Message>),
@@ -261,8 +277,8 @@ enum Msg {
     DismissDialog,
     SpawnName(String),
     Spawn,
-    AddPath(String),
-    AddProject,
+    /// A navigator window's field, rows and answers ([`navigator`]).
+    Nav(window::Id, NavMsg),
     /// The End Session card's End Session.
     EndConfirmed,
     /// `tab.rm`: end the session once the reply is out.
@@ -499,7 +515,8 @@ impl App {
             pane_status,
             adopted_from,
             spawn: cards::SpawnDraft::default(),
-            add: cards::AddDraft::default(),
+            navigators: HashMap::new(),
+            nav_handoff: None,
             end: cards::EndDraft::default(),
             window_focused: true,
             idle_fading: false,
@@ -760,7 +777,6 @@ impl App {
             }
             Msg::DismissDialog => {
                 self.spawn = cards::SpawnDraft::default();
-                self.add = cards::AddDraft::default();
                 self.end = cards::EndDraft::default();
                 Task::none()
             }
@@ -775,12 +791,7 @@ impl App {
                 Some(id) => self.end_session(&id),
                 None => Task::none(),
             },
-            Msg::AddPath(s) => {
-                self.add.name = s;
-                self.add.error = None;
-                Task::none()
-            }
-            Msg::AddProject => self.add_project(),
+            Msg::Nav(window, m) => self.on_nav(window, m),
             Msg::RestartShell(id) => self.attach_pane(&id, &[]),
             Msg::PtyOutput(id) => {
                 if let Some(rt) = self.runtimes.get(&id) {
@@ -899,6 +910,23 @@ impl App {
     }
 
     fn view(&self, window: window::Id) -> Element<'_, Msg> {
+        if let Some(nav) = self.navigators.get(&window) {
+            let body = container(navigator::view::view(nav, window, &self.open_here()))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|theme: &Theme| container::Style {
+                    background: Some(theme.palette().background.into()),
+                    ..container::Style::default()
+                });
+            return sola_kit::window_frame(
+                self.chrome(window),
+                self.frame_title(window),
+                Msg::TitleDrag(window),
+                Msg::TitleClose(window),
+                move |dir| Msg::TitleResize(window, dir),
+                body.into(),
+            );
+        }
         let session = self
             .windows
             .tab_of(window)
@@ -914,13 +942,14 @@ impl App {
             .height(Length::Fill)
             .clip(true)
             .into();
+        let bare = matches!(self.chrome(window), sola_kit::Chrome::Bare);
         let body: Element<'_, Msg> = match session {
-            Some(id) => column![bar::view(self.pane_status.get(id)), pane].into(),
-            None => pane,
+            Some(id) if !bare => column![bar::view(self.pane_status.get(id)), pane].into(),
+            _ => pane,
         };
 
         let body: Element<'_, Msg> = match (self.windows.focused == Some(window))
-            .then(|| cards::overlay(&self.spawn, &self.add, &self.end, &self.projects))
+            .then(|| cards::overlay(&self.spawn, &self.end, &self.projects))
             .flatten()
         {
             Some(veil) => stack![body, veil].into(),
@@ -990,6 +1019,10 @@ impl App {
     /// have to deliberatly tell sessions to close") — End Session ends it.
     /// The last window closing quits.
     fn close_window(&mut self, window: window::Id) -> Task<Msg> {
+        self.navigators.remove(&window);
+        if self.nav_handoff == Some(window) {
+            self.nav_handoff = None;
+        }
         let tab = self.windows.forget(window);
         tracing::info!(tab = ?tab, "session window closed; the session stays");
         if let Some(id) = tab {
@@ -1071,7 +1104,6 @@ impl App {
             })
             .unwrap_or_else(|| tab.name.clone());
         self.spawn = cards::SpawnDraft::default();
-        self.add = cards::AddDraft::default();
         self.end = cards::EndDraft {
             tab: Some(id.to_string()),
             label,
@@ -1127,6 +1159,7 @@ impl App {
             window::Event::CloseRequested => self.close_window(id),
             window::Event::Closed => {
                 // Closed under us (not through close_window).
+                self.navigators.remove(&id);
                 if let Some(tab) = self.windows.forget(id) {
                     self.forget_tab(&tab);
                     self.publish_menu();
@@ -1144,18 +1177,7 @@ impl App {
     /// The app menu; Project → Open lists the folders of `~/Projects` not
     /// open here.
     fn publish_menu(&self) {
-        let open: HashSet<&PathBuf> = self
-            .projects
-            .iter()
-            .filter(|p| p.host.is_none())
-            .map(|p| &p.root)
-            .collect();
-        let folders: Vec<(String, String)> = catalog::project_folders()
-            .into_iter()
-            .filter(|(_, path)| !open.contains(path))
-            .map(|(name, path)| (path.to_string_lossy().into_owned(), name))
-            .collect();
-        sola_kit::menu::publish(menu::app_menu(&folders));
+        sola_kit::menu::publish(menu::app_menu());
     }
 
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
@@ -1209,7 +1231,7 @@ impl App {
                 return match p.action_id.as_str() {
                     "spawn-sibling" => match self.selected_project_id() {
                         Some(id) => self.open_spawn(&id),
-                        None => self.open_add(),
+                        None => self.open_navigator(false),
                     },
                     instance::RAISE => {
                         let tab = Some(self.selected.clone())
@@ -1220,21 +1242,12 @@ impl App {
                             None => Task::none(),
                         }
                     }
-                    "add-project" => self.open_add(),
+                    "open-project" => self.open_navigator(false),
+                    "add-project" => self.open_navigator(true),
                     "close-window" => match self.windows.focused {
                         Some(window) => self.close_window(window),
                         None => Task::none(),
                     },
-                    open if open.starts_with(menu::OPEN_PREFIX) => {
-                        let path = open[menu::OPEN_PREFIX.len()..].to_string();
-                        match self.cli_open_project(&path, None, None) {
-                            Ok((_, task)) => task,
-                            Err(e) => {
-                                tracing::warn!(%path, "Project → Open: {e}");
-                                Task::none()
-                            }
-                        }
-                    }
                     "end-session" => {
                         let id = self.selected.clone();
                         self.ask_end_session(&id)
@@ -1640,21 +1653,9 @@ impl App {
         let Some(project) = self.projects.iter().find(|p| p.id == project_id) else {
             return Task::none();
         };
-        self.add = cards::AddDraft::default();
         self.end = cards::EndDraft::default();
         self.spawn = cards::SpawnDraft::open(project_id, project.host.clone());
         iced::widget::operation::focus::<Msg>(iced::widget::Id::new(cards::SPAWN_INPUT_ID))
-    }
-
-    fn open_add(&mut self) -> Task<Msg> {
-        self.spawn = cards::SpawnDraft::default();
-        self.end = cards::EndDraft::default();
-        self.add = cards::AddDraft {
-            open: true,
-            name: String::new(),
-            error: None,
-        };
-        iced::widget::operation::focus::<Msg>(iced::widget::Id::new(cards::ADD_INPUT_ID))
     }
 
     fn selected_project_id(&self) -> Option<String> {
@@ -2029,6 +2030,10 @@ impl App {
                     Err(e) => (Err(e), Task::none()),
                 }
             }
+            "window.navigate" => (
+                Ok(serde_json::json!({ "window": "navigator" })),
+                self.open_navigator(false),
+            ),
             "project.open" => {
                 let Some(path) = param_str(params, "path") else {
                     return (Err("missing path".into()), Task::none());
@@ -2646,26 +2651,6 @@ impl App {
         self.pending_waits = keep;
     }
 
-    /// New Project: `~/Projects/<name>` (made if it is not there), opened
-    /// in front on its root tab.
-    fn add_project(&mut self) -> Task<Msg> {
-        let made = catalog::check_project_name(&self.add.name).and_then(|name| {
-            let path = catalog::projects_dir().join(name);
-            std::fs::create_dir_all(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            Ok(path)
-        });
-        match made.and_then(|path| self.cli_open_project(&path.to_string_lossy(), None, None)) {
-            Ok((_, task)) => {
-                self.add = cards::AddDraft::default();
-                task
-            }
-            Err(e) => {
-                self.add.error = Some(e);
-                Task::none()
-            }
-        }
-    }
-
     /// A folder of `~/Projects` here becomes a project in this catalog
     /// (no session yet: [`Self::on_host_sessions`] finds or makes them).
     fn register_project(&mut self, raw: &str) -> Result<String, String> {
@@ -2776,11 +2761,13 @@ impl App {
         self.persist_catalog();
         if let Some(key) = only.map(|id| catalog::key_for(&id, host)) {
             if self.tabs.iter().any(|w| w.id == key) {
-                return Task::batch([learn, self.show_tab(&key)]);
+                let show = self.show_tab(&key);
+                return Task::batch([learn, show, self.nav_handed_off()]);
             }
             tracing::warn!(session = %key, "the chosen session is not there any more");
         }
-        Task::batch([learn, self.show_project(project_id)])
+        let show = self.show_project(project_id);
+        Task::batch([learn, show, self.nav_handed_off()])
     }
 
     /// A new main session for `project`: `ws-main` here when that is free
@@ -2833,9 +2820,10 @@ impl App {
     /// edge.
     fn content_rect(&self, window: window::Id) -> term_state::Rect {
         let size = self.windows.size(window).unwrap_or(DEFAULT_WINDOW);
+        // The titlebar, then the session's bar ([`bar`]); Cinema has neither.
         let top = match self.chrome(window) {
             sola_kit::Chrome::Bare => 0.0,
-            _ => sola_kit::components::window_frame::HEIGHT,
+            _ => sola_kit::components::window_frame::HEIGHT + sola_kit::components::style::BAR_H,
         };
         term_state::Rect {
             x: 0.0,
@@ -2871,15 +2859,18 @@ impl App {
     }
 
     fn dialog_open(&self) -> bool {
-        self.spawn.is_open() || self.add.open || self.end.is_open()
+        self.spawn.is_open() || self.end.is_open()
     }
 
     fn copy_selection(&self) -> Task<Msg> {
         if self.spawn.is_open() && !self.spawn.name.is_empty() {
             return iced::clipboard::write(self.spawn.name.clone());
         }
-        if self.add.open && !self.add.name.is_empty() {
-            return iced::clipboard::write(self.add.name.clone());
+        if let Some(nav) = self.focused_navigator() {
+            return match nav.query.is_empty() {
+                true => Task::none(),
+                false => iced::clipboard::write(nav.query.clone()),
+            };
         }
         let Some(rt) = self.runtimes.get(&self.focused) else {
             return Task::none();
@@ -2903,9 +2894,12 @@ impl App {
             self.spawn.name.push_str(&text.replace('\n', ""));
             return Task::none();
         }
-        if self.add.open {
-            self.add.name.push_str(&text.replace('\n', ""));
-            return Task::none();
+        if let Some(window) = self.windows.focused.filter(|w| self.navigators.contains_key(w)) {
+            let query = match self.navigators.get(&window) {
+                Some(nav) => format!("{}{}", nav.query, text.replace('\n', "")),
+                None => return Task::none(),
+            };
+            return self.on_nav(window, NavMsg::Query(query));
         }
         let Some(rt) = self.runtimes.get(&self.focused) else {
             return Task::none();
@@ -2930,6 +2924,10 @@ impl App {
             self.apply_modifier_key(key, physical_key, false);
             return Task::none();
         }
+        // A navigator's keys are its own: never a session's terminal.
+        if let Some(window) = self.windows.focused.filter(|w| self.navigators.contains_key(w)) {
+            return self.nav_key(window, &event);
+        }
 
         if let iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key: keyboard::Key::Named(keyboard::key::Named::Escape),
@@ -2938,7 +2936,6 @@ impl App {
         {
             if self.dialog_open() {
                 self.spawn = cards::SpawnDraft::default();
-                self.add = cards::AddDraft::default();
                 self.end = cards::EndDraft::default();
                 return Task::none();
             }

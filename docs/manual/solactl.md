@@ -470,6 +470,37 @@ one too — as a chip in that computer's prompt color. In place of its icon
 the row shows the session's activity: an amber diamond while it waits on
 a decision, a spinning ring while it works.
 
+Under its title, a session's window has a bar: its agent (Claude, Codex,
+Grok, or Shell) and model at the left; at the right its turns (prompts
+you sent), compactions, and context (what its last request carried, in
+tokens; "of 272k" when the agent's files give its window). Claude's come
+from its transcript, Codex's from its rollout; Grok's files give only
+compactions. A session on another computer reads them there over ssh. In
+Cinema the window shows only the terminal.
+
+**A Projects window to pick a project in.** The launcher's Projects
+(`window.navigate`), **Project → Open Project…** (⌘O) and **New
+Project…** (⌘N) open one; the launcher starts Projects first if it is not
+running. It lists the folders of `~/Projects` (type to filter; ↑ ↓ and
+Enter, or click), each with its sessions running on this computer under
+it, whichever computer started them (`main` for the project's first);
+ones open here say **Open**.
+
+- Picking a folder opens its running sessions (or starts its main one);
+  picking a session opens it alone. The window closes and the session's
+  window takes its place.
+- **New project…** asks for a name (or takes the one you typed) and makes
+  `~/Projects/<name>`, then opens it.
+- **On another computer…** asks for a computer: its name, `user@name`, or
+  a `~/.ssh/config` alias; the last eight are listed, latest first. Enter
+  lists that computer's `~/Projects` and its sessions over ssh, and the
+  window works as it does here; New makes a folder there. The listing
+  never asks for a password: it needs a key or an ssh agent, and tmux
+  there. If it cannot be listed, the reason shows above the computers.
+- **Esc** goes back a step (a computer's projects to the computers, the
+  computers to this one's projects, a new name to the list); at the top
+  it closes the window.
+
 Any computer's Projects can open any computer's sessions: two computers
 can watch and type in the same session. Its size follows the computer
 that typed last. **Closing a window detaches**: that computer stops
@@ -483,11 +514,10 @@ Projects makes no worktrees. A session makes its own when its work needs
 one (`git worktree add .worktrees/<slug>` from the project root); ending
 a session never touches them.
 
-New Project… (⌘N) makes `~/Projects/<name>` and opens it. New Session…
-(⌘T) starts one in the focused session's project, on its computer, in a
-window of its own. Closing the last window quits Projects; started with
-nothing to open, Projects waits 20 seconds for a `project.open` (the
-launcher's), then quits. Projects was called Workspaces; `solactl
+New Session… (⌘T) starts one in the focused session's project, on its
+computer, in a window of its own. Closing the last window quits Projects;
+started with nothing to open, Projects waits 20 seconds for a call (the
+launcher's `window.navigate`), then quits. Projects was called Workspaces; `solactl
 workspaces` and the `workspace.*` methods are gone. The verbs still say
 `tab`: a tab is a session.
 
@@ -495,6 +525,7 @@ workspaces` and the `workspace.*` methods are gone. The verbs still say
 solactl projects                           # list methods
 solactl projects ps
 solactl projects project.list
+solactl projects window.navigate                         # a window to pick a project in
 solactl projects project.open --path ~/Projects/Sola    # its sessions here
 solactl projects project.open --host <computer> --path /home/<user>/Projects/Sola [--session ws-main]
 solactl projects project.close --project Sola   # its windows close; sessions run on
@@ -547,12 +578,10 @@ Errors name what went wrong: `<path> is not a folder of ~/Projects` for
 every session running on its computer in that folder, whichever computer
 started it (one already open here comes forward). With none running
 anywhere, it starts the project's main session. `--session <id>` (its id
-there, as `ws-main`) opens that session alone: the launcher's chooser does
-this from a session's row. A folder that is not a
-project here yet is added first. Its reply is the project with `opened`
-(none of its sessions was open here). The launcher's Projects chooser
-uses it, and Project → Open lists the folders of `~/Projects` with no
-session open here.
+there, as `ws-main`) opens that session alone, as a session's row in a
+Projects window does. A folder that is not a project here yet is added
+first. Its reply is the project with `opened` (none of its sessions was
+open here).
 
 A session says what it is to any computer that lists it: tmux options on
 it (`@sola-project`, `@sola-name`, `@sola-title`, `@sola-kind`). One made
@@ -595,8 +624,8 @@ its window up and replies `{"id", "selected": true}`.
 computer (an ssh host: a name, `user@name`, or a `~/.ssh/config` alias).
 `--path` is the folder's full path there. `solactl` resolves `--path` on
 this computer, so `~` becomes this computer's home and a relative path is
-taken from your working directory here; write the full path. The
-launcher's Projects chooser does this from **On another computer…**.
+taken from your working directory here; write the full path. A Projects
+window does this from **On another computer…**.
 
 Its sessions run there, in that computer's own Projects tmux (socket
 `sola-ws`, the one its own Projects uses), reached over ssh: a Projects

@@ -1,5 +1,5 @@
-//! The cards over a project window (new tab, add project, startup
-//! script) and the pane placeholders.
+//! The cards over a session window (New Session, End Session) and the
+//! pane placeholders. A new project is the navigator's ([`crate::navigator`]).
 
 use iced::widget::{column, container, mouse_area, row};
 use iced::{Alignment, Element, Length, Theme};
@@ -12,7 +12,6 @@ use crate::Msg;
 use crate::catalog::{self, Project};
 
 pub const SPAWN_INPUT_ID: &str = "ws-spawn-name";
-pub const ADD_INPUT_ID: &str = "ws-new-project";
 
 #[derive(Clone, Debug, Default)]
 pub struct SpawnDraft {
@@ -52,14 +51,6 @@ impl EndDraft {
     pub fn is_open(&self) -> bool {
         self.tab.is_some()
     }
-}
-
-#[derive(Clone, Debug, Default)]
-/// The New Project card: a name for its folder in `~/Projects`.
-pub struct AddDraft {
-    pub open: bool,
-    pub name: String,
-    pub error: Option<String>,
 }
 
 /// Dead PTY (Ctrl-D / shell exit). One action: start a new shell.
@@ -134,7 +125,6 @@ pub fn empty_pane<'a>() -> Element<'a, Msg> {
 /// Dim overlay + the open card. Click the veil to dismiss.
 pub fn overlay<'a>(
     spawn: &'a SpawnDraft,
-    add: &'a AddDraft,
     end: &'a EndDraft,
     projects: &'a [Project],
 ) -> Option<Element<'a, Msg>> {
@@ -146,9 +136,6 @@ pub fn overlay<'a>(
             .map(catalog::island_name)
             .unwrap_or("project");
         return Some(veil(spawn_card(spawn, project_name)));
-    }
-    if add.open {
-        return Some(veil(add_card(add)));
     }
     if end.is_open() {
         return Some(veil(end_card(end)));
@@ -248,38 +235,3 @@ fn end_card<'a>(draft: &'a EndDraft) -> Element<'a, Msg> {
     .into()
 }
 
-fn add_card<'a>(draft: &'a AddDraft) -> Element<'a, Msg> {
-    card::modal(
-        container(
-            column![
-                sola_kit::components::text::body("New project"),
-                field(
-                    "Name",
-                    text_input("lantern", &draft.name)
-                        .id(iced::widget::Id::new(ADD_INPUT_ID))
-                        .on_input(Msg::AddPath)
-                        .on_submit(Msg::AddProject),
-                    None,
-                    draft.error.as_deref(),
-                )
-                .padding(0),
-                sola_kit::components::text::caption(
-                    "Its folder in ~/Projects: made, or opened if it is there."
-                )
-                .style(sola_kit::components::text::muted),
-                row![
-                    iced::widget::Space::new().width(Length::Fill),
-                    kit_btn::labeled_sm("Cancel", kit_btn::ghost).on_press(Msg::DismissDialog),
-                    kit_btn::labeled_sm("Create", kit_btn::primary).on_press(Msg::AddProject),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ]
-            .spacing(12),
-        )
-        .padding(18)
-        .width(Length::Fixed(360.0)),
-    )
-    .width(Length::Shrink)
-    .into()
-}

@@ -427,37 +427,10 @@ when it opened. The same holds in the Super+K overlay.
 
 ### Projects
 
-Projects opens a project, not another Projects. Every project is a folder
-of `~/Projects`; picking Projects turns the launcher into a list of those
-folders, the field scoped to "Projects". Type to filter.
-
-- Under each folder, its sessions running on that computer, whichever
-  computer started them (a terminal icon, the session's title or name;
-  `main` for the project's first). Picking one opens it alone; one open
-  here says **Open on** its workspace.
-- Picking a folder opens all its running sessions (or starts its main one)
-  in the workspace you are on, right after the focused window. Closing a
-  session's window only stops this computer watching it; Project → End
-  Session… ends it.
-- **New project…** asks for a name (or takes the one you typed): Enter
-  makes `~/Projects/<name>` and opens it the same way.
-- **On another computer…** asks for a computer: type its name (or
-  `user@name`, or a `~/.ssh/config` alias); the last eight you opened are
-  listed, latest first. Enter connects over ssh and lists that computer's
-  `~/Projects` with the sessions running there, the field scoped to its
-  name; picking a folder or a session opens it in Projects, and **New
-  project** makes one there. Its sessions run there and work as sessions
-  here do
-  ([Projects on another computer](solactl.md#projects-on-another-computer)).
-  The listing never asks for a password: it needs a key or an ssh agent
-  that logs you in, and tmux on that computer. A computer you have not
-  reached before is trusted the first time; one whose key changed is
-  refused. If it cannot be listed, the reason shows above the computers.
-- Escape goes back a step: a computer's projects to the computers, the
-  computers to this one's projects, those to the apps; again closes the
-  launcher.
-
-If Projects is not running, it starts and opens the project.
+Picking Projects opens a Projects window to pick a project in, starting
+Projects first if it is not running; the launcher closes. That window
+lists the folders of `~/Projects` with their sessions, and another
+computer's ([Projects](solactl.md#projects-solactl-projects)).
 
 ### Browser
 

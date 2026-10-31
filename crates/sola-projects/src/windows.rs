@@ -1,8 +1,9 @@
 //! A window per session: each session is its own window, a tab in the
 //! shell's tab bar (sessions anywhere, 2026-10-30). Closing a window only
 //! stops this computer watching; the session keeps running where it is.
+//! A navigator ([`crate::navigator`]) is a window with no session yet.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use iced::{Task, window};
 use sola_bus::topics::Activity;
@@ -16,6 +17,10 @@ pub struct SessionWindows {
     by_tab: HashMap<String, window::Id>,
     by_window: HashMap<window::Id, String>,
     sizes: HashMap<window::Id, iced::Size>,
+    /// Windows with no session yet: where a project is picked.
+    navigators: HashSet<window::Id>,
+    /// Navigators opened, for their tab ids.
+    navigators_opened: u32,
     /// The window keys and menu actions go to: the last one focused.
     pub focused: Option<window::Id>,
 }
@@ -27,9 +32,24 @@ impl SessionWindows {
             by_tab: HashMap::new(),
             by_window: HashMap::new(),
             sizes: HashMap::new(),
+            navigators: HashSet::new(),
+            navigators_opened: 0,
             focused: None,
         }
     }
+
+    /// Open a navigator window, in front.
+    pub fn open_navigator(&mut self, app_id: &'static str) -> (window::Id, Task<window::Id>) {
+        let settings = sola_kit::app::window_settings_transparent(app_id);
+        self.navigators_opened += 1;
+        let id = format!("navigator-{}", self.navigators_opened);
+        let (window, task) = self.tabs.open(&id, settings, false);
+        self.navigators.insert(window);
+        self.focused = Some(window);
+        tracing::info!(tab = %id, "navigator window");
+        (window, task)
+    }
+
 
     /// Open session `tab_id`'s window. A `background` window joins its
     /// zone behind, unfocused.
@@ -50,16 +70,27 @@ impl SessionWindows {
         task
     }
 
-    /// Forget a window (closing, or closed under us). Returns its session.
+    /// Forget a window (closing, or closed under us). Returns its session
+    /// (a navigator has none).
     pub fn forget(&mut self, window: window::Id) -> Option<String> {
-        let tab = self.by_window.remove(&window)?;
-        self.by_tab.remove(&tab);
+        let tab = if self.navigators.remove(&window) {
+            None
+        } else {
+            let tab = self.by_window.remove(&window)?;
+            self.by_tab.remove(&tab);
+            Some(tab)
+        };
         self.sizes.remove(&window);
         self.tabs.close(window);
         if self.focused == Some(window) {
-            self.focused = self.by_window.keys().next().copied();
+            self.focused = self
+                .by_window
+                .keys()
+                .chain(self.navigators.iter())
+                .next()
+                .copied();
         }
-        Some(tab)
+        tab
     }
 
     pub fn tab_of(&self, window: window::Id) -> Option<&str> {
@@ -84,8 +115,9 @@ impl SessionWindows {
         self.by_window.iter().map(|(w, p)| (*w, p.as_str()))
     }
 
+    /// No window at all: no session's, no navigator.
     pub fn is_empty(&self) -> bool {
-        self.by_window.is_empty()
+        self.by_window.is_empty() && self.navigators.is_empty()
     }
 
     pub fn set_size(&mut self, window: window::Id, size: iced::Size) {
