@@ -3,7 +3,12 @@
 **Date:** 2026-10-31  
 **Status:** **Agreed in shape** 2026-10-31 (Joshua: "All your
 recommendations sound good. Don't worry about stopgaps. We'll get this done
-today."). V1–V7 decided as proposed; built on branch `vault`.  
+today."). V1–V7 decided as proposed. Slices 1–5 built the same day on branch
+`vault` (`sola-vault-proto`, `sola-vaultd`, `sola-vault`, the browser on
+the service with the canvas's look, the desk menu in the shell, the kit,
+terminal and Projects); not applied yet. Not built: import, attachment
+download, the launcher's vault search, the SSH agent, Mail passwords from
+the vault (slice 6).  
 **Related:** [vault panel](2026-08-28-sola-browser-vault-panel-design.md);
 [item edit](2026-09-11-sola-browser-vault-item-edit-design.md);
 [browser agent control](2026-09-11-sola-browser-agent-control-design.md)
