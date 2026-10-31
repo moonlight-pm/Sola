@@ -6024,12 +6024,14 @@ dependencies = [
  "sola-bus",
  "sola-call",
  "sola-core",
+ "sola-vault-proto",
  "tracing",
  "ttf-parser",
  "unicode-segmentation",
  "wayland-client",
  "wayland-protocols-wlr",
  "wl-clipboard-rs",
+ "zeroize",
 ]
 
 [[package]]
@@ -6268,6 +6270,7 @@ dependencies = [
  "sola-call",
  "sola-core",
  "sola-kit",
+ "sola-vault-proto",
  "tokio",
  "tracing",
  "zbus",

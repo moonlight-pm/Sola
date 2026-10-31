@@ -26,6 +26,7 @@ use crate::zoning::ZoningState;
 pub mod adapt;
 pub mod agents;
 pub mod bus;
+pub mod desk;
 pub mod projects;
 pub mod web;
 pub mod workspaces;
@@ -272,6 +273,11 @@ pub enum Msg {
     },
     /// `compositor.screenshot` finished (call plane, not the bus).
     ScreenshotDone(Result<(), String>),
+    /// The desk menu (`crate::desk_menu`).
+    Desk(crate::desk_menu::DeskMsg),
+    /// Arrows or Return in a shell overlay: the desk menu's while it is
+    /// open, else the launcher's and the shortcuts'.
+    OverlayKey(crate::desk_menu::Key),
     Noop,
 }
 
@@ -309,6 +315,8 @@ pub enum Panel {
     AgentIsland,
     /// The agent islands that did not fit (the +N island).
     AgentIslands,
+    /// The desk menu over an app's window (`Shell::desk`).
+    DeskMenu,
 }
 
 /// In-flight launcher spawn waiting for a first matching window (or timeout).
@@ -496,6 +504,15 @@ pub struct Shell {
     /// selection / notify / shortcuts. Composition waits on this so River
     /// does not show a stretched 2×2.
     overlay_iced_live: [bool; OVERLAY_LIVE_SLOTS],
+    /// The desk menu, while one is open (`Panel::DeskMenu`).
+    pub desk: Option<crate::desk_menu::DeskMenu>,
+    /// Counts desk menus, so a late vault answer finds only its own.
+    desk_generation: u64,
+    /// The desk menu's overlay rectangle last framed.
+    desk_frame_sent: Option<crate::desk_menu::place::Rect>,
+    /// The app window last clicked (`Topic::MouseClicked`): where a desk
+    /// menu opens.
+    pub last_clicked_window: Option<u32>,
 }
 
 impl Shell {
@@ -609,6 +626,10 @@ impl Shell {
             calendar_agenda: None,
             calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
+            desk: None,
+            desk_generation: 0,
+            desk_frame_sent: None,
+            last_clicked_window: None,
         };
         state.publish_key_actions();
 
@@ -1827,6 +1848,7 @@ impl Shell {
                 self.selection.active && self.selection.presentable,
             ),
             ("shortcuts", self.shortcuts.active),
+            ("menu", self.desk.is_some()),
         ] {
             if !self.overlay_should_compose(title, want) {
                 continue;
@@ -2007,6 +2029,19 @@ impl Shell {
                 let x = crate::agents::view::anchor_x(self, None);
                 (clamp_x(x, w), w, crate::agents::view::list_height(self))
             }
+            // Over the app's window, at the click.
+            Some(Panel::DeskMenu) => {
+                if let Some(p) = self.desk_placed() {
+                    return crate::zoning::MenuOverlaySpec {
+                        x: p.window.x as i32,
+                        y: p.window.y as i32,
+                        width: p.window.w as i32,
+                        height: p.window.h as i32,
+                    };
+                }
+                let w = crate::menu::view::MENU_WIDTH;
+                (clamp_x(self.menu_anchor_x, w), w, crate::menu::view::MENU_HEIGHT)
+            }
             Some(Panel::RenameWorkspace) => {
                 let (x, y) = crate::tabbar::head::menu_anchor();
                 return crate::zoning::MenuOverlaySpec {
@@ -2041,6 +2076,10 @@ impl Shell {
     /// Change `open_panel`, stopping Bluetooth discovery and clearing the
     /// stats sampler when leaving those surfaces.
     pub(crate) fn set_open_panel(&mut self, panel: Option<Panel>) {
+        // The desk menu giving way unpicked tells its app.
+        if self.open_panel == Some(Panel::DeskMenu) && panel != Some(Panel::DeskMenu) {
+            self.desk_dismissed();
+        }
         let was_bt = self.open_panel == Some(Panel::Bluetooth);
         let now_bt = panel == Some(Panel::Bluetooth);
         let was_audio = self.open_panel == Some(Panel::Audio);
@@ -2072,21 +2111,30 @@ impl Shell {
         // forever after that — shell looked frozen (no FFM, no chords, stale
         // menubar). Always register the same set; gate behaviour in update.
         let kb = iced::keyboard::listen().map(|event| {
+            use crate::desk_menu::Key as DeskKey;
             use iced::keyboard::key::Named;
             use iced::keyboard::{Event, Key};
             match event {
                 Event::KeyPressed {
                     key: Key::Named(Named::ArrowUp),
                     ..
-                } => Msg::LauncherNav { up: true },
+                } => Msg::OverlayKey(DeskKey::Up),
                 Event::KeyPressed {
                     key: Key::Named(Named::ArrowDown),
                     ..
-                } => Msg::LauncherNav { up: false },
+                } => Msg::OverlayKey(DeskKey::Down),
+                Event::KeyPressed {
+                    key: Key::Named(Named::ArrowLeft),
+                    ..
+                } => Msg::OverlayKey(DeskKey::Left),
+                Event::KeyPressed {
+                    key: Key::Named(Named::ArrowRight),
+                    ..
+                } => Msg::OverlayKey(DeskKey::Right),
                 Event::KeyPressed {
                     key: Key::Named(Named::Enter),
                     ..
-                } => Msg::Launch,
+                } => Msg::OverlayKey(DeskKey::Enter),
                 Event::KeyPressed {
                     key: Key::Named(Named::Escape),
                     ..
@@ -2626,6 +2674,10 @@ impl Shell {
                 self.launch_from_launcher(Some(&app_id))
             }
             Msg::LauncherEscape => {
+                // Escape reached the menu as a key (before the grab).
+                if self.desk.is_some() {
+                    return iced::Task::done(Msg::CloseMenu);
+                }
                 if self.shortcuts.active {
                     return iced::Task::done(Msg::CloseShortcuts);
                 }
@@ -2789,6 +2841,10 @@ impl Shell {
                         current = self.pending_focus_generation,
                         "FFM fire superseded"
                     );
+                    return iced::Task::none();
+                }
+                // The desk menu keeps the keyboard until it closes.
+                if self.desk.is_some() {
                     return iced::Task::none();
                 }
                 // Pointer may have moved on without a leave we care about.
@@ -2960,6 +3016,19 @@ impl Shell {
                 Some(ev) => self.on_tabbar_event(ev),
                 None => iced::Task::none(),
             },
+            Msg::Desk(msg) => self.on_desk(msg),
+            Msg::OverlayKey(key) => {
+                use crate::desk_menu::Key;
+                if self.desk.is_some() {
+                    return self.desk_key(key);
+                }
+                match key {
+                    Key::Up => self.dispatch_msg(Msg::LauncherNav { up: true }),
+                    Key::Down => self.dispatch_msg(Msg::LauncherNav { up: false }),
+                    Key::Enter => self.dispatch_msg(Msg::Launch),
+                    Key::Left | Key::Right => iced::Task::none(),
+                }
+            }
             Msg::Noop => iced::Task::none(),
         }
     }
@@ -3099,6 +3168,10 @@ mod pending_launch_tests {
             calendar_agenda: None,
             calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
+            desk: None,
+            desk_generation: 0,
+            desk_frame_sent: None,
+            last_clicked_window: None,
         };
         // Existing window only — still pending, the ghost in the tab bar.
         shell.resolve_pending_launch_if_window();
@@ -3225,6 +3298,10 @@ mod hide_tests {
             calendar_agenda: None,
             calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
+            desk: None,
+            desk_generation: 0,
+            desk_frame_sent: None,
+            last_clicked_window: None,
         };
         // Tabs: the first app on the Left, the second on the Right, the
         // rest Left; the focused window shows.
@@ -3514,5 +3591,118 @@ mod hide_tests {
         assert_eq!(shell.open_panel, None);
         assert!(shell.selection.pending);
         assert_eq!(shell.selection.prior_focus, Some(2));
+    }
+
+    fn desk_open(pid: u32, editable: bool) -> sola_bus::topics::DeskMenuOpen {
+        sola_bus::topics::DeskMenuOpen {
+            app_id: "sola-terminal".into(),
+            pid,
+            token: 9,
+            x: 100,
+            y: 50,
+            context: sola_bus::topics::DeskMenuContext {
+                editable,
+                ..Default::default()
+            },
+            items: vec![sola_bus::topics::DeskMenuItem::Action {
+                id: "copy".into(),
+                label: "Copy".into(),
+                shortcut: None,
+                enabled: true,
+            }],
+            edit: Vec::new(),
+        }
+    }
+
+    /// The terminal (window 2, pid 42) placed at (260, 48) on a 1080p output.
+    fn desk_desktop() -> Shell {
+        let mut shell = desktop();
+        shell.zoning.output_size = Some((1920, 1080));
+        shell.known_windows[1].pid = Some(42);
+        shell.zoning.live_geometry.insert(
+            2,
+            sola_bus::topics::WindowGeometry {
+                window_id: 2,
+                x: 260,
+                y: 48,
+                width: 800,
+                height: 600,
+            },
+        );
+        shell
+    }
+
+    #[test]
+    fn a_desk_menu_hangs_at_the_click_in_its_apps_window() {
+        let mut shell = desk_desktop();
+        // The browser was clicked last; the menu is the terminal's.
+        shell.last_clicked_window = Some(3);
+        let _ = shell.on_desk_menu_open(desk_open(42, false));
+        assert!(shell.menu_open);
+        assert_eq!(shell.open_panel, Some(Panel::DeskMenu));
+        let desk = shell.desk.as_ref().expect("open");
+        assert_eq!(desk.window, Some(2));
+        assert_eq!(desk.anchor, (360.0, 98.0));
+        let placed = shell.desk_placed().expect("placed");
+        let spec = shell.menu_overlay_spec();
+        assert_eq!((spec.x, spec.y), (placed.window.x as i32, placed.window.y as i32));
+        let sheet = placed.sheets[0];
+        assert_eq!((placed.window.x + sheet.x, placed.window.y + sheet.y), (360.0, 98.0));
+    }
+
+    #[test]
+    fn the_opening_click_keeps_the_menu_and_another_click_ends_it() {
+        let mut shell = desk_desktop();
+        let _ = shell.on_desk_menu_open(desk_open(42, false));
+        let click = |wid| {
+            Topic::MouseClicked(sola_bus::topics::MouseClickedPayload { window_id: wid })
+                .to_message()
+        };
+        let _ = shell.handle_bus(&click(2));
+        assert!(shell.desk.is_some(), "the right press that opened it");
+        let _ = shell.handle_bus(&click(3));
+        assert!(shell.desk.is_none());
+        assert!(!shell.menu_open);
+        assert_eq!(shell.open_panel, None);
+    }
+
+    #[test]
+    fn another_panel_ends_the_desk_menu() {
+        let mut shell = desk_desktop();
+        let _ = shell.on_desk_menu_open(desk_open(42, false));
+        let _ = shell.update(Msg::ToggleCalendar);
+        assert!(shell.desk.is_none());
+        assert_eq!(shell.open_panel, Some(Panel::Calendar));
+    }
+
+    #[test]
+    fn a_pick_closes_the_desk_menu() {
+        let mut shell = desk_desktop();
+        let _ = shell.on_desk_menu_open(desk_open(42, false));
+        let _ = shell.update(Msg::Desk(crate::desk_menu::DeskMsg::Hover { level: 0, row: 0 }));
+        let _ = shell.update(Msg::OverlayKey(crate::desk_menu::Key::Enter));
+        assert!(shell.desk.is_none());
+        assert!(!shell.menu_open);
+    }
+
+    #[test]
+    fn the_desk_menu_holds_off_focus_follows_mouse() {
+        let mut shell = desk_desktop();
+        let _ = shell.on_desk_menu_open(desk_open(42, false));
+        shell.pointer_window_id = Some(3);
+        let generation = shell.pending_focus_generation;
+        let _ = shell.update(Msg::FocusHoverFire {
+            window_id: 3,
+            generation,
+        });
+        assert_eq!(shell.focused_window_id, Some(2));
+        assert!(shell.desk.is_some());
+    }
+
+    #[test]
+    fn edit_rows_show_the_shared_keys() {
+        let shell = desktop();
+        assert_eq!(shell.keys.common_key("paste"), Some(KeyCode::V.meta()));
+        assert_eq!(shell.keys.common_key("nope"), None);
     }
 }

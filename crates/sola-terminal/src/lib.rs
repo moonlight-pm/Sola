@@ -4,6 +4,7 @@
 //! (notably `sola-projects`) reuse this crate as a library. Call
 //! [`tmux::configure`] before any PTY if you must not share socket `sola`.
 
+pub mod desk;
 pub mod emulator;
 pub mod extkeys;
 pub mod input;
