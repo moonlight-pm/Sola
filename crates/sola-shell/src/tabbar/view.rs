@@ -9,14 +9,19 @@
 //! title does not move. Hovering a row shows the titlebar's red stoplight:
 //! it closes the window (`Topic::CloseWindow`). While an app starts from
 //! the launcher, a ghost row (its name, faint, a turning ring) stands
-//! where its window will land.
+//! where its window will land. A Projects window's row shows its parts
+//! apart (`sola_core::window_label`): the project, the session in it,
+//! quieter, and the computer it runs on as a chip in that computer's
+//! prompt color.
 
 use iced::widget::{row, text};
 use iced::{Alignment, Color, Element, Theme};
 use sola_bus::topics::{Activity, Zone};
+use sola_core::host_color::{PROMPT_LIGHTNESS, PROMPT_SATURATION, host_hue, hsl_rgb};
+use sola_core::window_label::WindowLabel;
 use sola_kit::components::{
-    LEADING_SLOT, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection, icon, island,
-    status_mark,
+    LEADING_SLOT, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection, SidebarTag, icon,
+    island, status_mark,
 };
 
 use super::row_id;
@@ -40,9 +45,15 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                 .find(|w| w.window_id == t.window_id)
                 .map(|w| w.title.trim())
                 .filter(|s| !s.is_empty());
-            let label = title
-                .map(str::to_string)
-                .unwrap_or_else(|| app_label(shell, &t.app_id));
+            let parts = title
+                .filter(|_| t.app_id == crate::launcher::projects::APP_ID)
+                .and_then(WindowLabel::parse);
+            let label = match &parts {
+                Some(p) => p.project.clone(),
+                None => title
+                    .map(str::to_string)
+                    .unwrap_or_else(|| app_label(shell, &t.app_id)),
+            };
             let activity = shell
                 .pairing
                 .key_of(t.window_id)
@@ -68,6 +79,12 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                 .on_close(Msg::CloseWindow(t.window_id))
                 .stoplight(true)
                 .leading(leading);
+            if let Some(p) = parts {
+                if let Some(session) = p.session {
+                    item = item.detail(session);
+                }
+                item = item.tag(host_tag(&p.host));
+            }
             if hidden(&t.app_id) {
                 item = item.secondary("hidden");
             }
@@ -106,6 +123,25 @@ fn ghost_row(label: &str) -> SidebarItem<'_, Msg> {
     .spacing(8)
     .align_y(Alignment::Center);
     SidebarItem::new(label, Msg::Noop).id(GHOST_ID).content(body)
+}
+
+/// The chip naming the computer a window runs on: its prompt's hue
+/// (Oath's), ink lifted to read on the bar, a faint fill of the prompt
+/// color itself.
+fn host_tag(host: &str) -> SidebarTag {
+    let hue = host_hue(host);
+    let color = |l: f32| {
+        let [r, g, b] = hsl_rgb(hue, PROMPT_SATURATION, l);
+        Color::from_rgb8(r, g, b)
+    };
+    SidebarTag {
+        label: host.to_string(),
+        ink: color(0.72),
+        fill: Color {
+            a: 0.22,
+            ..color(PROMPT_LIGHTNESS)
+        },
+    }
 }
 
 /// The ghost row's id (never a window's: those are `w<id>`).

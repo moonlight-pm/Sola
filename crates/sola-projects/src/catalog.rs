@@ -27,6 +27,27 @@ pub const LIVE_ID: &str = "ws-main";
 /// from a deleted / other tab that reused the same id.
 pub const SOLA_WS_PATH: &str = "SOLA_WS_PATH";
 
+/// A session's key here: its id on its host, plus `@<host>` when that is
+/// another computer. canto's own `ws-main` and novus's `ws-main` are
+/// different sessions; the key tells them apart, and every map of panes
+/// (status, runtimes, islands) is keyed by it.
+pub fn key_for(id: &str, host: Option<&str>) -> String {
+    match host {
+        Some(h) => format!("{id}@{h}"),
+        None => id.to_string(),
+    }
+}
+
+/// A key's id on its host: what `SOLA_PANE_ID` says there.
+pub fn bare_id(key: &str) -> &str {
+    key.split_once('@').map_or(key, |(id, _)| id)
+}
+
+/// The tmux session a key is, on its host (`sws-<id>`).
+pub fn session_name(key: &str) -> String {
+    sola_terminal::tmux::session_name(bare_id(key))
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
@@ -84,25 +105,6 @@ impl Layout {
         Self::Leaf { id: id.into() }
     }
 
-    pub fn from_node(node: &PaneNode) -> Self {
-        match node {
-            PaneNode::Leaf(id) => Self::Leaf { id: id.clone() },
-            PaneNode::Split {
-                id,
-                dir,
-                ratio,
-                a,
-                b,
-            } => Self::Split {
-                id: id.clone(),
-                dir: *dir,
-                ratio: *ratio,
-                a: Box::new(Self::from_node(a)),
-                b: Box::new(Self::from_node(b)),
-            },
-        }
-    }
-
     pub fn to_node(&self) -> PaneNode {
         match self {
             Self::Leaf { id } => PaneNode::Leaf(id.clone()),
@@ -126,23 +128,6 @@ impl Layout {
         sola_terminal::state::leaves_of(&self.to_node())
     }
 
-    pub fn split_ids(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        collect_split_ids(self, &mut out);
-        out
-    }
-
-    pub fn is_single(&self) -> bool {
-        matches!(self, Self::Leaf { .. })
-    }
-}
-
-fn collect_split_ids(layout: &Layout, out: &mut Vec<String>) {
-    if let Layout::Split { id, a, b, .. } = layout {
-        out.push(id.clone());
-        collect_split_ids(a, out);
-        collect_split_ids(b, out);
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -189,20 +174,6 @@ impl Tab {
                     .next()
                     .unwrap_or_else(|| self.id.clone())
             })
-    }
-
-    pub fn set_tree(&mut self, node: PaneNode, active: String) {
-        let layout = Layout::from_node(&node);
-        if layout.is_single() && layout.leaves().first().is_some_and(|id| id == &self.id) {
-            self.layout = None;
-        } else {
-            self.layout = Some(layout);
-        }
-        self.active_pane = if active == self.id && self.layout.is_none() {
-            None
-        } else {
-            Some(active)
-        };
     }
 
     pub fn owns_pane(&self, pane_id: &str) -> bool {
@@ -266,18 +237,59 @@ pub fn load() -> Catalog {
 /// An older catalog: a project's startup script moves to its store, and a
 /// closed project (kept then) is forgotten with its tabs.
 fn migrate(c: &mut Catalog) {
-    for p in &mut c.projects {
-        let script = std::mem::take(&mut p.startup);
-        if !script.trim().is_empty() && crate::startup::script_for(p).is_empty() {
-            if let Err(e) = crate::startup::set_script(p, &script) {
-                tracing::warn!(project = %p.id, "startup script move failed: {e}");
-            }
-        }
-    }
     let closed: Vec<String> = c.projects.iter().filter(|p| p.closed).map(|p| p.id.clone()).collect();
     for id in closed {
         tracing::info!(project = %id, "forgetting a closed project");
         unregister_project(c, &id);
+    }
+    migrate_to_sessions(c);
+}
+
+/// Sessions anywhere (2026-10-30): a split's leaves become sessions of
+/// their own (each was its own tmux session already), and a session on
+/// another computer is keyed `<id>@<host>` ([`key_for`]).
+fn migrate_to_sessions(c: &mut Catalog) {
+    let mut leaves = Vec::new();
+    for t in &mut c.tabs {
+        if let Some(layout) = t.layout.take() {
+            for leaf in layout.leaves().into_iter().filter(|l| *l != t.id) {
+                tracing::info!(tab = %t.id, %leaf, "a split leaf is a session of its own now");
+                leaves.push(Tab {
+                    id: leaf,
+                    name: format!("{} split", t.name),
+                    title: None,
+                    kind: Kind::Root,
+                    parent: Some(t.id.clone()),
+                    layout: None,
+                    active_pane: None,
+                    ..t.clone()
+                });
+            }
+        }
+        t.active_pane = None;
+    }
+    c.tabs.extend(leaves);
+    let mut renamed = Vec::new();
+    for t in &mut c.tabs {
+        if let Some(host) = t.host.as_deref() {
+            if !t.id.contains('@') {
+                let key = key_for(&t.id, Some(host));
+                renamed.push((t.id.clone(), key.clone()));
+                t.id = key;
+            }
+        }
+    }
+    let rekey = |id: &mut Option<String>| {
+        if let Some((_, key)) = renamed.iter().find(|(old, _)| Some(old) == id.as_ref()) {
+            *id = Some(key.clone());
+        }
+    };
+    rekey(&mut c.selected);
+    for p in &mut c.projects {
+        rekey(&mut p.selected);
+    }
+    for t in &mut c.tabs {
+        rekey(&mut t.parent);
     }
 }
 
@@ -631,122 +643,28 @@ pub fn ordered_for_project<'a>(project_id: &str, all: &'a [Tab]) -> Vec<&'a Tab>
     all.iter().filter(|w| w.project_id == project_id).collect()
 }
 
-fn splice_ids(ids: &mut Vec<String>, id: &str, before: Option<&str>) {
-    ids.retain(|x| x != id);
-    let at = before
-        .and_then(|b| ids.iter().position(|x| x == b))
-        .unwrap_or(ids.len());
-    ids.insert(at.min(ids.len()), id.to_string());
+/// A session named `name` is open here in project `project_id`.
+pub fn session_name_taken(tabs: &[Tab], project_id: &str, name: &str) -> bool {
+    tabs.iter()
+        .any(|w| w.project_id == project_id && w.name.eq_ignore_ascii_case(name.trim()))
 }
 
-/// Where a tab dragged from `from` and let go over `onto` goes, as the
-/// `before` of [`move_tab_before`]: it takes `onto`'s place, so after it
-/// when dragged rightwards and before it when leftwards. `None` when
-/// nothing moves.
-pub fn drop_place(order: &[String], from: &str, onto: &str) -> Option<Option<String>> {
-    let i = order.iter().position(|id| id == from)?;
-    let j = order.iter().position(|id| id == onto)?;
-    match i.cmp(&j) {
-        std::cmp::Ordering::Equal => None,
-        std::cmp::Ordering::Less => Some(order.get(j + 1).cloned()),
-        std::cmp::Ordering::Greater => Some(Some(onto.to_string())),
-    }
+/// A new session's name when none is given: `2`, `3`, … after those open
+/// here in the project (its first is `root`).
+pub fn next_session_name(tabs: &[Tab], project_id: &str) -> String {
+    (2..)
+        .map(|n| n.to_string())
+        .find(|n| !session_name_taken(tabs, project_id, n))
+        .unwrap_or_default()
 }
 
-/// Reorder `id` among this project's tabs. `before` is another
-/// tab in the same project (`None` = end).
-pub fn move_tab_before(
-    all: &mut Vec<Tab>,
-    id: &str,
-    before: Option<&str>,
-) -> Result<(), String> {
-    let project_id = all
+/// The ids of this computer's live Projects sessions (`sws-<id>`),
+/// whichever computer opened them.
+pub fn live_local_ids() -> Vec<String> {
+    sola_terminal::tmux::list_sessions()
+        .unwrap_or_default()
         .iter()
-        .find(|w| w.id == id)
-        .map(|w| w.project_id.clone())
-        .ok_or_else(|| format!("unknown tab '{id}'"))?;
-    if let Some(b) = before {
-        let other = all
-            .iter()
-            .find(|w| w.id == b)
-            .ok_or_else(|| format!("unknown tab '{b}'"))?;
-        if other.project_id != project_id {
-            return Err("cannot move a tab into another project".into());
-        }
-        if other.id == id {
-            return Ok(());
-        }
-    }
-    let mut order: Vec<String> = all
-        .iter()
-        .filter(|w| w.project_id == project_id)
-        .map(|w| w.id.clone())
-        .collect();
-    splice_ids(&mut order, id, before);
-    apply_tab_order(all, &project_id, &order);
-    Ok(())
-}
-
-fn apply_tab_order(all: &mut Vec<Tab>, project_id: &str, order: &[String]) {
-    let mut mine: Vec<Tab> = Vec::new();
-    let mut slots = Vec::new();
-    for (i, w) in all.iter().enumerate() {
-        if w.project_id == project_id {
-            slots.push(i);
-            mine.push(w.clone());
-        }
-    }
-    let mut next = Vec::new();
-    for id in order {
-        if let Some(j) = mine.iter().position(|w| w.id == *id) {
-            next.push(mine.remove(j));
-        }
-    }
-    next.extend(mine);
-    for (slot, w) in slots.into_iter().zip(next) {
-        all[slot] = w;
-    }
-}
-
-/// Sibling worktrees and root tabs can close from the row. The project's
-/// main tab cannot — drop the whole project instead (`unregister_project`).
-pub fn can_close(ws: &Tab) -> bool {
-    matches!(ws.kind, Kind::Worktree | Kind::Root)
-}
-
-/// This tab owns a `.worktrees/<slug>` checkout (rename / branch /
-/// `git worktree remove` apply). Root tabs share the project root.
-pub fn has_worktree(ws: &Tab) -> bool {
-    ws.kind == Kind::Worktree
-}
-
-/// Another tab in this project already uses this worktree slug or
-/// `.worktrees/<slug>` folder. `except_id` is the row being renamed.
-pub fn worktree_name_taken(
-    tabs: &[Tab],
-    project_id: &str,
-    slug: &str,
-    except_id: &str,
-) -> bool {
-    tabs.iter().any(|w| {
-        w.id != except_id
-            && w.project_id == project_id
-            && (w.name.eq_ignore_ascii_case(slug)
-                || w.path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .is_some_and(|n| n.eq_ignore_ascii_case(slug)))
-    })
-}
-
-/// Worktree tabs whose checkout is already gone. The rail should reap
-/// them — `git worktree remove` from inside the pane cannot call
-/// `tab.rm` afterward (cwd vanished).
-pub fn missing_worktree_ids(tabs: &[Tab]) -> Vec<String> {
-    tabs
-        .iter()
-        .filter(|w| w.host.is_none() && has_worktree(w) && !w.path.exists())
-        .map(|w| w.id.clone())
+        .filter_map(|s| s.strip_prefix(&sola_terminal::tmux::session_name("")).map(str::to_string))
         .collect()
 }
 
@@ -1220,24 +1138,6 @@ mod tests {
     }
 
     #[test]
-    fn move_tab_before_stays_in_project() {
-        let mut all = vec![
-            ws("a-root", "a", "root", Kind::Main),
-            ws("a-kid", "a", "kid", Kind::Worktree),
-            ws("b-root", "b", "root", Kind::Main),
-            ws("a-z", "a", "z", Kind::Worktree),
-        ];
-        move_tab_before(&mut all, "a-z", Some("a-kid")).unwrap();
-        let ids: Vec<&str> = ordered_for_project("a", &all)
-            .into_iter()
-            .map(|w| w.id.as_str())
-            .collect();
-        assert_eq!(ids, ["a-root", "a-z", "a-kid"]);
-        assert_eq!(all[2].id, "b-root");
-        assert!(move_tab_before(&mut all, "a-z", Some("b-root")).is_err());
-    }
-
-    #[test]
     fn unregister_project_drops_group_keeps_others() {
         let mut c = Catalog::empty();
         c.selected = Some("ws-kid".into());
@@ -1311,91 +1211,6 @@ mod tests {
         assert_eq!(c.tabs[0].id, "ws-b");
         assert_eq!(c.selected.as_deref(), Some("ws-b"));
         assert!(unregister_project(&mut c, "nope").is_empty());
-    }
-
-    #[test]
-    fn worktrees_and_root_tabs_can_close() {
-        let main = Tab {
-            id: "ws-main".into(),
-            project_id: "p".into(),
-            name: "root".into(),
-            title: None,
-            path: PathBuf::from("/r"),
-            host: None,
-            kind: Kind::Main,
-            parent: None,
-            layout: None,
-            active_pane: None,
-            status: AgentStatus::Idle,
-            agent: None,
-        };
-        let folder = Tab {
-            kind: Kind::Folder,
-            ..main.clone()
-        };
-        let tree = Tab {
-            id: "ws-kid".into(),
-            kind: Kind::Worktree,
-            ..main.clone()
-        };
-        let root_tab = Tab {
-            id: "ws-hotfix".into(),
-            kind: Kind::Root,
-            ..main.clone()
-        };
-        assert!(!can_close(&main));
-        assert!(!can_close(&folder));
-        assert!(can_close(&tree));
-        assert!(can_close(&root_tab));
-        assert!(has_worktree(&tree));
-        assert!(!has_worktree(&root_tab));
-        assert!(!has_worktree(&main));
-    }
-
-    #[test]
-    fn missing_worktree_ids_skips_root_and_live_paths() {
-        let dir = std::env::temp_dir().join(format!(
-            "ws-missing-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let live = Tab {
-            id: "ws-kid".into(),
-            project_id: "p".into(),
-            name: "kid".into(),
-            title: None,
-            path: dir.clone(),
-            host: None,
-            kind: Kind::Worktree,
-            parent: None,
-            layout: None,
-            active_pane: None,
-            status: AgentStatus::Idle,
-            agent: None,
-        };
-        let gone = Tab {
-            id: "ws-gone".into(),
-            path: dir.join("nope"),
-            ..live.clone()
-        };
-        let root = Tab {
-            id: "ws-main".into(),
-            path: PathBuf::from("/no/such/root"),
-            kind: Kind::Main,
-            ..live.clone()
-        };
-        let root_tab = Tab {
-            id: "ws-hotfix".into(),
-            path: PathBuf::from("/no/such/root"),
-            kind: Kind::Root,
-            ..live.clone()
-        };
-        assert!(missing_worktree_ids(&[live.clone(), root, root_tab]).is_empty());
-        assert_eq!(missing_worktree_ids(&[live, gone]), ["ws-gone"]);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1530,75 +1345,6 @@ mod tests {
     }
 
     #[test]
-    fn set_tree_clears_trivial_layout() {
-        let mut ws = Tab {
-            id: "ws-main".into(),
-            project_id: "p".into(),
-            name: "root".into(),
-            title: None,
-            path: PathBuf::from("/r"),
-            host: None,
-            kind: Kind::Main,
-            parent: None,
-            layout: None,
-            active_pane: None,
-            status: AgentStatus::Idle,
-            agent: None,
-        };
-        let split = PaneNode::Split {
-            id: "s1".into(),
-            dir: SplitDir::Horizontal,
-            ratio: 0.5,
-            a: Box::new(PaneNode::Leaf("ws-main".into())),
-            b: Box::new(PaneNode::Leaf("ws-main-p".into())),
-        };
-        ws.set_tree(split, "ws-main-p".into());
-        assert!(!ws.layout().is_single());
-        assert_eq!(ws.active_pane_id(), "ws-main-p");
-        ws.set_tree(PaneNode::Leaf("ws-main".into()), "ws-main".into());
-        assert!(ws.layout.is_none());
-        assert!(ws.active_pane.is_none());
-    }
-
-    #[test]
-    fn worktree_name_taken_matches_name_or_folder() {
-        let kid = Tab {
-            id: "ws-kid".into(),
-            project_id: "p".into(),
-            name: "adhoc".into(),
-            title: None,
-            path: PathBuf::from("/r/.worktrees/adhoc"),
-            host: None,
-            kind: Kind::Worktree,
-            parent: None,
-            layout: None,
-            active_pane: None,
-            status: AgentStatus::Idle,
-            agent: None,
-        };
-        let other = Tab {
-            id: "ws-other".into(),
-            project_id: "p".into(),
-            name: "Fix Login".into(),
-            title: None,
-            path: PathBuf::from("/r/.worktrees/fix-login"),
-            host: None,
-            kind: Kind::Worktree,
-            parent: None,
-            layout: None,
-            active_pane: None,
-            status: AgentStatus::Idle,
-            agent: None,
-        };
-        let all = [kid, other];
-        assert!(worktree_name_taken(&all, "p", "adhoc", "ws-new"));
-        assert!(worktree_name_taken(&all, "p", "fix-login", "ws-new"));
-        assert!(!worktree_name_taken(&all, "p", "adhoc", "ws-kid"));
-        assert!(!worktree_name_taken(&all, "p", "sc-1234", "ws-kid"));
-        assert!(!worktree_name_taken(&all, "other", "adhoc", "ws-new"));
-    }
-
-    #[test]
     fn a_catalog_saved_as_workspaces_still_loads() {
         let c: Catalog = serde_json::from_str(
             r#"{"version":1,"selected":"ws-main","projects":[],"workspaces":[
@@ -1612,14 +1358,59 @@ mod tests {
     }
 
     #[test]
-    fn a_dropped_tab_takes_the_place_it_lands_on() {
-        let order: Vec<String> = ["root", "a", "b", "c"].map(String::from).to_vec();
-        // Rightwards: after the target.
-        assert_eq!(drop_place(&order, "a", "b"), Some(Some("c".into())));
-        assert_eq!(drop_place(&order, "a", "c"), Some(None));
-        // Leftwards: before the target.
-        assert_eq!(drop_place(&order, "c", "a"), Some(Some("a".into())));
-        assert_eq!(drop_place(&order, "b", "b"), None);
-        assert_eq!(drop_place(&order, "x", "b"), None);
+    fn a_session_elsewhere_is_keyed_by_its_host() {
+        assert_eq!(key_for("ws-main", None), "ws-main");
+        assert_eq!(key_for("ws-main", Some("novus")), "ws-main@novus");
+        assert_eq!(bare_id("ws-main@novus"), "ws-main");
+        assert_eq!(bare_id("ws-main"), "ws-main");
+        assert_eq!(session_name("ws-main@novus"), session_name("ws-main"));
+    }
+
+    #[test]
+    fn an_older_catalog_moves_to_sessions() {
+        let mut c: Catalog = serde_json::from_str(
+            r#"{"version":1,"selected":"ws-buccina-oath","projects":[
+                {"id":"proj-oath","name":"Oath on buccina","root":"/home/Projects/Oath",
+                 "host":"buccina","selected":"ws-buccina-oath"}],"tabs":[
+                {"id":"ws-buccina-oath","project_id":"proj-oath","name":"root",
+                 "path":"/home/Projects/Oath","host":"buccina","kind":"main"},
+                {"id":"ws-fix","project_id":"proj-oath","name":"fix",
+                 "path":"/home/Projects/Oath","host":"buccina","kind":"root",
+                 "layout":{"kind":"split","id":"split-ws-fix","dir":"Vertical","ratio":0.5,
+                   "a":{"kind":"leaf","id":"ws-fix"},"b":{"kind":"leaf","id":"ws-fix-p"}}}]}"#,
+        )
+        .unwrap();
+        migrate_to_sessions(&mut c);
+        let ids: Vec<&str> = c.tabs.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["ws-buccina-oath@buccina", "ws-fix@buccina", "ws-fix-p@buccina"]);
+        assert!(c.tabs.iter().all(|t| t.layout.is_none()));
+        let leaf = &c.tabs[2];
+        assert_eq!(leaf.parent.as_deref(), Some("ws-fix@buccina"));
+        assert_eq!(leaf.name, "fix split");
+        assert_eq!(c.selected.as_deref(), Some("ws-buccina-oath@buccina"));
+        assert_eq!(c.projects[0].selected.as_deref(), Some("ws-buccina-oath@buccina"));
+    }
+
+    #[test]
+    fn new_sessions_are_numbered_past_those_open() {
+        let tab = |name: &str, project: &str| Tab {
+            id: format!("ws-{name}"),
+            project_id: project.into(),
+            name: name.into(),
+            title: None,
+            path: PathBuf::from("/tmp"),
+            host: None,
+            kind: Kind::Root,
+            parent: None,
+            layout: None,
+            active_pane: None,
+            status: AgentStatus::Idle,
+            agent: None,
+        };
+        let tabs = [tab("root", "sola"), tab("2", "sola"), tab("2", "oath")];
+        assert_eq!(next_session_name(&tabs, "sola"), "3");
+        assert_eq!(next_session_name(&tabs, "site"), "2");
+        assert!(session_name_taken(&tabs, "sola", " ROOT "));
+        assert!(!session_name_taken(&tabs, "site", "root"));
     }
 }

@@ -27,7 +27,6 @@ pub fn project_json(p: &Project) -> serde_json::Value {
         "id": p.id,
         "name": p.name,
         "root": p.root,
-        "startup": !crate::startup::script_for(p).is_empty(),
     });
     if let Some(host) = &p.host {
         v["host"] = serde_json::json!(host);

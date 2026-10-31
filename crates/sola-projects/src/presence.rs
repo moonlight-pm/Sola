@@ -67,9 +67,9 @@ fn scan_tree(
 /// [`scan_session`] for each of `sessions` on another computer: their
 /// panes' pids and its process table, in one look.
 pub fn scan_remote(m: &Machine, sessions: &[String]) -> HashMap<String, Presence> {
-    let socket = sola_terminal::remote::socket();
+    let pick = sola_terminal::remote::pick("\"=$s\"");
     let script = format!(
-        "for s in \"$@\"; do p=$(tmux -L {socket} display-message -p -t \"=$s:\" \"#{{pane_pid}}\" 2>/dev/null) \
+        "for s in \"$@\"; do {pick} p=$(tmux -L \"$L\" display-message -p -t \"=$s:\" \"#{{pane_pid}}\" 2>/dev/null) \
          && echo \"$s $p\"; done; echo --; ps -eo pid=,ppid=,comm=,args="
     );
     let mut argv = vec!["sh", "-c", script.as_str(), "sh"];

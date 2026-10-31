@@ -21,7 +21,7 @@ use crate::link::{self, Link, LinkEvent};
 use crate::machine::Machine;
 use crate::presence::Presence;
 use crate::status::{self, PaneStatus};
-use crate::{App, Msg, NewTab, catalog, cli, make_checkout, presence, spawn};
+use crate::{App, Msg, catalog, cli, presence, spawn};
 
 /// A host that could not be linked is tried again after this.
 const RETRY_AFTER: Duration = Duration::from_secs(20);
@@ -71,16 +71,6 @@ impl PaneTmux {
     }
 }
 
-/// A remote tab's `tab.set` that moves its worktree or renames its branch.
-#[derive(Debug, Clone)]
-pub(crate) struct RemoteSet {
-    pub id: String,
-    pub name: Option<String>,
-    pub title: Option<String>,
-    pub branch: Option<String>,
-    pub before: Option<Option<String>>,
-}
-
 impl App {
     /// The machine for `host` (`None`: here). Another computer's only
     /// while its link is up.
@@ -101,7 +91,7 @@ impl App {
         let host = self.tab_for_pane(pane).and_then(|w| w.host.clone());
         Ok(PaneTmux {
             machine: self.machine_for(host.as_deref())?,
-            session: tmux::session_name(pane),
+            session: catalog::session_name(pane),
         })
     }
 
@@ -330,7 +320,14 @@ impl App {
                     .insert(pane, "The session is there, but would not attach.".into());
                 Task::none()
             }
-            Ok(false) => self.close_pane(&pane),
+            // Its window stays, offering Start new shell.
+            Ok(false) => {
+                if let Some(st) = self.pane_status.get_mut(&pane) {
+                    *st = PaneStatus::default();
+                }
+                self.sync_row(&pane);
+                Task::none()
+            }
             Err(why) => {
                 tracing::warn!(pane = %pane, "remote pane out of reach: {why}");
                 self.remote_down.insert(pane, why);
@@ -382,14 +379,14 @@ impl App {
         let em = Emulator::new(cols, rows, listener);
         let hook_sock = link::remote_socket(r).to_string_lossy().into_owned();
         let env = [
-            ("SOLA_PANE_ID", id),
+            ("SOLA_PANE_ID", catalog::bare_id(id)),
             ("SOLA_WS_HOOKS_SOCK", hook_sock.as_str()),
             (catalog::SOLA_WS_PATH, cwd),
         ];
         let backend = match PtyBackend::spawn_remote(
             id,
             &r.host,
-            &tmux::session_name(id),
+            &catalog::session_name(id),
             cols,
             rows,
             cwd,
@@ -423,8 +420,8 @@ impl App {
     }
 
     /// The presence tick's part for other computers: for each linked host
-    /// (one look at a time), its panes' presence, Codex turns and `×N`,
-    /// and its worktrees that are gone ([`remote_tick`]).
+    /// (one look at a time), its panes' presence, Codex turns and `×N`
+    /// ([`remote_tick`]).
     pub(crate) fn remote_ticks(&mut self) -> Task<Msg> {
         self.link_hosts();
         let mut tasks = Vec::new();
@@ -445,26 +442,24 @@ impl App {
                 continue;
             }
             self.remote_ticked.insert(host.clone(), Instant::now());
-            let mut panes = Vec::new();
-            let mut worktrees = Vec::new();
-            for ws in self.tabs.iter().filter(|w| w.host.as_deref() == Some(host.as_str())) {
-                if catalog::has_worktree(ws) {
-                    worktrees.push((ws.id.clone(), ws.path.clone()));
-                }
-                for id in ws.layout().leaves() {
-                    let st = self.pane_status.get(&id).cloned().unwrap_or_default();
-                    panes.push((id, ws.path.clone(), st));
-                }
-            }
+            let panes: Vec<(String, PathBuf, PaneStatus)> = self
+                .tabs
+                .iter()
+                .filter(|w| w.host.as_deref() == Some(host.as_str()))
+                .map(|w| {
+                    let st = self.pane_status.get(&w.id).cloned().unwrap_or_default();
+                    (w.id.clone(), w.path.clone(), st)
+                })
+                .collect();
             tasks.push(Task::perform(
                 async move {
                     let h = host.clone();
-                    let done = tokio::task::spawn_blocking(move || remote_tick(&machine, panes, worktrees))
+                    let done = tokio::task::spawn_blocking(move || remote_tick(&machine, panes))
                         .await
                         .unwrap_or_default();
                     (h, done)
                 },
-                |(host, (panes, gone))| Msg::RemoteTick { host, panes, gone },
+                |(host, panes)| Msg::RemoteTick { host, panes },
             ));
         }
         Task::batch(tasks)
@@ -476,7 +471,6 @@ impl App {
         &mut self,
         host: String,
         panes: Vec<(String, PaneStatus, PaneStatus)>,
-        gone: Vec<(String, PathBuf)>,
     ) -> Task<Msg> {
         self.remote_busy.remove(&host);
         let mut dirty = false;
@@ -498,17 +492,7 @@ impl App {
         }
         self.sync_all_rows();
         self.flush_waits();
-        let mut tasks = Vec::new();
-        for (id, path) in gone {
-            // Only the folder the tab still names, and not one moving.
-            let still = self.tabs.iter().any(|w| w.id == id && w.path == path);
-            if !still || self.remote_moving.contains(&id) {
-                continue;
-            }
-            tracing::info!(tab = %id, %host, "worktree gone there; closing tab");
-            tasks.push(self.close_tab(&id, true, false));
-        }
-        Task::batch(tasks)
+        Task::none()
     }
 
     /// A call that reaches another computer's pane, tmux, git or scripts:
@@ -565,33 +549,6 @@ impl App {
                     crate::param_str(params, "prompt-file"),
                     reply,
                 ))
-            }
-            "tab.spawn" => {
-                let project = crate::param_str(params, "project")?;
-                let found = catalog::resolve_project(&self.projects, &project).ok()?;
-                found.host.as_ref()?;
-                if crate::param_bool(params, "root") {
-                    return None;
-                }
-                Some(self.remote_cli_spawn(params, reply))
-            }
-            "tab.set" => {
-                let q = crate::param_str(params, "tab")?;
-                let ws = catalog::resolve_tab(&self.tabs, &q).ok()?;
-                ws.host.as_ref()?;
-                let name = crate::param_str(params, "name");
-                let branch = crate::param_str(params, "branch");
-                if name.is_none() && branch.is_none() {
-                    return None;
-                }
-                let set = RemoteSet {
-                    id: ws.id.clone(),
-                    name,
-                    title: crate::param_str(params, "title"),
-                    branch,
-                    before: crate::param_before(params, "before"),
-                };
-                Some(self.remote_set(set, reply))
             }
             _ => None,
         }
@@ -704,258 +661,8 @@ impl App {
         task
     }
 
-    /// `tab.spawn` of a worktree on another computer.
-    fn remote_cli_spawn(&mut self, params: &serde_json::Value, reply: sola_call::ReplyTx) -> Task<Msg> {
-        let p = |k| crate::param_str(params, k);
-        let prompt = match cli::read_prompt(p("prompt").as_deref(), p("prompt-file").as_deref()) {
-            Ok(x) => x,
-            Err(e) => {
-                reply.err(e);
-                return Task::none();
-            }
-        };
-        let agent = match (cli::first_class_agent(p("agent").as_deref()), prompt.as_deref()) {
-            (Err(e), _) => {
-                reply.err(e);
-                return Task::none();
-            }
-            (Ok(Some(a)), _) => Some(a.to_string()),
-            (Ok(None), Some(_)) => Some("grok".to_string()),
-            (Ok(None), None) => None,
-        };
-        let Some(name) = p("name") else {
-            reply.err("missing name");
-            return Task::none();
-        };
-        let planned = self.plan_tab(
-            &p("project").unwrap_or_default(),
-            &name,
-            p("parent"),
-            agent.as_deref(),
-            p("branch").as_deref(),
-            p("base-branch").as_deref(),
-            p("title").as_deref(),
-            false,
-            crate::param_bool(params, "select"),
-        );
-        match planned {
-            Ok(new) => self.make_remote_checkout(new, Some(Spawned { reply, agent, prompt })),
-            Err(e) => {
-                reply.err(e);
-                Task::none()
-            }
-        }
-    }
-
-    /// Make `new`'s worktree there off the UI thread; then
-    /// [`Self::on_remote_spawned`].
-    pub(crate) fn make_remote_checkout(&mut self, new: NewTab, then: Option<Spawned>) -> Task<Msg> {
-        let machine = match self.machine_for(new.project.host.as_deref()) {
-            Ok(m) => m,
-            Err(e) => {
-                return Task::done(Msg::RemoteSpawned {
-                    new: Box::new(new),
-                    made: Err(e),
-                    then,
-                });
-            }
-        };
-        let job = new.clone();
-        Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || make_checkout(&machine, &job))
-                    .await
-                    .unwrap_or_else(|e| Err(e.to_string()))
-            },
-            move |made| Msg::RemoteSpawned {
-                new: Box::new(new.clone()),
-                made,
-                then: then.clone(),
-            },
-        )
-    }
-
-    /// A remote worktree is made (or not): add its tab, attach it, and
-    /// answer the call or close the card.
-    pub(crate) fn on_remote_spawned(
-        &mut self,
-        new: NewTab,
-        made: Result<Option<String>, String>,
-        then: Option<Spawned>,
-    ) -> Task<Msg> {
-        let startup_err = match made {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::warn!(project = %new.project.id, "remote worktree failed: {e}");
-                match then {
-                    Some(s) => s.reply.err(e),
-                    None => {
-                        self.spawn.pending = false;
-                        self.spawn.error = Some(e);
-                    }
-                }
-                return Task::none();
-            }
-        };
-        let select = new.select;
-        let id = self.add_planned_tab(new);
-        match then {
-            None => {
-                self.spawn = crate::cards::SpawnDraft::default();
-                self.maybe_toast_startup(startup_err, &id);
-                Task::batch([self.attach_pane(&id, &[]), self.reveal_tab(&id)])
-            }
-            Some(Spawned { reply, agent, prompt }) => {
-                let task = match agent.as_deref() {
-                    Some(a) => {
-                        let args = cli::agent_argv(a, prompt.as_deref());
-                        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-                        self.attach_pane(&id, &refs)
-                    }
-                    None => self.attach_pane(&id, &[]),
-                };
-                let mut data = self
-                    .tabs
-                    .iter()
-                    .find(|w| w.id == id)
-                    .map(|w| cli::spawn_json(w, select))
-                    .unwrap_or_else(|| serde_json::json!({ "id": id, "selected": select }));
-                if let Some(e) = startup_err {
-                    data["startup_error"] = serde_json::json!(e);
-                }
-                reply.ok(data);
-                match self.tabs.iter().find(|w| w.id == id) {
-                    Some(w) if select => {
-                        let project = w.project_id.clone();
-                        Task::batch([task, self.show_project(&project), self.reveal_tab(&id)])
-                    }
-                    _ => task,
-                }
-            }
-        }
-    }
-
-    /// `tab.set --name` / `--branch` on a remote tab: the move and the
-    /// rename there, then [`Self::on_remote_set`].
-    fn remote_set(&mut self, set: RemoteSet, reply: sola_call::ReplyTx) -> Task<Msg> {
-        let Some(ws) = self.tabs.iter().find(|w| w.id == set.id).cloned() else {
-            reply.err(format!("unknown tab '{}'", set.id));
-            return Task::none();
-        };
-        let machine = match self.machine_for(ws.host.as_deref()) {
-            Ok(m) => m,
-            Err(e) => {
-                reply.err(e);
-                return Task::none();
-            }
-        };
-        let moving = match set.name.as_deref() {
-            Some(raw) => match self.rename_plan(&set.id, raw) {
-                Ok(plan) => Some(plan),
-                Err(e) => {
-                    reply.err(e);
-                    return Task::none();
-                }
-            },
-            None => None,
-        };
-        if set.branch.is_some() && !catalog::has_worktree(&ws) {
-            reply.err(if ws.kind == catalog::Kind::Root {
-                "this tab has no worktree — it uses the project root's branch"
-            } else {
-                "cannot rename the project root branch"
-            });
-            return Task::none();
-        }
-        let branch = set.branch.clone();
-        let leaves = ws.layout().leaves();
-        self.remote_moving.insert(set.id.clone());
-        Task::perform(
-            async move {
-                let done = tokio::task::spawn_blocking(move || {
-                    let mut path = ws.path.clone();
-                    if let Some((root, slug, dest)) = &moving {
-                        if !catalog::path_same(&path, dest) {
-                            spawn::move_worktree(&machine, root, &path, slug)?;
-                            path = dest.clone();
-                            // Panes there say where they are now.
-                            if let Some(host) = machine.host() {
-                                for pane in &leaves {
-                                    let session = tmux::session_name(pane);
-                                    let p = path.to_string_lossy();
-                                    let _ = rtmux::set_environment(host, &session, catalog::SOLA_WS_PATH, &p);
-                                }
-                            }
-                        }
-                    }
-                    if let Some(b) = &branch {
-                        spawn::rename_branch(&machine, &path, b)?;
-                    }
-                    Ok(moving.map(|(_, slug, dest)| (slug, dest)))
-                })
-                .await
-                .unwrap_or_else(|e| Err(e.to_string()));
-                (set, done, reply)
-            },
-            |(set, done, reply)| Msg::RemoteSet {
-                set: Box::new(set),
-                done,
-                reply,
-            },
-        )
-    }
-
-    pub(crate) fn on_remote_set(
-        &mut self,
-        set: RemoteSet,
-        done: Result<Option<(String, PathBuf)>, String>,
-        reply: sola_call::ReplyTx,
-    ) -> Task<Msg> {
-        self.remote_moving.remove(&set.id);
-        let moved = match done {
-            Ok(m) => m,
-            Err(e) => {
-                reply.err(e);
-                return Task::none();
-            }
-        };
-        if let Some(ws) = self.tabs.iter_mut().find(|w| w.id == set.id) {
-            if let Some((slug, dest)) = moved {
-                ws.name = slug;
-                ws.path = dest;
-            }
-            if let Some(raw) = set.title.as_deref() {
-                cli::apply_rail_title(ws, raw);
-            }
-        }
-        if let Some(before) = set.before {
-            let before_id = match before.as_deref() {
-                None => None,
-                Some(q) => match catalog::resolve_tab(&self.tabs, q) {
-                    Ok(w) => Some(w.id.clone()),
-                    Err(e) => {
-                        self.persist_catalog();
-                        reply.err(e);
-                        return Task::none();
-                    }
-                },
-            };
-            if let Err(e) = catalog::move_tab_before(&mut self.tabs, &set.id, before_id.as_deref()) {
-                self.persist_catalog();
-                reply.err(e);
-                return Task::none();
-            }
-        }
-        self.persist_catalog();
-        match catalog::resolve_tab(&self.tabs, &set.id) {
-            Ok(ws) => reply.ok(cli::tab_json(ws, Some(&self.selected))),
-            Err(e) => reply.err(e),
-        }
-        Task::none()
-    }
-
     /// Learn off the UI thread what a remote project's root is (a git
-    /// checkout, or a folder) and its branch for the new-tab card.
+    /// checkout, or a folder).
     pub(crate) fn learn_remote_root(&self, tab_id: &str) -> Task<Msg> {
         let Some(ws) = self.tabs.iter().find(|w| w.id == tab_id) else {
             return Task::none();
@@ -973,29 +680,6 @@ impl App {
             move |git| Msg::RemoteKind {
                 tab: tab.clone(),
                 git,
-            },
-        )
-    }
-
-    /// The new-tab card on a remote project: its root's branch, off the UI
-    /// thread.
-    pub(crate) fn remote_root_branch(&self, project_id: &str) -> Task<Msg> {
-        let Some(p) = self.projects.iter().find(|p| p.id == project_id) else {
-            return Task::none();
-        };
-        let Ok(machine) = self.machine_for(p.host.as_deref()) else {
-            return Task::none();
-        };
-        let (project, root) = (p.id.clone(), p.root.clone());
-        Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || spawn::current_branch(&machine, &root))
-                    .await
-                    .unwrap_or(None)
-            },
-            move |branch| Msg::SpawnBranch {
-                project: project.clone(),
-                branch,
             },
         )
     }
@@ -1028,19 +712,11 @@ impl App {
     }
 }
 
-/// What to do once a CLI-spawned remote worktree is made.
-#[derive(Debug, Clone)]
-pub(crate) struct Spawned {
-    pub reply: sola_call::ReplyTx,
-    pub agent: Option<String>,
-    pub prompt: Option<String>,
-}
-
 /// Off the UI thread: a resumable remote pane's session alive there
 /// (attach as it is), else its agent's resume if that session is still
 /// there (as [`App::resume_argv`] here).
 fn plan_attach(id: String, machine: Machine, st: PaneStatus) -> Task<Msg> {
-    let session = tmux::session_name(&id);
+    let session = catalog::session_name(&id);
     Task::perform(
         async move {
             tokio::task::spawn_blocking(move || {
@@ -1063,15 +739,14 @@ fn plan_attach(id: String, machine: Machine, st: PaneStatus) -> Task<Msg> {
     )
 }
 
-/// Off the UI thread, for one host: its panes' presence (one look),
-/// Codex turns and `×N` from its files, and which of its worktrees are
-/// gone. Each pane comes back as it was and as it is now.
+/// Off the UI thread, for one host: its panes' presence (one look) and
+/// Codex turns and `×N` from its files. Each pane comes back as it was
+/// and as it is now.
 fn remote_tick(
     m: &Machine,
     panes: Vec<(String, PathBuf, PaneStatus)>,
-    worktrees: Vec<(String, PathBuf)>,
-) -> (Vec<(String, PaneStatus, PaneStatus)>, Vec<(String, PathBuf)>) {
-    let sessions: Vec<String> = panes.iter().map(|(id, ..)| tmux::session_name(id)).collect();
+) -> Vec<(String, PaneStatus, PaneStatus)> {
+    let sessions: Vec<String> = panes.iter().map(|(id, ..)| catalog::session_name(id)).collect();
     let who = presence::scan_remote(m, &sessions);
     let mut claimed: HashSet<String> = HashSet::new();
     for (_, _, st) in &panes {
@@ -1084,7 +759,7 @@ fn remote_tick(
     let mut out = Vec::with_capacity(panes.len());
     for (id, cwd, before) in panes {
         let mut st = before.clone();
-        let seen = who.get(&tmux::session_name(&id)).copied().unwrap_or(Presence::Unknown);
+        let seen = who.get(&catalog::session_name(&id)).copied().unwrap_or(Presence::Unknown);
         st.apply_presence(seen);
         if st.is_codex() {
             st.observe_codex_turn(m, &cwd, &claimed);
@@ -1095,55 +770,5 @@ fn remote_tick(
         st.refresh_compaction(m, &cwd);
         out.push((id, before, st));
     }
-    (out, missing(m, worktrees))
-}
-
-/// The worktrees whose folder is not there (with the folder looked at).
-/// Only when the look itself worked: a link that fails meanwhile reaps
-/// nothing.
-fn missing(m: &Machine, worktrees: Vec<(String, PathBuf)>) -> Vec<(String, PathBuf)> {
-    if worktrees.is_empty() {
-        return Vec::new();
-    }
-    let paths: Vec<String> = worktrees.iter().map(|(_, p)| p.to_string_lossy().into_owned()).collect();
-    let mut argv = vec![
-        "sh",
-        "-c",
-        "for p in \"$@\"; do [ -e \"$p\" ] || printf \"%s\\n\" \"$p\"; done; echo ok",
-        "sh",
-    ];
-    argv.extend(paths.iter().map(String::as_str));
-    let Ok(out) = m.run(None, &[], &argv, None) else {
-        return Vec::new();
-    };
-    let text = String::from_utf8_lossy(&out.stdout);
-    if !out.status.success() || text.lines().last() != Some("ok") {
-        return Vec::new();
-    }
-    let gone: HashSet<&str> = text.lines().collect();
-    worktrees
-        .into_iter()
-        .filter(|(_, p)| gone.contains(p.to_string_lossy().as_ref()))
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn missing_names_only_the_folders_that_are_gone() {
-        let dir = std::env::temp_dir().join(format!("sola-missing-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join("here")).unwrap();
-        let gone = missing(
-            &Machine::Local,
-            vec![
-                ("ws-here".into(), dir.join("here")),
-                ("ws-gone".into(), dir.join("gone")),
-            ],
-        );
-        assert_eq!(gone, [("ws-gone".to_string(), dir.join("gone"))]);
-        assert!(missing(&Machine::Local, Vec::new()).is_empty());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
+    out
 }

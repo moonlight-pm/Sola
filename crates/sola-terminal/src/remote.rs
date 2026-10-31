@@ -1,14 +1,17 @@
 //! tmux on another computer, over ssh ([`sola_core::ssh`]).
 //!
 //! A tab of a project on another computer is a session of a tmux there, so
-//! it runs there and outlives the connection. That server is this
-//! process's socket name plus `-remote` (`sola-ws-remote` for Projects): a
-//! Sola running on that computer keeps its own sessions on its own socket,
-//! and the two never meet. Session names are the same as here
-//! (`sws-<pane>`). Each attach first writes our tmux.conf there
-//! (`~/.config/sola/<socket>.tmux.conf`) and sources it into a running
-//! server, so the remote tmux draws like the local one (no status bar, no
-//! prefix, extended keys).
+//! it runs there and outlives the connection. That server is the same one
+//! a Sola on that computer keeps its own tabs on ([`socket`], `sola-ws` for
+//! Projects): a session belongs to the computer it runs on, whichever
+//! computer opened it, and any of them can open it again (sessions
+//! anywhere, 2026-10-30). Sessions made before that live on
+//! [`legacy_socket`] (`sola-ws-remote`) until they end; every command here
+//! finds a session on either ([`pick`]), and nothing new is made there.
+//! Session names are the same as here (`sws-<pane>`). Each attach first
+//! writes our tmux.conf there (`~/.config/sola/<socket>.tmux.conf`) and
+//! sources it into a running server, so the remote tmux draws like the
+//! local one (no status bar, no prefix, extended keys).
 
 use std::process::Command;
 
@@ -17,9 +20,28 @@ use sola_core::ssh;
 
 use crate::tmux::TMUX_CONF;
 
-/// The tmux socket on the other computer.
+/// The tmux socket on the other computer: the one its own tabs are on.
 pub fn socket() -> String {
+    crate::tmux::socket().to_string()
+}
+
+/// Where sessions opened from another computer lived before 2026-10-30.
+pub fn legacy_socket() -> String {
     format!("{}-remote", crate::tmux::socket())
+}
+
+/// A shell line that sets `L` to the socket `target` (a tmux `-t`, such as
+/// `=sws-x` or `"=$s"`) is on: [`socket`], unless only [`legacy_socket`]
+/// has it.
+pub fn pick(target: &str) -> String {
+    pick_on(&socket(), &legacy_socket(), target)
+}
+
+fn pick_on(socket: &str, legacy: &str, target: &str) -> String {
+    format!(
+        "L={socket}; tmux -L {socket} has-session -t {target} 2>/dev/null || \
+         {{ tmux -L {legacy} has-session -t {target} 2>/dev/null && L={legacy}; }};"
+    )
 }
 
 /// A tab's ssh: attach `session` on `host`, or make it in `dir`, running
@@ -41,26 +63,26 @@ pub fn attach(
     }
     Ok(ssh::interactive(
         host,
-        &attach_script(&socket(), session, dir, env, &sh_line(exec)),
+        &attach_script(&socket(), &legacy_socket(), session, dir, env, &sh_line(exec)),
     ))
 }
 
 /// `session`'s screen and scrollback on `host` ([`crate::tmux::capture_scrollback`]).
 pub fn capture_scrollback(host: &str, session: &str) -> Result<String, String> {
-    let out = tmux(host, &["capture-pane", "-t", &pane(session)?, "-p", "-S", "-"], None)?;
+    let out = tmux(host, session, &["capture-pane", "-t", &pane(session)?, "-p", "-S", "-"], None)?;
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// Type `text` into `session` on `host` ([`crate::tmux::send_literal`]).
 pub fn send_literal(host: &str, session: &str, text: &str) -> Result<(), String> {
-    tmux(host, &["send-keys", "-t", &pane(session)?, "-l", "--", text], None).map(|_| ())
+    tmux(host, session, &["send-keys", "-t", &pane(session)?, "-l", "--", text], None).map(|_| ())
 }
 
 /// Paste `text` into `session` on `host`, then Enter if asked
 /// ([`crate::tmux::send_prompt`]): one round trip, the text on stdin.
 pub fn send_prompt(host: &str, session: &str, text: &str, enter: bool) -> Result<(), String> {
     let target = pane(session)?;
-    let t = format!("tmux -L {}", socket());
+    let t = "tmux -L \"$L\"";
     let buf = format!("sws-paste-{session}");
     let mut steps = Vec::new();
     if !text.is_empty() {
@@ -77,7 +99,8 @@ pub fn send_prompt(host: &str, session: &str, text: &str, enter: bool) -> Result
     if steps.is_empty() {
         return Ok(());
     }
-    let out = ssh::run(ssh::batch(host, &steps.join(" && ")), Some(text.as_bytes()))?;
+    let script = format!("{} {}", pick(&format!("={session}")), steps.join(" && "));
+    let out = ssh::run(ssh::batch(host, &script), Some(text.as_bytes()))?;
     if out.status.success() {
         Ok(())
     } else {
@@ -90,15 +113,20 @@ pub fn set_environment(host: &str, session: &str, key: &str, value: &str) -> Res
     if !is_word(session) {
         return Err(format!("tmux session {session:?} is not one word"));
     }
-    tmux(host, &["set-environment", "-t", &format!("={session}"), key, value], None).map(|_| ())
+    tmux(host, session, &["set-environment", "-t", &format!("={session}"), key, value], None)
+        .map(|_| ())
 }
 
-/// `tmux -L <socket> <args>` on `host`; a failure says what tmux said.
-fn tmux(host: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<std::process::Output, String> {
-    let socket = socket();
-    let mut argv = vec!["tmux", "-L", socket.as_str()];
-    argv.extend_from_slice(args);
-    let out = ssh::run(ssh::batch(host, &ssh::argv_script(None, &[], &argv)), stdin)?;
+/// `tmux <args>` on `host`, on the socket `session` is on ([`pick`]); a
+/// failure says what tmux said. `session` is one word (its callers check).
+fn tmux(
+    host: &str,
+    session: &str,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+) -> Result<std::process::Output, String> {
+    let script = format!("{} tmux -L \"$L\" {}", pick(&format!("={session}")), sh_line(args));
+    let out = ssh::run(ssh::batch(host, &script), stdin)?;
     if out.status.success() {
         Ok(out)
     } else {
@@ -122,8 +150,10 @@ pub fn session_state(host: &str, session: &str) -> Result<bool, String> {
         return Ok(false);
     }
     let script = format!(
-        "command -v tmux >/dev/null || exit 3; tmux -L {} has-session -t ={session} 2>/dev/null",
-        socket()
+        "command -v tmux >/dev/null || exit 3; tmux -L {} has-session -t ={session} 2>/dev/null \
+         || tmux -L {} has-session -t ={session} 2>/dev/null",
+        socket(),
+        legacy_socket()
     );
     let out = ssh::run(ssh::batch(host, &script), None)?;
     match out.status.code() {
@@ -139,8 +169,10 @@ pub fn kill_session(host: &str, session: &str) {
         return;
     }
     let script = format!(
-        "tmux -L {} kill-session -t ={session} 2>/dev/null; true",
-        socket()
+        "tmux -L {} kill-session -t ={session} 2>/dev/null; \
+         tmux -L {} kill-session -t ={session} 2>/dev/null; true",
+        socket(),
+        legacy_socket()
     );
     match ssh::run(ssh::batch(host, &script), None) {
         Ok(_) => tracing::debug!(%host, %session, "killed remote tmux session"),
@@ -153,6 +185,7 @@ pub fn kill_session(host: &str, session: &str) {
 /// ([`ssh::is_quotable`]).
 fn attach_script(
     socket: &str,
+    legacy: &str,
     session: &str,
     dir: &str,
     env: &[(&str, &str)],
@@ -162,7 +195,7 @@ fn attach_script(
     let conf = b64.encode(TMUX_CONF);
     let dir = b64.encode(dir);
     let exec = b64.encode(exec);
-    let t = format!("tmux -L {socket} -f \"$c\"");
+    let t = "tmux -L \"$L\" -f \"$c\"";
     // Env values decode into e0, e1, …; then `-e` for a new session,
     // `set-environment` for one there already.
     let decode: String = env
@@ -190,6 +223,7 @@ fn attach_script(
             "{ echo \"tmux is not installed on $(uname -n)\" >&2; exit 127; }"
         )
         .to_string(),
+        pick_on(socket, legacy, &format!("={session}")).trim_end_matches(';').to_string(),
         format!("{t} source-file \"$c\" 2>/dev/null"),
         if decode.is_empty() { "true".to_string() } else { decode },
         format!(
@@ -234,6 +268,7 @@ mod tests {
     #[test]
     fn the_attach_script_is_one_quotable_word() {
         let s = attach_script(
+            "sola-ws",
             "sola-ws-remote",
             "sws-ws-novus-sola",
             "/home/j/Projects/It's \"here\"",
@@ -252,9 +287,11 @@ mod tests {
         let home = std::env::temp_dir().join(format!("sola-remote-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
-        let script = attach_script("t", "s", "/a dir/it's", &[("K", "v w")], &sh_line(&["echo", "it's"]))
+        let script = attach_script("t", "u", "s", "/a dir/it's", &[("K", "v w")], &sh_line(&["echo", "it's"]))
             .replace("command -v tmux >/dev/null", "true")
-            .replace("tmux -L t -f \"$c\"", "echo")
+            .replace("tmux -L t has-session", "false")
+            .replace("tmux -L u has-session", "false")
+            .replace("tmux -L \"$L\" -f \"$c\"", "echo")
             .replace("exec echo", "echo");
         let out = Command::new("sh")
             .args(["-c", &script])
@@ -263,10 +300,32 @@ mod tests {
             .unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let conf = std::fs::read_to_string(home.join(".config/sola/t.tmux.conf")).unwrap();
+        assert!(said_l(&script), "{script}");
         assert_eq!(conf, TMUX_CONF);
         let said = String::from_utf8_lossy(&out.stdout);
         assert!(said.contains("new-session -s s -c /a dir/it's -e K=v w echo 'it'\\''s'"), "{said}");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// The attach script picks its socket before any tmux call on it.
+    fn said_l(script: &str) -> bool {
+        script.find("L=t;").is_some_and(|i| i < script.find("echo source-file").unwrap_or(0))
+    }
+
+    #[test]
+    fn a_session_is_found_on_either_socket() {
+        let line = pick_on("sola-ws", "sola-ws-remote", "=sws-x");
+        let run = |new: bool, old: bool| {
+            let script = line
+                .replace("tmux -L sola-ws has-session -t =sws-x", if new { "true" } else { "false" })
+                .replace("tmux -L sola-ws-remote has-session -t =sws-x", if old { "true" } else { "false" });
+            let out = Command::new("sh").args(["-c", &format!("{script} echo $L")]).output().unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        assert_eq!(run(false, false), "sola-ws");
+        assert_eq!(run(true, false), "sola-ws");
+        assert_eq!(run(false, true), "sola-ws-remote");
+        assert_eq!(run(true, true), "sola-ws");
     }
 
     #[test]

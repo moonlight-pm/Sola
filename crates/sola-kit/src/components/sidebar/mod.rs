@@ -121,6 +121,16 @@ pub struct SidebarHoverAction<Message> {
     pub armed: bool,
 }
 
+/// [`SidebarItem::tag`]: a short label on a fill of its own color. The
+/// caller picks both from one hue so the ink reads on the fill and on the
+/// bar (the host chip: the host's prompt hue, lighter ink, faint fill).
+#[derive(Debug, Clone)]
+pub struct SidebarTag {
+    pub label: String,
+    pub ink: Color,
+    pub fill: Color,
+}
+
 /// One row in the sidebar. `active` flips on the visual state; `message`
 /// is what the parent receives when the row is clicked.
 ///
@@ -167,6 +177,14 @@ pub struct SidebarItem<'a, Message> {
     /// Optional second line under the title (e.g. project path). Muted,
     /// mono-friendly size; wraps/clips independently of the title.
     pub subtitle: Option<String>,
+    /// A quieter run after the title on the same line: the part of a
+    /// name that is not the main one (a project's session after the
+    /// project). Clipped before the title is.
+    pub detail: Option<String>,
+    /// A small chip at the row's end in a color of its own (the computer
+    /// a window runs on, in its prompt's color). Never clipped by the
+    /// title.
+    pub tag: Option<SidebarTag>,
     /// Double-click on the row (e.g. rename). Single click still emits
     /// [`Self::message`].
     pub on_double_click: Option<Message>,
@@ -214,6 +232,8 @@ impl<'a, Message> SidebarItem<'a, Message> {
             on_edit: None,
             secondary: None,
             subtitle: None,
+            detail: None,
+            tag: None,
             on_double_click: None,
             indicator: None,
             leading: None,
@@ -282,6 +302,18 @@ impl<'a, Message> SidebarItem<'a, Message> {
     /// Second line under the title (path, caption, …).
     pub fn subtitle(mut self, label: impl Into<String>) -> Self {
         self.subtitle = Some(label.into());
+        self
+    }
+
+    /// A quieter run after the title ([`Self::detail`]).
+    pub fn detail(mut self, label: impl Into<String>) -> Self {
+        self.detail = Some(label.into());
+        self
+    }
+
+    /// A chip at the row's end ([`Self::tag`]).
+    pub fn tag(mut self, tag: SidebarTag) -> Self {
+        self.tag = Some(tag);
         self
     }
 
@@ -1590,6 +1622,8 @@ where
         on_edit,
         secondary,
         subtitle,
+        detail,
+        tag,
         on_double_click,
         indicator,
         leading,
@@ -1634,6 +1668,8 @@ where
         item_content(
             &label,
             subtitle.as_deref(),
+            detail.as_deref(),
+            tag,
             secondary.as_deref(),
             shortcut,
             indicator,
@@ -2083,6 +2119,7 @@ fn assign_close_id<'a, Message>(
 fn item_text_block<'a, Message: 'a>(
     label: &str,
     subtitle: Option<&str>,
+    detail: Option<&str>,
     indicator: Option<SidebarIndicator>,
     leading: Option<Element<'a, Message, Theme>>,
     active: bool,
@@ -2111,11 +2148,17 @@ fn item_text_block<'a, Message: 'a>(
         None if bright && !active => Some(well_ink(row_surface(None))),
         None => None,
     };
+    // With a detail the title takes its own width and the detail the
+    // rest, so the detail is what clips first.
     let mut title = text(label.to_string())
         .font(title_font)
         .size(title_size)
         .wrapping(Wrapping::None)
-        .width(Length::Fill);
+        .width(if detail.is_some() {
+            Length::Shrink
+        } else {
+            Length::Fill
+        });
     if let Some(c) = title_color {
         title = title.style(move |_theme: &Theme| iced::widget::text::Style { color: Some(c) });
     }
@@ -2139,6 +2182,17 @@ fn item_text_block<'a, Message: 'a>(
         title_row = title_row.push(status_dot(ind));
     }
     title_row = title_row.push(title);
+    if let Some(detail) = detail {
+        let ink = detail_ink(active, bright, well);
+        title_row = title_row.push(
+            text(detail.to_string())
+                .font(fonts::ui())
+                .size(title_size)
+                .wrapping(Wrapping::None)
+                .width(Length::Fill)
+                .style(move |_theme: &Theme| iced::widget::text::Style { color: Some(ink) }),
+        );
+    }
 
     let mut text_col = column![title_row]
         .spacing(TITLE_SUB_GAP)
@@ -2219,6 +2273,8 @@ fn item_trailing<'a, Message: Clone + 'a>(
 fn item_content<'a, Message: Clone + 'a>(
     label: &str,
     subtitle: Option<&str>,
+    detail: Option<&str>,
+    tag: Option<SidebarTag>,
     secondary: Option<&str>,
     shortcut: Option<u8>,
     indicator: Option<SidebarIndicator>,
@@ -2234,6 +2290,7 @@ fn item_content<'a, Message: Clone + 'a>(
     let text_box = item_text_block(
         label,
         subtitle,
+        detail,
         indicator,
         leading,
         active,
@@ -2244,10 +2301,20 @@ fn item_content<'a, Message: Clone + 'a>(
         well,
     );
     let has_trail = secondary.is_some() || shortcut.is_some() || hover_action.is_some();
+    // A tag centres on a one-line row; rows without one keep their
+    // top-aligned trail.
+    let align = if tag.is_some() && subtitle.is_none() {
+        iced::Alignment::Center
+    } else {
+        iced::Alignment::Start
+    };
     let mut r = row![text_box]
         .spacing(SPACE_MD)
-        .align_y(iced::Alignment::Start)
+        .align_y(align)
         .width(Length::Fill);
+    if let Some(tag) = tag {
+        r = r.push(tag_chip(tag));
+    }
     if has_trail {
         r = r.push(item_trailing(secondary, shortcut, hover_action, well));
     }
@@ -2339,6 +2406,44 @@ fn dim_label<'a, Message: 'a>(s: &str, well: Option<Color>) -> Element<'a, Messa
             }
         })
         .into()
+}
+
+/// A detail's ink: the row's ink for its state, a step quieter. Hover
+/// lifts the title, not the detail.
+fn detail_ink(active: bool, bright: bool, well: Option<Color>) -> Color {
+    let face = well_face(row_surface(well));
+    let ink = if active && well.is_none() {
+        on_color(crate::theme::highlight())
+    } else {
+        on_color(face)
+    };
+    let ink = if active || bright { ink } else { well_muted(ink) };
+    Color {
+        a: ink.a * 0.62,
+        ..ink
+    }
+}
+
+/// [`SidebarItem::tag`]'s chip: small medium type on a pill of its fill.
+fn tag_chip<'a, Message: 'a>(tag: SidebarTag) -> Element<'a, Message> {
+    let SidebarTag { label, ink, fill } = tag;
+    container(
+        text(label)
+            .font(fonts::ui_medium())
+            .size(11)
+            .wrapping(Wrapping::None)
+            .style(move |_theme: &Theme| iced::widget::text::Style { color: Some(ink) }),
+    )
+    .padding(Padding::from([1, 6]))
+    .style(move |_theme: &Theme| container::Style {
+        background: Some(Background::Color(fill)),
+        border: Border {
+            radius: 8.0.into(),
+            ..Default::default()
+        },
+        ..container::Style::default()
+    })
+    .into()
 }
 
 // ─────────────────────────────── SidebarPanel ───────────────────────────────

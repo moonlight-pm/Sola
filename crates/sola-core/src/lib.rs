@@ -8,6 +8,7 @@ pub mod background;
 pub mod config;
 pub mod encrypted;
 pub mod env;
+pub mod host_color;
 pub mod keys;
 pub mod log;
 pub mod login;
@@ -20,6 +21,7 @@ pub mod process;
 pub mod ssh;
 pub mod theme;
 pub mod watcher;
+pub mod window_label;
 
 pub use encrypted::Encrypted;
 pub use keys::{KeyChord, KeyCode};

@@ -13,7 +13,6 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use sola_kit::components::SidebarIndicator;
 use sola_bus::topics::Activity;
 
 use crate::hooks::Incoming;
@@ -33,14 +32,6 @@ pub enum AgentStatus {
 }
 
 impl AgentStatus {
-    pub fn indicator(self) -> SidebarIndicator {
-        match self {
-            Self::Working => SidebarIndicator::Working,
-            Self::Waiting => SidebarIndicator::Waiting,
-            Self::Done => SidebarIndicator::Done,
-            Self::Idle => SidebarIndicator::Idle,
-        }
-    }
 
     /// The mark on a project window's row in the shell's tab bar: only
     /// working and waiting show there; done reads as idle.
@@ -89,16 +80,6 @@ pub fn loudest_agent<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> Opt
         .find(|p| p.status == rolled)
         .and_then(|p| p.agent.clone())
         .or_else(|| panes.first().and_then(|p| p.agent.clone()))
-}
-
-/// Quiet `×N` on the tab row: loudest Grok, Codex, or Claude session.
-pub fn rail_compaction<'a>(panes: impl IntoIterator<Item = &'a PaneStatus>) -> u32 {
-    panes
-        .into_iter()
-        .filter(|p| p.shows_compaction())
-        .map(|p| p.compaction_count)
-        .max()
-        .unwrap_or(0)
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -950,14 +931,6 @@ mod tests {
     }
 
     #[test]
-    fn vocab_maps_one_to_one_onto_kit_marks() {
-        assert_eq!(AgentStatus::Working.indicator(), SidebarIndicator::Working);
-        assert_eq!(AgentStatus::Waiting.indicator(), SidebarIndicator::Waiting);
-        assert_eq!(AgentStatus::Done.indicator(), SidebarIndicator::Done);
-        assert_eq!(AgentStatus::Idle.indicator(), SidebarIndicator::Idle);
-    }
-
-    #[test]
     fn encode_cwd_matches_grok_sessions() {
         assert_eq!(
             encode_session_cwd(Path::new("/home/joshua/Workspace/Sola")),
@@ -1130,39 +1103,6 @@ mod tests {
             AgentStatus::Waiting
         );
         assert_eq!(rollup_tracked([&shell]), AgentStatus::Idle);
-    }
-
-    #[test]
-    fn rail_compaction_takes_max_grok_or_codex() {
-        let a = PaneStatus {
-            agent: Some("grok".into()),
-            compaction_count: 2,
-            ..PaneStatus::default()
-        };
-        let b = PaneStatus {
-            agent: Some("grok".into()),
-            compaction_count: 5,
-            ..PaneStatus::default()
-        };
-        let shell = PaneStatus {
-            compaction_count: 9,
-            ..PaneStatus::default()
-        };
-        let codex = PaneStatus {
-            agent: Some("codex".into()),
-            compaction_count: 7,
-            ..PaneStatus::default()
-        };
-        assert_eq!(rail_compaction([&a, &b, &shell]), 5);
-        assert_eq!(rail_compaction([&shell]), 0);
-        assert_eq!(rail_compaction([&a, &codex, &shell]), 7);
-        assert_eq!(rail_compaction([&codex]), 7);
-        let claude = PaneStatus {
-            agent: Some("claude".into()),
-            compaction_count: 11,
-            ..PaneStatus::default()
-        };
-        assert_eq!(rail_compaction([&a, &codex, &claude, &shell]), 11);
     }
 
     #[test]

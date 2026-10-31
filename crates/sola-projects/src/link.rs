@@ -159,15 +159,7 @@ fn learn(host: &str) -> Result<Remote, String> {
 pub fn remote_socket(r: &Remote) -> PathBuf {
     r.home
         .join(".config/sola/remote")
-        .join(format!("hooks-{}.sock", crate::spawn::slug(&this_host())))
-}
-
-fn this_host() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .map(|h| h.trim().to_string())
-        .ok()
-        .filter(|h| !h.is_empty())
-        .unwrap_or_else(|| "here".into())
+        .join(format!("hooks-{}.sock", crate::spawn::slug(&crate::machine::this_host())))
 }
 
 fn keepalive(host: &str, remote_sock: &Path, local_sock: &Path) -> std::io::Result<Child> {

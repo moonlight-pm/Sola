@@ -230,6 +230,23 @@ canto today?
 
 ---
 
+### D16 — Projects sessions on any computer (P1) — **answered (2026-10-30)**
+
+**Context:** Joshua (2026-10-30): connect "from any machine to any machine and
+connect to any ongoing session"; closing a window is not ending a session; the
+tab shows the host ("Oath | novus"); in-window tabs go. Draft:
+[sessions anywhere](specs/2026-10-30-projects-sessions-anywhere-design.md).
+
+**Answer (Joshua, 2026-10-30):** the label in kit parts with the host in its
+prompt color; sessions restart by themselves after a reboot; size follows
+the desk in use with scaled mirrors (agents' full screen too); the rest as
+proposed (End Session only, splits dropped, islands on every desk with the
+session open). Recorded in the spec's D16.
+
+**Related:** `projects` capability; D8.
+
+---
+
 ## Open technical questions
 
 ### T1 — Agent pin UI surface — **closed (2026-08-28)**
