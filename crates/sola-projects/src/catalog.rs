@@ -828,7 +828,7 @@ pub fn resolve_tab<'a>(
         match hits.as_slice() {
             [one] => return Ok(one),
             [] => {}
-            _ => return Err(format!("tab path '{q}' is ambiguous")),
+            _ => return Err(format!("session path '{q}' is ambiguous")),
         }
     }
     let hits: Vec<&Tab> = tabs
@@ -838,7 +838,7 @@ pub fn resolve_tab<'a>(
     match hits.as_slice() {
         [one] => return Ok(one),
         [] => {}
-        _ => return Err(format!("tab '{q}' is ambiguous")),
+        _ => return Err(format!("session '{q}' is ambiguous")),
     }
     let hits: Vec<&Tab> = tabs
         .iter()
@@ -852,8 +852,8 @@ pub fn resolve_tab<'a>(
         .collect();
     match hits.as_slice() {
         [one] => Ok(one),
-        [] => Err(format!("unknown tab '{q}'")),
-        _ => Err(format!("tab '{q}' is ambiguous")),
+        [] => Err(format!("unknown session '{q}'")),
+        _ => Err(format!("session '{q}' is ambiguous")),
     }
 }
 

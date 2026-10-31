@@ -29,7 +29,7 @@ PID 1 (Oath)
 | `sola-call` | The call socket, and the registry of live owners and their methods. See [The call plane](call.md). |
 | `sola-river` | The compositor's window manager (`river-window-management-v1`). It places, stacks, and focuses windows as the shell asks, binds key chords, and reports windows and outputs on the bus. Call owner `compositor`. See [Compositor](compositor.md). |
 | `sola-shell` | The top row, the bar, the launcher, notifications, desktop workspaces, and zones. It decides which windows are shown and where, tells `sola-river`, and saves the layout that puts windows back after a restart. See [Shell](sola-shell.md). |
-| `sola-session` | Launching, tracking, and closing applications, and relaunching the previous session's applications at start. Call owner `session`. See [Session manager](session.md). |
+| `sola-session` | Launching, tracking, and closing applications, and relaunching the previous session's applications at start. Call owner `desk`. See [Session manager](session.md). |
 | `sola-kvm` | Sharing this machine's keyboard and mouse with another machine. See [KVM](sola-kvm-operator.md). |
 | Applications | Their own windows. Sola's applications are built on sola-kit and are Wayland clients and bus clients. Terminal, Browser, Paint, Projects, and Design open a window per tab (a terminal tab, a page, an image, a project) and announce each one to the shell, which lists it in the bar. Projects, Browser, and Design are also call owners. Other programs started through the session manager are plain Wayland or X11 clients. See [Applications](applications.md). |
 
@@ -62,7 +62,7 @@ it to every new subscriber; it also writes persistent topics to disk. A
 process that starts late, or restarts, therefore learns the current state as
 soon as it subscribes.
 
-The call plane carries requests. An owner (`compositor`, `session`,
+The call plane carries requests. An owner (`compositor`, `desk`,
 `projects`, …) advertises its methods. A caller names an owner and a
 method and gets exactly one reply, or an error: `<owner> is not running`,
 `<owner> has no method <method>`, or `timeout` (8 seconds unless the caller
@@ -196,7 +196,7 @@ exits cleanly stays down; that is how **Exit Sola** ends the session.
 | `sola-call` | Calls in flight fail. Owners reconnect every 400 ms and advertise their methods again. |
 | `sola-river` | The compositor and every window keep running. The new `sola-river` binds the window-management protocol again and reports outputs and windows. |
 | `sola-shell` | The top row, the bar, and the overlays go until the new shell maps them; windows stay. The new shell takes the saved layout and pairs the open windows with their tabs again. |
-| `sola-session` | The new one launches saved applications that have no window. It did not start the ones still running: their exits are not reported and `solactl session close` does not find them, but they stay in the saved set while they have windows. |
+| `sola-session` | The new one launches saved applications that have no window. It did not start the ones still running: their exits are not reported and `solactl desk close` does not find them, but they stay in the saved set while they have windows. |
 | An application | `sola-session` publishes its exit (`UserAppExited`) and drops it from the saved set. Nothing restarts it. Its windows' places in the bar wait 30 seconds, so a copy started again within that time gets them back. |
 | The compositor | Every Wayland client loses its connection. `sola-river` and the shell exit with an error, PID 1 starts them again, and they wait for a live Wayland socket. The applications exit with it; `sola-session` keeps them in the saved set and starts them again once the new compositor has answered for 2 seconds. |
 

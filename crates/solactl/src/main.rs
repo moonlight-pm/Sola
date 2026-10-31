@@ -1,6 +1,6 @@
 //! solactl — operator CLI for Sola.
 //!
-//! Compiled owners (`compositor`, `session`, `projects`, `browser`, `bots`,
+//! Compiled owners (`compositor`, `desk`, `projects`, `browser`, `bots`,
 //! `design`) are a real clap tree. Other live owners appear as
 //! `solactl <app-id>` from the call registry.
 
@@ -10,13 +10,13 @@ mod background;
 mod bus;
 mod call;
 mod compositor;
+mod desk;
 mod dynamic;
 mod emit;
 mod logs;
 mod mcp;
 mod media;
 mod open;
-mod session;
 
 #[derive(Parser, Debug)]
 #[command(name = "solactl", about = "Sola control + introspection CLI")]
@@ -32,12 +32,12 @@ enum Command {
         #[command(subcommand)]
         cmd: compositor::Command,
     },
-    /// Session manager: launch and close user apps.
-    Session {
+    /// Desk (sola-session): launch and close user apps.
+    Desk {
         #[command(subcommand)]
-        cmd: session::Command,
+        cmd: desk::Command,
     },
-    /// Projects: projects, tabs (worktree or root checkout), panes (app must be running).
+    /// Projects: projects, their sessions, panes (app must be running).
     #[command(disable_help_flag = true)]
     Projects {
         /// Method and flags. Omit to list advertised methods.
@@ -111,7 +111,7 @@ fn main() {
     let cli = Cli::parse();
     let exit = match cli.command {
         Command::Compositor { cmd } => compositor::run(cmd),
-        Command::Session { cmd } => session::run(cmd),
+        Command::Desk { cmd } => desk::run(cmd),
         Command::Projects { args } => {
             let mut all = vec!["projects".into()];
             all.extend(args);

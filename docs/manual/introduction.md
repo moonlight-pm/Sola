@@ -108,7 +108,7 @@ and how to close each one, and [Process manager](process-manager.md)
 lists the services and how PID 1 runs them.
 
 Applications open from the launcher (Super+Space) or with
-`solactl session launch <app_id>`. The session manager reopens the applications
+`solactl desk launch <app_id>`. The session manager reopens the applications
 that were open when the session last ended.
 
 To end the session, choose **Restart Computer** or **Shut Down** from the

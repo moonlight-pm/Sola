@@ -162,7 +162,7 @@ pub(crate) fn inject_ws_context(method: &str, params: &mut serde_json::Value) {
             }
         }
     }
-    if method == "tab.spawn" && !map.contains_key("parent") {
+    if method == "session.new" && !map.contains_key("parent") {
         if let Ok(p) = std::env::var("SOLA_PANE_ID") {
             if !p.is_empty() {
                 map.insert("parent".into(), serde_json::Value::String(p));
@@ -462,7 +462,7 @@ mod tests {
 
     fn spawn_spec() -> MethodSpec {
         MethodSpec {
-            name: "tab.spawn".into(),
+            name: "session.new".into(),
             summary: String::new(),
             args: vec![
                 ArgSpec {

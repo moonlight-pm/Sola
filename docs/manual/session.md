@@ -3,7 +3,7 @@
 The session manager, `sola-session`, starts, tracks, and stops your
 applications: everything opened from the launcher, and the applications
 restored when a session starts. It has no window. It is a bus client and a
-call-plane provider with the owner name `session`. On Oath, PID 1 runs it
+call-plane provider with the owner name `desk` (`solactl desk`). On Oath, PID 1 runs it
 as a service and starts it again when it exits with an error
 ([Architecture](architecture.md)).
 
@@ -20,15 +20,15 @@ A launch arrives in one of two ways:
 | Path | Sent by | Command run |
 |---|---|---|
 | `LaunchApp {app_id, command}` on the bus | The shell (the launcher — Projects included, when it is not running — and the clock's panel, which opens Calendar); a web app's `--app` process when no Browser is running | The one in the request |
-| The `launch` call: `solactl session launch <app_id> [--command CMD]` | You, scripts, agents | `--command`; else `/bin/<app_id>` if that file exists; else the app id itself |
+| The `launch` call: `solactl desk launch <app_id> [--command CMD]` | You, scripts, agents | `--command`; else `/bin/<app_id>` if that file exists; else the app id itself |
 
 The call does not read the catalog: without `--command` it runs the
-program the app id names (`solactl session launch sola-mail` runs
+program the app id names (`solactl desk launch sola-mail` runs
 `/bin/sola-mail`). A program that needs arguments needs `--command`.
 
 ```bash
-solactl session launch sola-terminal
-solactl session launch foot --command "foot -e htop"
+solactl desk launch sola-terminal
+solactl desk launch foot --command "foot -e htop"
 ```
 
 `LaunchApp` is not kept on the bus. If `sola-session` is not running when
@@ -184,7 +184,7 @@ The shell shows `<app_id> exited (code N)` for a non-zero exit and
 A process started any other way is not tracked: from a terminal, by
 `solactl open`, by another application, or by an earlier run of
 `sola-session`. It has no exit fact and no place in the saved set, and
-`solactl session close` does not find it. Its windows are ordinary
+`solactl desk close` does not find it. Its windows are ordinary
 windows, and Super+Q still closes them through `sola-river`.
 
 ## Closing
@@ -194,7 +194,7 @@ every tracked process of that app id that is not already stopping. Only
 the process itself gets the signal, not the processes it started.
 
 ```bash
-solactl session close sola-mail
+solactl desk close sola-mail
 ```
 
 A process that is stopping stays tracked until it exits, and then
@@ -205,7 +205,7 @@ or fails with `no live children for <app_id>` when nothing tracked matches.
 Super+Q sends `CloseApp` for the focused application, which reaches three
 receivers at once: `sola-session` stops the process, `sola-river` asks
 every window with that app id to close ([Compositor](compositor.md)), and
-a kit application quits by itself. `solactl session close` does only the
+a kit application quits by itself. `solactl desk close` does only the
 first.
 
 ## Ending the session
@@ -314,7 +314,7 @@ launch opens a new window. Choosing Projects lists your projects
 and opens it as a new page through `open_url` ([URLs](#urls)); when no
 Browser is running, that starts the Browser outside `sola-session`, which
 then does not track it or restore it. Other ways in
-(`solactl session launch`, opening a file) still reach the application's
+(`solactl desk launch`, opening a file) still reach the application's
 own single-instance handling.
 
 ## Opening URLs and files
@@ -389,8 +389,8 @@ no default handlers for `xdg-open`.
 | `LaunchResult` | Published | `{app_id, command, ok, error}` |
 | `UserAppExited` | Published | `{app_id, command, code, signal}` |
 
-Call methods, owner `session` (also the MCP tools `session_launch` and
-`session_close`):
+Call methods, owner `desk` (also the MCP tools `desk_launch` and
+`desk_close`):
 
 | Method | Parameters | Reply |
 |---|---|---|
@@ -401,7 +401,7 @@ Call methods, owner `session` (also the MCP tools `session_launch` and
 
 | What restarts | What happens |
 |---|---|
-| `sola-session` | Open applications keep running, but the new `sola-session` did not start them: no `UserAppExited`, and `solactl session close` does not find them. The listed ones with windows stay in `SessionApps` while they have windows (3 s grace). Super+Q still closes their windows. Restore launches only listed applications that have no window. An apply that moves `pkg:sola` stops `sola-session`, which closes the applications as at **Exit Sola**; the new one opens them again. |
+| `sola-session` | Open applications keep running, but the new `sola-session` did not start them: no `UserAppExited`, and `solactl desk close` does not find them. The listed ones with windows stay in `SessionApps` while they have windows (3 s grace). Super+Q still closes their windows. Restore launches only listed applications that have no window. An apply that moves `pkg:sola` stops `sola-session`, which closes the applications as at **Exit Sola**; the new one opens them again. |
 | `sola-bus` | `sola-session` reconnects and subscribes again. A `LaunchApp` sent while the bus was down is lost. |
 | The compositor | The applications lose their display and exit; they stay in `SessionApps` and start again on the new compositor. See [Architecture](architecture.md#when-a-part-stops). |
 

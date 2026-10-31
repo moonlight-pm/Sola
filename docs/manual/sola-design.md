@@ -90,7 +90,7 @@ the last good layout.
 
 ## Launch
 
-Launcher → **Design**, or `solactl session launch sola-design`. On Oath,
+Launcher → **Design**, or `solactl desk launch sola-design`. On Oath,
 Design is its own package, `pkg:sola-design`, and its pages run on Oath's
 CEF (`pkg:cef`). A second launch brings the active window up.
 
