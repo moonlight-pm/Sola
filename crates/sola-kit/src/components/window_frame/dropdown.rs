@@ -8,7 +8,7 @@ use iced::advanced::layout::{self, Layout};
 use iced::advanced::{Clipboard, Shell, mouse, overlay, renderer};
 use iced::border::Radius;
 use iced::keyboard::{self, key::Named};
-use iced::{Event, Point, Rectangle, Shadow, Size, Theme, Vector};
+use iced::{Event, Point, Rectangle, Size, Theme, Vector};
 use sola_bus::topics::{MenuDefinition, MenuItem};
 
 use super::bar::{line, measure};
@@ -16,17 +16,11 @@ use super::frame::State;
 use super::paint::{self, Colors};
 use crate::fonts;
 
-const PAD: f32 = 5.0;
-const ROW_H: f32 = 26.0;
-const ROW_PAD: f32 = 10.0;
-const ROW_RADIUS: f32 = 7.0;
-const SEP_H: f32 = 11.0;
+use crate::components::menu_sheet::{
+    self, KEY_GAP, KEY_SIZE, LABEL_SIZE, MIN_W, PAD, RADIUS, ROW_H, ROW_PAD, ROW_RADIUS, SEP_H,
+};
+
 const CHECK_W: f32 = 16.0;
-const KEY_GAP: f32 = 28.0;
-const MIN_W: f32 = 200.0;
-const RADIUS: f32 = 12.0;
-const LABEL_SIZE: f32 = 13.0;
-const KEY_SIZE: f32 = 12.0;
 /// Room kept between the sheet and the window's edges.
 const MARGIN: f32 = 4.0;
 
@@ -179,11 +173,7 @@ impl<Message> overlay::Overlay<Message, Theme, iced::Renderer> for Dropdown<'_, 
                     width: 1.0,
                     radius: RADIUS.into(),
                 },
-                shadow: Shadow {
-                    color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.28),
-                    offset: Vector::new(0.0, 2.0),
-                    blur_radius: 10.0,
-                },
+                shadow: menu_sheet::shadow(),
                 snap: true,
             },
             colors.sheet,

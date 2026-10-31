@@ -18,6 +18,8 @@ use sola_bus::topics::Topic;
 const MANAGED: &[&str] = &[
     "sola-bus",
     "sola-call",
+    // The vault service (Oath runs it as `svc:sola-vault`).
+    "sola-vaultd",
     "sola-botsd",
     "sola-river",
     "sola-shell",

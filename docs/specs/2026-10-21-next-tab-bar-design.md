@@ -46,7 +46,8 @@ code and updates the **Workspaces names** lock in the same change.
 **Done 2026-10-21:** the unit inside a project is a **tab** (`tab.*`,
 `--tab`, JSON `tabs` / `tab` / `tab_name`), with no `solactl workspaces`
 alias; tmux `sola-ws` / `sws-` and the `SOLA_WS_*` names stay (live
-sessions use them). The lock row is now **Projects names**.
+sessions use them). The lock row is now **Projects names**. (2026-10-31: a
+tab is a session, `session.*`, `--session`.)
 **Order:** the browser (slice 4) comes before Projects sessions (slice 3).
 **Profiles (Joshua, 2026-10-21; shaped 2026-10-23; joined 2026-10-26):**
 each desktop workspace has a browser profile of its own and every browser

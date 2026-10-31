@@ -2,7 +2,7 @@
 Type=Application
 Name=Sola Paint
 Comment=Sola image viewer and editor — default image handler
-Exec=/opt/sola/bin/sola-paint %F
+Exec=/opt/sola/bin/sola-paint --open %F
 Terminal=false
 Categories=Graphics;2DGraphics;RasterGraphics;
 MimeType=image/png;image/jpeg;image/gif;image/webp;image/bmp;image/tiff;image/x-tga;

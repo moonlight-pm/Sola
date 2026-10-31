@@ -114,3 +114,13 @@ shows the session as tmux draws it (padded or cut) until you type in it.
 ## Slice 5 — CLI
 
 `tab.*` → `session.*`; manual in the same change.
+
+- [x] **5.1 Rename** (2026-10-31, branch `desk-sessions`). `session.list`,
+  `session.new` (was `tab.spawn`), `session.end` (was `tab.rm`),
+  `session.select`, `session.set`, `session.exec`; `--session/-s` for
+  `--tab/-t`; JSON `sessions` / `session` / `session_name`, and the
+  agent's own id `agent_session` (was `session_id`). No aliases.
+  `sola-session`'s call owner became `desk` in the same change.
+- Not done: `session.list --host`; `whoami` answering from the session's
+  own tmux options with no Projects on that host. `session.open` is
+  `project.open --session`.

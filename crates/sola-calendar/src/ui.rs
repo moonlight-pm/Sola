@@ -141,6 +141,8 @@ struct PendingRemind {
 #[derive(Debug, Clone)]
 pub enum Msg {
     Bus(Arc<Message>),
+    /// A call: `open` from Sola's opener.
+    Call(sola_kit::sola_call::Incoming),
     Worker(CalNotice),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
@@ -261,6 +263,7 @@ impl App {
     pub fn subscription(&self) -> Subscription<Msg> {
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
+            sola_kit::call_subscription().map(Msg::Call),
             bridge::subscription().map(Msg::Worker),
             crate::instance::subscription().map(Msg::OpenFiles),
             iced::time::every(Duration::from_secs(5)).map(|_| Msg::Tick),
@@ -288,6 +291,18 @@ impl App {
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(message) => self.on_bus(&message),
+            Msg::Call(inc) => match sola_kit::opener::open_target(&inc) {
+                // A calendar file from Sola's opener: drafted, as a handoff is.
+                Some(target) => {
+                    tracing::info!(%target, "open: a calendar file from Sola's opener");
+                    inc.reply.ok(serde_json::json!({ "opened": true }));
+                    self.update(Msg::OpenFiles(vec![std::path::PathBuf::from(target)]))
+                }
+                None => {
+                    inc.reply.err(format!("unknown method {}", inc.method));
+                    Task::none()
+                }
+            },
             Msg::Worker(ev) => self.on_worker(ev),
             Msg::WindowReady(id) => {
                 self.window_id = id;
@@ -450,7 +465,7 @@ impl App {
                 Task::none()
             }
             Msg::OpenUrl(url) => {
-                sola_core::open_url_logged(&url);
+                sola_kit::open(&url);
                 Task::none()
             }
             Msg::Refresh => {

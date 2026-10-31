@@ -31,6 +31,18 @@ fn main() -> iced::Result {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     startup(APP_ID);
+    // An opener's launch with no Calendar up: the session starts Calendar,
+    // and this process hands it the files once it listens. Calendar then
+    // runs inside the session, and comes back when the desk restarts.
+    if sola_core::opener::is_open_launch()
+        && !instance::live()
+        && sola_kit::opener::start(APP_ID, |_| instance::live())
+    {
+        if let Err(e) = instance::handoff(&instance::launch_paths()) {
+            tracing::warn!(error = %e, "handoff to the session's calendar failed");
+        }
+        return Ok(());
+    }
     if instance::claim() == instance::Claim::Handoff {
         if let Err(e) = instance::handoff(&instance::launch_paths()) {
             tracing::warn!(error = %e, "handoff to running calendar failed");
@@ -68,6 +80,8 @@ fn main() -> iced::Result {
             ],
         })
         .window_menu()
+        // `.ics` files from other apps and xdg-open (Sola's opener).
+        .opens_own()
         .install();
 
     iced::application(App::boot, App::update, App::view)

@@ -40,7 +40,7 @@ windows):
   sola-browser, same profile and cookies. See **Browser** below.
 - `solactl compositor` — **windows list only** (optional). Never
   screenshot, sample, or `input`. Joshua is at the real seat.
-- `solactl session launch|close` — other Sola apps.
+- `solactl desk launch|close` — other Sola apps.
 - `solactl bots` — this host. You are one of these bots. Do **not**
   poll `list` in a loop.
 - `solactl projects` — **not yours.** That is the coding rail.

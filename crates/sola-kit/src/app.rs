@@ -31,6 +31,9 @@ use sola_core::KeyChord;
 /// A static is the natural fit; thread-locals are the alternative.
 static BUS: OnceLock<Arc<Mutex<BusClient>>> = OnceLock::new();
 
+/// This process's app id, from [`BusSetup::install`].
+static APP_ID: OnceLock<&'static str> = OnceLock::new();
+
 /// Topic kinds the process subscribed to at install time (or later via
 /// [`set_bus_kinds`]). Replayed on bus reconnect so a sola-bus restart
 /// mid-session does not leave the app connected but deaf (and so sticky
@@ -50,6 +53,11 @@ pub fn bus() -> &'static Mutex<BusClient> {
 /// Unit tests and optional emit paths use this instead of panicking.
 pub fn try_bus() -> Option<&'static Mutex<BusClient>> {
     BUS.get().map(|a| a.as_ref())
+}
+
+/// This process's app id, once [`BusSetup::install`] has run.
+pub fn app_id() -> Option<&'static str> {
+    APP_ID.get().copied()
 }
 
 /// Remember the process's bus subscription kinds for reconnect.
@@ -92,6 +100,7 @@ pub struct BusSetup {
     connect_timeout: Duration,
     call_owner: Option<String>,
     call_methods: Vec<sola_call::MethodSpec>,
+    opens: Option<sola_open::claims::Claim>,
 }
 
 impl BusSetup {
@@ -103,7 +112,26 @@ impl BusSetup {
             connect_timeout: Duration::from_millis(250),
             call_owner: None,
             call_methods: Vec::new(),
+            opens: None,
         }
+    }
+
+    /// Claim the link schemes and file types this app opens
+    /// ([`sola_open::claims`]): the claim is recorded for Sola's opener, and
+    /// the app answers the `open` call (on its call owner, else one named
+    /// for its app id). Fold [`crate::call_subscription`] into the app and
+    /// take each `open` with [`crate::opener::open_target`]. Claiming never
+    /// makes the app the handler where another already is.
+    pub fn opens(mut self, claim: sola_open::claims::Claim) -> Self {
+        self.opens = Some(claim);
+        self
+    }
+
+    /// [`Self::opens`] for one of Sola's own apps: what Sola ships for it
+    /// ([`sola_open::claims::builtin`]); nothing for an app with none.
+    pub fn opens_own(mut self) -> Self {
+        self.opens = sola_open::claims::builtin_of(self.app_id);
+        self
     }
 
     /// Subscribe the bus client to the given topic kinds before
@@ -183,7 +211,7 @@ impl BusSetup {
     /// Connect, subscribe, publish the menu, and stash the client
     /// in the global slot. Panics if called twice in the same
     /// process — that's a setup-order bug.
-    pub fn install(self) {
+    pub fn install(mut self) {
         let mut client = BusClient::new();
         // Identity tags sticky `source` and re-identifies on bus reconnect
         // so the host roster is restored after a sola-bus restart.
@@ -196,8 +224,9 @@ impl BusSetup {
         tracing::info!(app_id = self.app_id, "bus connected");
         if let Some(kinds) = self.subscribe {
             // The kit follows your key changes for the app's menus
-            // (`crate::keys`), whatever the app asked for.
-            let kinds = with_key_kinds(kinds);
+            // (`crate::keys`) and answers the desk menu
+            // (`crate::desk_menu`), whatever the app asked for.
+            let kinds = with_kit_kinds(kinds);
             set_bus_kinds(kinds);
             if let Err(e) = client.subscribe(kinds) {
                 tracing::warn!("bus subscribe failed: {e}");
@@ -206,11 +235,19 @@ impl BusSetup {
         BUS.set(Arc::new(Mutex::new(client)))
             .map_err(|_| ())
             .expect("sola_kit::BusSetup::install called twice");
+        let _ = APP_ID.set(self.app_id);
         if !self.app_menus.is_empty() {
             crate::menu::publish(AppMenuPayload {
                 app_id: self.app_id.into(),
                 menus: self.app_menus,
             });
+        }
+        if let Some(claim) = &self.opens {
+            if let Err(e) = sola_open::claims::register(claim) {
+                tracing::warn!(app_id = self.app_id, error = %e, "could not record what this app opens");
+            }
+            self.call_methods.push(sola_open::open_method());
+            self.call_owner.get_or_insert_with(|| self.app_id.to_string());
         }
         if let Some(owner) = self.call_owner {
             crate::call::install_provider(owner, self.app_id.to_string(), self.call_methods);
@@ -452,10 +489,17 @@ fn install_bus_stream_tx(tx: iced::futures::channel::mpsc::UnboundedSender<Arc<M
     }
 }
 
-/// `kinds` and the ones the kit's menus need (`KeyActions`, `Keybindings`,
-/// `ZoneLayout`), for the life of the process.
-fn with_key_kinds(kinds: &'static [TopicKind]) -> &'static [TopicKind] {
-    let extra = [TopicKind::KeyActions, TopicKind::Keybindings, TopicKind::ZoneLayout];
+/// `kinds` and the ones the kit itself needs: its menus' (`KeyActions`,
+/// `Keybindings`, `ZoneLayout`) and the desk menu's picks
+/// (`DeskMenuPick`), for the life of the process. An app that subscribes
+/// again on its own passes its kinds through this first.
+pub fn with_kit_kinds(kinds: &'static [TopicKind]) -> &'static [TopicKind] {
+    let extra = [
+        TopicKind::KeyActions,
+        TopicKind::Keybindings,
+        TopicKind::ZoneLayout,
+        TopicKind::DeskMenuPick,
+    ];
     if extra.iter().all(|k| kinds.contains(k)) {
         return kinds;
     }
@@ -516,6 +560,7 @@ fn ensure_bus_poller() {
                         crate::menu::republish();
                     }
                     crate::menu::observe(&msg);
+                    crate::desk_menu::observe(&msg);
                     forward_or_buffer(Arc::new(msg))
                 }
                 None => std::thread::sleep(Duration::from_millis(8)),

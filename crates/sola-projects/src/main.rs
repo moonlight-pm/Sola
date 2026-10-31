@@ -28,7 +28,7 @@ use sola_terminal::input::{self, Mods};
 use sola_terminal::pty::PtyBackend;
 use sola_terminal::state::{self as term_state, PaneRuntime};
 use sola_terminal::term_view::{self, CellMetrics, Palette};
-use sola_terminal::{extkeys, links, remote as rtmux, tmux};
+use sola_terminal::{desk, extkeys, links, remote as rtmux, tmux};
 
 mod bar;
 mod calls;
@@ -235,6 +235,8 @@ struct App {
     /// Hosts whose status tick is out, and when each last went out.
     remote_busy: HashSet<String>,
     remote_ticked: HashMap<String, Instant>,
+    /// The desk menu open on a session's pane.
+    desk: desk::PaneMenu,
 }
 
 struct PendingWait {
@@ -269,6 +271,16 @@ enum Msg {
     OpenUrl(String),
     WheelToPty(String, Vec<u8>),
     Pasted(Option<String>),
+    /// A right-click on a pane (its id, the point in its window): the desk
+    /// menu.
+    DeskMenu(String, iced::Point),
+    /// The desk menu's Paste: the clipboard's text for the pane.
+    DeskPaste(String, Option<String>),
+    /// A vault value redeemed for the pane: typed into its session.
+    DeskInsert(
+        String,
+        Result<sola_kit::desk_menu::Secret, sola_kit::desk_menu::VaultError>,
+    ),
     BlinkTick,
     Window(window::Id, window::Event),
     TitleDrag(window::Id),
@@ -281,7 +293,7 @@ enum Msg {
     Nav(window::Id, NavMsg),
     /// The End Session card's End Session.
     EndConfirmed,
-    /// `tab.rm`: end the session once the reply is out.
+    /// `session.end`: end the session once the reply is out.
     EndSession(String),
     RestartShell(String),
     PaneFocused(String),
@@ -333,7 +345,7 @@ enum Msg {
         pane: String,
         exec: Vec<String>,
     },
-    /// `tab.exec` on a remote tab: is its session alive there?
+    /// `session.exec` on a remote session: is it alive there?
     RemoteExec {
         tab: String,
         pane: String,
@@ -528,6 +540,7 @@ impl App {
             remote_pending: HashSet::new(),
             remote_busy: HashSet::new(),
             remote_ticked: HashMap::new(),
+            desk: desk::PaneMenu::default(),
         };
         app.link_hosts();
         app.sync_all_rows();
@@ -906,6 +919,31 @@ impl App {
                 Task::none()
             }
             Msg::Pasted(text) => self.on_pasted(text),
+            Msg::DeskMenu(pane, at) => {
+                if let Some(rt) = self.runtimes.get(&pane) {
+                    self.desk.open(&pane, at, &rt.emulator.term());
+                }
+                Task::none()
+            }
+            Msg::DeskPaste(pane, text) => {
+                if let (Some(text), Some(rt)) = (text, self.runtimes.get(&pane)) {
+                    let mode = { *rt.emulator.term().lock().mode() };
+                    rt.backend.write(&input::paste(&text, mode));
+                }
+                Task::none()
+            }
+            Msg::DeskInsert(pane, value) => {
+                match (value, self.runtimes.get(&pane)) {
+                    // As typed, not a bracketed paste: a password prompt
+                    // takes keys.
+                    (Ok(value), Some(rt)) => rt.backend.write(value.as_str().as_bytes()),
+                    (Ok(_), None) => tracing::warn!(%pane, "desk menu: the pane went away"),
+                    (Err(e), _) => {
+                        tracing::warn!(%pane, code = ?e.code, "desk menu: the vault value did not come")
+                    }
+                }
+                Task::none()
+            }
         }
     }
 
@@ -1226,6 +1264,10 @@ impl App {
         if is_self_quit(m, APP_ID) {
             return iced::exit();
         }
+        // The desk menu's answer for a pane.
+        if let Some((pane, pick)) = self.desk.answer(m) {
+            return self.on_desk_pick(pane, pick);
+        }
         if let Some(Topic::MenuAction(p)) = Topic::parse(m) {
             if p.app_id == APP_ID {
                 return match p.action_id.as_str() {
@@ -1289,6 +1331,10 @@ impl App {
                     on_wheel_pty: Box::new({
                         let pid = pane_id.to_string();
                         move |bytes| Msg::WheelToPty(pid.clone(), bytes)
+                    }),
+                    on_desk_menu: Box::new({
+                        let pid = pane_id.to_string();
+                        move |at| Msg::DeskMenu(pid.clone(), at)
                     }),
                 };
                 canvas(view).width(Length::Fill).height(Length::Fill).into()
@@ -1633,7 +1679,7 @@ impl App {
     }
 
     /// Bring session `id`'s window up (opening it if it has none here):
-    /// `tab.select`, `--select`, a desk-card click.
+    /// `session.select`, `--select`, a desk-card click.
     fn show_tab(&mut self, id: &str) -> Task<Msg> {
         if self.tabs.iter().all(|w| w.id != id) {
             return Task::none();
@@ -2045,11 +2091,11 @@ impl App {
                     Err(e) => (Err(e), Task::none()),
                 }
             }
-            "tab.list" => (
+            "session.list" => (
                 self.cli_tab_list(param_str(params, "project").as_deref()),
                 Task::none(),
             ),
-            "tab.spawn" => {
+            "session.new" => {
                 let Some(project) = param_str(params, "project") else {
                     return (Err("missing project".into()), Task::none());
                 };
@@ -2071,9 +2117,9 @@ impl App {
                     Err(e) => (Err(e), Task::none()),
                 }
             }
-            "tab.rm" => {
-                let Some(ws) = param_str(params, "tab") else {
-                    return (Err("missing tab".into()), Task::none());
+            "session.end" => {
+                let Some(ws) = param_str(params, "session") else {
+                    return (Err("missing session".into()), Task::none());
                 };
                 match catalog::resolve_tab(&self.tabs, &ws).map(|w| w.id.clone()) {
                     // Reply first; teardown on the next tick so solactl
@@ -2086,18 +2132,18 @@ impl App {
                     Err(e) => (Err(e), Task::none()),
                 }
             }
-            "tab.select" => {
-                let Some(q) = param_str(params, "tab") else {
-                    return (Err("missing tab".into()), Task::none());
+            "session.select" => {
+                let Some(q) = param_str(params, "session") else {
+                    return (Err("missing session".into()), Task::none());
                 };
                 match self.cli_select(&q) {
                     Ok((data, task)) => (Ok(data), task),
                     Err(e) => (Err(e), Task::none()),
                 }
             }
-            "tab.set" => {
-                let Some(q) = param_str(params, "tab") else {
-                    return (Err("missing tab".into()), Task::none());
+            "session.set" => {
+                let Some(q) = param_str(params, "session") else {
+                    return (Err("missing session".into()), Task::none());
                 };
                 (
                     self.cli_set(
@@ -2108,9 +2154,9 @@ impl App {
                     Task::none(),
                 )
             }
-            "tab.exec" => {
-                let Some(q) = param_str(params, "tab") else {
-                    return (Err("missing tab".into()), Task::none());
+            "session.exec" => {
+                let Some(q) = param_str(params, "session") else {
+                    return (Err("missing session".into()), Task::none());
                 };
                 match self.cli_exec(
                     &q,
@@ -2123,7 +2169,7 @@ impl App {
                 }
             }
             "pane.list" => (
-                self.cli_pane_list(param_str(params, "tab").as_deref()),
+                self.cli_pane_list(param_str(params, "session").as_deref()),
                 Task::none(),
             ),
             "pane.send" => {
@@ -2177,7 +2223,7 @@ impl App {
                         .map(|w| cli::tab_json(w, Some(&self.selected)))
                         .collect();
                 let mut row = cli::project_json(p);
-                row["tabs"] = serde_json::Value::Array(tabs);
+                row["sessions"] = serde_json::Value::Array(tabs);
                 row
             })
             .collect();
@@ -2195,7 +2241,7 @@ impl App {
             .filter(|w| filter.as_ref().is_none_or(|id| w.project_id == *id))
             .map(|w| cli::tab_json(w, None))
             .collect();
-        Ok(serde_json::json!({ "tabs": list }))
+        Ok(serde_json::json!({ "sessions": list }))
     }
 
     fn cli_spawn(
@@ -2244,7 +2290,7 @@ impl App {
         Ok((serde_json::json!({ "id": id, "selected": true }), task))
     }
 
-    /// `tab.set`: a session's name (unique in its project here) and
+    /// `session.set`: a session's name (unique in its project here) and
     /// title. Its id and its tmux stay.
     fn cli_set(
         &mut self,
@@ -2306,7 +2352,7 @@ impl App {
             }
             return Ok((
                 serde_json::json!({
-                    "tab": ws_id,
+                    "session": ws_id,
                     "pane": pane,
                     "started": false,
                     "sent": prompt.is_some(),
@@ -2328,7 +2374,7 @@ impl App {
         };
         Ok((
             serde_json::json!({
-                "tab": ws_id,
+                "session": ws_id,
                 "pane": pane,
                 "started": true,
                 "sent": false,
@@ -2421,7 +2467,7 @@ impl App {
             None => self.selected.clone(),
         };
         if id.is_empty() {
-            return Err("no tab selected".into());
+            return Err("no session selected".into());
         }
         let leaves = self
             .tabs
@@ -2553,15 +2599,15 @@ impl App {
         let project = catalog::resolve_project(&self.projects, &ws.project_id).ok();
         Ok(serde_json::json!({
             "pane": pane_id,
-            "tab": ws.id,
-            "tab_name": cli::display_name(ws),
+            "session": ws.id,
+            "session_name": cli::display_name(ws),
             "project": ws.project_id,
             "project_name": project.map(|p| p.name.as_str()),
             "path": ws.path,
             "kind": cli::kind_str(ws.kind),
             "status": cli::status_str(st.map(|s| s.status).unwrap_or(ws.status)),
             "agent": st.and_then(|s| s.agent.clone()).or_else(|| ws.agent.clone()),
-            "session_id": st.and_then(|s| s.owner_session.clone()),
+            "agent_session": st.and_then(|s| s.owner_session.clone()),
         }))
     }
 
@@ -2878,6 +2924,28 @@ impl App {
         let text = { rt.emulator.term().lock().selection_to_string() };
         match text {
             Some(s) if !s.is_empty() => iced::clipboard::write(s),
+            _ => Task::none(),
+        }
+    }
+
+    /// What was picked in a pane's desk menu.
+    fn on_desk_pick(&mut self, pane: String, pick: sola_kit::desk_menu::DeskPick) -> Task<Msg> {
+        use sola_kit::desk_menu::{self as desk_menu, DeskPick};
+        match pick {
+            DeskPick::Action(id) if id == desk::COPY => {
+                let Some(rt) = self.runtimes.get(&pane) else {
+                    return Task::none();
+                };
+                match rt.emulator.term().lock().selection_to_string() {
+                    Some(s) if !s.is_empty() => desk_menu::copy(s),
+                    _ => Task::none(),
+                }
+            }
+            DeskPick::Action(id) if id == desk::PASTE => {
+                desk_menu::paste_task().map(move |text| Msg::DeskPaste(pane.clone(), text))
+            }
+            DeskPick::VaultInsert { ticket } => desk_menu::redeem_task(ticket)
+                .map(move |value| Msg::DeskInsert(pane.clone(), value)),
             _ => Task::none(),
         }
     }

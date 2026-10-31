@@ -25,10 +25,11 @@ Model (sessions anywhere, 2026-10-30; spec
   needs one (AGENTS.md → Worktrees): `git worktree add .worktrees/<slug>
   -b <branch>` from the project root. Never ask Projects for one.
 - **Closing a window detaches.** The session keeps running. Only **End
-  Session** (menu) / `tab.rm` ends it — for every computer watching.
+  Session** (menu) / `session.end` ends it — for every computer watching.
 
-The verbs still say `tab` (`tab.spawn`, `--tab`, JSON `tabs`): a tab is a
-session. A session from another computer is keyed `<id>@<host>`.
+The verbs say `session` (`session.new`, `--session`, JSON `sessions`;
+they said `tab` until 2026-10-31). A session from another computer is keyed
+`<id>@<host>`.
 
 Operator list: `docs/manual/solactl.md`. Do not copy it here.
 
@@ -39,15 +40,15 @@ pane.
 
 | User says | Do |
 |---|---|
-| start / fan out a session in *project* (with a brief) | `tab.spawn --project P [--name N] --agent claude --prompt '…'` — no `--select` |
-| tell *name* / brief *name* / send to *name* | `tab.exec --tab N --prompt '…'` (or `pane.send --pane N --text '…' --enter`) |
+| start / fan out a session in *project* (with a brief) | `session.new --project P [--name N] --agent claude --prompt '…'` — no `--select` |
+| tell *name* / brief *name* / send to *name* | `session.exec --session N --prompt '…'` (or `pane.send --pane N --text '…' --enter`) |
 | what's on that pane / read *name* | `pane.read --pane N` |
 | when it's done / report back | `pane.wait --pane N --status done` (`--fresh` if it may be done already) |
-| show me / switch to *name* | `tab.select --tab N` |
+| show me / switch to *name* | `session.select --session N` |
 | open *project* (on *host*) | `project.open --path ~/Projects/P [--host H]` — opens its running sessions there, else a new main one |
 | a window to pick a project in (what the launcher's Projects opens) | `window.navigate` — opens in front and takes focus: only when asked |
-| rename that session | `tab.set --tab N --name '…'` and/or `--title '…'` |
-| end that session | `tab.rm --tab N` (kills it where it runs; worktrees stay) |
+| rename that session | `session.set --session N --name '…'` and/or `--title '…'` |
+| end that session | `session.end --session N` (kills it where it runs; worktrees stay) |
 | close the project's windows here | `project.close --project P` (its sessions keep running) |
 
 Worktree requests ("in a worktree", "on a branch") are the session's own
@@ -56,18 +57,18 @@ job: brief it to make one, or make it yourself in your session.
 ## Focus (locked)
 
 CLI spawn is **background**: the new window lands behind. Pass `--select`
-only when the user asks to jump to it. `tab.exec`, `pane.send`,
-`pane.read`, `pane.wait` never select. `tab.select` is the only interrupt.
+only when the user asks to jump to it. `session.exec`, `pane.send`,
+`pane.read`, `pane.wait` never select. `session.select` is the only interrupt.
 
 ## Fan-out
 
 ```bash
 solactl projects whoami
-solactl projects tab.list --project PROJECT
+solactl projects session.list --project PROJECT
 # exists:
-solactl projects tab.exec --tab NAME --prompt '…'
+solactl projects session.exec --session NAME --prompt '…'
 # new (no --select):
-solactl projects tab.spawn --project PROJECT --name NAME --agent claude \
+solactl projects session.new --project PROJECT --name NAME --agent claude \
   --prompt '…'
 # long brief: --prompt-file /path/brief.md (not both)
 ```
@@ -80,7 +81,7 @@ or `claude`. Spawn parent defaults from `$SOLA_PANE_ID`.
 ## Talk to an existing session
 
 ```bash
-solactl projects tab.exec --tab NAME --prompt 'also check X'
+solactl projects session.exec --session NAME --prompt 'also check X'
 solactl projects pane.send --pane NAME --text 'also check X' --enter
 solactl projects pane.read --pane NAME --lines 80
 solactl projects pane.wait --pane NAME --status done --timeout 300
@@ -91,10 +92,10 @@ live agent; pass `--enter` when you mean submit.
 
 ## Do not
 
-- Steal focus (`--select`, `tab.select`) on a fan-out
-- End a session (`tab.rm`) unless asked — closing its window is not ending
+- Steal focus (`--select`, `session.select`) on a fan-out
+- End a session (`session.end`) unless asked — closing its window is not ending
   it, and ending it ends it for every computer
 - Ask Projects for a worktree, or remove one unasked
 - Build a mailbox / ask-reply / `worker_done`
 - Raw `tmux paste-buffer` / `send-keys` / `capture-pane` when
-  `tab.exec` / `pane.send` / `pane.read` fail — retry or report the error
+  `session.exec` / `pane.send` / `pane.read` fail — retry or report the error

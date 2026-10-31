@@ -9,6 +9,8 @@
 //! - call-plane advertise + subscription ([`CallSetup`], [`call::call_subscription`])
 //! - call-plane observer ([`install_observer`], [`observe_subscription`])
 //! - app-menu publishing (so `Cmd+Q` quits without per-app glue)
+//! - the desk menu: right-click asks the shell, picks come back
+//!   ([`desk_menu`]; kit text inputs answer their own)
 //! - system font resolution (no bundled fonts; see `fonts::ensure_system_fonts`)
 //! - window settings (no decorations, correct `xdg_toplevel.app_id`)
 //! - theme construction from the shared sola palette
@@ -34,10 +36,12 @@ pub mod app;
 pub mod call;
 pub mod clipboard;
 pub mod components;
+pub mod desk_menu;
 pub mod float;
 pub mod fonts;
 pub mod keys;
 pub mod menu;
+pub mod opener;
 pub mod tabs;
 pub mod theme;
 
@@ -60,3 +64,5 @@ pub use iced;
 /// their own dep — convenience only, not load-bearing.
 pub use sola_bus;
 pub use sola_call;
+pub use sola_open;
+pub use opener::open;

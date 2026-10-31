@@ -16,6 +16,7 @@ pub mod omnibox;
 pub mod open_calendar;
 pub mod open_image;
 pub mod open_url;
+pub mod opener;
 pub mod paths;
 pub mod process;
 pub mod project_sessions;

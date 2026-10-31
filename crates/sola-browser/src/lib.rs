@@ -30,7 +30,7 @@ pub mod run;
 pub mod session;
 pub mod shader;
 pub mod util;
-#[cfg(feature = "bitwarden")]
+#[cfg(feature = "vault")]
 pub mod vault;
 pub mod visit_history;
 pub mod wallpaper;

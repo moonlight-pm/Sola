@@ -99,7 +99,7 @@ if the tunnel needs it; on Oath the daemon needs a `svc:sola-botsd`.
 running in its tab cannot drive this Projects: `solactl projects` there
 talks to that computer's own call plane (if any). The link could forward
 this computer's call socket there too (`SOLA_CALL_PATH` on the remote
-panes, as the hook socket is forwarded), so `solactl projects tab.spawn`,
+panes, as the hook socket is forwarded), so `solactl projects session.new`,
 `pane.send`, `whoami` etc. from there reach this Projects. But the call
 plane is desk-equivalent privilege (D3): every owner (browser, shell,
 design…) would be reachable by anything running as that user on that
@@ -212,6 +212,12 @@ anything with the call socket is desk-equivalent (D3)?
 **Ask:** which of these should Oath get, and from which package (Sola's or
 Oath's)?
 
+**Answered 2026-10-31 (opening links and files):** Sola owns it (Joshua:
+"sola owns it.."). `pkg:sola` ships Sola's own opener as `/bin/xdg-open`,
+not xdg-utils and not `.desktop` files; the rest of the routing is the
+handler registry in the decision log (Link and file handlers).
+`cloudflared` and log rotation are still open.
+
 **Related:** `oath-platform`, `install-make`, `kvm`, `design` capabilities.
 
 ---
@@ -247,7 +253,7 @@ session open). Recorded in the spec's D16.
 
 ---
 
-### D17 — Vault: the desk's Bitwarden client, its service, the right-click menu (P1)
+### D17 — Vault: the desk's Bitwarden client, its service, the right-click menu (P1) — **answered (2026-10-31)**
 
 **Context:** Joshua (2026-10-31) asked for a Bitwarden client of Sola's own
 ("Vault" / `sola-vault`), the browser's vault logic moved into a service, the
@@ -262,8 +268,11 @@ included.
 agents and the vault; who draws the right-click menu; apps that are not
 Sola's; the server; copying the code on fill; what "everything" covers.
 
-**Until decided:** nothing built; no vault value on the bus or the call plane
-(D3).
+**Answer (Joshua, 2026-10-31):** "All your recommendations sound good" —
+V1–V7 as proposed (memory-only unlock, locking on idle and the screen lock;
+agents never read a value; the shell draws the menu; foreign apps later;
+US / EU / self-hosted; the code copied on fill; everything but Send and
+account settings). Recorded in the spec.
 
 **Related:** `vault`, `desk-menu`, `browser` capabilities; D3.
 
@@ -296,7 +305,7 @@ speak D-Bus (BlueZ, logind / systemd, other players' MPRIS, Chromium's
 
 **Ask:**
 
-1. ~~Display name / window title~~ **decided 2026-08-14 / amended 2026-08-18:** crate / app id `sola-workspaces`; window **Workspaces**; owner `workspaces` (`solactl workspaces`); tmux `sola-ws` / `sws-`; config `~/.config/sola/workspaces/`. **Renamed 2026-10-21** (branch `next`) to free "workspace" for desktop workspaces ([Next N5](specs/2026-10-21-next-tab-bar-design.md)): crate / app id `sola-projects`, window **Projects**, owner `projects` (`solactl projects`, no alias), a workspace is now a tab (`tab.*`), config `~/.config/sola/projects/`; tmux names unchanged.  
+1. ~~Display name / window title~~ **decided 2026-08-14 / amended 2026-08-18:** crate / app id `sola-workspaces`; window **Workspaces**; owner `workspaces` (`solactl workspaces`); tmux `sola-ws` / `sws-`; config `~/.config/sola/workspaces/`. **Renamed 2026-10-21** (branch `next`) to free "workspace" for desktop workspaces ([Next N5](specs/2026-10-21-next-tab-bar-design.md)): crate / app id `sola-projects`, window **Projects**, owner `projects` (`solactl projects`, no alias), a workspace is now a tab (`tab.*`), config `~/.config/sola/projects/`; tmux names unchanged. **Renamed 2026-10-31:** a tab is a session (`session.list|new|end|select|set|exec`, `--session`, JSON `sessions` / `session` / `session_name`; the agent's own id `agent_session`), and `sola-session`'s owner is `desk` (`solactl desk`).  
 2. ~~Default worktree base~~ **decided 2026-08-13:** `<project-root>/.worktrees/<name>`.  
 3. ~~If CLI runs and the app is down~~ **decided via call plane:** fail, do not launch.  
 4. ~~Claude in v1~~ **decided 2026-10-08:** first-class, same path as Codex.
@@ -336,6 +345,8 @@ runs `cloudflared` while open. Links work only while Design runs.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-10-31 | Link and file handlers | Custom, with backward compatibility (Joshua: "Since i run almost only sola apps -- i wonder if we couldn't do something custom"; "we put this in sola-kit -- any app can register itself for any custom protocol"). Apps claim **link schemes and file types** through the kit; a claim never changes the default (a newcomer is an alternative in Settings); an app may ask to become the default, and only the user's confirm changes it; defaults are the user's, in Settings. Sola's opener is `/bin/xdg-open` on Oath (D14); unclaimed schemes go to `.desktop` handlers and `mimeapps.list`. Spec not written. | CURRENT Now, D14 |
+| 2026-10-31 | Session names | "Session" in `solactl` means a Projects session. `sola-session`'s call owner is **`desk`** (`solactl desk launch\|close`, MCP `desk_*`; was `session`; Joshua: "I like desk"). Projects' `tab.*` are **`session.*`** as the sessions-anywhere spec named them (`session.list`, `session.new`, `session.end`, `session.set`, plus `session.select`, `session.exec`), `--tab/-t` is `--session/-s`, JSON `sessions` / `session` / `session_name`, the agent's own session id `agent_session`. No aliases. | manual solactl / session / call, CURRENT Locked models, capabilities `projects` / `session-mgr` |
 | 2026-10-31 | Apps without a window | An app that isn't Sola's runs only while it has a window on the desk (Joshua: "make sure we never have steam and all its processes running without some desktop representation … if we close the window or SUPER+Q or SUPER+W (and the last steam window is closed) that it completely clear out all steam processes as if we had quit steam from its own menus"). Asked and answered: the rule covers **every app that isn't Sola's**, not Steam alone (Sola has no tray, so any app that hides in one would run on unseen); **a game's window keeps Steam open** (closing Steam's own window mid-game leaves it for the game; it quits when the game closes). Quitting is the app's own quit command first (`steam -shutdown`), then SIGTERM and SIGKILL to every process carrying its launch tag. Not a tray (D-Bus, T3), not `STEAM_FRAME_FORCE_CLOSE` (gone from the client), no Oath change. | manual `session.md`, `sola-shell.md`; capabilities `session-mgr` |
 | 2026-10-30 | Zone layout | Z1–Z16: Settings draws the screen; rows × columns of equal cells, changed with − / + (− asks before deleting the zones it cuts; + keeps cells for now); a zone is a rectangle of cells (drag, or click one) with one key, Super added; Full, Cinema and Floating always exist (keys changeable, not deletable); a new window comes up in the zone last looked at (a workspace's first, and one opened while Cinema is up, in Full); zones shown by key and drawing, no names; edit a zone's cells keeping its key; no toggles (Cinema is a zone; send a window elsewhere to resize it); Cinema completely opaque; an app's fullscreen goes to Cinema and back; keys belong to a keybinding system; several screens parked. P1 (overlap rule) proposed, built. | [zone layout spec](specs/2026-10-30-zone-layout-design.md) |
 | 2026-10-30 | Keybindings | K1–K7: one keybinding system, every named action editable (not plain movement and typing keys), no conflicts, Settings → Keybindings; no new process (the shell keeps registering and acting); shared menus (Copy, Paste, Quit, Window) come from the kit; system keys include Super; the two key bugs fixed by it; zone keys set on the Zones page. Where the code goes was left to the implementer: sola-core (the key table) and sola-kit (`keys`), no new crate. | [keybindings spec](specs/2026-10-30-keybindings-design.md) |

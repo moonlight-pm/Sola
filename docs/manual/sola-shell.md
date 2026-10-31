@@ -1,8 +1,8 @@
 # Shell
 
 The Shell (`sola-shell`) draws the desk's own surfaces: the top row, the
-bar, the launcher, the keyboard shortcuts overlay, notification cards and
-the screenshot marquee. It also decides where each window goes
+bar, the launcher, the keyboard shortcuts overlay, the right-click menu,
+notification cards and the screenshot marquee. It also decides where each window goes
 (workspaces and zones) and owns the desktop's keyboard shortcuts.
 
 ## The desk
@@ -415,6 +415,114 @@ holds **Hide** (Super+H), **Cycle Windows** (Super+Backtick),
 **Cinema**, each with its key now, so each of those keys also has a mouse
 path. The Shell acts on the focused window.
 
+## The right-click menu
+
+A right-click in a Sola application asks the Shell for the desk's
+right-click menu. The Shell draws it over the window, in the look of its
+other menus, and it can reach past the window's edges. The application
+says what the click landed on (a field, a selection, a link, a picture, a
+page), never the text itself, and which rows it adds; the Shell adds the
+Edit rows and the vault's, and sends back what you chose.
+
+It opens in:
+
+- every single-line text field of a Sola application: Settings, Mail,
+  Calendar, Vault, Browser's location bar and vault panel, and the rest;
+- a page in Browser, and in a web app's window
+  ([Browser](sola-browser.md#page-menu));
+- a pane in Terminal and in Projects.
+
+It does not open in other programs' windows (XWayland and other Wayland
+clients), in the Shell's own fields (the launcher, the shortcuts
+overlay's filter, renaming a workspace), or in multi-line text (a letter
+in Mail, an item's notes in Vault). In a Terminal or Projects pane whose
+program has asked for mouse reports (vim with the mouse on, htop), the
+right-click goes to that program and no menu opens. With the Shell not
+running, a right-click opens nothing.
+
+### Rows
+
+From the top, a hairline between groups:
+
+1. **The application's rows**, when it has any: a page's (see
+   [Browser](sola-browser.md#page-menu)), a pane's **Copy** (with a
+   selection) and **Paste**. Each shows the key the application's own
+   menus give it. A row can open one level of submenu.
+2. **Edit**, by what the click landed on: **Cut** with a selection in a
+   field you can type in, **Copy** with a selection, **Paste** where you
+   can type, and **Select All**. Never Cut or Copy out of a password
+   field. Each shows its key from Settings → Keybindings. In a text
+   field, the right-click first gives the field the keyboard and puts the
+   caret where you clicked, unless you clicked in the selection.
+3. **Vault ▸**, where you can type.
+
+**Vault ▸** follows the vault ([Vault](sola-vault.md)):
+
+| The vault | Vault ▸ shows |
+|---|---|
+| Not running | **Vault isn't running** |
+| Signed out | **Sign in to Vault…**, which brings Vault forward |
+| Locked | **Unlock Vault…**, which brings Vault forward; right-click again once it is unlocked |
+| Unlocked | On a page, the page's logins first, each with its username at the right; then **Search vault…** |
+
+A login opens its values:
+
+- **Fill**, on a page and for the page's own logins only: the whole
+  login into the page, as Browser's vault panel fills it
+  ([Filling a page](sola-browser.md#filling-a-page)).
+- **Username**, **Password**, and **One-time code** (when the login has
+  one). In a password field, only **Password** and **One-time code**.
+- A login that asks for your master password shows these dimmed, under
+  them **Asks for your master password**, and **Open in Vault…**, which
+  brings Vault forward on the login.
+
+**Search vault…** turns the column into a search field over your logins:
+type, and up to eight matches show, the most recently used first. ↓ or a
+click moves into them, and → or Return opens one's values: no **Fill**,
+since a match can be any site's. ← in an empty field goes back to the
+vault's rows. Only logins are searched.
+
+### Vault values
+
+A value you pick goes straight in, never through the clipboard: into a
+text field at the caret, replacing any selection; into a page at its
+caret; into a Terminal or Projects pane typed as keys, with no Return
+after, so a `sudo` or `ssh` password prompt takes it.
+
+On its way, only the vault service and that one application see the
+value. The Shell asks the service to deliver the item's field to the
+application's process; the service keeps the value against a one-time
+ticket that only that process can collect, for up to a minute; the Shell
+sends the application the ticket on the bus; and the application collects
+the value from the service's socket and puts it in. The Shell itself sees
+item names and usernames, never a value
+([Who may use it](sola-vault.md#who-may-use-it)).
+
+The service refuses a value from an item that asks for the master
+password, or from one in the trash, and the top row says why ("Vault:
+This item asks for your master password — open it in Vault."). Locking
+the vault drops a ticket not yet collected.
+
+### Keys and placement
+
+| Key | Action |
+|---|---|
+| ↑ / ↓ | The previous or next row, wrapping, over the hairlines |
+| → | Open the row's submenu |
+| ← | Back to the column before (in **Search vault…**, once its field is empty) |
+| Return | Choose the row |
+| Escape | Close the menu, choosing nothing |
+
+Hovering a row highlights it and opens its submenu; a click chooses it. A
+click anywhere else closes the menu. Afterwards the keyboard goes back to
+the window.
+
+The menu opens at the pointer, over the window you clicked. When it would
+pass the screen's right or bottom edge, it opens to the left of the
+pointer or above it instead. Each submenu opens beside its row, on the
+left when there is no room on the right. The whole menu stays inside the
+screen's 10 px edge.
+
 ## Launcher
 
 Super+Space opens the launcher; type to filter the apps and press Enter
@@ -477,6 +585,14 @@ the missed list; a newer card pushes the oldest out the same way.
 Calendar's reminders are the exception: they stay until you click or
 dismiss them (up to six). A notification that updates an earlier one
 (the same tag) replaces it rather than stacking.
+
+An app that asks to open a kind of link or file in place of the app
+that does now gets a card above the others, **Default app**: "Open
+mailto: links with *App* instead of *Mail*?", with **Keep Mail** and
+**Use *App***. It stays until you answer; only **Use** changes it
+([Opening links and files](session.md#opening-links-and-files)). An app
+that already opens it, or does not claim it, gets no card; a newer
+request replaces one still waiting.
 
 The bell in the top row appears while anything is missed, with the
 count, in the accent until you open its panel. The panel, **Notifications**,

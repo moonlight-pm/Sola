@@ -82,6 +82,7 @@ const fn app(name: &'static str, bins: &'static [&'static str], needs: &'static 
 pub fn crate_of(bin: &str) -> &str {
     match bin {
         "sola-botsd" => "sola-bots",
+        "xdg-open" => "sola-open",
         other => other,
     }
 }
@@ -120,6 +121,8 @@ pub const PACKAGES: &[Package] = &[
             "sola-lock",
             "solactl",
             "sola-oath",
+            // Sola's opener under the name every program calls (D14).
+            "xdg-open",
         ],
         build: &["rust", "pkgconf", "libxkbcommon"],
         needs: &[
@@ -145,6 +148,9 @@ pub const PACKAGES: &[Package] = &[
     app("sola-mail", &["sola-mail"], &[]),
     app("sola-settings", &["sola-settings"], &[]),
     app("sola-bots", &["sola-bots", "sola-botsd"], &[]),
+    // Vault and its daemon (`svc:sola-vault` runs `sola-vaultd`): moving
+    // it restarts the vault only.
+    app("sola-vault", &["sola-vault", "sola-vaultd"], &[]),
     Package {
         name: "sola-browser",
         bins: &["sola-browser"],

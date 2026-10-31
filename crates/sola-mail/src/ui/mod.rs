@@ -74,6 +74,8 @@ fn list_scroll_id() -> ScrollId {
 #[derive(Debug, Clone)]
 pub enum Msg {
     Bus(Arc<Message>),
+    /// A call: `open` from Sola's opener (a `mailto:` link).
+    Call(sola_kit::sola_call::Incoming),
     Worker(MailEvent),
     WindowReady(Option<iced::window::Id>),
     WindowResized(f32),
@@ -303,6 +305,7 @@ impl App {
         };
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
+            sola_kit::call_subscription().map(Msg::Call),
             bridge::mail_subscription().map(Msg::Worker),
             if self.picker.is_some() {
                 FilePicker::keys().map(Msg::Picker)
@@ -356,6 +359,7 @@ impl App {
         }
         match msg {
             Msg::Bus(message) => return self.on_bus(&message),
+            Msg::Call(inc) => return self.on_call(inc),
             Msg::Worker(ev) => return self.on_worker(ev),
             Msg::WindowReady(id) => {
                 self.window_id = id;
@@ -413,7 +417,7 @@ impl App {
                 self.refresh(true);
             }
 
-            Msg::OpenUrl(url) => sola_core::open_url_logged(&url),
+            Msg::OpenUrl(url) => sola_kit::open(&url),
             Msg::BodySelect(sel) => {
                 if let Some(l) = self.reader.letter_mut() {
                     l.selection = sel;
@@ -1226,6 +1230,28 @@ impl App {
 
     /// Open the compose pane with `make(self)`. Reply / forward / edit
     /// need an open letter; an edited draft is never replaced silently.
+    /// `open` from Sola's opener: a `mailto:` link becomes a new letter, in
+    /// front.
+    fn on_call(&mut self, inc: sola_kit::sola_call::Incoming) -> Task<Msg> {
+        let Some(target) = sola_kit::opener::open_target(&inc) else {
+            inc.reply.err(format!("unknown method {}", inc.method));
+            return Task::none();
+        };
+        let Some(link) = crate::mailto::parse(&target) else {
+            inc.reply.err(format!("not a mailto: link: {target}"));
+            return Task::none();
+        };
+        if !link.bcc.is_empty() {
+            tracing::info!(bcc = link.bcc.len(), "mailto: Bcc left out (Mail has no Bcc)");
+        }
+        tracing::info!(to = ?link.to, "open: a mailto: link from Sola's opener");
+        inc.reply.ok(serde_json::json!({ "opened": true }));
+        if let Some(window_id) = self.float.any_window_id() {
+            sola_kit::show_window(window_id);
+        }
+        self.start_compose(|app| compose::from_mailto(&link, app.default_from()))
+    }
+
     fn start_compose(&mut self, make: impl FnOnce(&Self) -> compose::Draft) -> Task<Msg> {
         if let Some(c) = self.compose.as_mut() {
             // Never swap out a draft that is mid-send or has edits.

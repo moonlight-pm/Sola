@@ -47,9 +47,22 @@ pub fn run() -> iced::Result {
 
     let argv: Vec<PathBuf> = std::env::args()
         .skip(1)
-        .filter(|a| !a.is_empty())
+        .filter(|a| !a.is_empty() && a != sola_core::opener::OPEN_FLAG)
         .map(|a| abs_path(PathBuf::from(a)))
         .collect();
+    // An opener's launch with no Paint up: the session starts Paint, and
+    // once its window is up (its bus subscription with it) this process
+    // hands it the images. Paint then runs inside the session, and comes
+    // back when the desk restarts.
+    if sola_core::opener::is_open_launch()
+        && !crate::instance::live()
+        && sola_kit::opener::start(APP_ID, |ws| sola_kit::opener::has_window(ws, APP_ID))
+    {
+        if let Err(e) = crate::instance::handoff(&argv) {
+            tracing::warn!(error = %e, "handoff to the session's paint failed");
+        }
+        return Ok(());
+    }
     if crate::instance::claim() == crate::instance::Claim::Handoff {
         if let Err(e) = crate::instance::handoff(&argv) {
             tracing::warn!(error = %e, "handoff to existing paint failed");
@@ -89,6 +102,8 @@ pub fn run() -> iced::Result {
                 ("zoom_fit", "Fit", KeyCode::KEY_0.meta()),
             ],
         )
+        // Images from other apps and xdg-open (Sola's opener).
+        .opens_own()
         .install();
 
     iced::daemon(App::boot, App::update, App::view)
@@ -228,6 +243,7 @@ impl App {
     pub fn subscription(&self) -> Subscription<Msg> {
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
+            sola_kit::call_subscription().map(Msg::Call),
             if self.picker.is_some() {
                 FilePicker::keys().map(Msg::Picker)
             } else {
@@ -654,6 +670,16 @@ impl App {
 
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
+            Msg::Call(inc) => match sola_kit::opener::open_target(&inc) {
+                // An image from Sola's opener: in a window of its own, in front.
+                Some(target) => {
+                    tracing::info!(%target, "open: an image from Sola's opener");
+                    inc.reply.ok(serde_json::json!({ "opened": true }));
+                    self.raise_self();
+                    return self.open_path(PathBuf::from(target));
+                }
+                None => inc.reply.err(format!("unknown method {}", inc.method)),
+            },
             Msg::Bus(message) => {
                 self.float.update(&message);
                 self.windows.update(&message);

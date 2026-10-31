@@ -1,0 +1,46 @@
+[package]
+name = "sola-vaultd"
+version.workspace = true
+edition.workspace = true
+description = "The desk's Bitwarden service: the one place the vault is unlocked"
+
+[dependencies]
+sola-bus = { path = "../sola-bus" }
+sola-call = { path = "../sola-call" }
+sola-core = { path = "../sola-core" }
+sola-vault-proto = { path = "../sola-vault-proto" }
+
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = { workspace = true }
+libc = "0.2"
+async-trait = "0.1"
+zeroize = "1"
+url = "2"
+serde_qs = "0.13"
+sha2 = "0.10"
+getrandom = "0.2"
+chrono = "0.4"
+# URI matching: the public suffix list passkey-rs already ships (same rev
+# as bitwarden-fido's), and the linear-time regex for stored patterns.
+public-suffix = { git = "https://github.com/bitwarden/passkey-rs", rev = "043279e92e2eb5f509bf87eb7fa50987fd377e32" }
+regex = "1"
+
+# Bitwarden Password Manager SDK (internal; the browser's pinned rev).
+bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6" }
+bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", features = ["internal"] }
+bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6" }
+bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6" }
+bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6" }
+bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6" }
+bitwarden-crypto = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6" }
+bitwarden-crypto-sync-handler = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6" }
+bitwarden-fido = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6" }
+bitwarden-collections = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6" }
+bitwarden-generators = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6" }
+bitwarden-exporters = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6" }
+
+[dev-dependencies]
+tempfile = "3"

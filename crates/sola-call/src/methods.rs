@@ -3,7 +3,7 @@
 use crate::protocol::{ArgSpec, ArgType, MethodSpec};
 
 pub const OWNER_COMPOSITOR: &str = "compositor";
-pub const OWNER_SESSION: &str = "session";
+pub const OWNER_DESK: &str = "desk";
 
 pub fn compositor_methods() -> Vec<MethodSpec> {
     vec![
@@ -195,11 +195,11 @@ pub fn compositor_methods() -> Vec<MethodSpec> {
     ]
 }
 
-pub fn session_methods() -> Vec<MethodSpec> {
+pub fn desk_methods() -> Vec<MethodSpec> {
     vec![
         MethodSpec {
             name: "launch".into(),
-            summary: "Spawn an app (session must be running)".into(),
+            summary: "Spawn an app (sola-session must be running)".into(),
             args: vec![
                 arg("app_id", None, None, ArgType::String, true, "app id"),
                 arg(
@@ -215,7 +215,7 @@ pub fn session_methods() -> Vec<MethodSpec> {
         },
         MethodSpec {
             name: "close".into(),
-            summary: "Close a session-tracked app".into(),
+            summary: "Close an app sola-session launched".into(),
             args: vec![arg("app_id", None, None, ArgType::String, true, "app id")],
             timeout_ms: None,
         },

@@ -104,6 +104,9 @@ Backspace erases a character, and Escape or Ctrl+U clears the field. Keys
 typed while **Checking…** shows are ignored. A password typed through a
 paired KVM works like the local keyboard.
 
+Locking the screen also locks the vault, unless **Lock when the screen
+locks** is off in Vault's settings ([Vault](sola-vault.md#locking)).
+
 While locked, the compositor (`ext-session-lock-v1`) shows and sends input
 to the lock screen only. If `sola-lock` dies, the screen stays locked and the
 shell starts it again, up to five times a minute.
@@ -133,6 +136,11 @@ These hold with or without a password:
   into any window, take screenshots of the screen, and drive Browser and
   Design. `solactl` and its MCP server reach the same methods. See
   [The bus](bus.md) and [The call plane](call.md).
+- **The vault** keeps its values off the bus and the call plane, and
+  answers only Sola's own programs on its socket
+  ([Vault](sola-vault.md#the-service)). A program running as `home` can
+  still get in by other means: through `sudo`, or by reading the master
+  password as you type it.
 - **Design's share links** have no password and no expiry: anyone with a
   link sees its canvas until **New Link** replaces it.
 - **The keyboard can always end the desk.** Every SysRq key is on, so

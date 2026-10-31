@@ -241,7 +241,7 @@ Canonical map: `AGENTS.md` and `docs/architecture.md`. Headline pieces:
 - `RUST_LOG=info,sola_kit=trace,cef=warn`.
 - `solactl compositor windows` — running apps + window IDs.
 - `solactl logs <name>` — print `/opt/sola/log/<name>.log`; `-f` follows it (apps are `app-<app_id>`).
-- `solactl compositor screenshot` / `solactl session launch` talk to
+- `solactl compositor screenshot` / `solactl desk launch` talk to
   `sola-call` (not the bus). Owner down → fail.
 - `solactl emit <Topic> '<json-payload>'` — bus poke from the CLI.
 - River: `/opt/sola/log/river.log`.

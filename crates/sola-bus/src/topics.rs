@@ -295,6 +295,15 @@ pub struct FullscreenRequest {
     pub fullscreen: bool,
 }
 
+/// An app asks to open a link scheme or a file type in place of the app
+/// that does now (app, through the kit → shell). The shell asks you; only
+/// your yes changes it. `kind` is `mailto:` for a scheme, `.png` for a type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DefaultHandlerRequest {
+    pub app_id: String,
+    pub kind: String,
+}
+
 /// One action a key can be bound to (`Topic::KeyActions`). Its id is
 /// stable; the label is what Settings and Super+K show.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1899,6 +1908,113 @@ pub struct MailStatus {
     pub inbox_unread: u32,
 }
 
+/// The vault's state for anyone to show (`Topic::VaultState`, sticky,
+/// from `sola-vaultd`). Never a secret: no item names, no values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct VaultState {
+    /// An account is signed in (locked or not).
+    pub signed_in: bool,
+    /// The vault is unlocked: values can be read.
+    pub unlocked: bool,
+    pub email: String,
+    /// The server's web vault (`https://vault.bitwarden.com`, ...).
+    pub server: String,
+    /// Unix seconds of the last sync that worked.
+    pub synced_at: Option<u64>,
+    pub syncing: bool,
+    /// The last sync's failure, while it stands.
+    pub sync_error: Option<String>,
+    /// Items the vault holds (trash not counted).
+    pub items: u32,
+}
+
+/// What a right-click landed on, as the app sees it. Never the text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DeskMenuContext {
+    /// A text field or anything that takes typing (a page's input, a
+    /// terminal).
+    pub editable: bool,
+    /// A secret field (a password input).
+    pub secret: bool,
+    /// Something is selected where the click landed.
+    pub selection: bool,
+    /// The page or account the field belongs to (the browser's page URL),
+    /// so the vault can offer its logins first.
+    pub site: Option<String>,
+}
+
+/// One row of a desk menu an app supplies.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeskMenuItem {
+    Action {
+        /// Comes back in [`DeskPick::Action`].
+        id: String,
+        label: String,
+        shortcut: Option<sola_core::KeyChord>,
+        enabled: bool,
+    },
+    Separator,
+    /// One level of submenu.
+    Submenu {
+        label: String,
+        items: Vec<DeskMenuItem>,
+    },
+}
+
+/// The standard Edit rows the shell adds by context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeskEdit {
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+}
+
+/// An app asks the shell for the desk menu at a right-click
+/// (`Topic::DeskMenuOpen`). The shell draws it over the window it last
+/// saw clicked (`MouseClicked`), at `(x, y)` in that window's logical
+/// pixels.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeskMenuOpen {
+    pub app_id: String,
+    /// The app's process: a vault value is delivered to it alone.
+    pub pid: u32,
+    /// The app's own key for this menu; comes back in the pick.
+    pub token: u64,
+    /// Window-local logical pixels, rounded.
+    pub x: i32,
+    pub y: i32,
+    pub context: DeskMenuContext,
+    /// The app's own rows, shown first.
+    pub items: Vec<DeskMenuItem>,
+    /// Which Edit rows apply (the shell shows them after the app's).
+    pub edit: Vec<DeskEdit>,
+}
+
+/// What was picked in a desk menu.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeskPick {
+    /// One of the app's rows, by its id.
+    Action(String),
+    Edit(DeskEdit),
+    /// A vault value for the field: redeem `ticket` on the vault's socket
+    /// (only this pid can) and insert it at the caret.
+    VaultInsert { ticket: String },
+    /// Fill a whole login into the page (the browser): the item's id.
+    VaultFill { item: String },
+    /// Closed with nothing picked.
+    Dismissed,
+}
+
+/// The shell answers a [`DeskMenuOpen`] (`Topic::DeskMenuPick`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeskMenuPick {
+    pub app_id: String,
+    pub pid: u32,
+    pub token: u64,
+    pub pick: DeskPick,
+}
+
 define_topics! {
     // A subscription names its kinds (`crate::subscribe`), so adding or
     // removing a kind renumbers nothing on the wire. Payloads are still
@@ -2205,6 +2321,21 @@ define_topics! {
     // An app asked to enter or leave fullscreen (sola-river → shell).
     // Appended last.
     FullscreenRequest(FullscreenRequest),
+
+    // The vault's state (sola-vaultd → anyone). Sticky. No secrets.
+    // Appended last.
+    #[sticky]
+    VaultState(VaultState),
+
+    // A right-click asks for the desk menu (an app → shell). Appended last.
+    DeskMenuOpen(DeskMenuOpen),
+
+    // What was picked in it (shell → the app). Appended last.
+    DeskMenuPick(DeskMenuPick),
+
+    // An app asks to be the handler for a link scheme or a file type (an
+    // app through the kit → shell, which asks you). Appended last.
+    DefaultHandlerRequest(DefaultHandlerRequest),
 }
 
 #[cfg(test)]

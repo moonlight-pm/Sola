@@ -87,6 +87,7 @@ crates/
   sola/                # Process manager (binary entry point)
   sola-bus/            # IPC bus host + client library
   sola-call/           # Call host + client (request/reply; not the bus)
+  sola-open/           # Opening links and files (handlers, xdg-open)
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
   sola-kit/            # Iced app kit (a library)
   sola-assets/         # Vendored icon/asset bundles
@@ -161,7 +162,7 @@ docs/
   cleanup after merge. When asked: from the root checkout (never from
   inside it), `git worktree remove .worktrees/<slug>`, then
   `git branch -d <branch>` if it is merged (never `-D` unasked).
-- Ending a session (Project → End Session…, `solactl projects tab.rm`)
+- Ending a session (Project → End Session…, `solactl projects session.end`)
   never touches worktrees; closing its window does not end it.
 
 ### Installing
@@ -300,7 +301,7 @@ port. CEF binding notes at the end of this file apply to `sola-browser`
 `sola-kit` is the shared Iced app kit, a library (its storybook app was
 retired 2026-10-30). Library surface in `src/lib.rs`: `BusSetup`, `CallSetup`, `call_subscription`,
 `apply_theme_update`, `default_theme`, the `components` / `fonts` / `theme` /
-`menu` / `float` / `clipboard` modules, plus re-exported `iced`, `sola_bus`, and
+`menu` / `float` / `clipboard` / `opener` modules, plus re-exported `iced`, `sola_bus`, and
 `sola_call` (so consumers don't take their own direct deps just to spell trait
 bounds or reference bus types). Operator-level detail:
 [`docs/manual/theme.md`](docs/manual/theme.md).

@@ -864,7 +864,7 @@ cef::wrap_render_process_handler! {
             // on "Verifying it's you".
             let Some(ctx) = context else { return };
             eval_v8_context(ctx, &crate::paste_js::clipboard_bridge_script());
-            #[cfg(feature = "bitwarden")]
+            #[cfg(feature = "vault")]
             {
                 install_vault_post(ctx);
                 eval_v8_context(ctx, crate::vault::inject_webauthn_intercept_script());
@@ -1693,7 +1693,7 @@ cef::wrap_display_handler! {
                 return 1;
             }
 
-            #[cfg(feature = "bitwarden")]
+            #[cfg(feature = "vault")]
             {
                 if let Some(detail) = msg.strip_prefix("__sola_webauthn_resolve_err__") {
                     tracing::warn!(detail = %detail.trim(), "webauthn page resolve failed");
@@ -1718,7 +1718,7 @@ cef::wrap_display_handler! {
     }
 }
 
-// ── LoadHandler (inject WebAuthn intercept when bitwarden enabled) ─
+// ── LoadHandler (inject the WebAuthn intercept with the vault) ─
 
 cef::wrap_load_handler! {
     pub struct BrowserLoadHandler {}
@@ -1822,7 +1822,7 @@ fn inject_page_scripts(frame: Option<&mut cef::Frame>) {
     let notify_src = crate::notify::inject_script(&json);
     let notify: cef::CefString = notify_src.as_str().into();
     frame.execute_java_script(Some(&notify), None, 0);
-    #[cfg(feature = "bitwarden")]
+    #[cfg(feature = "vault")]
     {
         // Every frame — Google sign-in (accounts.google.com iframe) and
         // Gemini Exchange 2FA both call WebAuthn off the top-level page.
@@ -1881,14 +1881,14 @@ fn handle_notify_perm(browser: Option<&cef::Browser>, raw: &str) {
 
 /// Name of the window function the WebAuthn hook calls, and of the
 /// process message it becomes.
-#[cfg(feature = "bitwarden")]
+#[cfg(feature = "vault")]
 const VAULT_POST: &str = "__solaVaultPost";
 
 /// Give a new frame `window.__solaVaultPost(json)`: a native function that
 /// sends `json` to the browser process as a message *from this frame*, so
 /// the helper learns the frame (and its real origin) from CEF, not from
 /// the page's words.
-#[cfg(feature = "bitwarden")]
+#[cfg(feature = "vault")]
 fn install_vault_post(ctx: &mut cef::V8Context) {
     use cef::sys::cef_v8_propertyattribute_t as Attr;
     if ctx.is_valid() == 0 || ctx.enter() == 0 {
@@ -1908,7 +1908,7 @@ fn install_vault_post(ctx: &mut cef::V8Context) {
     ctx.exit();
 }
 
-#[cfg(feature = "bitwarden")]
+#[cfg(feature = "vault")]
 cef::wrap_v8_handler! {
     struct VaultPostHandler {}
 
@@ -1946,7 +1946,7 @@ cef::wrap_v8_handler! {
 
 /// A frame's `__solaVaultPost` message (browser process). The origin is
 /// the sending frame's; an rpId it may not use is refused on the spot.
-#[cfg(feature = "bitwarden")]
+#[cfg(feature = "vault")]
 fn handle_vault_post(browser: &cef::Browser, frame: &cef::Frame, raw: &str) {
     use cef::ImplFrame;
     let state = cef_state();
@@ -2037,7 +2037,7 @@ fn eval_js_scoped(browser: &cef::Browser, scope: &crate::engine::FrameScope, scr
                 None => tracing::debug!(%id, "scoped eval: frame gone"),
             }
         }
-        #[cfg(feature = "bitwarden")]
+        #[cfg(feature = "vault")]
         FrameScope::Site { .. } | FrameScope::Page { .. } => {
             let (origin, uris, any_frame) = match scope {
                 FrameScope::Site { origin, uris } => (origin, uris.as_slice(), false),
@@ -2068,7 +2068,7 @@ fn eval_js_scoped(browser: &cef::Browser, scope: &crate::engine::FrameScope, scr
             }
             tracing::debug!(frames = n, "vault fill evaluated");
         }
-        #[cfg(not(feature = "bitwarden"))]
+        #[cfg(not(feature = "vault"))]
         FrameScope::Site { .. } | FrameScope::Page { .. } => {}
     }
 }
@@ -2354,6 +2354,18 @@ cef::wrap_request_handler! {
             let Some(req) = request else { return 0 };
             use cef::ImplRequest;
             let url = cef_string_userfree_display(&req.url());
+            // A link the browser does not load (`mailto:`, `claude-cli:`)
+            // goes to the app Sola keeps for it — on a click only: a page
+            // must not start apps by itself.
+            if let Some(scheme) = crate::util::outside_scheme(&url) {
+                if user_gesture != 0 {
+                    tracing::info!(%url, %scheme, "a link the browser does not load: to Sola's opener");
+                    sola_kit::open(&url);
+                } else {
+                    tracing::warn!(%url, %scheme, "a link the browser does not load, without a click: not opened");
+                }
+                return 1;
+            }
             // A web app's window: a link the user follows to another site
             // opens as a browser page. Redirects stay in the window.
             let main = frame.is_some_and(|f| f.is_main() != 0);
@@ -2463,17 +2475,26 @@ cef::wrap_context_menu_handler! {
                 let t = cef_string_userfree_display(&s);
                 if t.is_empty() { None } else { Some(t) }
             };
+            let selection = nonempty(params.selection_text());
+            let editable = params.is_editable() != 0;
+            let flags: cef::sys::cef_context_menu_edit_state_flags_t =
+                params.edit_state_flags().into();
+            let can_copy = flags.0
+                & cef::sys::cef_context_menu_edit_state_flags_t::CM_EDITFLAG_CAN_COPY.0
+                != 0;
+            let secret = crate::page_menu::looks_secret(editable, selection.as_deref(), can_copy);
             let mut ctx = PageContext {
                 link_url: nonempty(params.link_url()),
                 src_url: nonempty(params.source_url()),
-                selection: nonempty(params.selection_text()),
-                editable: params.is_editable() != 0,
+                selection,
+                editable,
                 can_go_back: false,
                 can_go_forward: false,
                 x: params.xcoord(),
                 y: params.ycoord(),
                 tab_id: 0,
                 image: params.media_type() == cef::ContextMenuMediaType::IMAGE,
+                secret,
             };
             if let Some(b) = browser {
                 ctx.can_go_back = b.can_go_back() != 0;
@@ -3187,7 +3208,7 @@ cef::wrap_client! {
             _source_process: cef::ProcessId,
             message: Option<&mut cef::ProcessMessage>,
         ) -> ::std::os::raw::c_int {
-            #[cfg(feature = "bitwarden")]
+            #[cfg(feature = "vault")]
             if let (Some(browser), Some(frame), Some(message)) = (browser, frame, message) {
                 use cef::{ImplListValue, ImplProcessMessage};
                 if cef::CefString::from(&message.name()).to_string() == VAULT_POST {
@@ -3199,7 +3220,7 @@ cef::wrap_client! {
                     return 1;
                 }
             }
-            #[cfg(not(feature = "bitwarden"))]
+            #[cfg(not(feature = "vault"))]
             let _ = (browser, frame, message);
             0
         }

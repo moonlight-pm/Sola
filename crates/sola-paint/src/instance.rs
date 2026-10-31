@@ -86,6 +86,11 @@ pub fn handoff(paths: &[PathBuf]) -> Result<(), String> {
     Ok(())
 }
 
+/// A paint holds the lock (a probe connect, drained by its accept thread).
+pub fn live() -> bool {
+    UnixStream::connect(lock_path()).is_ok()
+}
+
 pub fn lock_path() -> PathBuf {
     lock_path_in(&sola_core::env::runtime_dir())
 }

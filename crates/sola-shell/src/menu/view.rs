@@ -61,6 +61,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         Some(crate::app::Panel::AgentIslands) => {
             return crate::menu::host_card(crate::agents::view::list(shell));
         }
+        Some(crate::app::Panel::DeskMenu) => return crate::desk_menu::view::view(shell),
         None => {}
     }
 

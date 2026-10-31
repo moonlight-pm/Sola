@@ -78,6 +78,5 @@ Formats: PNG, JPEG, GIF, WebP, BMP, TIFF.
 
 Paint has no clipboard image support (Preview has **Copy**), no color
 adjustment, no filters, and no layers. Flip has no menu item or shortcut.
-`pkg:sola` carries no `.desktop` file for Paint, so on Oath Paint is not
-registered as an image handler for `xdg-open` or a file manager; use
-`solactl open` or `sola-paint <path>`.
+Paint claims raster images, so `xdg-open`, `solactl open` and an image
+opened from Mail reach it ([Opening links and files](session.md#opening-links-and-files)).
