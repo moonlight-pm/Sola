@@ -6,9 +6,10 @@ recommendations sound good. Don't worry about stopgaps. We'll get this done
 today."). V1–V7 decided as proposed. Slices 1–5 built the same day on branch
 `vault`, merged to master and applied on novus the same evening (`sola-vault-proto`, `sola-vaultd`, `sola-vault`, the browser on
 the service with the canvas's look, the desk menu in the shell, the kit,
-terminal and Projects). Not built: import, attachment
-download, the launcher's vault search, the SSH agent, Mail passwords from
-the vault (slice 6).  
+terminal and Projects). Slice 6 (2026-10-31, Joshua): the launcher's vault search declined; the SSH agent, Mail
+passwords, import, attachments, Send and other apps' windows parked in
+[ideas](../ideas/2026-10-31-vault-later.md); in any field the right-click
+menu offers every value of an item ("any field is fine to show the items").  
 **Related:** [vault panel](2026-08-28-sola-browser-vault-panel-design.md);
 [item edit](2026-09-11-sola-browser-vault-item-edit-design.md);
 [browser agent control](2026-09-11-sola-browser-agent-control-design.md)
@@ -160,7 +161,7 @@ pick:  app item  → MenuAction to the app (as the titlebar menus do)
 - **Other applications** draw their own menus; the desk menu does not
   reach them unless V4 adds a key for it.
 
-## The vault beyond the browser (later slices)
+## The vault beyond the browser (later slices — parked, see [ideas](../ideas/2026-10-31-vault-later.md); the launcher's search declined)
 
 - **Launcher:** vault items in its search; Enter copies the password,
   with keys for the username and code (cleared after the clipboard time).
