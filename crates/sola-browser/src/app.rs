@@ -6080,7 +6080,7 @@ impl<E: Engine> App<E> {
                 .font(sola_kit::fonts::ui_medium());
             let pending = self.pending_passkey.as_ref();
             let host = pending
-                .map(|p| page_host_hint(&p.req.origin))
+                .map(|p| crate::vault::log_host(&p.req.origin))
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "this site".into());
 
