@@ -18,6 +18,7 @@ use sola_bus::topics::Activity;
 use crate::hooks::Incoming;
 use crate::machine::{Agent, Entry, Machine};
 use crate::presence::Presence;
+use crate::stats::{self, Stats};
 use sola_terminal::osc9999::{OscState, OscStatus};
 
 /// What a pane (or the tab roll-up) is doing.
@@ -106,6 +107,9 @@ pub struct PaneStatus {
     /// Last Claude transcript length counted. Presence ticks skip a
     /// rescan when the jsonl has not grown.
     pub claude_scan_len: u64,
+    /// Turns, context and model for the session's bar ([`crate::stats`]),
+    /// read with the compaction count.
+    pub stats: Stats,
 }
 
 impl PaneStatus {
@@ -211,6 +215,7 @@ impl PaneStatus {
             self.compaction_count = 0;
             self.codex_scan_len = 0;
             self.claude_scan_len = 0;
+            self.stats = Stats::default();
             return;
         }
         if self.is_grok() {
@@ -220,20 +225,32 @@ impl PaneStatus {
             return;
         }
         if self.is_codex() {
-            if let Some((n, len)) = read_codex_compaction_in(
+            if let Some(read) = read_codex_compaction_in(
                 m,
                 &m.agent_home(Agent::Codex),
                 self.owner_session.as_deref(),
                 self.codex_scan_len,
                 self.compaction_count,
             ) {
-                self.compaction_count = n;
-                self.codex_scan_len = len;
+                self.compaction_count = read.count;
+                self.codex_scan_len = read.len;
+                if let Some(turns) = read.turns {
+                    let (context, window, model) = m
+                        .read_tail(&read.path, stats::TAIL_BYTES)
+                        .map(|t| stats::codex_tail(&t))
+                        .unwrap_or_default();
+                    self.stats = Stats {
+                        turns,
+                        context,
+                        window,
+                        model: model.or(self.stats.model.take()),
+                    };
+                }
             }
             return;
         }
         if self.is_claude() {
-            if let Some((n, len)) = read_claude_compaction_in(
+            if let Some(read) = read_claude_compaction_in(
                 m,
                 &m.agent_home(Agent::Claude),
                 cwd,
@@ -241,8 +258,20 @@ impl PaneStatus {
                 self.claude_scan_len,
                 self.compaction_count,
             ) {
-                self.compaction_count = n;
-                self.claude_scan_len = len;
+                self.compaction_count = read.count;
+                self.claude_scan_len = read.len;
+                if let Some(turns) = read.turns {
+                    let (context, model) = m
+                        .read_tail(&read.path, stats::TAIL_BYTES)
+                        .map(|t| stats::claude_tail(&t))
+                        .unwrap_or_default();
+                    self.stats = Stats {
+                        turns,
+                        context,
+                        window: None,
+                        model: model.or(self.stats.model.take()),
+                    };
+                }
             }
         }
     }
@@ -253,6 +282,7 @@ impl PaneStatus {
             self.codex_phase_len = 0;
             self.codex_turn_open = None;
             self.claude_scan_len = 0;
+            self.stats = Stats::default();
         }
         self.owner_session = Some(sid);
     }
@@ -483,20 +513,31 @@ fn parse_compaction_count(text: &str) -> Option<u32> {
         .map(|n| n as u32)
 }
 
+/// A session file's look: its compactions, its length, and — when it grew
+/// since `last_len` and was read again — its turns.
+#[derive(Debug, PartialEq, Eq)]
+struct Read {
+    count: u32,
+    len: u64,
+    turns: Option<u32>,
+    path: PathBuf,
+}
+
 fn read_codex_compaction_in(
     m: &Machine,
     home: &Path,
     session_id: Option<&str>,
     last_len: u64,
     last_count: u32,
-) -> Option<(u32, u64)> {
+) -> Option<Read> {
     let sid = session_id.filter(|s| is_session_id(s))?;
     let path = find_codex_rollout(m, home, sid)?;
     let len = m.stat(&path)?.len;
     if len == last_len && last_count > 0 {
-        return Some((last_count, len));
+        return Some(Read { count: last_count, len, turns: None, path });
     }
-    Some((count_codex_compactions(m, &path), len))
+    let (count, turns) = count_codex_compactions(m, &path);
+    Some(Read { count, len, turns: Some(turns), path })
 }
 
 pub fn codex_rollout_exists(m: &Machine, session_id: &str) -> bool {
@@ -622,10 +663,14 @@ fn note_turn_marker(head: &[u8], open: Option<bool>) -> Option<bool> {
 /// Count jsonl records whose top-level `type` is `compacted`.
 /// Compact payloads are huge; only the first bytes of each line are
 /// inspected ([`Machine::line_heads`]).
-fn count_codex_compactions(m: &Machine, path: &Path) -> u32 {
+/// Compactions and turns, from one read of the rollout's line heads.
+fn count_codex_compactions(m: &Machine, path: &Path) -> (u32, u32) {
     m.line_heads(path, 0, 192)
-        .map(|read| read.heads.iter().filter(|h| line_is_codex_compacted(h)).count() as u32)
-        .unwrap_or(0)
+        .map(|read| {
+            let compactions = read.heads.iter().filter(|h| line_is_codex_compacted(h)).count() as u32;
+            (compactions, stats::codex_turns(&read.heads))
+        })
+        .unwrap_or((0, 0))
 }
 
 fn line_is_codex_compacted(head: &[u8]) -> bool {
@@ -691,20 +736,23 @@ fn read_claude_compaction_in(
     session_id: Option<&str>,
     last_len: u64,
     last_count: u32,
-) -> Option<(u32, u64)> {
+) -> Option<Read> {
     let path = claude_transcript_for(m, home, cwd, session_id)?;
     let len = m.stat(&path)?.len;
     if len == last_len && last_len > 0 {
-        return Some((last_count, len));
+        return Some(Read { count: last_count, len, turns: None, path });
     }
-    Some((count_claude_compactions(m, &path), len))
+    let (count, turns) = count_claude_compactions(m, &path);
+    Some(Read { count, len, turns: Some(turns), path })
 }
 
-/// `compact_boundary` rows, or `isCompactSummary` when an older transcript
-/// has no boundary. Both on the same compaction would double-count.
-fn count_claude_compactions(m: &Machine, path: &Path) -> u32 {
+/// Compactions and turns, from one read of the transcript's line heads.
+/// Compactions: `compact_boundary` rows, or `isCompactSummary` when an
+/// older transcript has no boundary (both on the same compaction would
+/// double-count).
+fn count_claude_compactions(m: &Machine, path: &Path) -> (u32, u32) {
     let Some(read) = m.line_heads(path, 0, 384) else {
-        return 0;
+        return (0, 0);
     };
     let (mut boundaries, mut summaries) = (0u32, 0u32);
     for head in &read.heads {
@@ -714,11 +762,8 @@ fn count_claude_compactions(m: &Machine, path: &Path) -> u32 {
             _ => {}
         }
     }
-    if boundaries > 0 {
-        boundaries
-    } else {
-        summaries
-    }
+    let compactions = if boundaries > 0 { boundaries } else { summaries };
+    (compactions, stats::claude_turns(&read.heads))
 }
 
 /// 2 = `compact_boundary`, 1 = compact summary, 0 = neither.
@@ -1144,18 +1189,19 @@ mod tests {
         )
         .unwrap();
         assert!(find_claude_transcript(&Machine::Local, &root, sid).is_some());
-        assert_eq!(count_claude_compactions(&Machine::Local, &path), 2);
-        let (n, len) = read_claude_compaction_in(&Machine::Local, &root, cwd, Some(sid), 0, 0).unwrap();
-        assert_eq!(n, 2);
-        assert!(len > 0);
-        let (cached, _) = read_claude_compaction_in(&Machine::Local, &root, cwd, Some(sid), len, n).unwrap();
-        assert_eq!(cached, n);
-        let (newest, _) = read_claude_compaction_in(&Machine::Local, &root, cwd, None, 0, 0).unwrap();
-        assert_eq!(newest, 2);
+        assert_eq!(count_claude_compactions(&Machine::Local, &path), (2, 1));
+        let read = read_claude_compaction_in(&Machine::Local, &root, cwd, Some(sid), 0, 0).unwrap();
+        assert_eq!((read.count, read.turns), (2, Some(1)));
+        assert!(read.len > 0);
+        let cached =
+            read_claude_compaction_in(&Machine::Local, &root, cwd, Some(sid), read.len, read.count).unwrap();
+        assert_eq!((cached.count, cached.turns), (read.count, None));
+        let newest = read_claude_compaction_in(&Machine::Local, &root, cwd, None, 0, 0).unwrap();
+        assert_eq!(newest.count, 2);
         assert!(read_claude_compaction_in(&Machine::Local, &root, cwd, Some("missing-session"), 0, 0).is_none());
         let old = dir.join("older-session.jsonl");
         std::fs::write(&old, "{\"type\":\"user\",\"isCompactSummary\":true}\n").unwrap();
-        assert_eq!(count_claude_compactions(&Machine::Local, &old), 1);
+        assert_eq!(count_claude_compactions(&Machine::Local, &old).0, 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1299,16 +1345,12 @@ mod tests {
         write_codex_rollout(&root, sid, 3, true);
         let path = find_codex_rollout(&Machine::Local, &root, sid).unwrap();
         let len = std::fs::metadata(&path).unwrap().len();
-        assert_eq!(
-            read_codex_compaction_in(&Machine::Local, &root, Some(sid), 0, 0),
-            Some((3, len))
-        );
+        let read = read_codex_compaction_in(&Machine::Local, &root, Some(sid), 0, 0).unwrap();
+        assert_eq!((read.count, read.len), (3, len));
         // Unchanged length keeps the previous count (no rescan).
-        assert_eq!(
-            read_codex_compaction_in(&Machine::Local, &root, Some(sid), len, 99),
-            Some((99, len))
-        );
-        assert_eq!(count_codex_compactions(&Machine::Local, &path), 3);
+        let cached = read_codex_compaction_in(&Machine::Local, &root, Some(sid), len, 99).unwrap();
+        assert_eq!((cached.count, cached.len, cached.turns), (99, len, None));
+        assert_eq!(count_codex_compactions(&Machine::Local, &path).0, 3);
         // A megabyte-class compacted line still counts once (type is in
         // the first bytes; later `"type":"compacted"` in the payload is
         // the same record).
@@ -1322,7 +1364,7 @@ mod tests {
         long_line.push_str(r#"","note":"\"type\":\"compacted\" decoy"}}"#);
         long_line.push('\n');
         std::fs::write(&long, long_line).unwrap();
-        assert_eq!(count_codex_compactions(&Machine::Local, &long), 1);
+        assert_eq!(count_codex_compactions(&Machine::Local, &long).0, 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 

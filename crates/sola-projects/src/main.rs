@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use iced::widget::{canvas, container, mouse_area, stack};
+use iced::widget::{canvas, column, container, mouse_area, stack};
 use iced::{Element, Event, Length, Subscription, Task, Theme};
 use iced::{event, keyboard, window};
 
@@ -30,6 +30,7 @@ use sola_terminal::state::{self as term_state, PaneRuntime};
 use sola_terminal::term_view::{self, CellMetrics, Palette};
 use sola_terminal::{extkeys, links, remote as rtmux, tmux};
 
+mod bar;
 mod calls;
 mod cards;
 mod catalog;
@@ -46,6 +47,7 @@ mod records;
 mod remote;
 mod sessions;
 mod spawn;
+mod stats;
 mod status;
 mod windows;
 
@@ -897,17 +899,25 @@ impl App {
     }
 
     fn view(&self, window: window::Id) -> Element<'_, Msg> {
-        let pane: Element<'_, Msg> = match self.windows.tab_of(window) {
-            Some(id) if self.tabs.iter().any(|w| w.id == id) => self.render_leaf(id),
-            _ => cards::empty_pane(),
+        let session = self
+            .windows
+            .tab_of(window)
+            .filter(|id| self.tabs.iter().any(|w| w.id == *id));
+        let pane: Element<'_, Msg> = match session {
+            Some(id) => self.render_leaf(id),
+            None => cards::empty_pane(),
         };
         // Clipped: a terminal canvas paints outside its bounds (rows
         // above the top while a grid catches up with its size).
-        let body: Element<'_, Msg> = container(pane)
+        let pane: Element<'_, Msg> = container(pane)
             .width(Length::Fill)
             .height(Length::Fill)
             .clip(true)
             .into();
+        let body: Element<'_, Msg> = match session {
+            Some(id) => column![bar::view(self.pane_status.get(id)), pane].into(),
+            None => pane,
+        };
 
         let body: Element<'_, Msg> = match (self.windows.focused == Some(window))
             .then(|| cards::overlay(&self.spawn, &self.add, &self.end, &self.projects))
