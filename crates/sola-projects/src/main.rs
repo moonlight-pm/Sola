@@ -190,6 +190,9 @@ struct App {
     remote_down: HashMap<String, String>,
     /// Each host's link ([`link`]).
     links: HashMap<String, link::Link>,
+    /// The agent and agent session last written to each session's record
+    /// ([`records`]): a hook that says otherwise rewrites it.
+    recorded: HashMap<String, (Option<String>, Option<String>)>,
     /// Remote panes waiting for their link to attach.
     remote_pending: HashSet<String>,
     /// Hosts whose status tick is out, and when each last went out.
@@ -439,9 +442,9 @@ impl App {
             });
         let mut pane_status = HashMap::new();
         for ws in &catalog.tabs {
-            // Saved under its id before sessions were keyed by host.
-            let st = status::hydrate(&ws.id).or_else(|| status::hydrate(catalog::bare_id(&ws.id)));
-            if let Some(st) = st {
+            // By its key alone: a bare id here is this computer's session
+            // (`ws-main@novus` is not this computer's `ws-main`).
+            if let Some(st) = status::hydrate(&ws.id) {
                 pane_status.insert(ws.id.clone(), st);
             }
         }
@@ -472,6 +475,7 @@ impl App {
             islands: islands::Islands::default(),
             remote_down: HashMap::new(),
             links: HashMap::new(),
+            recorded: HashMap::new(),
             remote_pending: HashSet::new(),
             remote_busy: HashSet::new(),
             remote_ticked: HashMap::new(),
@@ -603,10 +607,10 @@ impl App {
                     .filter(|w| w.host.is_none())
                     .map(|w| w.path.clone());
                 let st = self.pane_status.entry(id.clone()).or_default();
-                let owner_before = (st.agent.clone(), st.owner_session.clone());
                 st.apply_hook(&incoming);
-                let owner_changed = st.owner_session.is_some()
-                    && (st.agent.clone(), st.owner_session.clone()) != owner_before;
+                let owner = (st.agent.clone(), st.owner_session.clone());
+                let owner_changed =
+                    owner.1.is_some() && self.recorded.get(&id) != Some(&owner);
                 if incoming.mapped.compacted || incoming.mapped.session_id.is_some() {
                     if let Some(cwd) = cwd.as_deref() {
                         st.refresh_compaction(&Machine::Local, cwd);
@@ -621,6 +625,7 @@ impl App {
                 // Its agent's session is what a reboot resumes.
                 if owner_changed {
                     self.save_record(&id, true);
+                    self.recorded.insert(id.clone(), owner);
                 }
                 self.sync_row(&id);
                 self.maybe_toast_status(&id, prev, now, unconfirmed);
