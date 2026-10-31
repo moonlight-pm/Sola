@@ -133,7 +133,7 @@ impl Shell {
             Outcome::Nothing => Task::none(),
             Outcome::Moved => {
                 self.desk_relayout();
-                Task::none()
+                self.desk_field_focus()
             }
             Outcome::Pick(pick) => {
                 if let Some(desk) = self.desk_close() {
@@ -168,9 +168,7 @@ impl Shell {
                 self.desk_relayout();
                 let generation = self.desk_generation;
                 Task::batch([
-                    iced::widget::operation::focus::<Msg>(iced::widget::Id::new(
-                        desk_menu::SEARCH_INPUT_ID,
-                    )),
+                    self.desk_field_focus(),
                     Task::perform(vault::off_thread(vault::list), move |items| {
                         Msg::Desk(DeskMsg::Listed {
                             generation,
@@ -179,6 +177,27 @@ impl Shell {
                     }),
                 ])
             }
+        }
+    }
+
+    /// The search field takes the keyboard while the keys are in its
+    /// results and lets it go in a result's values, where ← and → are the
+    /// menu's (a focused field keeps them for its caret).
+    fn desk_field_focus(&mut self) -> Task<Msg> {
+        let Some(desk) = self.desk.as_mut() else {
+            return Task::none();
+        };
+        let want = desk.wants_field();
+        if want == desk.field_focused {
+            return Task::none();
+        }
+        desk.field_focused = want;
+        if want {
+            iced::widget::operation::focus(iced::widget::Id::new(desk_menu::SEARCH_INPUT_ID))
+        } else {
+            iced::advanced::widget::operate(
+                iced::advanced::widget::operation::focusable::unfocus(),
+            )
         }
     }
 

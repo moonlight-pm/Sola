@@ -107,6 +107,9 @@ pub struct DeskMenu {
     hot: Vec<Option<usize>>,
     /// The column the keys move in.
     level: usize,
+    /// The search field has the keyboard (while the keys are in the
+    /// results; in a result's values the arrows are the menu's).
+    pub field_focused: bool,
 }
 
 impl DeskMenu {
@@ -129,7 +132,19 @@ impl DeskMenu {
             open_rows: Vec::new(),
             hot: vec![None],
             level: 0,
+            field_focused: false,
         }
+    }
+
+    /// The column the keys move in.
+    pub fn level(&self) -> usize {
+        self.level
+    }
+
+    /// The search field should have the keyboard: the keys are in the
+    /// results.
+    pub fn wants_field(&self) -> bool {
+        self.level == 1 && self.searching(1)
     }
 
     pub fn target(&self) -> Target {
