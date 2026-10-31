@@ -164,10 +164,13 @@ seconds as columns tinted the same way, with the peak.
 
 The volume island is a 12-band LED spectrum of what the default output is
 playing (green at the bottom to amber at the top), dimmed while the
-output is muted or at zero. It shows while PipeWire answers. Click it for
+output is muted or at zero. It shows while PipeWire runs, even when
+WirePlumber stops answering. Click it for
 the volume panel: **Output** and **Input**, each with its level, a slider,
 a mute button and its devices. Click a device to make it the default
-(`wpctl set-default`).
+(`wpctl set-default`). While WirePlumber is stuck, the panel keeps the
+last level and default it saw, and a change waits until WirePlumber
+answers.
 
 ### Mail, the bell, the mouse and Bluetooth
 

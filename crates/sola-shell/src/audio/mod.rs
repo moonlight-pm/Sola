@@ -267,18 +267,82 @@ fn refresh(
     match pw::snapshot() {
         Ok(snap) => {
             let mut g = lock_snap(last);
-            *g = snap;
+            merge_snapshot(&mut g, snap);
             publish(event_tx, &g);
         }
         Err(e) => {
             tracing::warn!("audio snapshot: {e}");
             let mut g = lock_snap(last);
-            if !g.available {
+            if pw::pipewire_socket_present() {
+                g.available = true;
+                publish(event_tx, &g);
+            } else if !g.available {
                 *g = Snapshot::default();
                 publish(event_tx, &g);
             }
         }
     }
+}
+
+/// Keep last defaults/volumes when `wpctl` did not answer, and keep last
+/// endpoints when this poll's graph was empty (partial `pw-cli` miss).
+fn merge_snapshot(last: &mut Snapshot, new: Snapshot) {
+    let keep_sink = new.default_sink.is_none();
+    let keep_source = new.default_source.is_none();
+    let keep_devices = new.sinks.is_empty()
+        && new.sources.is_empty()
+        && (!last.sinks.is_empty() || !last.sources.is_empty());
+    let sinks = if keep_devices {
+        last.sinks.clone()
+    } else {
+        new.sinks
+    };
+    let sources = if keep_devices {
+        last.sources.clone()
+    } else {
+        new.sources
+    };
+    let default_sink = if keep_sink {
+        last.default_sink
+    } else {
+        new.default_sink
+    };
+    let default_source = if keep_source {
+        last.default_source
+    } else {
+        new.default_source
+    };
+    let sink_volume = if keep_sink {
+        last.sink_volume
+    } else {
+        new.sink_volume
+    };
+    let sink_mute = if keep_sink {
+        last.sink_mute
+    } else {
+        new.sink_mute
+    };
+    let source_volume = if keep_source {
+        last.source_volume
+    } else {
+        new.source_volume
+    };
+    let source_mute = if keep_source {
+        last.source_mute
+    } else {
+        new.source_mute
+    };
+    *last = Snapshot {
+        available: new.available,
+        sinks,
+        sources,
+        default_sink,
+        default_source,
+        sink_volume,
+        sink_mute,
+        source_volume,
+        source_mute,
+    };
 }
 
 fn lock_snap(last: &Mutex<Snapshot>) -> std::sync::MutexGuard<'_, Snapshot> {
@@ -358,5 +422,58 @@ mod tests {
         let cmd = ui.update(UiMsg::SetDefaultSource(8));
         assert!(matches!(cmd, Some(Command::SetDefault(8))));
         assert_eq!(ui.snapshot.default_source, Some(8));
+    }
+
+    #[test]
+    fn merge_keeps_last_volume_when_wpctl_silent() {
+        let mut last = Snapshot {
+            available: true,
+            default_sink: Some(56),
+            sink_volume: 0.4,
+            sink_mute: false,
+            sinks: vec![Device {
+                id: 56,
+                name: "HDMI".into(),
+                kind: Kind::Output,
+            }],
+            ..Snapshot::default()
+        };
+        merge_snapshot(
+            &mut last,
+            Snapshot {
+                available: true,
+                sinks: vec![Device {
+                    id: 56,
+                    name: "HDMI".into(),
+                    kind: Kind::Output,
+                }],
+                ..Snapshot::default()
+            },
+        );
+        assert!(last.available);
+        assert_eq!(last.default_sink, Some(56));
+        assert!((last.sink_volume - 0.4).abs() < 0.001);
+        assert_eq!(last.sinks[0].name, "HDMI");
+    }
+
+    #[test]
+    fn merge_keeps_last_devices_on_empty_graph() {
+        let mut last = Snapshot {
+            available: true,
+            sinks: vec![Device {
+                id: 163,
+                name: "WH-CH520".into(),
+                kind: Kind::Output,
+            }],
+            ..Snapshot::default()
+        };
+        merge_snapshot(
+            &mut last,
+            Snapshot {
+                available: true,
+                ..Snapshot::default()
+            },
+        );
+        assert_eq!(last.sinks[0].id, 163);
     }
 }
