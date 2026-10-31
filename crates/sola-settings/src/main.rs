@@ -30,6 +30,7 @@ mod appearance;
 mod calendar;
 mod calendar_oauth;
 mod edit;
+mod keybindings;
 mod login;
 mod mail;
 mod mail_discover;
@@ -41,9 +42,10 @@ use appearance::{AppearanceMsg, AppearanceState};
 use login::{LoginMsg, LoginState};
 use applications::{AppsMsg, AppsState};
 use calendar::{CalMsg, CalendarState};
+use keybindings::{KeysMsg, KeysState};
 use mail::{MailMsg, MailState};
 
-const APP_ID: &str = "sola-settings";
+pub(crate) const APP_ID: &str = "sola-settings";
 
 fn main() -> iced::Result {
     startup(APP_ID);
@@ -78,6 +80,7 @@ enum Panel {
     Login,
     Mail,
     Calendar,
+    Keybindings,
 }
 
 struct App {
@@ -105,6 +108,8 @@ struct App {
     login_ui: LoginState,
     /// The background picture and the appearance settings.
     appearance: AppearanceState,
+    /// Every action's key (Settings → Keybindings).
+    keys: KeysState,
     /// Float tracker + iced window id for CSD while floating.
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
@@ -124,6 +129,7 @@ impl Default for App {
             calendar_ui: CalendarState::default(),
             login_ui: LoginState::default(),
             appearance: AppearanceState::default(),
+            keys: KeysState::default(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
         }
@@ -139,6 +145,7 @@ enum Msg {
     Calendar(CalMsg),
     Appearance(AppearanceMsg),
     Login(LoginMsg),
+    Keys(KeysMsg),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -177,6 +184,7 @@ impl App {
                 apply_theme_update(&message, &mut self.theme);
 
                 if is_self_quit(&message, APP_ID) {
+                    keybindings::leave(&mut self.keys);
                     return iced::exit();
                 }
 
@@ -228,10 +236,20 @@ impl App {
                     Some(Topic::ThemeVariations(v)) => {
                         self.appearance.variations = message.sticky.then_some(v);
                     }
+                    Some(Topic::KeyActions(d)) => {
+                        let owner = d.owner.clone();
+                        self.keys.declared(&owner, message.sticky.then_some(d));
+                    }
+                    Some(Topic::Keybindings(k)) => {
+                        self.keys.keys = if message.sticky { k } else { Default::default() };
+                    }
                     _ => {}
                 }
             }
             Msg::SelectPanel(p) => {
+                if p != Panel::Keybindings {
+                    keybindings::leave(&mut self.keys);
+                }
                 self.panel = p;
                 if p == Panel::Login {
                     return login::update(LoginMsg::Refresh, &mut self.login_ui).map(Msg::Login);
@@ -241,6 +259,7 @@ impl App {
                 }
             }
             Msg::Login(m) => return login::update(m, &mut self.login_ui).map(Msg::Login),
+            Msg::Keys(m) => return keybindings::update(m, &mut self.keys).map(Msg::Keys),
             Msg::Apps(m) => {
                 return applications::update(m, &mut self.applications, &mut self.apps_ui)
                     .map(Msg::Apps);
@@ -259,6 +278,7 @@ impl App {
             Msg::TitleDrag => return sola_kit::drag(self.window_id),
             Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
             Msg::TitleClose => {
+                keybindings::leave(&mut self.keys);
                 sola_kit::close_app(APP_ID);
             }
             Msg::ClipboardPasted(text) => {
@@ -341,6 +361,8 @@ impl App {
                     .active(self.panel == Panel::Mail),
                 SidebarItem::new("Calendar", Msg::SelectPanel(Panel::Calendar))
                     .active(self.panel == Panel::Calendar),
+                SidebarItem::new("Keybindings", Msg::SelectPanel(Panel::Keybindings))
+                    .active(self.panel == Panel::Keybindings),
             ],
         )]);
 
@@ -350,6 +372,7 @@ impl App {
             Panel::Login => "Login",
             Panel::Mail => "Mail",
             Panel::Calendar => "Calendar",
+            Panel::Keybindings => "Keybindings",
         };
 
         // Page pad 24 = SPACE_XL + SPACE_MD (content margin, not control density).
@@ -396,6 +419,14 @@ impl App {
             .padding(Padding::new(page_pad))
             .height(Length::Fill)
             .into(),
+            Panel::Keybindings => column![
+                kit_text::heading(title_text),
+                keybindings::view(&self.keys).map(Msg::Keys),
+            ]
+            .spacing(page_pad)
+            .padding(Padding::new(page_pad))
+            .height(Length::Fill)
+            .into(),
         };
 
         let main_pane = container(main_inner)
@@ -421,7 +452,12 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Msg> {
-        bus_subscription().map(Msg::BusMessage)
+        let bus = bus_subscription().map(Msg::BusMessage);
+        if self.keys.capturing() {
+            let keys = keybindings::capture_keys().map(|(p, m)| Msg::Keys(KeysMsg::Pressed(p, m)));
+            return Subscription::batch([bus, keys]);
+        }
+        bus
     }
 }
 
