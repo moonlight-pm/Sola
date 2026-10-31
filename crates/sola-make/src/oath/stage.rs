@@ -28,7 +28,10 @@ pub fn stage(release: bool) -> Vec<Staged> {
     build(release);
     let share_cache = Path::new(STAGE_ROOT).join("share-cache");
     crate::assets::sync_into(&share_cache, false);
-    let version = version();
+    // The crate's version, never the commit: where a tree came from is its
+    // source record (`provenance`), so a package nothing touched keeps
+    // its hash and does not move.
+    let version = env!("CARGO_PKG_VERSION");
     PACKAGES
         .iter()
         .map(|pkg| Staged {
@@ -122,26 +125,6 @@ fn copy_tree(from: &Path, to: &Path) {
         .unwrap_or_else(|e| fail(format!("cp: {e}")));
     if !status.success() {
         fail(format!("cp -a {} {} failed", from.display(), to.display()));
-    }
-}
-
-/// `<workspace version>+g<short rev>`, `.dirty` when the tree has changes.
-fn version() -> String {
-    let git = |args: &[&str]| {
-        Command::new("git")
-            .args(args)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-    };
-    let rev = git(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".into());
-    let dirty = git(&["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
-    let base = env!("CARGO_PKG_VERSION");
-    if dirty {
-        format!("{base}+g{rev}.dirty")
-    } else {
-        format!("{base}+g{rev}")
     }
 }
 

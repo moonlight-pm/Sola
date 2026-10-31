@@ -35,14 +35,15 @@ const WORK: &str = "target/oath/publish";
 /// `local`: build the plans here and upload nothing.
 pub fn publish(local: bool) -> Result<(), String> {
     let origin = if local { None } else { Some(Origin::from_env()?) };
-    let (rev, dirty) = git_rev()?;
-    if dirty {
+    if git_dirty()? {
         return Err("commit first: a published source is the committed tree".into());
     }
     if !local {
         released_from_master()?;
     }
-    let version = format!("{}+g{rev}", env!("CARGO_PKG_VERSION"));
+    // Not the commit (see `stage`): an untouched package builds to the
+    // hash it had.
+    let version = env!("CARGO_PKG_VERSION");
     let work = Path::new(WORK);
     let _ = fs::remove_dir_all(work);
 
@@ -264,7 +265,7 @@ fn released_from_master() -> Result<(), String> {
     Ok(())
 }
 
-fn git_rev() -> Result<(String, bool), String> {
+fn git_dirty() -> Result<bool, String> {
     let out = |args: &[&str]| {
         Command::new("git")
             .args(args)
@@ -272,9 +273,7 @@ fn git_rev() -> Result<(String, bool), String> {
             .map_err(|e| format!("git: {e}"))
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
     };
-    let rev = out(&["rev-parse", "--short", "HEAD"])?;
-    let dirty = !out(&["status", "--porcelain"])?.is_empty();
-    Ok((rev, dirty))
+    Ok(!out(&["status", "--porcelain"])?.is_empty())
 }
 
 fn sh(script: &str) -> Result<(), String> {
