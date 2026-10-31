@@ -31,28 +31,35 @@ current project / tab / split model by host first would be done twice.
 So the next step is the core: `App` holds session windows keyed by
 `(host, session)`, built from each host's `@sola-*` listing.
 
-- [ ] **1.3 Ids unique per host.** A new session's id is checked against
+- [x] **1.3 Ids unique per host.** A new session's id is checked against
   that host's live sessions (local tmux, or `list-sessions` over the
   shared ssh), not only this catalog; tmux `new-session` refusing a name
   moves to the next.
-- [ ] **1.4 The session describes itself.** `@sola-project`, `@sola-name`,
+- [x] **1.4 The session describes itself.** `@sola-project`, `@sola-name`,
   `@sola-title`, `@sola-kind`, `@sola-parent`, `@sola-agent`,
   `@sola-agent-session` set at creation and on rename / move / agent
   change; stamped on first sight for sessions made before this.
-- [ ] **1.5 Closing detaches.** Window close, tab ×, ⌘W and Projects quit
+- [x] **1.5 Closing detaches.** Window close, tab ×, ⌘W and Projects quit
   drop this computer's client only. **End Session** (menu, `tab.rm`)
   kills, with a confirm while its agent works or waits; worktree removal
   stays its own choice.
-- [ ] **1.6 Size claim.** No `resize-window` on every resize; a window
-  claims the session's size when it gains focus or gets a key / click.
-- [ ] **1.7 One window per session.** The in-window tab bar, its `+` card,
+- [x] **1.6 Size claim.** No `resize-window`: Projects sizes its client
+  only (`PtyBackend::resize_client`), unpins a session it attaches
+  (`tmux::follow_latest`, and in the remote attach script), and our
+  tmux.conf says `window-size latest` — the computer that typed last sets
+  the size. Focus alone does not claim (tmux counts keys); revisit with
+  mirrors (slice 3).
+- [x] **1.7 One window per session.** The in-window tab bar, its `+` card,
   drag reorder, splits and the project roll-up go; ⌘T / New Session opens
   the spawn card for that project and host; each session its own window.
-- [ ] **1.8 Open any session.** The launcher's chooser lists each host's
-  projects and their live sessions (from `@sola-*`); `project.open` /
-  a new `session.open` attach one here.
-- [ ] **1.9 Docs.** capabilities `projects` row, CURRENT, manual
-  (`solactl.md`, `sola-shell.md`), architecture (sockets).
+- [~] **1.8 Open any session.** `project.open` (the chooser's pick, here
+  or **On another computer…**) opens every session of the project on its
+  computer (`sessions.rs`: `@sola-*`, or the pane's folder for older
+  ones). Left: the chooser listing sessions under each project, and
+  opening one session alone.
+- [~] **1.9 Docs.** capabilities `projects` row, architecture, manual
+  `solactl.md`, AGENTS.md + the Projects skills (worktrees are the
+  session's). Left: `sola-shell.md` (the row's parts), CURRENT on merge.
 
 ## Slice 2 — status on the host
 

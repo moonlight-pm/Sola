@@ -97,7 +97,7 @@ misspelt command reports `<name> is not running`.
 | `SOLA_BUS_PATH` | `emit`, `background` | Bus socket. Default `$XDG_RUNTIME_DIR/sola-bus` |
 | `XDG_RUNTIME_DIR` | call commands, `mcp`, `emit`, `background` | Directory of the default sockets. When it is unset or empty (an SSH login on Oath sets none): `/run/user/<uid>` if that directory exists, else `/tmp` |
 | `SOLA_BOT` | `compositor`, `browser`, `mcp` | `1`, `true`, `TRUE`, or `yes` turns on the [bot rules](#bot-rules) |
-| `SOLA_PANE_ID` | `projects whoami`, `projects tab.spawn` | Default `--pane` and `--parent`. Projects sets it in each pane |
+| `SOLA_PANE_ID` | `projects whoami`, `projects tab.spawn` | Default `--pane` and `--parent`. Projects sets it in each session |
 | `SOLA_WS_PATH` | `projects whoami` | Default `--path`. Projects sets it in each pane to the tab's checkout path |
 | `HOME` | path arguments, `open`, `logs` | `~` expansion; default location of `chrome.sock` and, on Oath, of the logs |
 | `SOLA_LOG_DIR` | `logs` | Log directory. Default `$XDG_STATE_HOME/sola` on Oath (`~/.local/state/sola` when that is unset or not absolute), else `/opt/sola/log` |
@@ -455,110 +455,123 @@ iPhone app (SolaBot) spoke the old TCP API and cannot reach this one.
 ## Projects (`solactl projects`)
 
 Needs **Projects** running (owner `projects`, app id `sola-projects`).
-Fails if the app or `sola-call` is down; it does not launch a window. A
-tab is one checkout in a project: the project root, a `.worktrees/`
-worktree, or a folder. Each project is its own window (a row in the
-shell's bar, named for the project), with its tabs along the top.
-A project is a folder in `~/Projects` (or in another computer's), and
-Projects keeps only the open ones. Closing a project's window (its close
-dot, Project → Close Window, or `project.close`) closes the project: its
-tabs' sessions end — their tmux is killed, agents and all, here or on its
-computer — and Projects forgets it and its tabs. Its folders, worktrees
-too, stay on disk. Opening it again (the launcher, Project → Open, or
-`project.open`) starts it on its root tab. New Project… (⌘N) makes
-`~/Projects/<name>` and opens it; `project.open` here takes only a folder
-of `~/Projects`. Each project's startup script is kept by its folder
-(`~/.config/sola/projects/startup.json`), so it outlives closing. Closing
-the last window quits Projects; started with nothing to open, Projects
-waits 20 seconds for a `project.open` (the launcher's), then quits.
-Quitting Projects any other way (a restart, logging out) leaves every
-session running, and it opens the same projects again. A project here
-whose folder is gone is closed at start.
-That row in the shell's bar shows a project's activity in place of its
-icon: an amber diamond when any of its tabs is waiting on a decision, a
-spinning ring when any is working (the diamond wins), the icon otherwise.
-Projects was called Workspaces, and a tab a workspace;
-`solactl workspaces` and the `workspace.*` methods are gone, with no
-alias.
+Fails if the app or `sola-call` is down; it does not launch a window.
+
+A **session** is a terminal (a shell, or an agent: Grok, Codex, Claude)
+in a project. It is a tmux session on the computer it runs on, so it
+runs whether or not a window shows it. Every session starts in its
+project's folder; a project can have any number. A project is a folder in
+`~/Projects`, here or on another computer.
+
+Each session open here is its own window, a row in the shell's bar. The
+row names three things, drawn apart: the project, the session (when it is
+not the project's main one), and the computer it runs on — always, this
+one too — as a chip in that computer's prompt color. In place of its icon
+the row shows the session's activity: an amber diamond while it waits on
+a decision, a spinning ring while it works.
+
+Any computer's Projects can open any computer's sessions: two computers
+can watch and type in the same session. Its size follows the computer
+that typed last. **Closing a window detaches**: that computer stops
+watching and the session keeps running, as it does when Projects quits.
+**Project → End Session…** (or `tab.rm`) ends a session — its tmux is
+killed where it runs, for every computer watching; it asks first while
+its agent is working or waiting. A session whose shell exits shows
+**Start new shell**.
+
+Projects makes no worktrees. A session makes its own when its work needs
+one (`git worktree add .worktrees/<slug>` from the project root); ending
+a session never touches them.
+
+New Project… (⌘N) makes `~/Projects/<name>` and opens it. New Session…
+(⌘T) starts one in the focused session's project, on its computer, in a
+window of its own. Closing the last window quits Projects; started with
+nothing to open, Projects waits 20 seconds for a `project.open` (the
+launcher's), then quits. Projects was called Workspaces; `solactl
+workspaces` and the `workspace.*` methods are gone. The verbs still say
+`tab`: a tab is a session.
 
 ```text
 solactl projects                           # list methods
 solactl projects ps
 solactl projects project.list
-solactl projects project.open --path ~/Projects/Sola    # show it, or open it here
+solactl projects project.open --path ~/Projects/Sola    # its sessions here
 solactl projects project.open --host <computer> --path /home/<user>/Projects/Sola
-solactl projects project.startup [--project Illuno]
-solactl projects project.startup --project Illuno --script 'cp -a "$PROJECT/.grok" "$WORKTREE/"'
-solactl projects project.close --project Sola   # as closing its window: sessions end
+solactl projects project.close --project Sola   # its windows close; sessions run on
 solactl projects tab.list [--project Sola]
-solactl projects tab.spawn --project Sola --name ticket-123 \
-    [--branch joshua/sc-1234/fix] [--base-branch origin/dev] [--title 'fix login'] \
+solactl projects tab.spawn --project Sola [--name review] [--title 'fix login'] \
     [--agent grok|codex|claude] [--prompt '…' | --prompt-file FILE] [--parent …] [--select]
-solactl projects tab.spawn --project Sola --name hotfix --root   # no worktree
-solactl projects tab.set --tab ticket-123 --title 'fix login'
-solactl projects tab.set --tab adhoc --name sc-1234 \
-    [--title 'fix login'] [--branch joshua/sc-1234/fix] [--before root]
-solactl projects tab.exec --tab ticket-123 [--agent grok|codex|claude] \
+solactl projects tab.set --tab review [--name …] [--title 'fix login']
+solactl projects tab.exec --tab review [--agent grok|codex|claude] \
     [--prompt '…' | --prompt-file FILE]
-solactl projects tab.select --tab ticket-123
-solactl projects tab.rm --tab ticket-123 [--worktree] [--force]
-solactl projects pane.list [--tab ticket-123]
-solactl projects pane.send --text 'follow up' --enter [--pane ticket-123]
-solactl projects pane.read [--pane ticket-123] [--lines 40]
-solactl projects pane.wait [--pane ticket-123] [--status done] [--timeout 300] [--fresh]
+solactl projects tab.select --tab review
+solactl projects tab.rm --tab review        # end it, for every computer
+solactl projects pane.list [--tab review]
+solactl projects pane.send --text 'follow up' --enter [--pane review]
+solactl projects pane.read [--pane review] [--lines 40]
+solactl projects pane.wait [--pane review] [--status done] [--timeout 300] [--fresh]
 solactl projects whoami                    # from a Projects pane; or --pane / --path
 ```
 
 | Short | Long | Methods |
 |---|---|---|
-| `-p` | `--project` | `project.close`, `project.startup`, `tab.list`, `tab.spawn` |
+| `-p` | `--project` | `project.close`, `tab.list`, `tab.spawn` |
 | `-p` | `--path` | `project.open` |
 | `-n` | `--name` | `tab.spawn`, `tab.set` |
-| `-b` | `--branch` | `tab.spawn`, `tab.set` |
 | `-a` | `--agent` | `tab.spawn`, `tab.exec` |
 | `-s` | `--select` | `tab.spawn` |
 | `-t` | `--tab` | `tab.rm`, `tab.select`, `tab.set`, `tab.exec`, `pane.list` |
-| `-f` | `--force` | `tab.rm` |
 | `-t` | `--text` | `pane.send` |
 | `-e` | `--enter` | `pane.send` |
 | `-l` | `--lines` | `pane.read` |
 | `-s` | `--status` | `pane.wait` |
 | `-f` | `--fresh` | `pane.wait` |
 
-Required arguments: `--path` on `project.open`; `project.close`
-`--project`; `tab.spawn --project --name`; `--tab` on `tab.rm`,
-`tab.select`, `tab.set`, `tab.exec`; `pane.send --text`. `--project` on
-`project.startup` and `--tab` on `pane.list` default to the focused
-project window's selected tab; `--pane` on `pane.send`, `pane.read`, and
-`pane.wait` defaults to the focused pane, else the selected tab.
-`tab.list` without `--project` lists every tab.
+Required arguments: `--path` on `project.open`; `project.close
+--project`; `tab.spawn --project`; `--tab` on `tab.rm`, `tab.select`,
+`tab.set`, `tab.exec`; `pane.send --text`. `--tab` on `pane.list` and
+`--pane` on `pane.send`, `pane.read`, and `pane.wait` default to the
+focused session. `tab.list` without `--project` lists every session open
+here.
 
-Deadlines: `project.open` 15 s; `tab.spawn` and `tab.exec`
-60 s; `pane.wait` 302 s, or its `--timeout` plus 2 s; the rest 8 s.
+Deadlines: `project.open` 15 s; `tab.spawn` and `tab.exec` 60 s;
+`pane.wait` 302 s, or its `--timeout` plus 2 s; the rest 8 s.
 
 Errors name what went wrong: `<path> is not a folder of ~/Projects` for
-`project.open`, `cannot close the project root` for `tab.rm` on a
-project's own tab, `--force needs --worktree`, and `no project selected`
-or `no tab selected` when a default has nothing to fall back on.
+`project.open`, `a session '<name>' is already open in this project`, and
+`no tab selected` when a default has nothing to fall back on.
 
-### Spawn
+### Open
 
-`--name` is the `.worktrees/<name>` folder and the default tab label.
-`--branch` defaults to that name; `--base-branch` defaults to `HEAD`.
-`--title` is the tab label. An empty `--title`, or a title equal to
-`--name`, falls back to the folder slug; the slug is not prefixed onto a
-custom title.
+`project.open` opens a project's sessions here, each in its own window:
+every session running on its computer in that folder, whichever computer
+started it (one already open here comes forward). With none running
+anywhere, it starts the project's main session. A folder that is not a
+project here yet is added first. Its reply is the project with `opened`
+(none of its sessions was open here). The launcher's Projects chooser
+uses it, and Project → Open lists the folders of `~/Projects` with no
+session open here.
 
-The reply is the new tab: `id`, `name`, `title`, `label`, `path`, `kind`,
-`parent`, `project`, and `selected`, plus `startup_error` when the
-project's startup script failed (the tab is made anyway).
+A session says what it is to any computer that lists it: tmux options on
+it (`@sola-project`, `@sola-name`, `@sola-title`, `@sola-kind`). One made
+before those existed is placed by the folder its pane is in.
 
-Spawn runs in the background: the new tab appears in its project
-window's top bar, and the windows stay on what they show. `--select`
-shows the project's window and selects the new tab (the same as **+** or
-⌘T in the UI). `tab.exec` does not select. When you spawn from a Projects
-pane, the parent defaults to `$SOLA_PANE_ID`. `--parent` takes a parent
-tab, pane, or path.
+`project.close` closes the project's windows here and replies
+`{"project", "closed": true}`; its sessions keep running.
+
+### Start
+
+`tab.spawn` starts a session in the project's folder, on the project's
+computer, in a window of its own. `--name` is its name, unique among the
+project's sessions open here (default: the next number, `2`, `3`, …);
+`--title` is its label (default: the name). The reply is the new session:
+`id`, `name`, `title`, `label`, `path`, `kind`, `parent`, `project`, and
+`selected`.
+
+It runs in the background: its window lands behind, and the shown windows
+stay. `--select` brings it up (as ⌘T does). When you spawn from a Projects
+pane, the parent defaults to `$SOLA_PANE_ID`; `--parent` takes a session,
+pane, or path.
 
 `--agent` is `grok`, `codex`, or `claude`. Other names are an error
 (OpenCode is presence-only). `--prompt` without `--agent` implies Grok.
@@ -568,121 +581,69 @@ merged into `~/.claude/settings.json` and apply to the next Claude
 session. On start, Projects finds its existing Codex and Claude hook
 entries by script file name and rewrites them in place (status message
 "Sola Projects status"). Its catalog, last status, and hook scripts live
-in `~/.config/sola/projects/`, moved there once from
-`~/.config/sola/workspaces/`.
+in `~/.config/sola/projects/`.
 
-### Root tabs
+`tab.set` sets a session's `--name` and `--title`; its id and its tmux
+stay. Target a session by id, name, path, or label. `tab.select` brings
+its window up and replies `{"id", "selected": true}`.
 
-`--root` opens the tab in the project root checkout instead of a new
-worktree (the **No worktree** box on the New tab card). Its `kind`
-is `root`, its `path` is the project root, and work lands on whatever
-branch the root has checked out (usually master). `--branch` and
-`--base-branch` are refused with `--root`, and the startup script does not
-run.
-
-A root tab closes with plain `tab.rm` (`--worktree` is refused).
-`tab.set` takes `--title` and `--before` on a root tab; `--name` and
-`--branch` need a worktree. Hover × and the pencil work as on a worktree
-tab.
-
-### Rename and reorder
-
-`tab.set --name` runs `git worktree move` to `.worktrees/<name>`.
-The id stays, so tmux sessions keep working; live or dirty checkouts are
-moved with force. The project root cannot be renamed. `--branch` runs
-`git branch -m` in that checkout and does not move the folder. To promote
-an ad hoc tab, pass both:
-`--name sc-1234 --branch joshua/sc-1234/fix --title '…'`.
-
-Target a tab by id, slug, path, or label. `--before` reorders that tab
-within its project's top bar (`end` = last). On a worktree tab, a
-double-click on its chip sets `--title` (the label, not the folder).
-`tab.select` shows the tab's project window and selects the tab.
-
-### Projects on another computer
+### Sessions on another computer
 
 `project.open --host <computer> --path <folder>` opens a folder on another
-computer (an ssh host: a name, `user@name`, or a `~/.ssh/config` alias) as
-a project named "<folder> on <computer>". `--path` is the folder's full
-path there. `solactl` resolves `--path` on this computer, so `~` becomes
-this computer's home and a relative path is taken from your working
-directory here; write the full path. The launcher's Projects chooser does
-this from **On another computer…**.
+computer (an ssh host: a name, `user@name`, or a `~/.ssh/config` alias).
+`--path` is the folder's full path there. `solactl` resolves `--path` on
+this computer, so `~` becomes this computer's home and a relative path is
+taken from your working directory here; write the full path. The
+launcher's Projects chooser does this from **On another computer…**.
 
-It works as a project here does. Each tab is a tmux session on that
-computer, reached over ssh, so it runs there and survives the connection:
-a Projects restart, or losing the network, leaves it running, and the tab
-attaches it again. While the computer has a project, Projects keeps a
-connection there of its own (the link) that brings its agents' hooks back:
-marks, islands, desk cards and `pane.wait` work as here. The first link
-installs the same agent hooks there (Claude's `settings.json`, Codex's
+Its sessions run there, in that computer's own Projects tmux (socket
+`sola-ws`, the one its own Projects uses), reached over ssh: a Projects
+restart, or losing the network, leaves them running, and the windows
+attach them again. Here such a session's id is `<id>@<computer>`. While
+the computer has a session open here, Projects keeps a connection there of
+its own (the link) that brings the hooks of agents it started back: marks,
+islands, desk cards and `pane.wait` work as here. The first link installs
+the same agent hooks there (Claude's `settings.json`, Codex's
 `hooks.json`, Grok's `sola-status.json`; scripts in
-`~/.config/sola/remote/`). New tabs make worktrees there, the project's
-startup script runs there, `tab.set --name` / `--branch` move and rename
-there, `tab.rm --worktree` removes there; `pane.send`, `pane.read` and
-`tab.exec` reach its panes; a lost session whose Grok or Claude transcript
-is still there resumes.
+`~/.config/sola/remote/`). `pane.send`, `pane.read` and `tab.exec` reach
+its panes; a lost session whose Grok or Claude transcript is still there
+resumes.
 
-That tmux uses its own socket (`sola-ws-remote`), so a Sola running on that
-computer keeps its own sessions apart; its settings are written to
-`~/.config/sola/sola-ws-remote.tmux.conf` there. A tab's ssh may ask for a
-password in the tab. The link and the listing never ask: they need a key or
-an agent that logs you in, tmux there, and curl there for marks.
+Sessions opened from another computer before 2026-10-30 lived on a socket
+of their own there (`sola-ws-remote`); they are still found and attached
+until they end, and nothing new is made there. A session's ssh may ask
+for a password in its window. The link and the listing never ask: they
+need a key or an agent that logs you in, tmux there, and curl there for
+marks.
 
-- The connection drops: the tab says **Can't reach** the computer, with
-  ssh's reason, and **Reconnect**. The session there is left alone, and the
-  link is tried again every 20 seconds; tabs come back with it.
-- The shell in a tab exits: **Start new shell**, as on this computer.
-- Closing a tab, or closing the project's window, ends its sessions there.
-- Agents running there cannot drive this Projects (`solactl projects` there
-  talks to that computer's own Sola).
+- The connection drops: the window says **Can't reach** the computer,
+  with ssh's reason, and **Reconnect**. The session there is left alone,
+  and the link is tried again every 20 seconds; windows come back with it.
+- Agents running there cannot drive this Projects (`solactl projects`
+  there talks to that computer's own Sola).
 
-### Lists, startup scripts, and sessions
+### Lists and sessions
 
-`tab.list` replies `{"tabs": […]}`; `ps` replies
-`{"projects", "selected"}` with each project's tabs under
-`projects[].tabs[]`. A tab has `id`, `name`, `title`, `label`, `path`,
-`kind`, `parent`, `status`, `agent`, and `project`, plus `host` on
-another computer; in `ps` and the `tab.set` reply it also says
-`selected`. A project has `id`, `name`, `root`, `startup` (whether it has
-a startup script), and `host` on another computer.
-
-`project.list` replies `{"projects": […]}`, the projects Projects keeps
-(the open ones), each with `open`. `project.open` brings a project's
-window up (the shell shows its workspace), or opens the folder in the
-showing workspace on its root tab; its reply is the project with `opened`
-(it was not open). The launcher's Projects chooser uses both.
-`project.close` replies `{"project", "closed": true}`, `tab.select`
-`{"id", "selected": true}`, and `tab.rm` `{"ok": true}`.
+`tab.list` replies `{"tabs": […]}`; `ps` replies `{"projects",
+"selected"}` with each project's sessions under `projects[].tabs[]`. A
+session has `id`, `name`, `title`, `label`, `path`, `kind`, `parent`,
+`status`, `agent`, and `project`, plus `host` on another computer; in
+`ps` and the `tab.set` reply it also says `selected`. A project has `id`,
+`name`, `root`, and `host` on another computer. `project.list` replies
+`{"projects": […]}`, those with a session open here, each with `open`.
 
 `whoami` replies `pane`, `tab` (id), `tab_name`, `project`,
 `project_name`, `path`, `kind`, `status`, `agent`, and `session_id`.
 `tab.exec` replies `{"tab", "pane", "started", "sent"}`: `started` when it
 launched the agent, `sent` when it pasted the prompt into one already
-running. `kind` is one of:
+running. `kind` is `main` (the project's main session), `folder` (the main
+session of a non-git project), or `root` (any other).
 
-- `main` — the project's own tab
-- `worktree`
-- `root` — an extra tab in the project root
-- `folder` — a non-git project
-
-`project.startup` is the per-project script that runs in a new worktree
-after spawn (also **Project → Startup Script…**). Without `--script` it
-reads the script; `--script ''` clears it. The script sees `$PROJECT` (the
-project folder on disk), `$WORKTREE` (this tab, `.worktrees/<name>`), and
-`$NAME` (the tab name).
-
-`pane.list` and `whoami` include `session_id` when that pane’s Grok or
+`pane.list` and `whoami` include `session_id` when that pane's Grok or
 Claude owner session is known. Use it with `grok -r` or `claude --resume`
 after a reboot loses tmux.
 
 ### Panes
-
-A tab name prefers the Grok leaf when sending, reading, waiting, or
-exec-ing (the Codex leaf with `--agent codex`, the Claude leaf with
-`--agent claude`). `pane.send`, `pane.read`, and `tab.exec --prompt`
-address that tab’s tmux session exactly (`=session:` current pane),
-so a split leaf `…-p` is not confused with its parent.
 
 `pane.send` and `tab.exec --prompt` **paste** into the live agent (tmux
 bracketed paste), so a multiline brief does not submit on the first
@@ -694,26 +655,19 @@ tmux error, not a bare `send failed`.
 `{"text", "pane"}` with the whole scrollback, or the last `--lines N`
 lines.
 
-`pane.wait` holds until the pane's status is `--status` (`working`,
+`pane.wait` holds until the session's status is `--status` (`working`,
 `waiting`, `done`, or `idle`; default `done`), for up to `--timeout`
-seconds (default 300, at most 3600). `--fresh` waits for
-a transition onto that status. It replies `{"pane", "status"}`, or fails
-with `timeout waiting for pane <pane> to be <status>`.
+seconds (default 300, at most 3600). `--fresh` waits for a transition
+onto that status. It replies `{"pane", "status"}`, or fails with
+`timeout waiting for pane <pane> to be <status>`.
 
-### Remove
+### End
 
-`tab.rm` unregisters the tab. It does not run `git worktree remove`
-unless you pass `--worktree`; add `--force` to discard a dirty checkout.
-
-`tab.rm` replies first, then drops the tab on the next tick, so a
-call from inside that pane can finish instead of hanging.
-`tmux kill-session` and `git worktree remove` then run off the UI thread,
-and the rest of Projects stays live.
-
-Do **not** run `git worktree remove` yourself from inside that pane: the
-working directory vanishes and the next tool cannot run. Use `--worktree`
-instead. If the checkout is already gone, Projects reaps the tab, with no
-working spinner left behind.
+`tab.rm` ends a session: its tmux is killed where it runs, for every
+computer watching it, and its window here closes. It replies
+`{"ok": true}` first, then ends it on the next tick, so a call from
+inside that session can finish instead of hanging; the kill runs off the
+UI thread. Its folder and any worktree stay.
 
 ## Browser (`solactl browser`)
 

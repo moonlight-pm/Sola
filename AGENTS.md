@@ -26,9 +26,8 @@ pointer to `CURRENT.md` (auto-load reminder).
 
 - `sola-session-start` — boot order above  
 - `sola-progress-docs` — **mandatory** end-of-slice doc updates  
-- `sola-projects-cli` — `solactl projects` control plane (review/work
-  ticket, create worktree, tell a pane, merge/cleanup — fan-out stays off
-  the rail)  
+- `sola-projects-cli` — `solactl projects` control plane (sessions:
+  start one in a project, tell a pane, read / wait, end one)  
 - `sync-project` — checkpoint each sibling worktree (if needed), merge
   into master, then merge master back into each worktree (`/sync-project`)  
 
@@ -100,7 +99,7 @@ crates/
   sola-oath/           # Oath catalog app (`oath --json`); launcher entry only on Oath
   sola-shell/          # Desktop shell — launcher, tab bar, menubar, zoning
   sola-terminal/       # Untitled-shell terminal (alacritty grid + iced); also a lib
-  sola-projects/       # Projects: project / tab rail + agent-aware PTYs
+  sola-projects/       # Projects: a window per session (any computer's) + agent-aware PTYs
   sola-mail/           # Kit-native mail client
   sola-calendar/       # Kit-native calendar (local, Google, iCloud)
   sola-kvm/            # KVM / input bridge
@@ -134,32 +133,36 @@ docs/
 ## Development Rules
 
 ### Worktrees
-- **Work where your tab is. Root tabs do not open worktrees unless asked.**
-  A root tab is the project's own tab (`solactl projects whoami` →
-  `kind: main`) or an extra tab opened with **No worktree** (`kind:
-  root`). In one, do the work right there on the root's branch (usually
-  master). Do **not** open a worktree (`tab.spawn`, `git worktree
-  add`) or fan out to a sibling unless the user asks for one (create a
-  worktree / fan out / spawn a sibling / new worktree tab). Same in the root
-  checkout outside Projects.
-- Root tabs share one checkout — commit only your own changes; never
-  stash, reset, or discard edits you did not make. Close an extra root
-  tab with plain `tab.rm` (never `--worktree`).
-- Worktrees, when asked for, live in `.worktrees/`. A worktree tab
-  (`kind: worktree`) works on its own branch.
+- **A session works on its project; it picks its own worktrees.** Every
+  Projects session starts in the project's folder (the root checkout).
+  Projects makes no worktrees and ties none to a window or a session
+  (Joshua, 2026-10-30: "Each session can decide for itself which
+  worktrees to use... from the users point of view, the session is just
+  working on whatever project").
+- **Prefer a worktree for discrete work.** For a feature or a set of
+  features, make one yourself from the project root —
+  `git worktree add .worktrees/<slug> -b <branch>` — and work there
+  (absolute paths or `cd` into it). Small edits (docs, a one-line fix, a
+  checkpoint) may stay in the root. "Work on master" / "no worktree" from
+  the user overrides. Worktrees live in `.worktrees/`.
+- The root checkout is shared by every session of the project — commit
+  only your own changes there; never stash, reset, or discard edits you
+  did not make. Starting a worktree for work already begun in the root:
+  carry your own changes over (patch + your untracked files), then put
+  the root's copies of only those files back.
 - Only merge worktree branches to master with explicit user permission.
 - **Approval = land it in the same turn, not cleanup.** When the user
   signals the work is good — e.g. "nailed it", "looks good", "merge that",
-  "ship it", "LGTM", "perfect" — in a root tab, commit on that branch; in a
-  worktree, commit any uncommitted work if needed and merge the branch to
-  master. Do **not** wait for a second explicit "please merge" (unless they
-  say hold off). Leave the git worktree **and** the Projects tab unless
-  they asked to remove them.
-- **Do not remove a worktree or Projects tab unless they asked.** There is
-  no default cleanup after merge. If a git worktree is removed, close the
-  tab unless they said keep it. Phrases and sequence:
-  [`.grok/skills/sola-projects-cli/SKILL.md`](.grok/skills/sola-projects-cli/SKILL.md)
-  (Merge / cleanup).
+  "ship it", "LGTM", "perfect" — commit; in a worktree, commit any
+  uncommitted work if needed and merge the branch to master. Do **not**
+  wait for a second explicit "please merge" (unless they say hold off).
+  Leave the worktree unless they asked to remove it.
+- **Do not remove a worktree unless they asked.** There is no default
+  cleanup after merge. When asked: from the root checkout (never from
+  inside it), `git worktree remove .worktrees/<slug>`, then
+  `git branch -d <branch>` if it is merged (never `-D` unasked).
+- Ending a session (Project → End Session…, `solactl projects tab.rm`)
+  never touches worktrees; closing its window does not end it.
 
 ### Installing
 - **NEVER run `cargo make install` (or any variant) without express user permission for that specific install.** This applies to subagents too — if you delegate work, your prompt MUST tell the subagent not to install. Permission for one install is not permission for the next; ask each time.

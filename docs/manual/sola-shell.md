@@ -225,15 +225,17 @@ session's tab without answering. Escape, or a click on the island again,
 closes the card and leaves the island.
 
 An island also goes when the session moves on, and when you look at it
-yourself: its tab is the one its project window shows and that window has
-the keyboard. While the desk is fading idle you are away, so a session in
+yourself: its window has the keyboard. While the desk is fading idle you are away, so a session in
 the focused tab gets an island too.
 
 ## The bar
 
 The bar lists every window on the workspace in one order of its own, not
 grouped by zone. Each row is the app's icon and the window's title (the
-app's name while it has none).
+app's name while it has none). A Projects window's row names three things,
+drawn apart: the project, the session in a quieter ink (when it is not the
+project's main one), and the computer the session runs on — this one too —
+as a chip in that computer's prompt color.
 
 - **The focused window's row** is the bright pill, in the theme's
   highlight colour.
@@ -244,8 +246,8 @@ app's name while it has none).
 - **An app hidden** with Super+H says *hidden* on its rows.
 - **Activity**: a window that is working shows a turning ring in place of
   its icon, and one waiting on a decision a diamond, so the title does not
-  move. Projects marks a project's window by its tabs (a decision waiting
-  outranks work), and Design marks a project's window while an agent works
+  move. Projects marks each session's window by its session, and Design
+  marks a project's window while an agent works
   in one of its canvases.
 
 Click a row to show its window in its zone and focus it (its workspace

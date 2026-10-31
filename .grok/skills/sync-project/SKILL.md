@@ -29,13 +29,18 @@ solactl projects ps
 ```
 
 Targets = every checkout under `.worktrees/` for **this** repo. Skip the
-master checkout you are sitting in. Match rail slug to folder name
-(`.worktrees/<name>`).
+master checkout you are sitting in.
 
-Root tabs (`kind: main` / `kind: root` in `ps`) are not targets — they
-work on master in this checkout. If master is dirty, that is root-tab
-work in progress (maybe another tab's): do not commit, stash, or discard
-it; if a merge refuses because of it, report and let that tab commit.
+Since 2026-10-30 a worktree belongs to the **session** that made it, not
+to a Projects tab: every session starts in the root and makes its own
+worktrees (AGENTS.md → Worktrees). To brief a worktree's owner, find the
+session working in it (`pane.read` the project's sessions, or ask the
+human); with no owner found, checkpoint it yourself only if it is clean
+or the human says so.
+
+If master is dirty, that is another session's work in progress in the
+shared root: do not commit, stash, or discard it; if a merge refuses
+because of it, report and let that session commit.
 
 Per target, record: path, branch, porcelain, `git log --oneline master..BRANCH`,
 whether it is already an ancestor of `master`.
