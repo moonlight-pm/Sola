@@ -65,9 +65,9 @@ impl App {
             }
             self.edit = None;
         }
-        if self.selected.as_deref() == Some(id.as_str())
-            && matches!(self.record, Pane::Open(_) | Pane::Loading)
-        {
+        let same = self.selected.as_deref() == Some(id.as_str());
+        let asking = self.reprompt.as_ref().is_some_and(|r| r.id == id);
+        if same && (asking || matches!(self.record, Pane::Open(_) | Pane::Loading)) {
             return Task::none();
         }
         self.popup = None;

@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use iced::Task;
 use iced::futures::channel::oneshot;
-use sola_kit::clipboard::{Offer, read_offer};
+use sola_kit::clipboard::read_string;
 use wl_clipboard_rs::copy::{ClipboardType, Seat, clear};
 use zeroize::Zeroize;
 
@@ -90,13 +90,13 @@ pub fn clear_if_ours(guard: ClipGuard) -> impl Future<Output = ()> + Send + 'sta
     let spawned = std::thread::Builder::new()
         .name("vault-clipboard".into())
         .spawn(move || {
-            let ours = match read_offer() {
-                Offer::Text(mut s) => {
+            let ours = match read_string() {
+                Some(mut s) => {
                     let ours = guard.holds(&s);
                     s.zeroize();
                     ours
                 }
-                _ => false,
+                None => false,
             };
             if ours {
                 match clear(ClipboardType::Regular, Seat::All) {
