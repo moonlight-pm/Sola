@@ -52,11 +52,12 @@ So the next step is the core: `App` holds session windows keyed by
 - [x] **1.7 One window per session.** The in-window tab bar, its `+` card,
   drag reorder, splits and the project roll-up go; ⌘T / New Session opens
   the spawn card for that project and host; each session its own window.
-- [~] **1.8 Open any session.** `project.open` (the chooser's pick, here
+- [x] **1.8 Open any session.** `project.open` (the chooser's pick, here
   or **On another computer…**) opens every session of the project on its
-  computer (`sessions.rs`: `@sola-*`, or the pane's folder for older
-  ones). Left: the chooser listing sessions under each project, and
-  opening one session alone.
+  computer; the listing is shared (`sola_core::project_sessions`). The
+  chooser lists each folder's running sessions under it (this computer's
+  at once, a host's in the same ssh call as its folders); a session's row
+  opens it alone (`project.open --session`).
 - [~] **1.9 Docs.** capabilities `projects` row, architecture, manual
   `solactl.md`, AGENTS.md + the Projects skills (worktrees are the
   session's). Left: `sola-shell.md` (the row's parts), CURRENT on merge.
@@ -75,10 +76,12 @@ So the next step is the core: `App` holds session windows keyed by
 - [ ] Smoke: an agent on novus marks and islands on canto; seen on one
   clears both; a Codex hook outside its session still placed by cwd.
 
-## Slice 3 — mirrors
+## Slice 3 — mirrors (not doing, 2026-10-30)
 
-A viewer not holding the size scales the session to fit; Watch
-(`attach -r`).
+Joshua: "for slice 3 -- i may be inclined just to keep it working like it
+currently does. sometimes the windows will be so vastly different in size
+the scaling will just look silly." The window that does not hold the size
+shows the session as tmux draws it (padded or cut) until you type in it.
 
 ## Slice 4 — reboot
 

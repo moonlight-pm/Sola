@@ -34,7 +34,13 @@ impl Shell {
     /// The launcher's Projects row: show `~/Projects` instead of starting
     /// another Projects. Asks a running Projects which are open.
     pub(crate) fn enter_projects_chooser(&mut self) -> iced::Task<Msg> {
-        self.show_chooser(Chooser::new(projects::scan(&projects::projects_dir())))
+        let sessions = sola_core::project_sessions::list_local().unwrap_or_else(|e| {
+            tracing::warn!("project chooser: {e}");
+            Vec::new()
+        });
+        self.show_chooser(
+            Chooser::new(projects::scan(&projects::projects_dir())).with_sessions(sessions),
+        )
     }
 
     /// The chooser shows `chooser`'s folders; asks a running Projects
@@ -116,7 +122,10 @@ impl Shell {
         match listed {
             Ok(listing) => {
                 remote::remember(&host);
-                self.show_chooser(Chooser::remote(&host, &listing.root, listing.names))
+                self.show_chooser(
+                    Chooser::remote(&host, &listing.root, listing.names)
+                        .with_sessions(listing.sessions),
+                )
             }
             Err(e) => {
                 tracing::warn!(%host, error = %e, "project chooser: remote listing");
@@ -171,7 +180,13 @@ impl Shell {
             Some(Row::Folder(f)) => {
                 let path = chooser.folders[f].path.clone();
                 let host = chooser.host.clone();
-                self.open_project(host, path)
+                self.open_project(host, path, None)
+            }
+            Some(Row::Session(f, s)) => {
+                let path = chooser.folders[f].path.clone();
+                let host = chooser.host.clone();
+                let id = chooser.sessions[s].id.clone();
+                self.open_project(host, path, Some(id))
             }
             Some(Row::Remote) => self.enter_hosts(),
             Some(Row::New) => {
@@ -186,7 +201,7 @@ impl Shell {
                     match projects::create(&projects::projects_dir(), &name) {
                         Ok(path) => {
                             tracing::info!(path = %path.display(), "new project folder");
-                            self.open_project(None, path)
+                            self.open_project(None, path, None)
                         }
                         Err(e) => self.chooser_toast(e),
                     }
@@ -203,16 +218,22 @@ impl Shell {
     }
 
     /// Close the launcher and have Projects bring `path` (on `host`, else
-    /// here) up: shown on its workspace if open, else opened in the showing
-    /// one. Projects not running: start it, and ask until it answers (with
-    /// no project open it shows no window; it waits for this call).
-    fn open_project(&mut self, host: Option<String>, path: PathBuf) -> iced::Task<Msg> {
+    /// here) up: its sessions shown, or opened in the showing workspace —
+    /// session `session` alone when given. Projects not running: start it,
+    /// and ask until it answers (with nothing open it shows no window; it
+    /// waits for this call).
+    fn open_project(
+        &mut self,
+        host: Option<String>,
+        path: PathBuf,
+        session: Option<String>,
+    ) -> iced::Task<Msg> {
         let close = iced::Task::done(Msg::CloseLauncher);
         if self.projects_running() {
             if self.is_app_hidden(APP_ID) {
                 self.unhide_app(APP_ID);
             }
-            return iced::Task::batch([close, ask_open(host, path)]);
+            return iced::Task::batch([close, ask_open(host, path, session)]);
         }
         let Some(app) = self.applications.get(APP_ID) else {
             return close;
@@ -225,7 +246,7 @@ impl Shell {
             }));
         });
         let opening = self.begin_opening(APP_ID, &label);
-        iced::Task::batch([close, opening, ask_open_starting(host, path)])
+        iced::Task::batch([close, opening, ask_open_starting(host, path, session)])
     }
 
     /// The workspace project `id`'s window is on, by name, if it has one.
@@ -248,7 +269,7 @@ impl Shell {
         match made {
             Ok(path) => {
                 tracing::info!(%host, path = %path.display(), "new project folder there");
-                self.open_project(Some(host), path)
+                self.open_project(Some(host), path, None)
             }
             Err(e) => self.chooser_toast(e),
         }
@@ -278,17 +299,17 @@ fn create_remote(host: String, root: PathBuf, name: String) -> iced::Task<Msg> {
     )
 }
 
-/// `project.open --path [--host]`.
-fn ask_open(host: Option<String>, path: PathBuf) -> iced::Task<Msg> {
-    iced::Task::perform(call("project.open", open_params(host, path), OPEN_TIMEOUT), |r| {
+/// `project.open --path [--host] [--session]`.
+fn ask_open(host: Option<String>, path: PathBuf, session: Option<String>) -> iced::Task<Msg> {
+    iced::Task::perform(call("project.open", open_params(host, path, session), OPEN_TIMEOUT), |r| {
         Msg::ProjectOpened(r.map(|_| ()))
     })
 }
 
 /// [`ask_open`] for a Projects just started: asked again while it is not
 /// up yet ("projects is not running"), for as long as it waits for one.
-fn ask_open_starting(host: Option<String>, path: PathBuf) -> iced::Task<Msg> {
-    let params = open_params(host, path);
+fn ask_open_starting(host: Option<String>, path: PathBuf, session: Option<String>) -> iced::Task<Msg> {
+    let params = open_params(host, path, session);
     iced::Task::perform(
         async move {
             let deadline = std::time::Instant::now() + START_TIMEOUT;
@@ -305,10 +326,13 @@ fn ask_open_starting(host: Option<String>, path: PathBuf) -> iced::Task<Msg> {
     )
 }
 
-fn open_params(host: Option<String>, path: PathBuf) -> serde_json::Value {
+fn open_params(host: Option<String>, path: PathBuf, session: Option<String>) -> serde_json::Value {
     let mut params = serde_json::json!({ "path": path.to_string_lossy() });
     if let Some(host) = host {
         params["host"] = serde_json::json!(host);
+    }
+    if let Some(session) = session {
+        params["session"] = serde_json::json!(session);
     }
     params
 }

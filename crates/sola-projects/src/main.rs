@@ -76,9 +76,9 @@ fn now_millis() -> u128 {
         .unwrap_or(0)
 }
 
-const TMUX_SOCKET: &str = "sola-ws";
+const TMUX_SOCKET: &str = sola_core::project_sessions::SOCKET;
 const TMUX_UNIT: &str = "sola-ws-tmux.service";
-const TMUX_PREFIX: &str = "sws-";
+const TMUX_PREFIX: &str = sola_core::project_sessions::PREFIX;
 /// Started with no project open, Projects waits this long for one, then
 /// quits.
 const IDLE_QUIT_AFTER: Duration = Duration::from_secs(20);
@@ -259,6 +259,8 @@ enum Msg {
     HostSessions {
         project: String,
         found: Result<Vec<sessions::HostSession>, String>,
+        /// Open this session alone (its id there), not all of them.
+        only: Option<String>,
     },
     /// A resumable remote pane's attach, planned off the UI thread.
     RemoteAttach {
@@ -757,7 +759,7 @@ impl App {
             Msg::Link(ev) => self.on_link(ev),
             Msg::RemoteTick { host, panes } => self.on_remote_tick(host, panes),
             Msg::RemoteAttach { pane, exec } => self.attach_planned(&pane, exec),
-            Msg::HostSessions { project, found } => self.on_host_sessions(&project, found),
+            Msg::HostSessions { project, found, only } => self.on_host_sessions(&project, found, only),
             Msg::RemoteExec {
                 tab,
                 pane,
@@ -1137,7 +1139,7 @@ impl App {
                     },
                     open if open.starts_with(menu::OPEN_PREFIX) => {
                         let path = open[menu::OPEN_PREFIX.len()..].to_string();
-                        match self.cli_open_project(&path, None) {
+                        match self.cli_open_project(&path, None, None) {
                             Ok((_, task)) => task,
                             Err(e) => {
                                 tracing::warn!(%path, "Project → Open: {e}");
@@ -1871,7 +1873,8 @@ impl App {
                     return (Err("missing path".into()), Task::none());
                 };
                 let host = param_str(params, "host").filter(|h| !h.trim().is_empty());
-                match self.cli_open_project(&path, host.as_deref()) {
+                let session = param_str(params, "session");
+                match self.cli_open_project(&path, host.as_deref(), session) {
                     Ok((data, task)) => (Ok(data), task),
                     Err(e) => (Err(e), Task::none()),
                 }
@@ -2177,6 +2180,7 @@ impl App {
         &mut self,
         path: &str,
         host: Option<&str>,
+        only: Option<String>,
     ) -> Result<(serde_json::Value, Task<Msg>), String> {
         let known = match host {
             Some(host) => {
@@ -2214,7 +2218,7 @@ impl App {
         let task = match host {
             None => {
                 let found = sessions::list_local();
-                self.on_host_sessions(&project_id, found)
+                self.on_host_sessions(&project_id, found, only)
             }
             Some(host) => {
                 let (host, project) = (host.to_string(), project_id.clone());
@@ -2227,6 +2231,7 @@ impl App {
                     move |found| Msg::HostSessions {
                         project: project.clone(),
                         found,
+                        only: only.clone(),
                     },
                 )
             }
@@ -2487,7 +2492,7 @@ impl App {
             std::fs::create_dir_all(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             Ok(path)
         });
-        match made.and_then(|path| self.cli_open_project(&path.to_string_lossy(), None)) {
+        match made.and_then(|path| self.cli_open_project(&path.to_string_lossy(), None, None)) {
             Ok((_, task)) => {
                 self.add = cards::AddDraft::default();
                 task
@@ -2547,11 +2552,13 @@ impl App {
     /// Project `project_id`'s computer listed its sessions: each one of
     /// this project not open here gets a window; with none anywhere, its
     /// main session starts (its id free on that computer). Then its
-    /// windows come up, the first in front.
+    /// windows come up, the first in front. With `only` (a session's id
+    /// there, the chooser's pick), that session alone.
     fn on_host_sessions(
         &mut self,
         project_id: &str,
         found: Result<Vec<sessions::HostSession>, String>,
+        only: Option<String>,
     ) -> Task<Msg> {
         let Some(project) = self.projects.iter().find(|p| p.id == project_id).cloned() else {
             return Task::none();
@@ -2561,7 +2568,11 @@ impl App {
             Vec::new()
         });
         let host = project.host.as_deref();
-        for s in found.iter().filter(|s| s.project.as_deref() == Some(project.root.as_path())) {
+        let wanted = |s: &&sessions::HostSession| {
+            s.project.as_deref() == Some(project.root.as_path())
+                && only.as_deref().is_none_or(|id| s.id == id)
+        };
+        for s in found.iter().filter(wanted) {
             let key = catalog::key_for(&s.id, host);
             if self.tabs.iter().any(|w| w.id == key) {
                 continue;
@@ -2601,6 +2612,12 @@ impl App {
             }
         }
         self.persist_catalog();
+        if let Some(key) = only.map(|id| catalog::key_for(&id, host)) {
+            if self.tabs.iter().any(|w| w.id == key) {
+                return Task::batch([learn, self.show_tab(&key)]);
+            }
+            tracing::warn!(session = %key, "the chosen session is not there any more");
+        }
         Task::batch([learn, self.show_project(project_id)])
     }
 

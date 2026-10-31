@@ -496,7 +496,7 @@ solactl projects                           # list methods
 solactl projects ps
 solactl projects project.list
 solactl projects project.open --path ~/Projects/Sola    # its sessions here
-solactl projects project.open --host <computer> --path /home/<user>/Projects/Sola
+solactl projects project.open --host <computer> --path /home/<user>/Projects/Sola [--session ws-main]
 solactl projects project.close --project Sola   # its windows close; sessions run on
 solactl projects tab.list [--project Sola]
 solactl projects tab.spawn --project Sola [--name review] [--title 'fix login'] \
@@ -546,7 +546,9 @@ Errors name what went wrong: `<path> is not a folder of ~/Projects` for
 `project.open` opens a project's sessions here, each in its own window:
 every session running on its computer in that folder, whichever computer
 started it (one already open here comes forward). With none running
-anywhere, it starts the project's main session. A folder that is not a
+anywhere, it starts the project's main session. `--session <id>` (its id
+there, as `ws-main`) opens that session alone: the launcher's chooser does
+this from a session's row. A folder that is not a
 project here yet is added first. Its reply is the project with `opened`
 (none of its sessions was open here). The launcher's Projects chooser
 uses it, and Project → Open lists the folders of `~/Projects` with no

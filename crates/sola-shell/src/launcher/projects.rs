@@ -10,9 +10,15 @@
 //! `~/Projects`, then opened the same way. The last row opens a project on
 //! another computer ([`super::remote`]): the chooser then lists that
 //! computer's `~/Projects` (its `host`), and New makes one there.
+//!
+//! Under each folder, its sessions running on that computer
+//! ([`sola_core::project_sessions`]), whichever computer started them:
+//! picking one opens it alone (`project.open --session`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+use sola_core::project_sessions::HostSession;
 
 /// Projects' app id, and its call-plane owner.
 pub const APP_ID: &str = "sola-projects";
@@ -31,6 +37,8 @@ pub struct Folder {
 pub enum Row {
     /// `folders[i]`.
     Folder(usize),
+    /// `sessions[s]`, running in `folders[i]`.
+    Session(usize, usize),
     /// Make a new project.
     New,
     /// Open a project on another computer.
@@ -51,6 +59,8 @@ pub struct Chooser {
     /// Its `~/Projects` there (for a host).
     pub root: Option<PathBuf>,
     pub folders: Vec<Folder>,
+    /// The sessions running on [`Self::host`] (each under its folder).
+    pub sessions: Vec<HostSession>,
     /// Projects' projects on [`Self::host`] by canonical root (empty while
     /// Projects is not running, or until it answers).
     pub known: HashMap<PathBuf, Known>,
@@ -116,6 +126,20 @@ impl Chooser {
         }
     }
 
+    /// With the sessions running on its computer.
+    pub fn with_sessions(mut self, sessions: Vec<HostSession>) -> Self {
+        self.sessions = sessions;
+        self
+    }
+
+    /// The sessions running in folder `f`, in listing order.
+    pub fn sessions_of(&self, f: usize) -> Vec<usize> {
+        let folder = &self.folders[f].path;
+        (0..self.sessions.len())
+            .filter(|&s| self.sessions[s].project.as_deref() == Some(folder.as_path()))
+            .collect()
+    }
+
     /// The host's `~/Projects` there, for a host's chooser.
     pub fn folders_root(&self) -> Option<PathBuf> {
         self.root.clone()
@@ -136,7 +160,11 @@ impl Chooser {
         if self.naming {
             return vec![Row::New];
         }
-        let mut rows: Vec<Row> = self.filtered.iter().map(|&i| Row::Folder(i)).collect();
+        let mut rows: Vec<Row> = Vec::new();
+        for &i in &self.filtered {
+            rows.push(Row::Folder(i));
+            rows.extend(self.sessions_of(i).into_iter().map(|s| Row::Session(i, s)));
+        }
         rows.push(Row::New);
         if self.host.is_none() {
             rows.push(Row::Remote);
@@ -189,6 +217,35 @@ mod tests {
             name: name.into(),
             path: PathBuf::from(format!("/p/{name}")),
         }
+    }
+
+    #[test]
+    fn a_folders_sessions_follow_it() {
+        let session = |id: &str, project: &str| HostSession {
+            id: id.into(),
+            project: Some(PathBuf::from(project)),
+            name: None,
+            title: None,
+            kind: None,
+        };
+        let mut c = Chooser::new(vec![folder("oath"), folder("sola")]).with_sessions(vec![
+            session("ws-main", "/p/sola"),
+            session("ws-x", "/elsewhere"),
+            session("ws-zones", "/p/sola"),
+        ]);
+        assert_eq!(
+            c.rows(),
+            vec![
+                Row::Folder(0),
+                Row::Folder(1),
+                Row::Session(1, 0),
+                Row::Session(1, 2),
+                Row::New,
+                Row::Remote
+            ]
+        );
+        c.apply_query("oa");
+        assert_eq!(c.rows(), vec![Row::Folder(0), Row::New, Row::Remote]);
     }
 
     #[test]

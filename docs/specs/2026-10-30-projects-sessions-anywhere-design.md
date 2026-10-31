@@ -212,8 +212,9 @@ canto's output windows are going to be much smaller."
    (here by reading, elsewhere by `ssh tail -F`); islands on every desk with
    that session open, seen shared; hooks server and the reverse forward
    removed.
-3. **Mirrors.** A viewer that does not hold the size scales the session to
-   fit; Watch (read-only).
+3. **Mirrors — not doing** (Joshua, 2026-10-30: "keep it working like it
+   currently does … the scaling will just look silly"): the window not
+   holding the size shows the session as tmux draws it.
 4. **Reboot.** `sola-projects --restore` at boot (Oath `svc`, with the Oath
    tab) and at Projects start; `session.start` from anywhere.
 5. **CLI** `tab.*` → `session.*` with the manual (`solactl.md`) in the same
