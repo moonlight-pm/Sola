@@ -43,6 +43,9 @@ pub mod output_config;
 pub mod screenshot;
 pub mod screenshot_window;
 pub mod seat;
+pub mod background;
+pub mod corners;
+pub mod fade;
 pub mod shadow;
 pub mod virtual_keyboard;
 pub mod virtual_pointer;
@@ -142,6 +145,12 @@ pub struct AppData {
     /// Windows the shell has marked floating (`Topic::WindowFloating`). Gates
     /// CSD move/resize. Dropped when the window closes.
     pub floating: std::collections::HashSet<u32>,
+    /// How the shell shows each window (`Topic::WindowChrome`): tiled hints
+    /// and the hairline rim for windows whose app draws no frame. Dropped
+    /// when the window closes.
+    pub chrome: std::collections::HashMap<u32, sola_bus::topics::WindowChrome>,
+    /// The `set_tiled` state last sent per window (each send is a configure).
+    pub tiled_sent: std::collections::HashMap<u32, bool>,
     /// Window currently under the pointer, tracked from `river_seat_v1`
     /// `pointer_enter`/`pointer_leave`. A move/resize op targets this window at
     /// button-press time.
@@ -149,6 +158,14 @@ pub struct AppData {
     /// Latest pointer position in compositor logical coords (`pointer_position`
     /// event). Used to pick the grabbed corner when a resize starts.
     pub pointer_pos: Option<(i32, i32)>,
+    /// The pointer moved since the last manage sequence (River sends a
+    /// move's position as it happens, before the enter it causes). An
+    /// enter without it is still: the window under the pointer changed.
+    pub pointer_moved: bool,
+    /// Announce the hovered window again on the pointer's next move: its
+    /// enter was still, or keyboard focus went elsewhere without the
+    /// pointer. The shell's focus-follows-mouse then takes it up.
+    pub rehover: bool,
     /// The in-flight interactive move/resize, if any. See `client::op`.
     /// Started only from CSD (`pointer_move_requested` / resize).
     pub op: Option<op::OpState>,
@@ -168,6 +185,20 @@ pub struct AppData {
     pub call_rx: Option<std::sync::mpsc::Receiver<sola_call::Incoming>>,
     /// Floating-window drop shadows (`get_decoration_below` + SHM silhouette).
     pub shadow: shadow::ShadowState,
+    /// Rounded corners for tiles whose app draws no frame.
+    pub corners: corners::CornerState,
+    /// The background picture (`Topic::Background`).
+    pub background: background::BackgroundState,
+    /// The idle fade (`Appearance.fade_idle`).
+    pub fade: fade::FadeState,
+    /// A focused foreign window's rim (sRGB 0–1): the theme's highlight a
+    /// step lighter in its hue (`sola_core::theme::focus_rim`), as kit
+    /// windows draw theirs.
+    pub rim_focused: [f32; 3],
+    /// An unfocused foreign window's rim (sRGB 0–1): the theme's base 7%
+    /// lighter, opaque (`sola_core::theme::rest_rim`) — over an XWayland
+    /// window's black edge a translucent rim showed a dark line.
+    pub rim_rest: [f32; 3],
     /// `river_layer_shell_v1` — enables wlr-layer-shell for clients
     /// (sola-kvm edge capture, panels, etc.).
     pub layer_shell: layer_shell::LayerShellState,
@@ -232,8 +263,12 @@ impl AppData {
             conn: None,
             focused_window: None,
             floating: std::collections::HashSet::new(),
+            chrome: std::collections::HashMap::new(),
+            tiled_sent: std::collections::HashMap::new(),
             pointer_window: None,
             pointer_pos: None,
+            pointer_moved: false,
+            rehover: false,
             op: None,
             cursor_shape_manager: None,
             wl_pointer: None,
@@ -241,6 +276,16 @@ impl AppData {
             screenshot: screenshot::ScreenshotState::default(),
             call_rx: None,
             shadow: shadow::ShadowState::default(),
+            corners: corners::CornerState::default(),
+            background: background::BackgroundState::default(),
+            fade: fade::FadeState::default(),
+            rim_focused: sola_core::theme::focus_rim(sola_core::theme::highlight_rgb(
+                &sola_core::theme::Theme::default(),
+            )),
+            rim_rest: sola_core::theme::rest_rim(sola_core::theme::token_rgb(
+                &sola_core::theme::Theme::default(),
+                "bg-primary",
+            )),
             layer_shell: layer_shell::LayerShellState::default(),
             last_composition: Vec::new(),
         }
@@ -310,6 +355,8 @@ pub fn bus_tick(state: &mut AppData) {
     // Screenshot PNG encode runs off-thread; deliver results here.
     screenshot::poll_results(state);
     crate::call::poll(state);
+    background::poll(state);
+    fade::tick(state);
     while let Some(msg) = state.bus.try_recv() {
         let Some(topic) = sola_bus::topics::Topic::parse(&msg) else {
             continue;
@@ -329,6 +376,17 @@ pub fn bus_tick(state: &mut AppData) {
                 // Kick a manage/render cycle so decoration-below shadows
                 // attach or tear down promptly (not only on the next frame).
                 state.pending.manage_dirty = true;
+            }
+            sola_bus::topics::Topic::WindowChrome(c) => {
+                // A retraction arrives as the same topic, not sticky.
+                if msg.sticky {
+                    state.chrome.insert(c.window_id, c);
+                } else {
+                    state.chrome.remove(&c.window_id);
+                }
+                // set_tiled is manage-only, borders render-only.
+                state.pending.manage_dirty = true;
+                state.pending.render_dirty = true;
             }
             sola_bus::topics::Topic::Frame(f) => {
                 let app_id = state.registry.app_id_for(f.window_id).unwrap_or("?");
@@ -427,6 +485,35 @@ pub fn bus_tick(state: &mut AppData) {
                     .collect();
                 tracing::info!(%app_id, count = to_close.len(), "CloseApp: queuing close");
                 state.pending.queue_close(to_close);
+            }
+            sola_bus::topics::Topic::CloseWindow(window_id) => {
+                if state.windows_by_id.contains_key(&window_id) {
+                    tracing::info!(window_id, "CloseWindow: queuing close");
+                    state.pending.queue_close(vec![window_id]);
+                } else {
+                    tracing::warn!(window_id, "CloseWindow: no such window");
+                }
+            }
+            sola_bus::topics::Topic::Theme(theme) => {
+                let rim = sola_core::theme::focus_rim(sola_core::theme::highlight_rgb(&theme));
+                let rest = sola_core::theme::rest_rim(sola_core::theme::token_rgb(&theme, "bg-primary"));
+                if (rim, rest) != (state.rim_focused, state.rim_rest) {
+                    state.rim_focused = rim;
+                    state.rim_rest = rest;
+                    state.pending.render_dirty = true;
+                }
+            }
+            sola_bus::topics::Topic::Appearance(look) => {
+                // A retraction arrives as the same topic, not sticky.
+                fade::settings(state, msg.sticky.then_some(&look));
+            }
+            sola_bus::topics::Topic::IdleKeep(keep) => {
+                fade::keep(state, msg.sticky.then_some(keep));
+            }
+            sola_bus::topics::Topic::Background(bg) => {
+                // A retraction arrives as the same topic, not sticky.
+                background::set(state, msg.sticky.then_some(bg));
+                background::poll(state);
             }
             sola_bus::topics::Topic::Shutdown => {
                 info!("shutdown requested via bus");
@@ -626,6 +713,18 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppData {
                     let output: wl_output::WlOutput = proxy.bind(name, version.min(4), qh, ());
                     info!(%version, "bound wl_output for screencopy");
                     state.screenshot.outputs.push(output);
+                }
+                "ext_idle_notifier_v1" => {
+                    use wayland_protocols::ext::idle_notify::v1::client::ext_idle_notifier_v1::ExtIdleNotifierV1;
+                    let n: ExtIdleNotifierV1 = proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound ext_idle_notifier_v1");
+                    state.fade.notifier = Some(n);
+                }
+                "wp_alpha_modifier_v1" => {
+                    use wayland_protocols::wp::alpha_modifier::v1::client::wp_alpha_modifier_v1::WpAlphaModifierV1;
+                    let a: WpAlphaModifierV1 = proxy.bind(name, version.min(1), qh, ());
+                    info!(%version, "bound wp_alpha_modifier_v1");
+                    state.fade.alpha = Some(a);
                 }
                 "river_layer_shell_v1" => {
                     use crate::protocol::river_layer_shell_v1::river_layer_shell_v1::RiverLayerShellV1;

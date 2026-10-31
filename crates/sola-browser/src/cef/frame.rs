@@ -183,6 +183,8 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                                 ctrl = mods_now.control(),
                                 "page left-press (iced)"
                             );
+                        } else {
+                            tracing::debug!(x, y, button, "page press (iced)");
                         }
                         state.held_button_mods |= input::button_to_modifier(button);
                         let prev = state.last_press.map(|(pb, px, py, at, count)| {
@@ -287,6 +289,11 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                     state.modifiers = *m;
                     crate::input::store_modifiers(*m);
                 }
+                // The file panel over the page takes its keys (as keys no
+                // widget used): the page gets none, and none are captured.
+                if crate::file_dialog::is_open() {
+                    return None;
+                }
                 // Chrome Edit menu owns ⌘C/X/V/A/Z — do not also send them
                 // to CEF or a page field pastes twice (JS + native).
                 if let keyboard::Event::KeyPressed { key, modifiers, .. }
@@ -373,7 +380,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                         {
                             let _ = self.slot.cmd_tx.send(Cmd::DevToolsFocus(true));
                         } else {
-                            let _ = self.slot.cmd_tx.send(Cmd::Focus(true));
+                            let _ = self.slot.cmd_tx.send(self.slot.page_cmd(Cmd::Focus(true)));
                         }
                     }
                     WE::Unfocused if self.surface == PaintSurface::Page => {
@@ -385,7 +392,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                             let (x, y) = state.last_pointer.unwrap_or((0, 0));
                             self.send_input(crate::cef::engine::InputEvent::DragCancel { x, y });
                         }
-                        let _ = self.slot.cmd_tx.send(Cmd::Focus(false));
+                        let _ = self.slot.cmd_tx.send(self.slot.page_cmd(Cmd::Focus(false)));
                         let _ = self.slot.cmd_tx.send(Cmd::DevToolsFocus(false));
                     }
                     WE::RedrawRequested(_) => {
@@ -426,7 +433,7 @@ impl CefProgram {
 
     fn send_input(&self, ev: crate::cef::engine::InputEvent) {
         let cmd = match self.surface {
-            PaintSurface::Page => Cmd::Input(ev),
+            PaintSurface::Page => self.slot.page_cmd(Cmd::Input(ev)),
             PaintSurface::DevTools => Cmd::DevToolsInput(ev),
         };
         let _ = self.slot.cmd_tx.send(cmd);
@@ -526,6 +533,23 @@ fn should_pump(slot: &FrameSlot<CefEngine>, surface: PaintSurface) -> bool {
     false
 }
 
+impl CefPrimitive {
+    /// A page window got its page at another size (CEF painted a stale
+    /// size last): ask for the window's size again, once per stray size.
+    fn ask_size_again(&self, got: (u32, u32), req_w: u32, req_h: u32, scale: f32) {
+        let mut stray = self.slot.stray_size.lock().unwrap();
+        if *stray == Some(got) {
+            return;
+        }
+        *stray = Some(got);
+        let _ = self.slot.cmd_tx.send(self.slot.page_cmd(Cmd::Resize {
+            width: req_w,
+            height: req_h,
+            scale: scale as f64,
+        }));
+    }
+}
+
 impl shader::Primitive for CefPrimitive {
     type Pipeline = CefPipeline;
 
@@ -542,11 +566,11 @@ impl shader::Primitive for CefPrimitive {
         let req_h = (bounds.height * scale).round().max(1.0) as u32;
         if self.slot.store_last_size(self.surface, (req_w, req_h)) {
             let cmd = match self.surface {
-                PaintSurface::Page => Cmd::Resize {
+                PaintSurface::Page => self.slot.page_cmd(Cmd::Resize {
                     width: req_w,
                     height: req_h,
                     scale: scale as f64,
-                },
+                }),
                 PaintSurface::DevTools => Cmd::ResizeDevTools {
                     width: req_w,
                     height: req_h,
@@ -557,9 +581,27 @@ impl shader::Primitive for CefPrimitive {
         }
         let want = (req_w, req_h);
         let paint_tab = self.slot.paint_id(self.surface);
-        let pipe = pipeline.surface_mut(self.surface);
+        pipeline.drop_retired();
+        let pipe = pipeline.surface_mut(self.surface, self.slot.key, device, queue);
         let pending = self.slot.take_pending_of(self.surface);
         if let Some(pending) = pending {
+            let got = (pending.frame.width, pending.frame.height);
+            if pending.tab_id.0 != paint_tab || !crate::shader::size_matches(got, want) {
+                tracing::debug!(
+                    surface = ?self.surface,
+                    frame_tab = pending.tab_id.0,
+                    paint_tab,
+                    ?got,
+                    ?want,
+                    "frame dropped"
+                );
+                if self.slot.windowed
+                    && self.surface == PaintSurface::Page
+                    && pending.tab_id.0 == paint_tab
+                {
+                    self.ask_size_again(got, req_w, req_h, scale);
+                }
+            }
             if pending.tab_id.0 == paint_tab
                 && crate::shader::size_matches((pending.frame.width, pending.frame.height), want)
             {
@@ -575,6 +617,7 @@ impl shader::Primitive for CefPrimitive {
                     pipe.sample.note_frame();
                     pipe.painted_tab = paint_tab;
                     self.slot.clear_blank(self.surface);
+                    *self.slot.stray_size.lock().unwrap() = None;
                     return;
                 }
             }
@@ -594,7 +637,9 @@ impl shader::Primitive for CefPrimitive {
         clip_bounds: &Rectangle<u32>,
     ) {
         let requested = self.slot.last_size_of(self.surface);
-        let pipe = pipeline.surface(self.surface);
+        let Some(pipe) = pipeline.surface(self.surface, self.slot.key) else {
+            return;
+        };
         let label = match self.surface {
             PaintSurface::Page => "cef sample pass",
             PaintSurface::DevTools => "cef devtools sample pass",
@@ -618,24 +663,75 @@ impl std::fmt::Debug for SurfacePipe {
     }
 }
 
+/// One pipeline serves every window (iced shares it), so each frame slot
+/// has its own page texture, keyed by [`FrameSlot::key`]: page windows
+/// paint side by side.
 #[derive(Debug)]
 pub struct CefPipeline {
-    page: SurfacePipe,
+    pages: std::collections::HashMap<u64, SurfacePipe>,
     devtools: SurfacePipe,
+    format: wgpu::TextureFormat,
+}
+
+/// Slots whose windows closed: their page textures go at the next prepare.
+static RETIRED_SLOTS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+
+/// A page window closed: free its slot's page texture.
+pub fn retire_slot(key: u64) {
+    if let Ok(mut retired) = RETIRED_SLOTS.lock() {
+        retired.push(key);
+    }
+}
+
+fn surface_pipe(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    format: wgpu::TextureFormat,
+    label: &str,
+) -> SurfacePipe {
+    SurfacePipe {
+        sample: SamplePipeline::new(device, queue, format, label),
+        importer: CefImporter {
+            texture: None,
+            bind_group: None,
+            staging: Vec::new(),
+        },
+        painted_tab: u64::MAX,
+    }
 }
 
 impl CefPipeline {
-    fn surface(&self, surface: PaintSurface) -> &SurfacePipe {
+    fn surface(&self, surface: PaintSurface, key: u64) -> Option<&SurfacePipe> {
         match surface {
-            PaintSurface::Page => &self.page,
-            PaintSurface::DevTools => &self.devtools,
+            PaintSurface::Page => self.pages.get(&key),
+            PaintSurface::DevTools => Some(&self.devtools),
         }
     }
 
-    fn surface_mut(&mut self, surface: PaintSurface) -> &mut SurfacePipe {
+    fn surface_mut(
+        &mut self,
+        surface: PaintSurface,
+        key: u64,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> &mut SurfacePipe {
         match surface {
-            PaintSurface::Page => &mut self.page,
+            PaintSurface::Page => {
+                let format = self.format;
+                self.pages
+                    .entry(key)
+                    .or_insert_with(|| surface_pipe(device, queue, format, "cef"))
+            }
             PaintSurface::DevTools => &mut self.devtools,
+        }
+    }
+
+    fn drop_retired(&mut self) {
+        let Ok(mut retired) = RETIRED_SLOTS.lock() else {
+            return;
+        };
+        for key in retired.drain(..) {
+            self.pages.remove(&key);
         }
     }
 }
@@ -648,18 +744,10 @@ impl std::fmt::Debug for CefImporter {
 
 impl shader::Pipeline for CefPipeline {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
-        let pipe = |label: &str| SurfacePipe {
-            sample: SamplePipeline::new(device, queue, format, label),
-            importer: CefImporter {
-                texture: None,
-                bind_group: None,
-                staging: Vec::new(),
-            },
-            painted_tab: u64::MAX,
-        };
         Self {
-            page: pipe("cef"),
-            devtools: pipe("cef-devtools"),
+            pages: std::collections::HashMap::new(),
+            devtools: surface_pipe(device, queue, format, "cef-devtools"),
+            format,
         }
     }
 }

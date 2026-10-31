@@ -213,8 +213,7 @@ and the MCP server also trace as `solactl`.
 
 [Monitor](sola-monitor.md) is the observer Sola has: its **Call** view
 lists invokes with owner, method, caller, status, and duration, and its
-right rail is the live catalog. Monitor is not in Sola's Oath packages
-([Architecture](architecture.md#packages)).
+right rail is the live catalog.
 
 ## Owners today
 

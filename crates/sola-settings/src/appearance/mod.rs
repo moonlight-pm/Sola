@@ -1,0 +1,345 @@
+//! Appearance: light or dark (for web pages), the background picture and
+//! the ones kept before ([`pictures`]), whether the theme's colors follow
+//! it (and which of its schemes), the looks you make with your own colors,
+//! how opaque the desk is over the picture, and the idle fade and dim. A
+//! new picture is set from Paint (File → Set as Background) or `solactl
+//! background`; here a kept one is set again, forgotten, or cleared.
+//! The settings are `Topic::Appearance`: the shell acts on the colors,
+//! sola-river on the opacity and the fade, the browser on light or dark.
+//! The schemes come from the shell (`Topic::ThemeVariations`).
+
+mod looks;
+mod pictures;
+
+use iced::widget::{container, row, slider, text, toggler};
+use iced::{Alignment, Element, Length, Task};
+use sola_bus::topics::{Appearance, Background, ThemeVariations, Topic};
+use sola_kit::app::bus;
+use sola_kit::components::button as kit_btn;
+use sola_kit::components::color_picker::{ColorPicker, Message as PickerMsg};
+use sola_kit::components::form::toggle_style;
+use sola_kit::components::style::SPACE_SM;
+use sola_kit::components::text as kit_text;
+
+use crate::page;
+
+pub use looks::settle;
+pub use pictures::refresh;
+
+#[derive(Debug, Clone)]
+pub enum AppearanceMsg {
+    /// Light (`true`) or dark, for web pages.
+    Light(bool),
+    /// Adapt colors to the background on / off.
+    Adapt(bool),
+    /// The strength slider moved: sent as it moves (at most every
+    /// [`LIVE_EVERY`]), so the theme follows the drag.
+    Strength(u8),
+    /// The strength slider was let go: send where it stopped.
+    StrengthDone,
+    /// The opacity slider moved: sent as it moves, like the strength.
+    Opacity(u8),
+    /// The opacity slider was let go.
+    OpacityDone,
+    /// One of the picture's schemes, by index, as it is.
+    Variation(u8),
+    /// One of your looks (`Appearance.customs`), by index.
+    Custom(u8),
+    /// Forget the look of yours in use.
+    RemoveCustom,
+    /// Fade the windows when idle on / off.
+    Fade(bool),
+    /// The fade delay and length sliders moved (shown, not yet sent).
+    FadeAfter(u16),
+    FadeOver(u16),
+    /// Dim the background once the fade is full on / off.
+    Dim(bool),
+    /// Lock the screen once the fade is full on / off.
+    LockIdle(bool),
+    /// The dim's delay and length sliders moved (shown, not yet sent).
+    DimAfter(u16),
+    DimOver(u16),
+    /// A fade or dim slider was let go: send it.
+    FadeDone,
+    /// Back to the plain ground.
+    ClearPicture,
+    /// Set a kept picture again.
+    Use(std::path::PathBuf),
+    /// Forget a kept picture.
+    Forget(std::path::PathBuf),
+    /// A kept picture's thumbnail is made (`None`: it would not decode).
+    Thumb(std::path::PathBuf, Option<iced::widget::image::Handle>),
+    /// Open the picker for a custom color (`CUSTOM_COLORS` key); again
+    /// closes it.
+    Pick(&'static str),
+    Picker(PickerMsg),
+    /// Use the picked color.
+    UsePicked,
+    /// The look in use drops one of your colors.
+    ResetColor(&'static str),
+}
+
+/// The picture (`Topic::Background`), the settings (`Topic::Appearance`)
+/// and the picture's schemes (`Topic::ThemeVariations`), as the bus last
+/// said.
+#[derive(Default)]
+pub struct AppearanceState {
+    pub picture: Option<Background>,
+    pub look: Appearance,
+    pub variations: Option<ThemeVariations>,
+    /// The live theme (`Topic::Theme`), for showing the colors as they are.
+    pub theme: Option<sola_core::theme::Theme>,
+    /// The custom color being picked, and its picker.
+    picking: Option<(&'static str, ColorPicker)>,
+    /// When a strength or opacity drag last sent the settings.
+    drag_sent: Option<std::time::Instant>,
+    /// The kept pictures, with thumbnails.
+    gallery: pictures::Gallery,
+}
+
+/// While the strength or opacity slider moves, the settings go out at
+/// most this often (a strength re-tints every app); letting go sends the
+/// last value.
+const LIVE_EVERY: std::time::Duration = std::time::Duration::from_millis(40);
+
+pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) -> Task<AppearanceMsg> {
+    let look = &mut state.look;
+    match msg {
+        AppearanceMsg::Light(on) => look.light = on,
+        AppearanceMsg::Adapt(on) => look.adapt_theme = on,
+        AppearanceMsg::Strength(v) | AppearanceMsg::Opacity(v) => {
+            match msg {
+                AppearanceMsg::Strength(_) => look.strength = v,
+                _ => look.opacity = v,
+            }
+            let now = std::time::Instant::now();
+            if state.drag_sent.is_some_and(|at| now - at < LIVE_EVERY) {
+                return Task::none();
+            }
+            state.drag_sent = Some(now);
+        }
+        AppearanceMsg::StrengthDone | AppearanceMsg::OpacityDone | AppearanceMsg::FadeDone => {}
+        AppearanceMsg::Variation(i) => {
+            looks::pick_variation(look, i);
+            state.picking = None;
+        }
+        AppearanceMsg::Custom(i) => {
+            looks::pick_custom(look, i);
+            state.picking = None;
+        }
+        AppearanceMsg::RemoveCustom => {
+            looks::remove_custom(look);
+            state.picking = None;
+        }
+        AppearanceMsg::Fade(on) => look.fade_idle = on,
+        AppearanceMsg::FadeAfter(m) => {
+            look.fade_after_min = m;
+            return Task::none();
+        }
+        AppearanceMsg::FadeOver(m) => {
+            look.fade_over_min = m;
+            return Task::none();
+        }
+        AppearanceMsg::Dim(on) => look.dim_idle = on,
+        AppearanceMsg::LockIdle(on) => look.lock_idle = on,
+        AppearanceMsg::DimAfter(m) => {
+            look.dim_after_min = m;
+            return Task::none();
+        }
+        AppearanceMsg::DimOver(m) => {
+            look.dim_over_min = m;
+            return Task::none();
+        }
+        AppearanceMsg::Use(path) => {
+            pictures::wear(&path);
+            return Task::none();
+        }
+        AppearanceMsg::Forget(path) => return pictures::forget(state, &path),
+        AppearanceMsg::Thumb(path, thumb) => return pictures::made(state, path, thumb),
+        AppearanceMsg::ClearPicture => {
+            if let Some(picture) = state.picture.clone() {
+                send(|b| b.retract(Topic::Background(picture)));
+            }
+            return Task::none();
+        }
+        AppearanceMsg::Pick(key) => {
+            let open = state.picking.as_ref().is_some_and(|(k, _)| *k == key);
+            state.picking = (!open).then(|| (key, ColorPicker::new(looks::current(state, key))));
+            return Task::none();
+        }
+        AppearanceMsg::Picker(m) => {
+            if let Some((_, picker)) = &mut state.picking {
+                picker.update(m);
+            }
+            return Task::none();
+        }
+        AppearanceMsg::UsePicked => {
+            let Some((key, picker)) = state.picking.take() else {
+                return Task::none();
+            };
+            let c = picker.color();
+            let hex = sola_kit::theme::color_to_hex(iced::Color { a: 1.0, ..c });
+            looks::set_color(look, key, hex);
+        }
+        AppearanceMsg::ResetColor(key) => {
+            looks::reset_color(look, key);
+            state.picking = None;
+        }
+    }
+    let topic = Topic::Appearance(state.look.clone());
+    send(|b| b.emit(topic));
+    Task::none()
+}
+
+fn send(write: impl FnOnce(&mut sola_bus::BusClient) -> std::io::Result<()>) {
+    let sent = bus()
+        .lock()
+        .map_err(|_| "bus unavailable".to_string())
+        .and_then(|mut client| write(&mut client).map_err(|e| e.to_string()));
+    if let Err(e) = sent {
+        tracing::warn!(error = %e, "appearance: bus write failed");
+    }
+}
+
+pub fn view(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
+    page::page(vec![
+        mode(state),
+        pictures::section(state),
+        looks::colors(state),
+        looks::yours(state),
+        desk(state),
+        idle(state),
+    ])
+}
+
+fn mode(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
+    let choice = |label, light: bool| {
+        let style = if state.look.light == light {
+            kit_btn::primary
+        } else {
+            kit_btn::secondary
+        };
+        kit_btn::labeled_sm(label, style).on_press(AppearanceMsg::Light(light))
+    };
+    page::section(
+        "Light or dark",
+        None,
+        page::group(vec![page::setting(
+            "Mode",
+            row![choice("Dark", false), choice("Light", true)].spacing(SPACE_SM),
+        )]),
+        Some(
+            "What web pages are told you prefer: a site with a light and a \
+             dark look shows that one. Sola's own windows stay dark."
+                .into(),
+        ),
+    )
+}
+
+fn desk(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
+    let opacity = state.look.opacity.clamp(Appearance::MIN_OPACITY, 100);
+    page::section(
+        "Desk",
+        None,
+        page::group(vec![page::setting(
+            "Opacity",
+            slider_with(
+                slider(Appearance::MIN_OPACITY..=100u8, opacity, AppearanceMsg::Opacity)
+                    .on_release(AppearanceMsg::OpacityDone),
+                format!("{opacity}%"),
+            ),
+        )]),
+        Some(
+            "How opaque the windows, the bar and the top row are over the \
+             background. The idle fade starts from here."
+                .into(),
+        ),
+    )
+}
+
+fn idle(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
+    let look = &state.look;
+    page::section(
+        "Idle",
+        None,
+        page::group(vec![
+            page::setting(
+                "Fade the windows when idle",
+                toggler(look.fade_idle)
+                    .on_toggle(AppearanceMsg::Fade)
+                    .style(toggle_style),
+            ),
+            page::setting(
+                "Start after",
+                slider_with(
+                    slider(1..=60u16, look.fade_after_min, AppearanceMsg::FadeAfter)
+                        .on_release(AppearanceMsg::FadeDone),
+                    format!("{} min", look.fade_after_min),
+                ),
+            ),
+            page::setting(
+                "Fade over",
+                slider_with(
+                    slider(1..=120u16, look.fade_over_min, AppearanceMsg::FadeOver)
+                        .on_release(AppearanceMsg::FadeDone),
+                    format!("{} min", look.fade_over_min),
+                ),
+            ),
+            page::setting(
+                "Lock when the windows have faded",
+                toggler(look.lock_idle)
+                    .on_toggle(AppearanceMsg::LockIdle)
+                    .style(toggle_style),
+            ),
+            page::setting(
+                "Then dim the background",
+                toggler(look.dim_idle)
+                    .on_toggle(AppearanceMsg::Dim)
+                    .style(toggle_style),
+            ),
+            page::setting(
+                "Dim after",
+                slider_with(
+                    slider(1..=240u16, look.dim_after_min, AppearanceMsg::DimAfter)
+                        .on_release(AppearanceMsg::FadeDone),
+                    format!("{} min", look.dim_after_min),
+                ),
+            ),
+            page::setting(
+                "Dim over",
+                slider_with(
+                    slider(1..=120u16, look.dim_over_min, AppearanceMsg::DimOver)
+                        .on_release(AppearanceMsg::FadeDone),
+                    format!("{} min", look.dim_over_min),
+                ),
+            ),
+        ]),
+        Some(
+            "After the first time with no input, the windows fade into the \
+             background over the second. Once only the background shows, it \
+             dims after the third, over the fourth, to a tenth of its light. \
+             Any input brings them back. Not while a window is fullscreen or an \
+             app keeps the screen awake (a video). Locking needs a password \
+             (Settings → Login)."
+                .into(),
+        ),
+    )
+}
+
+fn slider_with<'a>(
+    slider: impl Into<Element<'a, AppearanceMsg>>,
+    value: String,
+) -> Element<'a, AppearanceMsg> {
+    let slider: Element<'a, AppearanceMsg> = container(slider.into())
+        .width(Length::Fixed(200.0))
+        .into();
+    row![
+        slider,
+        text(value)
+            .width(Length::Fixed(56.0))
+            .style(kit_text::muted),
+    ]
+    .spacing(SPACE_SM)
+    .align_y(Alignment::Center)
+    .into()
+}

@@ -1,8 +1,8 @@
 //! sola-preview — standalone kit image viewer (argv path opens).
 //!
 //! Session history in a left sidebar; main pane fits the selected PNG.
-//! Screenshots land here (shell Super+Shift+3/4/5). MIME / `solactl open`
-//! image paths go to **sola-paint**. Preview also accepts argv paths.
+//! The shell's screenshots go to the clipboard, not here. MIME / `solactl
+//! open` image paths go to **sola-paint**. Preview opens argv paths.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,7 +33,7 @@ const MAX_HISTORY: usize = 64;
 /// How long the header button shows “Copied” after a path click.
 const COPY_FEEDBACK_MS: u64 = 1500;
 /// Top chrome strip height (matches agent/settings toolbar density).
-const HEADER_H: f32 = 52.0;
+const HEADER_H: f32 = sola_kit::components::style::BAR_H;
 
 fn main() -> iced::Result {
     startup(APP_ID);
@@ -124,7 +124,7 @@ impl App {
     }
 
     fn theme(&self) -> Theme {
-        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
+        sola_kit::theme_for(self.float.chrome_any(), &self.theme)
     }
 
     fn subscription(&self) -> Subscription<Msg> {
@@ -256,8 +256,8 @@ impl App {
             .height(Length::Fill)
             .into();
 
-        sola_kit::wrap_if_floating(
-            self.float.is_floating_any(),
+        sola_kit::window_frame(
+            self.float.chrome_any(),
             "Preview",
             Msg::TitleDrag,
             Msg::TitleClose,
@@ -325,9 +325,9 @@ impl App {
         };
 
         container(container(content).width(Length::Fill).padding(Padding {
-            top: SPACE_MD,
+            top: 0.0,
             right: SPACE_LG,
-            bottom: SPACE_MD,
+            bottom: 0.0,
             left: SPACE_LG,
         }))
         .width(Length::Fill)

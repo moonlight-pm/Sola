@@ -6,6 +6,8 @@ use crate::util;
 /// One row in the page (right-click) menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PageMenuKind {
+    /// A picture: make it the desktop's background.
+    UseAsBackground,
     OpenLink,
     CopyLink,
     Copy,
@@ -23,6 +25,10 @@ pub enum PageMenuKind {
 pub fn page_menu_kinds(ctx: &PageContext) -> Vec<PageMenuKind> {
     let mut rows = Vec::new();
     let has_link = ctx.link_url.as_deref().is_some_and(|u| !u.is_empty());
+    if ctx.image && ctx.src_url.as_deref().is_some_and(|u| !u.is_empty()) {
+        rows.push(PageMenuKind::UseAsBackground);
+        rows.push(PageMenuKind::Separator);
+    }
     let has_sel = ctx.selection.as_deref().is_some_and(|s| !s.is_empty());
     if has_link {
         rows.push(PageMenuKind::OpenLink);
@@ -225,6 +231,20 @@ mod tests {
                 PageMenuKind::InspectElement,
             ]
         );
+    }
+
+    #[test]
+    fn a_picture_offers_the_desktop_background_first() {
+        let rows = page_menu_kinds(&PageContext {
+            image: true,
+            src_url: Some("https://ex/a.jpg".into()),
+            link_url: Some("https://ex/big.jpg".into()),
+            ..ctx()
+        });
+        assert_eq!(&rows[..3], &[PageMenuKind::UseAsBackground, PageMenuKind::Separator, PageMenuKind::OpenLink]);
+        // No source (a canvas, a blob it cannot name): no row.
+        let rows = page_menu_kinds(&PageContext { image: true, ..ctx() });
+        assert!(!rows.contains(&PageMenuKind::UseAsBackground));
     }
 
     #[test]

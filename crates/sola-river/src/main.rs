@@ -5,23 +5,21 @@ use calloop::EventLoop;
 use calloop_wayland_source::WaylandSource;
 use tracing::{error, info};
 
-use sola_core::env::{SOLA_WAYLAND_NAME_FILE, wayland_socket};
+use sola_core::env::{resolve_wayland_display, wait_for_wayland_socket};
 use sola_river::{bus, client};
 
 fn main() {
     sola_core::log::init("sola-river");
     info!("sola-river starting");
 
-    let socket_name = match wayland_socket() {
-        Some(n) => n,
-        None => {
-            error!(
-                file = SOLA_WAYLAND_NAME_FILE,
-                "wayland socket name file not populated; is sola running?"
-            );
-            exit(1);
-        }
-    };
+    // The published `sola-wayland` name when Sola's process manager runs
+    // River; otherwise (Oath's PID 1 runs the compositor) a live socket
+    // under XDG_RUNTIME_DIR.
+    let socket_name = resolve_wayland_display(15_000);
+    if !wait_for_wayland_socket(&socket_name, 5_000) {
+        error!(socket = %socket_name, "wayland socket never appeared");
+        exit(1);
+    }
 
     // SAFETY: no other threads in sola-river yet — single-threaded main.
     unsafe {
@@ -74,8 +72,10 @@ fn main() {
         Ok(()) => {
             // Topic::Shutdown calls process::exit(0) and never returns
             // here. A clean loop end is the compositor going away
-            // (River restart). Exit 1 so the process manager restarts
-            // us; exit 0 looks like Quit Sola and the session stays down.
+            // (River restart). Exit 1 so PID 1 / the process manager
+            // restarts us (`restart=on-failure`); exit 0 looks like
+            // Exit Sola and the session stays down, which leaves xdg
+            // clients unconfigured.
             error!("wayland event loop ended");
             exit(1);
         }

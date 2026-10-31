@@ -50,34 +50,38 @@ use sola_core::theme::Theme as BusTheme;
 pub const THEME_NAME: &str = "sola";
 
 pub mod hex {
-    // Cool graphite tool UI (Open Design sola-kit-ds). Keep in sync with
-    // `Palette::seed` in sola-core.
-    /// Window / canvas base — deep graphite.
-    pub const BG: &str = "#0c0e12";
-    /// Primary label — cool off-white for contrast on dark fills.
-    pub const FG: &str = "#e9ecf2";
+    // Graphite tool UI on neutral greys (Next: no blue in the base).
+    // Keep in sync with `Palette::seed` in sola-core.
+    /// Window / canvas base — near-black grey.
+    pub const BG: &str = "#0b0b0b";
+    /// Primary label — off-white for contrast on dark fills.
+    pub const FG: &str = "#ececec";
     /// Sparse accent (selection chrome, focus, key status).
     pub const ACCENT: &str = "#3dd6f5";
     pub const SUCCESS: &str = "#3ecf8e";
     pub const WARNING: &str = "#e8b84a";
     pub const DANGER: &str = "#f07178";
     /// Muted / secondary label.
-    pub const FG_MUTED: &str = "#8b94a8";
+    pub const FG_MUTED: &str = "#949494";
     /// Raised panel / sidebar / card.
-    pub const BG_RAISED: &str = "#151922";
+    pub const BG_RAISED: &str = "#151515";
     /// Hover lift.
-    pub const BG_HOVER: &str = "#1e2533";
+    pub const BG_HOVER: &str = "#1f1f1f";
     /// Stronger edges / hard chrome (soft hairlines use white@α in style).
-    pub const BORDER: &str = "#2a3344";
-    /// Selected-row / field text-selection fill — cool graphite lift, not a
+    pub const BORDER: &str = "#2a2a2a";
+    /// Selected-row / field text-selection fill — a grey lift, not a
     /// darkened neon. `#3dd6f5` goes muddy when mixed toward black, so
-    /// this atom is a slate step above raised (distinct from `BG_HOVER`)
+    /// this atom is a grey step above raised (distinct from `BG_HOVER`)
     /// and neon stays full-chroma for accent only.
     ///
-    /// Terminal / Workspaces **cell** selection is not this atom: those
+    /// Terminal / Projects **cell** selection is not this atom: those
     /// grids overlay [`ACCENT`] at alpha so the wash stays neon and
     /// scannable (`sola_terminal::term_view::Palette::from_kit_theme`).
-    pub const SELECTION: &str = "#2c333e";
+    pub const SELECTION: &str = "#292929";
+    /// The active row of a sidebar column (the tab bar's focused window,
+    /// the picked item): a lift above [`BG_RAISED`]'s column, 14% white on
+    /// `#141414` in the grey theme.
+    pub const HIGHLIGHT: &str = "#353535";
 }
 
 /// Build the kit's iced theme from its compile-time default atoms.
@@ -130,8 +134,8 @@ pub fn menubar(base: &Theme, bg: Color) -> Theme {
 /// via `theme.extended_palette()`; no component references `hex::*`
 /// directly unless escape-hatching.
 fn extended_from_atoms(a: &Atoms) -> Extended {
-    // `selection` is intentionally not bound — it has no iced palette
-    // slot and is delivered via the process-wide cell, not this binding.
+    // `selection` and `highlight` are intentionally not bound — they have
+    // no iced palette slot and are delivered via process-wide cells.
     let Atoms {
         bg,
         bg_raised,
@@ -144,6 +148,7 @@ fn extended_from_atoms(a: &Atoms) -> Extended {
         warning,
         danger,
         selection: _,
+        highlight: _,
     } = *a;
     Extended {
         background: Background {
@@ -199,19 +204,42 @@ pub fn build_theme(atoms: &Atoms) -> Theme {
 /// palette has no selection slot, so — exactly like the font role table
 /// (`crate::fonts`) — this rides a process-wide cell reinstalled on
 /// every live theme build and every bus `Topic::Theme` delivery.
-/// Component style fns read it via [`selection`]; the storybook and the
-/// bus consumer path both refresh it via [`install_selection`].
+/// Component style fns read it via [`selection`]; the bus consumer path
+/// refreshes it via [`install_selection`].
 static SELECTION: std::sync::LazyLock<std::sync::RwLock<Color>> =
     std::sync::LazyLock::new(|| std::sync::RwLock::new(parse(hex::SELECTION)));
 
-/// Swap the process-wide selection colour. Re-callable — the storybook
-/// calls it as the user edits the `selection` atom, and the bus theme
-/// consumer path calls it on every `Topic::Theme` so a selection edit
+/// Swap the process-wide selection colour. Re-callable — the bus theme
+/// consumer path calls it on every `Topic::Theme` so a selection change
 /// propagates everywhere on the next render.
 pub fn install_selection(color: Color) {
     if let Ok(mut guard) = SELECTION.write() {
         *guard = color;
     }
+}
+
+/// Install the process-wide colours that have no iced palette slot from
+/// `atoms`: the selection ([`install_selection`]) and the chrome surface
+/// ([`crate::components::style::chrome_surface`]). Every theme path calls
+/// it (the bus consumer, the shell).
+pub fn install_atoms(atoms: &Atoms) {
+    install_selection(atoms.selection);
+    if let Ok(mut guard) = HIGHLIGHT.write() {
+        *guard = atoms.highlight;
+    }
+    crate::components::style::install_chrome_surface(atoms.bg, atoms.bg_raised);
+}
+
+static HIGHLIGHT: std::sync::LazyLock<std::sync::RwLock<Color>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(parse(hex::HIGHLIGHT)));
+
+/// A sidebar column's active row (the tab bar's focused window), as the
+/// theme last installed it ([`install_atoms`]).
+pub fn highlight() -> Color {
+    HIGHLIGHT
+        .read()
+        .map(|c| *c)
+        .unwrap_or_else(|_| parse(hex::HIGHLIGHT))
 }
 
 /// The current selected-row highlight colour. Falls back to the
@@ -280,8 +308,8 @@ pub fn to_bus_theme() -> BusTheme {
     bus_theme_from_atoms(&Atoms::default())
 }
 
-/// Editable atom set — every colour the iced kit's theme depends on,
-/// held as `iced::Color` so the storybook can mutate one and rebuild.
+/// The atom set — every colour the iced kit's theme depends on, held as
+/// `iced::Color`.
 ///
 /// This is the bridge between the kit's compile-time palette (the
 /// `hex::*` constants) and the bus-side `BusTheme` schema. Both
@@ -291,9 +319,8 @@ pub fn to_bus_theme() -> BusTheme {
 ///   `Atoms` → `iced::Theme` via [`build_theme`]
 ///   `Atoms` → `BusTheme`   via [`bus_theme_from_atoms`]
 ///
-/// The storybook's editor mutates an `Atoms` value, then rebuilds and
-/// re-emits both forms; other kit apps consume the bus form via
-/// [`theme_from_bus`] and pick up the change on their next render.
+/// Kit apps consume the bus form via [`theme_from_bus`] and pick up a
+/// change on their next render.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Atoms {
     pub bg: Color,
@@ -312,6 +339,9 @@ pub struct Atoms {
     /// `Atoms` so it edits, defaults, and round-trips on the bus like any
     /// other atom.
     pub selection: Color,
+    /// A sidebar column's active row. No iced palette slot either:
+    /// delivered process-wide like `selection` ([`highlight`]).
+    pub highlight: Color,
 }
 
 impl Default for Atoms {
@@ -328,6 +358,7 @@ impl Default for Atoms {
             warning: parse(hex::WARNING),
             danger: parse(hex::DANGER),
             selection: parse(hex::SELECTION),
+            highlight: parse(hex::HIGHLIGHT),
         }
     }
 }
@@ -421,6 +452,13 @@ const ATOM_BINDINGS: &[AtomBinding] = &[
         get: |a| a.selection,
         set: |a, c| a.selection = c,
     },
+    // No iced palette slot; delivered process-wide ([`highlight`]).
+    AtomBinding {
+        token: "highlight",
+        fallback: hex::HIGHLIGHT,
+        get: |a| a.highlight,
+        set: |a, c| a.highlight = c,
+    },
 ];
 
 /// Build a `BusTheme` from an editable atom set, writing every token in
@@ -472,34 +510,6 @@ impl Default for FontSelection {
     }
 }
 
-/// Merge font role selections into a `BusTheme`. Adds five
-/// `FontFamily`-kind tokens — `font-ui`, `font-ui-medium`, `font-display`,
-/// `font-chrome`, `font-mono` — so consumers can read them out via
-/// [`fonts_from_bus_theme`] and reinstall the role table.
-pub fn bus_theme_with_fonts(mut t: BusTheme, fonts: &FontSelection) -> BusTheme {
-    use sola_core::theme::{Token, TokenKind};
-    let writes = [
-        ("font-ui", fonts.ui.clone()),
-        ("font-ui-medium", fonts.ui_medium.clone()),
-        ("font-display", fonts.display.clone()),
-        ("font-chrome", fonts.chrome.clone()),
-        ("font-mono", fonts.mono.clone()),
-    ];
-    for (name, value) in writes {
-        t.palette.tokens.insert(
-            name.to_string(),
-            Token::new(TokenKind::FontFamily, &value, &["font-family"]),
-        );
-    }
-    t
-}
-
-/// Build a complete `BusTheme` from an atoms + fonts pair. Convenience
-/// over chaining [`bus_theme_from_atoms`] and [`bus_theme_with_fonts`].
-pub fn bus_theme_from(atoms: &Atoms, fonts: &FontSelection) -> BusTheme {
-    bus_theme_with_fonts(bus_theme_from_atoms(atoms), fonts)
-}
-
 /// Read the kit's font role tokens out of a `BusTheme` and build a
 /// `crate::fonts::Fonts` table. Missing tokens fall back to the
 /// process-wide default font selection.
@@ -538,31 +548,9 @@ pub fn atoms_from_bus_theme(bus: &BusTheme) -> Atoms {
     atoms
 }
 
-/// Read the font roles out of a `BusTheme` as a `FontSelection`
-/// (string family names). Sibling to [`fonts_from_bus_theme`], which
-/// returns the resolved `crate::fonts::Fonts` table.
-pub fn font_selection_from_bus_theme(bus: &BusTheme) -> FontSelection {
-    let default = FontSelection::default();
-    let read = |name: &str, fallback: &str| {
-        bus.palette
-            .tokens
-            .get(name)
-            .map(|t| t.value.clone())
-            .unwrap_or_else(|| fallback.to_string())
-    };
-    FontSelection {
-        ui: read("font-ui", &default.ui),
-        ui_medium: read("font-ui-medium", &default.ui_medium),
-        display: read("font-display", &default.display),
-        chrome: read("font-chrome", &default.chrome),
-        mono: read("font-mono", &default.mono),
-    }
-}
-
 /// Format an iced `Color` as `#rrggbb`, or `#rrggbbaa` when alpha < 1 —
 /// so existing opaque values don't churn on round-trip. The inverse of
-/// [`parse`]; shared with the storybook's atom grid so it doesn't
-/// reimplement the conversion.
+/// [`parse`].
 pub fn color_to_hex(c: Color) -> String {
     let r = (c.r * 255.0).round().clamp(0.0, 255.0) as u8;
     let g = (c.g * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -585,13 +573,15 @@ pub fn color_to_hex(c: Color) -> String {
 /// Menubar stays near-black (opaque greys first; blur deferred). Switcher
 /// is a Cmd+Tab-style HUD: neutral frosted pill, soft light plate under
 /// the selected icon (not an accent pill).
-const SHELL_MENUBAR_BG: &str = "#050608";
+const SHELL_MENUBAR_BG: &str = "#050505";
+/// The flower: Sola's amber until a look recolors it.
+const SHELL_FLOWER: &str = "#ffb800";
 const SHELL_BACKDROP_DIM: &str = "#00000099";
-const SHELL_SWITCHER_BG: &str = "#151922e6"; // raised graphite HUD glass
+const SHELL_SWITCHER_BG: &str = "#151515e6"; // raised grey HUD glass
 const SHELL_SWITCHER_BORDER: &str = "#ffffff1a";
 const SHELL_SWITCHER_ICON_BG: &str = "#ffffff2e"; // soft raised plate under icon
-const SHELL_SWITCHER_ICON_FG: &str = "#e9ecf2";
-const SHELL_SWITCHER_ICON_FG_SEL: &str = "#e9ecf2";
+const SHELL_SWITCHER_ICON_FG: &str = "#ececec";
+const SHELL_SWITCHER_ICON_FG_SEL: &str = "#ececec";
 // Compact frame around a large-icon strip.
 const SHELL_SWITCHER_PAD: f32 = 14.0;
 const SHELL_SWITCHER_TILE_PAD: f32 = 8.0;
@@ -609,6 +599,7 @@ const SHELL_LAUNCHER_PAD: f32 = 8.0;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShellStyle {
     pub menubar_bg: Color,
+    pub flower: Color,
     pub backdrop_dim: Color,
     pub switcher_bg: Color,
     pub switcher_border: Color,
@@ -625,6 +616,7 @@ impl Default for ShellStyle {
     fn default() -> Self {
         Self {
             menubar_bg: parse(SHELL_MENUBAR_BG),
+            flower: parse(SHELL_FLOWER),
             backdrop_dim: parse(SHELL_BACKDROP_DIM),
             switcher_bg: parse(SHELL_SWITCHER_BG),
             switcher_border: parse(SHELL_SWITCHER_BORDER),
@@ -664,14 +656,14 @@ fn shell_space(bus: &BusTheme, token: &str, fallback: f32) -> f32 {
         .unwrap_or(fallback)
 }
 
-/// Read the shell style out of a `BusTheme` (the inverse of
-/// [`bus_theme_with_shell`]). Missing or malformed tokens fall back
-/// per-field to the compile-time defaults, so a stale preset (saved
-/// before the shell tokens existed) renders exactly as before.
+/// Read the shell style out of a `BusTheme`. Missing or malformed tokens
+/// fall back per-field to the compile-time defaults, so a theme saved
+/// before the shell tokens existed renders exactly as before.
 pub fn shell_style_from_bus_theme(bus: &BusTheme) -> ShellStyle {
     let d = ShellStyle::default();
     ShellStyle {
         menubar_bg: shell_color(bus, "shell-menubar-bg", d.menubar_bg),
+        flower: shell_color(bus, "shell-flower", d.flower),
         backdrop_dim: shell_color(bus, "shell-backdrop-dim", d.backdrop_dim),
         switcher_bg: shell_color(bus, "shell-switcher-bg", d.switcher_bg),
         switcher_border: shell_color(bus, "shell-switcher-border", d.switcher_border),
@@ -687,83 +679,6 @@ pub fn shell_style_from_bus_theme(bus: &BusTheme) -> ShellStyle {
         launcher_width: shell_space(bus, "shell-launcher-width", d.launcher_width),
         launcher_pad: shell_space(bus, "shell-launcher-pad", d.launcher_pad),
     }
-}
-
-/// Write `shell`'s values into `t`'s palette as `shell-*` tokens
-/// (the inverse of [`shell_style_from_bus_theme`]). Mirrors
-/// `bus_theme_from_atoms`'s upsert behavior — overwrite when present,
-/// insert when the seed somehow lacks the token — preserving the
-/// write-list ⊇ read-list invariant.
-pub fn bus_theme_with_shell(mut t: BusTheme, shell: &ShellStyle) -> BusTheme {
-    use sola_core::theme::{Token, TokenKind};
-    let entries: [(&str, TokenKind, String); 11] = [
-        (
-            "shell-menubar-bg",
-            TokenKind::Color,
-            color_to_hex(shell.menubar_bg),
-        ),
-        (
-            "shell-backdrop-dim",
-            TokenKind::Color,
-            color_to_hex(shell.backdrop_dim),
-        ),
-        (
-            "shell-switcher-bg",
-            TokenKind::Color,
-            color_to_hex(shell.switcher_bg),
-        ),
-        (
-            "shell-switcher-border",
-            TokenKind::Color,
-            color_to_hex(shell.switcher_border),
-        ),
-        (
-            "shell-switcher-icon-bg",
-            TokenKind::Color,
-            color_to_hex(shell.switcher_icon_bg),
-        ),
-        (
-            "shell-switcher-icon-fg",
-            TokenKind::Color,
-            color_to_hex(shell.switcher_icon_fg),
-        ),
-        (
-            "shell-switcher-icon-fg-sel",
-            TokenKind::Color,
-            color_to_hex(shell.switcher_icon_fg_sel),
-        ),
-        (
-            "shell-switcher-pad",
-            TokenKind::Space,
-            format!("{}px", shell.switcher_pad),
-        ),
-        (
-            "shell-switcher-tile-pad",
-            TokenKind::Space,
-            format!("{}px", shell.switcher_tile_pad),
-        ),
-        (
-            "shell-launcher-width",
-            TokenKind::Space,
-            format!("{}px", shell.launcher_width),
-        ),
-        (
-            "shell-launcher-pad",
-            TokenKind::Space,
-            format!("{}px", shell.launcher_pad),
-        ),
-    ];
-    for (name, kind, value) in entries {
-        match t.palette.tokens.get_mut(name) {
-            Some(tok) => tok.value = value,
-            None => {
-                t.palette
-                    .tokens
-                    .insert(name.to_string(), Token::new(kind, &value, &["shell"]));
-            }
-        }
-    }
-    t
 }
 
 #[cfg(test)]
@@ -787,6 +702,7 @@ mod tests {
             warning: parse("#191a1b"),
             danger: parse("#1c1d1e"),
             selection: parse("#1f2021"),
+            highlight: parse("#222324"),
         };
         assert_eq!(atoms_from_bus_theme(&bus_theme_from_atoms(&atoms)), atoms);
     }
@@ -835,7 +751,7 @@ mod tests {
         assert_eq!(atoms.bg_hover, parse(hex::BG_HOVER));
         // Seed currently uses the same step for tertiary + hover; still
         // must load via the `bg-hover` token binding, not hard-coded elsewhere.
-        assert_eq!(atoms.bg_hover, parse("#1e2533"));
+        assert_eq!(atoms.bg_hover, parse("#1f1f1f"));
     }
 
     // Sub-decision (A4): the seed speaks the kit's font-role vocabulary,
@@ -1003,17 +919,18 @@ mod tests {
     }
 
     #[test]
-    fn seed_surfaces_are_graphite_not_primer() {
+    fn seed_surfaces_are_neutral_grey() {
         let atoms = Atoms::default();
-        assert_eq!(atoms.bg, parse("#0c0e12"));
-        assert_eq!(atoms.bg_raised, parse("#151922"));
+        assert_eq!(atoms.bg, parse("#0b0b0b"));
+        assert_eq!(atoms.bg_raised, parse("#151515"));
         assert_eq!(atoms.accent, parse("#3dd6f5"), "soft cyan accent");
         assert_eq!(
             atoms.selection,
-            parse("#2c333e"),
-            "graphite selection, not dark cyan"
+            parse("#292929"),
+            "grey selection, not dark cyan"
         );
-        // Not the old Primer canvas or macOS system greys
+        // Not the retired slate, the old Primer canvas or macOS system greys
+        assert_ne!(atoms.bg, parse("#0c0e12"));
         assert_ne!(atoms.bg, parse("#0d1117"));
         assert_ne!(atoms.bg, parse("#1c1c1e"));
     }
@@ -1021,11 +938,11 @@ mod tests {
     #[test]
     fn switcher_defaults_are_cmd_tab_hud() {
         let s = ShellStyle::default();
-        assert_eq!(color_to_hex(s.switcher_bg), "#151922e6");
+        assert_eq!(color_to_hex(s.switcher_bg), "#151515e6");
         assert_eq!(color_to_hex(s.switcher_border), "#ffffff1a");
         // Soft light plate under icon — not cyan, not selection-atom teal
         assert_eq!(color_to_hex(s.switcher_icon_bg), "#ffffff2e");
-        assert_eq!(color_to_hex(s.switcher_icon_fg_sel), "#e9ecf2");
+        assert_eq!(color_to_hex(s.switcher_icon_fg_sel), "#ececec");
         assert_eq!(s.switcher_pad, 14.0);
         assert_eq!(s.switcher_tile_pad, 8.0);
     }
@@ -1048,18 +965,6 @@ mod tests {
             components: Default::default(),
         };
         assert_eq!(shell_style_from_bus_theme(&empty), ShellStyle::default());
-    }
-
-    #[test]
-    fn shell_style_bus_roundtrip() {
-        let mut style = ShellStyle::default();
-        // parse() quantizes to u8 channels, so equality after the string
-        // round-trip is exact. Don't use raw f32 alphas here (0.5 → 0x80
-        // → 128/255 ≠ 0.5).
-        style.switcher_bg = parse("#ffb80080");
-        style.switcher_pad = 48.0;
-        let bus = bus_theme_with_shell(BusTheme::default(), &style);
-        assert_eq!(shell_style_from_bus_theme(&bus), style);
     }
 
     #[test]

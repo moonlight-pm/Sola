@@ -21,11 +21,30 @@ pub const SOLA_DISPLAY_NAME_FILE: &str = "sola-display";
 /// Directory holding X11 Unix-domain display sockets (`X0`, `X1`, ...).
 const X_UNIX_DIR: &str = "/tmp/.X11-unix";
 
-/// Return `$XDG_RUNTIME_DIR` as a `PathBuf`, or `/tmp` if the variable
-/// is unset. `/tmp` is the historical XDG fallback and is always present.
+/// NixOS's GPU driver indirection (`hardware.graphics`).
+const NIXOS_OPENGL_DRIVER_DIR: &str = "/run/opengl-driver";
+
+/// Return `$XDG_RUNTIME_DIR` as a `PathBuf`. Unset (an SSH login on Oath
+/// sets none), the user's own `/run/user/<uid>` when it exists — where the
+/// session's sockets are (`sola-bus`, `sola-call`, `wayland-1`) — else
+/// `/tmp`, the historical XDG fallback.
 pub fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
+    use std::os::unix::fs::MetadataExt;
+    // `/proc/self` is owned by the process's own uid; no libc needed.
+    let uid = std::fs::metadata("/proc/self").ok().map(|m| m.uid());
+    runtime_dir_from(std::env::var_os("XDG_RUNTIME_DIR"), uid, |p| p.is_dir())
+}
+
+fn runtime_dir_from(
+    xdg: Option<std::ffi::OsString>,
+    uid: Option<u32>,
+    is_dir: impl Fn(&Path) -> bool,
+) -> PathBuf {
+    if let Some(dir) = xdg.filter(|d| !d.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    uid.map(|uid| PathBuf::from(format!("/run/user/{uid}")))
+        .filter(|p| is_dir(p))
         .unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
@@ -112,19 +131,24 @@ pub fn find_live_wayland_socket(dir: &Path) -> Option<String> {
     None
 }
 
-/// Resolve which wayland socket to connect to, prioritising the name
-/// sola-river published over the inherited `$WAYLAND_DISPLAY` env (the
-/// env may be stale from a prior session). Polls
-/// `$XDG_RUNTIME_DIR/sola-wayland` for up to `timeout_ms`, then falls
-/// back to `$WAYLAND_DISPLAY`, then to `"wayland-0"`.
+/// Resolve which wayland socket to connect to.
+///
+/// Prefers the name Sola's River supervisor published
+/// (`$XDG_RUNTIME_DIR/sola-wayland`). Where something else runs the
+/// compositor (Oath's PID 1), that file never appears: poll for a live
+/// `wayland-*` socket instead. Then `$WAYLAND_DISPLAY`, then `"wayland-0"`.
 ///
 /// Pure: no env-var mutation, no side effects beyond filesystem reads.
 /// Use [`activate_wayland_session`] when you also want the env set.
 pub fn resolve_wayland_display(timeout_ms: u64) -> String {
     let start = std::time::Instant::now();
     let interval = std::time::Duration::from_millis(500);
+    let dir = runtime_dir();
     loop {
         if let Some(name) = wayland_socket() {
+            return name;
+        }
+        if let Some(name) = find_live_wayland_socket(&dir) {
             return name;
         }
         if (start.elapsed().as_millis() as u64) >= timeout_ms {
@@ -137,7 +161,7 @@ pub fn resolve_wayland_display(timeout_ms: u64) -> String {
             return v;
         }
     }
-    "wayland-0".to_string()
+    find_live_wayland_socket(&dir).unwrap_or_else(|| "wayland-0".to_string())
 }
 
 /// Resolve the sola-river wayland socket (per [`resolve_wayland_display`])
@@ -201,21 +225,6 @@ pub fn on_oath() -> bool {
     Path::new("/oath/INDEX.md").is_file()
 }
 
-/// Directory of Sola ELFs: `/bin` on Oath (symlink farm), `/opt/sola/bin`
-/// on NixOS.
-pub fn bin_dir() -> PathBuf {
-    if on_oath() {
-        PathBuf::from("/bin")
-    } else {
-        PathBuf::from("/opt/sola/bin")
-    }
-}
-
-/// `bin_dir()` joined with a binary name (`sola-session`, …).
-pub fn bin_path(name: &str) -> PathBuf {
-    bin_dir().join(name)
-}
-
 /// Point NixOS-specific GPU dispatch env at `/run/opengl-driver/` so
 /// any wgpu/EGL/VAAPI/Vulkan client launched from a TTY (where the
 /// desktop session never ran to set these) can actually find vendor
@@ -240,22 +249,28 @@ pub fn bin_path(name: &str) -> PathBuf {
 /// dev box is NVIDIA-only. Cross-vendor support waits until we have
 /// a Mesa-on-NixOS test rig.
 ///
+/// The driver paths are set only when `/run/opengl-driver` exists, so
+/// a system without NixOS's indirection (Oath, which loads Mesa from
+/// `/lib`) keeps its loaders' defaults. `GSETTINGS_BACKEND` is set
+/// everywhere.
+///
 /// Call once, single-threaded, before any GPU library initialises —
 /// in practice that's right after `activate_wayland_session` in each
 /// kit's `startup()`.
 pub fn activate_gpu_env() {
+    let nixos_drivers = Path::new(NIXOS_OPENGL_DRIVER_DIR).is_dir();
     // SAFETY: documented as single-threaded pre-init.
     unsafe {
-        if std::env::var_os("__EGL_VENDOR_LIBRARY_DIRS").is_none() {
+        if nixos_drivers && std::env::var_os("__EGL_VENDOR_LIBRARY_DIRS").is_none() {
             std::env::set_var(
                 "__EGL_VENDOR_LIBRARY_DIRS",
                 "/run/opengl-driver/share/glvnd/egl_vendor.d",
             );
         }
-        if std::env::var_os("LIBVA_DRIVERS_PATH").is_none() {
+        if nixos_drivers && std::env::var_os("LIBVA_DRIVERS_PATH").is_none() {
             std::env::set_var("LIBVA_DRIVERS_PATH", "/run/opengl-driver/lib/dri");
         }
-        if std::env::var_os("VK_ICD_FILENAMES").is_none() {
+        if nixos_drivers && std::env::var_os("VK_ICD_FILENAMES").is_none() {
             std::env::set_var(
                 "VK_ICD_FILENAMES",
                 "/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.x86_64.json",
@@ -293,25 +308,45 @@ fn runtime_dir_has_systemd_private(dir: &str) -> bool {
     Path::new(dir).join("systemd/private").exists()
 }
 
+/// Wayland socket name to hand to a child. Prefers the published
+/// `sola-wayland` file; without a process manager (Oath), a live socket.
+pub fn child_wayland_display() -> Option<String> {
+    wayland_socket()
+        .or_else(|| find_live_wayland_socket(&runtime_dir()))
+        .or_else(|| {
+            std::env::var("WAYLAND_DISPLAY")
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_dir_without_xdg_is_the_users_run_dir() {
+        let have = |p: &Path| p == Path::new("/run/user/1");
+        assert_eq!(
+            runtime_dir_from(Some("/x".into()), Some(1), have),
+            PathBuf::from("/x")
+        );
+        assert_eq!(
+            runtime_dir_from(None, Some(1), have),
+            PathBuf::from("/run/user/1")
+        );
+        assert_eq!(
+            runtime_dir_from(Some("".into()), Some(1), have),
+            PathBuf::from("/run/user/1")
+        );
+        assert_eq!(runtime_dir_from(None, Some(2), have), PathBuf::from("/tmp"));
+        assert_eq!(runtime_dir_from(None, None, have), PathBuf::from("/tmp"));
+    }
 
     #[test]
     fn systemd_private_socket_is_under_runtime_dir() {
         assert!(!runtime_dir_has_systemd_private(
             "/tmp/sola-no-systemd-here"
         ));
-    }
-
-    #[test]
-    fn bin_dir_is_opt_sola_off_oath() {
-        // Host unit tests do not have `/oath/INDEX.md`.
-        assert!(!on_oath());
-        assert_eq!(bin_dir(), PathBuf::from("/opt/sola/bin"));
-        assert_eq!(
-            bin_path("sola-session"),
-            PathBuf::from("/opt/sola/bin/sola-session")
-        );
     }
 }

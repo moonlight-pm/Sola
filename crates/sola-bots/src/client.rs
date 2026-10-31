@@ -1,22 +1,17 @@
-//! Local HTTP client for sola-botsd (`127.0.0.1:HTTP_PORT`).
-//! Same REST + SSE surface as the iPhone app.
+//! The Bots app's client for sola-botsd: REST + SSE over its socket.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use crate::auth::{HTTP_PORT, HTTP_TOKEN};
+use crate::paths;
 
-const CONNECT: Duration = Duration::from_secs(2);
+const WRITE: Duration = Duration::from_secs(2);
 const REST_READ: Duration = Duration::from_secs(8);
 const SSE_READ: Duration = Duration::from_secs(45);
-
-fn addr() -> SocketAddr {
-    SocketAddr::from(([127, 0, 0, 1], HTTP_PORT))
-}
 
 pub fn get(path: &str) -> Result<Value, String> {
     exchange("GET", path, None)
@@ -157,20 +152,21 @@ impl<R: BufRead> Read for ChunkDecoder<R> {
     }
 }
 
-fn connect(read_timeout: Duration) -> Result<TcpStream, String> {
-    let stream = TcpStream::connect_timeout(&addr(), CONNECT)
-        .map_err(|e| format!("sola-botsd is not listening on 127.0.0.1:{HTTP_PORT} ({e})"))?;
+fn connect(read_timeout: Duration) -> Result<UnixStream, String> {
+    let path = paths::socket_path();
+    let stream = UnixStream::connect(&path)
+        .map_err(|e| format!("sola-botsd is not listening on {} ({e})", path.display()))?;
     stream
         .set_read_timeout(Some(read_timeout))
         .map_err(|e| e.to_string())?;
     stream
-        .set_write_timeout(Some(CONNECT))
+        .set_write_timeout(Some(WRITE))
         .map_err(|e| e.to_string())?;
     Ok(stream)
 }
 
 fn write_request(
-    stream: &mut TcpStream,
+    stream: &mut UnixStream,
     method: &str,
     path: &str,
     accept: &str,
@@ -179,8 +175,7 @@ fn write_request(
 ) -> Result<(), String> {
     let mut head = format!(
         "{method} {path} HTTP/1.1\r\n\
-         Host: 127.0.0.1:{HTTP_PORT}\r\n\
-         Authorization: Bearer {HTTP_TOKEN}\r\n\
+         Host: localhost\r\n\
          Accept: {accept}\r\n"
     );
     if close {
@@ -229,7 +224,7 @@ fn read_headers(reader: &mut impl BufRead) -> Result<(u16, HashMap<String, Strin
     Ok((code, headers))
 }
 
-fn read_entity(stream: &mut TcpStream) -> Result<(u16, Vec<u8>), String> {
+fn read_entity(stream: &mut UnixStream) -> Result<(u16, Vec<u8>), String> {
     let mut reader = BufReader::new(stream);
     let (code, headers) = read_headers(&mut reader)?;
     let mut body = Vec::new();

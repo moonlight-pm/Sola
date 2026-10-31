@@ -5,9 +5,9 @@
 //!
 //! - `solactl open` (and `xdg-open` / terminal `open` when MIME points here)
 //! - sola-shell handling of `Topic::OpenUrl`
-//! - terminal / mail / arcade clickable links
+//! - terminal / mail clickable links
 //!
-//! Spawns `env::bin_path("sola-browser")` (`/bin` on Oath, `/opt/sola/bin`
+//! Spawns `paths::bin_path("sola-browser")` (`/bin` on Oath, `/opt/sola/bin`
 //! on NixOS). Override the binary with `SOLA_BROWSER`. No other browser
 //! fallback.
 //!
@@ -22,7 +22,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 /// Env override for the sola-browser binary (defaults to
-/// [`crate::env::bin_path`] `"sola-browser"`).
+/// [`crate::paths::bin_path`] `"sola-browser"`).
 pub const SOLA_BROWSER_ENV: &str = "SOLA_BROWSER";
 
 /// Open `uri` in sola-browser. Spawns detached; returns after spawn (not
@@ -43,7 +43,7 @@ pub fn open(uri: &str) -> Result<(), String> {
         format!(
             "sola-browser not found at {} \
              (install it, or set {SOLA_BROWSER_ENV} to the binary path)",
-            crate::env::bin_path("sola-browser").display()
+            crate::paths::bin_path("sola-browser").display()
         )
     })?;
     Command::new(&bin)
@@ -135,7 +135,7 @@ pub fn sola_browser_bin() -> Option<PathBuf> {
             "{SOLA_BROWSER_ENV} set but file missing; falling back to default"
         );
     }
-    let path = crate::env::bin_path("sola-browser");
+    let path = crate::paths::bin_path("sola-browser");
     path.is_file().then_some(path)
 }
 
@@ -153,7 +153,7 @@ mod tests {
     fn sola_browser_default_when_present() {
         // SAFETY: test-only, single-threaded unit test process.
         unsafe { std::env::remove_var(SOLA_BROWSER_ENV) };
-        let path = crate::env::bin_path("sola-browser");
+        let path = crate::paths::bin_path("sola-browser");
         if !path.is_file() {
             return;
         }

@@ -26,6 +26,7 @@ corners is the ground: the background picture, or black without one
 | Super+Space | Open the launcher |
 | Super+K | Keyboard shortcuts overlay (press again to close) |
 | Super+H | Hide the focused app |
+| Super+L | Lock the screen (needs a password: [Security](security.md#locking)) |
 | Super+Q | Close the focused app: every window of it |
 | Super+Backtick | Show the next window in the bar (Super+Shift+Backtick: the previous) |
 | Super+1 … Super+9 | Show workspace 1 to 9 |
@@ -104,8 +105,10 @@ Click it again, press Escape, or click a window to close the panel.
 | Item | What it does |
 |------|--------------|
 | Launch Application… | Opens the launcher |
+| Settings… | Brings Settings forward, or starts it |
 | Keyboard Shortcuts | Opens the shortcuts overlay (Super+K) |
-| Exit Sola | Ends the desktop session (`Shutdown` on the bus) |
+| Lock Screen | Locks the screen (Super+L; [Security](security.md#locking)) |
+| Exit Sola | Ends the desktop session (`Shutdown` on the bus); on Oath the console then has the screen, and `oath desk` brings the desk back |
 | Restart Computer | Restarts the machine |
 | Shut Down | Powers the machine off |
 
@@ -189,7 +192,12 @@ a mute button and its devices. Click a device to make it the default
   (**Disconnect**), the paired ones not connected (**Connect**), and
   **Add device**, which searches and lists named devices nearby (**Pair**)
   until **Done**. A device that needs a PIN or a passkey asks in the
-  panel.
+  panel. The Shell reaches BlueZ on the system bus, at
+  `DBUS_SYSTEM_BUS_ADDRESS` when it is set, else
+  `/run/dbus/system_bus_socket`. On Oath that is `svc:dbus-system`, and
+  BlueZ is `svc:bluetooth`; the `desk` profile has both, and a machine
+  installed before them adds them with `oath new` (Oath's manual,
+  Services).
 
 ## Agent islands
 
@@ -321,7 +329,7 @@ the last one raised on top.
 
 A new window joins the zone in front: Full while Full is on screen (or
 when neither half has a window), otherwise the half that last had focus.
-Scope, Preview and gamescope (Arcade's games) float from the start, and
+Scope, Preview and gamescope float from the start, and
 so does an app whose window you floated, until you tile it again.
 
 - **Super+Keypad 0, 4 and 6** move the focused window to Full, Left or

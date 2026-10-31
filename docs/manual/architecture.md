@@ -85,12 +85,11 @@ Sola's icons and cursors are in `/oath/store/pkg/sola/share`.
 
 | Package | Programs |
 |---|---|
-| `pkg:sola` | `sola-bus`, `sola-call`, `sola-river`, `sola-shell`, `sola-session`, `sola-kvm`, `sola-botsd`, `solactl`, and Terminal, Projects, Paint, Calendar, Mail, Settings, Bots, and Oath |
+| `pkg:sola` | `sola-bus`, `sola-call`, `sola-river`, `sola-shell`, `sola-session`, `sola-lock`, `sola-kvm`, `sola-botsd`, `solactl`, and Terminal, Projects, Paint, Preview, Scope, Monitor, Calendar, Mail, Settings, Bots, and Oath |
 | `pkg:sola-browser` | Browser, which also hosts the web apps |
 | `pkg:sola-design` | Design |
 
-The launcher also lists Monitor, Kit, Preview, Arcade, Scope, and Spotify;
-none of these packages carries them. `SOLA_BIN_DIR`, `SOLA_SHARE_DIR`, and
+`SOLA_BIN_DIR`, `SOLA_SHARE_DIR`, and
 `SOLA_LOG_DIR` override the program, share, and log directories.
 
 ### Runtime directory
@@ -187,16 +186,18 @@ exits cleanly stays down; that is how **Exit Sola** ends the session.
 | `sola-call` | Calls in flight fail. Owners reconnect every 400 ms and advertise their methods again. |
 | `sola-river` | The compositor and every window keep running. The new `sola-river` binds the window-management protocol again and reports outputs and windows. |
 | `sola-shell` | The top row, the bar, and the overlays go until the new shell maps them; windows stay. The new shell takes the saved layout and pairs the open windows with their tabs again. |
-| `sola-session` | The new one launches saved applications that have no window. It does not track the applications the previous one started: their exits are not reported, `solactl session close` does not find them, and they leave the saved set at its next change. |
+| `sola-session` | The new one launches saved applications that have no window. It did not start the ones still running: their exits are not reported and `solactl session close` does not find them, but they stay in the saved set while they have windows. |
 | An application | `sola-session` publishes its exit (`UserAppExited`) and drops it from the saved set. Nothing restarts it. Its windows' places in the bar wait 30 seconds, so a copy started again within that time gets them back. |
-| The compositor | Every Wayland client loses its connection. `sola-river` and the shell exit with an error, PID 1 starts them again, and they wait for a live Wayland socket. |
+| The compositor | Every Wayland client loses its connection. `sola-river` and the shell exit with an error, PID 1 starts them again, and they wait for a live Wayland socket. The applications exit with it; `sola-session` keeps them in the saved set and starts them again once the new compositor has answered for 2 seconds. |
 
 ### Ending the session
 
 **Exit Sola** in the flower menu publishes `Shutdown`, and the shell exits
 cleanly. `sola-session` stops every application it launched (SIGTERM, then
 SIGKILL to any still running after 6 seconds) and exits; `sola-river`
-exits. None of the three is started again. `sola-bus`, `sola-call`, and
+exits. Once `sola-session` is gone, the shell tells Oath's login service
+that the desk ended on purpose, and PID 1 hands the screen to the console
+([Security](security.md#the-console)). `sola-bus`, `sola-call`, and
 `sola-kvm` do not act on `Shutdown` and keep running. **Restart Computer**
 and **Shut Down** are described in [Shell](sola-shell.md).
 

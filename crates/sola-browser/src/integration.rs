@@ -5,11 +5,10 @@
 //! `run()` via `sola_kit::app::BusSetup`; this module is the receive side.
 //! It reacts to:
 //!
-//! - `Topic::OpenUrl` — open a fresh tab (focused per `activate`);
-//!   a `chrome.sock` handoff re-emits this so the shell can raise the
-//!   window. Our own echo is ignored.
+//! - `Topic::OpenUrl` — open a fresh tab, a window of its own (in front
+//!   per `activate`). Our own echo is ignored.
 //! - `Topic::MenuAction` from published menus — keyboard shortcuts and
-//!   menubar clicks (Profiles switch / manage included),
+//!   menubar clicks,
 //! - `Topic::Chord` / `ChordReleased` — Super held (River steals Super_L
 //!   from the focused client; ⌘-click needs that bit),
 //! - `Topic::Theme` — restyle the chrome live (handled by the kit helper),
@@ -27,16 +26,14 @@ use sola_bus::topics::{
 };
 use sola_core::{KeyChord, KeyCode};
 
-use crate::app::{App, BLANK_URL, Msg, ProfileDialog};
+use crate::app::{App, BLANK_URL, Msg};
 use crate::engine::{EditCmd, Engine};
-use crate::profiles;
 
 // Menu action ids — shared between the published menu and the handler so the
 // two never drift.
 pub const ACTION_NEW_TAB: &str = "new-tab";
 pub const ACTION_CLOSE_TAB: &str = "close-tab";
 pub const ACTION_REOPEN_TAB: &str = "reopen-tab";
-pub const ACTION_NEW_GROUP: &str = "new-group";
 pub const ACTION_RELOAD: &str = "reload";
 pub const ACTION_HARD_RELOAD: &str = "hard-reload";
 pub const ACTION_FOCUS_URL: &str = "focus-url";
@@ -51,11 +48,8 @@ pub const ACTION_EDIT_SELECT_ALL: &str = "edit-select-all";
 pub const ACTION_FIND: &str = "find";
 pub const ACTION_FIND_NEXT: &str = "find-next";
 pub const ACTION_FIND_PREV: &str = "find-prev";
-pub const ACTION_PROFILE_NEW: &str = "profile-new";
-pub const ACTION_PROFILE_RENAME: &str = "profile-rename";
-pub const ACTION_PROFILE_DELETE: &str = "profile-delete";
-/// Prefix for per-profile switch actions: `profile-switch:<uuid>`.
-pub const ACTION_PROFILE_SWITCH_PREFIX: &str = "profile-switch:";
+/// Browser → Wrap This Page…: the page becomes a web app.
+pub const ACTION_WRAP_PAGE: &str = "wrap-page";
 /// Topics the browser subscribes to. Theme/MenuAction are the live inputs;
 /// CloseApp is the shell's "quit this app" signal (via `is_self_quit`).
 ///
@@ -71,16 +65,30 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::MenuAction,
     TopicKind::CloseApp,
     TopicKind::WindowFloating,
+    TopicKind::WindowChrome,
     TopicKind::OpenUrl,
     TopicKind::Chord,
     TopicKind::ChordReleased,
     TopicKind::NotificationActivate,
+    // Which window each page is, and whether it is on screen (Next).
+    TopicKind::TabWindow,
+    TopicKind::CloseTab,
+    // Which workspace shows and where each window is: a page runs its
+    // workspace's profile (Next slice 5).
+    TopicKind::Workspaces,
+    TopicKind::WindowWorkspace,
+    // The catalog: web apps this process hosts.
+    TopicKind::Application,
+    // The output's size: the shape Use as Desktop Background cuts to.
+    TopicKind::OutputGeometry,
+    // Light or dark for the pages (`Appearance.light`).
+    TopicKind::Appearance,
 ];
 
 /// The "Browser" app-menu published to the shell at startup. Each entry is
 /// `(action_id, label, chord)`; chords are meta-bound. The shell binds them
 /// globally and routes `Topic::MenuAction` back when one is pressed.
-pub const MENU_ITEMS: [(&str, &str, KeyChord); 11] = [
+pub const MENU_ITEMS: [(&str, &str, KeyChord); 10] = [
     (ACTION_NEW_TAB, "New Tab", KeyCode::T.meta()),
     (ACTION_CLOSE_TAB, "Close Tab", KeyCode::W.meta()),
     (
@@ -88,7 +96,6 @@ pub const MENU_ITEMS: [(&str, &str, KeyChord); 11] = [
         "Reopen Closed Tab",
         KeyCode::T.meta_shift(),
     ),
-    (ACTION_NEW_GROUP, "New Group", KeyCode::G.meta().alt()),
     (ACTION_RELOAD, "Reload", KeyCode::R.meta()),
     (ACTION_HARD_RELOAD, "Hard Reload", KeyCode::R.meta_shift()),
     (ACTION_FOCUS_URL, "Focus URL", KeyCode::L.meta()),
@@ -114,15 +121,27 @@ pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 7] = [
     (ACTION_FIND_PREV, "Find Previous", KeyCode::G.meta_shift()),
 ];
 
-/// Full menubar for the browser (Browser + Edit + Profiles). Rebuilt when
-/// the profile list changes so switcher checkmarks stay accurate.
+/// Full menubar for the browser (Browser + Edit). No Profiles menu: a
+/// workspace has its own profile, so where a page is says which it runs.
 pub fn browser_app_menu(app_id: &str) -> AppMenuPayload {
+    let mut browser = menu_from_items("Browser", &MENU_ITEMS);
+    // Before Quit: the page becomes its own app.
+    let quit = browser.items.pop();
+    browser.items.push(MenuItem::Divider);
+    browser.items.push(MenuItem::Action {
+        id: ACTION_WRAP_PAGE.into(),
+        label: "Wrap This Page…".into(),
+        shortcut: None,
+        disabled: false,
+        checked: false,
+    });
+    browser.items.push(MenuItem::Divider);
+    browser.items.extend(quit);
     AppMenuPayload {
         app_id: app_id.into(),
         menus: vec![
-            menu_from_items("Browser", &MENU_ITEMS),
+            browser,
             menu_from_items("Edit", &EDIT_MENU_ITEMS),
-            profiles_menu(),
         ],
     }
 }
@@ -143,72 +162,10 @@ fn menu_from_items(label: &str, items: &[(&str, &str, KeyChord)]) -> MenuDefinit
     }
 }
 
-/// Profiles menubar: list (checked **registry** active) + New / Rename / Delete.
-pub fn profiles_menu() -> MenuDefinition {
-    let active_id = profiles::registry_active_id();
-    let entries = profiles::list();
-    let only_one = entries.len() <= 1;
-
-    let mut items: Vec<MenuItem> = entries
-        .into_iter()
-        .map(|p| {
-            let is_active = p.id == active_id;
-            MenuItem::Action {
-                id: format!("{ACTION_PROFILE_SWITCH_PREFIX}{}", p.id),
-                label: p.name,
-                shortcut: None,
-                disabled: false,
-                checked: is_active,
-            }
-        })
-        .collect();
-
-    items.push(MenuItem::Divider);
-    items.push(MenuItem::Action {
-        id: ACTION_PROFILE_NEW.into(),
-        label: "New Profile…".into(),
-        shortcut: None,
-        disabled: false,
-        checked: false,
-    });
-    items.push(MenuItem::Action {
-        id: ACTION_PROFILE_RENAME.into(),
-        label: "Rename Profile…".into(),
-        shortcut: None,
-        disabled: false,
-        checked: false,
-    });
-    items.push(MenuItem::Action {
-        id: ACTION_PROFILE_DELETE.into(),
-        label: "Delete Profile…".into(),
-        shortcut: None,
-        disabled: only_one,
-        checked: false,
-    });
-
-    MenuDefinition {
-        label: "Profiles".into(),
-        items,
-    }
-}
-
-/// Re-publish Browser + Edit + Profiles menus (after create/rename/delete).
-pub fn republish_menus(app_id: &str) {
-    if let Ok(mut client) = sola_kit::app::bus().lock() {
-        if let Err(e) = client.emit(Topic::SetAppMenu(browser_app_menu(app_id))) {
-            tracing::warn!(error = %e, "republish browser menus failed");
-        }
-    }
-}
-
 /// Stable widget id for the chrome URL field, so the `Focus URL` action can
 /// move keyboard focus to it.
 pub fn url_input_id() -> iced::advanced::widget::Id {
     iced::advanced::widget::Id::new("browser-url-bar")
-}
-
-pub fn profile_name_input_id() -> iced::advanced::widget::Id {
-    iced::advanced::widget::Id::new("browser-profile-name")
 }
 
 pub fn find_input_id() -> iced::advanced::widget::Id {
@@ -229,8 +186,6 @@ pub enum BrowserIntent {
     NewBlankTab,
     CloseActiveTab,
     ReopenClosedTab,
-    /// Wrap the selected loose tab in a group and start renaming it (⌘⌥G).
-    NewGroup,
     Reload,
     HardReload,
     Back,
@@ -238,41 +193,21 @@ pub enum BrowserIntent {
     FocusUrl,
     /// Run an editing command, routed to the focused surface.
     Edit(EditCmd),
-    /// Switch to profile `id` (save session, set active, same window).
-    SwitchProfile {
-        id: String,
-    },
-    /// Open the new-profile name dialog.
-    NewProfile,
-    /// Open rename dialog for the active profile.
-    RenameProfile,
-    /// Open delete confirmation for the active profile.
-    DeleteProfile,
     /// Open DevTools (console) for the active tab.
     ShowDevTools,
     Find,
     FindNext,
     FindPrev,
+    /// The active page becomes a web app (the Wrap sheet).
+    WrapPage,
     Quit,
     None,
 }
 
-/// True when this `OpenUrl` is the chrome re-broadcasting a `chrome.sock`
-/// handoff so the shell will raise the window. The tab is already open.
+/// True when this `OpenUrl` came from this chrome (it opens its own pages;
+/// never open them twice).
 pub fn open_url_is_self_echo(source: &str, app_id: &str) -> bool {
     source == app_id
-}
-
-/// Re-broadcast a sock-handoff as `Topic::OpenUrl` so the shell raises
-/// the existing window (same path as mail / bus opens). The chrome
-/// ignores its own echo in [`handle_bus`].
-pub fn emit_open_url_for_raise(url: &str) {
-    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-        let _ = bus.emit(Topic::OpenUrl(OpenUrlRequest {
-            url: url.to_string(),
-            activate: true,
-        }));
-    }
 }
 
 /// Map an `OpenUrlRequest` to an intent: always a fresh tab, focused per
@@ -286,14 +221,10 @@ pub fn intent_for_open_url(req: &OpenUrlRequest) -> BrowserIntent {
 
 /// Map a menu `action_id` to an intent. Unknown ids are ignored.
 pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
-    if let Some(id) = action_id.strip_prefix(ACTION_PROFILE_SWITCH_PREFIX) {
-        return BrowserIntent::SwitchProfile { id: id.to_string() };
-    }
     match action_id {
         ACTION_NEW_TAB => BrowserIntent::NewBlankTab,
         ACTION_CLOSE_TAB => BrowserIntent::CloseActiveTab,
         ACTION_REOPEN_TAB => BrowserIntent::ReopenClosedTab,
-        ACTION_NEW_GROUP => BrowserIntent::NewGroup,
         ACTION_FIND => BrowserIntent::Find,
         ACTION_FIND_NEXT => BrowserIntent::FindNext,
         ACTION_FIND_PREV => BrowserIntent::FindPrev,
@@ -303,14 +234,12 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_BACK => BrowserIntent::Back,
         ACTION_FORWARD => BrowserIntent::Forward,
         ACTION_QUIT => BrowserIntent::Quit,
+        ACTION_WRAP_PAGE => BrowserIntent::WrapPage,
         ACTION_DEVTOOLS => BrowserIntent::ShowDevTools,
         ACTION_EDIT_CUT => BrowserIntent::Edit(EditCmd::Cut),
         ACTION_EDIT_COPY => BrowserIntent::Edit(EditCmd::Copy),
         ACTION_EDIT_PASTE => BrowserIntent::Edit(EditCmd::Paste),
         ACTION_EDIT_SELECT_ALL => BrowserIntent::Edit(EditCmd::SelectAll),
-        ACTION_PROFILE_NEW => BrowserIntent::NewProfile,
-        ACTION_PROFILE_RENAME => BrowserIntent::RenameProfile,
-        ACTION_PROFILE_DELETE => BrowserIntent::DeleteProfile,
         _ => BrowserIntent::None,
     }
 }
@@ -332,9 +261,12 @@ pub fn handle_bus<E: Engine>(
         app.persist_session();
         return iced::exit();
     }
+    // Web apps: the catalog, and what is addressed to an app hosted here.
+    if let Some(task) = app.on_web_app_bus(&message) {
+        return task;
+    }
     match Topic::parse(&message) {
         Some(Topic::OpenUrl(req)) => {
-            // Sock handoff re-emits OpenUrl so the shell can raise us.
             // Ignore our own echo or we would open the tab twice.
             if open_url_is_self_echo(&message.source, app_id) {
                 tracing::debug!(url = %req.url, "OpenUrl self-echo — tab already opened");
@@ -346,7 +278,7 @@ pub fn handle_bus<E: Engine>(
         Some(Topic::MenuAction(m)) if m.app_id == app_id => {
             tracing::info!(
                 action_id = %m.action_id,
-                profile = %crate::profiles::active().name,
+                profile = %crate::profiles::active().id,
                 "menu action received"
             );
             run_intent(app, intent_for_menu_action(&m.action_id))
@@ -400,7 +332,6 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             app.update(Msg::CloseTab(id))
         }
         BrowserIntent::ReopenClosedTab => app.update(Msg::ReopenClosedTab),
-        BrowserIntent::NewGroup => app.update(Msg::NewGroup),
         BrowserIntent::Find => app.update(Msg::FindOpen),
         BrowserIntent::FindNext => app.update(Msg::FindNext),
         BrowserIntent::FindPrev => app.update(Msg::FindPrev),
@@ -425,19 +356,6 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
                 url_bar_focused: app.url_bar_focused,
             })
         }
-        BrowserIntent::SwitchProfile { id } => app.switch_profile(&id),
-        BrowserIntent::NewProfile => {
-            app.open_profile_dialog(ProfileDialog::New);
-            focus_profile_name()
-        }
-        BrowserIntent::RenameProfile => {
-            app.open_profile_dialog(ProfileDialog::Rename);
-            focus_profile_name()
-        }
-        BrowserIntent::DeleteProfile => {
-            app.open_profile_dialog(ProfileDialog::DeleteConfirm);
-            Task::none()
-        }
         BrowserIntent::ShowDevTools => {
             let _ = app.cmd_tx.send(crate::engine::Cmd::ShowDevTools {
                 panel: "console".into(),
@@ -446,6 +364,7 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             });
             Task::none()
         }
+        BrowserIntent::WrapPage => app.open_wrap_sheet(),
         BrowserIntent::Quit => iced::exit(),
         BrowserIntent::None => Task::none(),
     }
@@ -462,12 +381,6 @@ pub(crate) fn focus_url_bar() -> Task<Msg> {
 /// webview shader after a click into the page.
 pub(crate) fn unfocus_chrome() -> Task<Msg> {
     iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::unfocus::<Msg>())
-}
-
-fn focus_profile_name() -> Task<Msg> {
-    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus::<Msg>(
-        profile_name_input_id(),
-    ))
 }
 
 /// Select all text in the chrome URL field.
@@ -518,10 +431,6 @@ mod tests {
             intent_for_menu_action(ACTION_REOPEN_TAB),
             BrowserIntent::ReopenClosedTab
         );
-        assert_eq!(
-            intent_for_menu_action(ACTION_NEW_GROUP),
-            BrowserIntent::NewGroup
-        );
         assert_eq!(intent_for_menu_action(ACTION_BACK), BrowserIntent::Back);
         assert_eq!(
             intent_for_menu_action(ACTION_FORWARD),
@@ -560,10 +469,10 @@ mod tests {
         let ids: Vec<&str> = MENU_ITEMS.iter().map(|(id, _, _)| *id).collect();
         assert!(ids.contains(&ACTION_REOPEN_TAB));
         assert_eq!(MENU_ITEMS[2].0, ACTION_REOPEN_TAB);
-        assert!(ids.contains(&ACTION_NEW_GROUP));
-        assert_eq!(MENU_ITEMS[3].0, ACTION_NEW_GROUP);
+        // Groups went with the tab strip (a window per page).
+        assert!(!ids.contains(&"new-group"));
         assert!(ids.contains(&ACTION_HARD_RELOAD));
-        assert_eq!(MENU_ITEMS[5].0, ACTION_HARD_RELOAD);
+        assert_eq!(MENU_ITEMS[4].0, ACTION_HARD_RELOAD);
     }
 
     #[test]
@@ -602,28 +511,6 @@ mod tests {
                 ACTION_FIND_NEXT,
                 ACTION_FIND_PREV,
             ]
-        );
-    }
-
-    #[test]
-    fn profile_actions_map() {
-        assert_eq!(
-            intent_for_menu_action(ACTION_PROFILE_NEW),
-            BrowserIntent::NewProfile
-        );
-        assert_eq!(
-            intent_for_menu_action(ACTION_PROFILE_RENAME),
-            BrowserIntent::RenameProfile
-        );
-        assert_eq!(
-            intent_for_menu_action(ACTION_PROFILE_DELETE),
-            BrowserIntent::DeleteProfile
-        );
-        assert_eq!(
-            intent_for_menu_action("profile-switch:abc-123"),
-            BrowserIntent::SwitchProfile {
-                id: "abc-123".into()
-            }
         );
     }
 

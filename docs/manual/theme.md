@@ -7,16 +7,15 @@ application applies it on its next frame. The theme styles the
 applications' own controls; web pages shown inside Browser, web apps,
 and Design are not restyled.
 
-Two places change the theme. **Settings → Appearance** sets the colours
+One place changes the theme: **Settings → Appearance** sets the colours
 from the background picture, from four colours of your own, or both
-([Appearance settings](#appearance-settings)). **Kit** edits every token,
-the fonts included, and keeps named presets
-([Editing the theme in Kit](#editing-the-theme-in-kit)).
+([Appearance settings](#appearance-settings)). The fonts, sizes and
+spacing stay at their defaults ([Changing the theme](#changing-the-theme)).
 
 ## sola-kit
 
-`sola-kit` is a Rust library that every Sola application links, plus the
-Kit application. It has no generic entry point: each application builds its
+`sola-kit` is a Rust library that every Sola application links. It has
+no generic entry point: each application builds its
 own `iced::application` or `iced::daemon` from the kit's parts.
 
 | Part | What it gives an application |
@@ -26,17 +25,9 @@ own `iced::application` or `iced::daemon` from the kit's parts.
 | `CallSetup`, `call_subscription` | Call-plane methods ([Call plane](call.md)) |
 | `theme` | The palette, the shell style, and conversion from the bus theme |
 | `fonts` | System font loading and the five font roles |
-| `components` | Shared widgets: buttons, badges, cards, fields and forms, select, number input, colour picker, file picker, popover, context menu, sidebar, status marks, split, scroll, toolbar, prose, JSON view, icons, and the window frame (titlebar, menus, rim) |
+| `components` | Shared widgets: buttons, badges, cards, fields and forms, select, colour picker, file picker, popover, context menu, sidebar, status marks, split, scroll, toolbar, prose, JSON view, icons, and the window frame (titlebar, menus, rim) |
 | `menu`, `float`, `app::window_settings` | The app's menus in its titlebars and the standard Window menu; moving and resizing floating windows; window settings that carry the application's Wayland `app_id` and turn off server decorations |
 | `tabs` | A window per document: tells the Shell which window is which tab, so it keeps its place in the bar, puts an activity mark on its row, and asks the Shell to show it |
-
-### The Kit application
-
-Kit (`sola-kit`, **Kit** in the launcher) is the toolkit's storybook. Each
-component has a page showing it in use, grouped as System (Overview, Theme,
-Shell), Layout, and Components. Kit is also a theme editor
-([Editing the theme in Kit](#editing-the-theme-in-kit)). It remembers the
-last page in `~/.config/sola/kit/storybook-page`.
 
 ## The theme on the bus
 
@@ -67,15 +58,15 @@ palette:
       - accent
 ```
 
-The bus reads the file only when it starts, so change the theme with
-Settings or Kit, not in the file. Kit's presets are separate records
-(`CustomTheme`), one file each in `~/.config/sola/theme/presets/`.
+The bus reads the file only when it starts, so an edit in the file shows
+only after `sola-bus` restarts. Settings → Appearance changes the colors
+through the shell instead.
 
 ## Palette tokens
 
 Iced widgets take their colours from palette slots. The kit fills those
 slots from ten of the tokens below and keeps the last two, `selection` and
-`highlight`, beside them. Kit components and application styles read
+`highlight`, beside them. The kit's components and application styles read
 these; a colour an application writes into its code does not follow the
 theme.
 
@@ -94,8 +85,7 @@ theme.
 | `selection` | `#292929` | None; read with `sola_kit::theme::selection()` | Selected rows and text selection |
 | `highlight` | `#353535` | None; read with `sola_kit::theme::highlight()` | A sidebar column's active row: the bar's focused window, Settings' page |
 
-`text-tertiary` has two defaults. A fresh desk, and Kit's Default preset,
-write `#949494`; the palette's seed value, which the Shell uses whenever it
+`text-tertiary` has two defaults. A fresh desk writes `#949494`; the palette's seed value, which the Shell uses whenever it
 manages the colours (from the picture, or your own), is `#737373`.
 
 Themes saved by earlier versions of Sola use a blue-tinted slate base
@@ -160,7 +150,7 @@ The shell's chrome has its own tokens in the same palette, all in the group
 | `shell-launcher-width` | `560px` | Launcher width |
 | `shell-launcher-pad` | `8px` | Row padding in the launcher and the shortcuts overlay |
 
-Eight more are editable in Kit and saved with its themes, but nothing
+Eight more are in the theme, but nothing edits them and nothing
 draws with them:
 `shell-menubar-bg` (`#050505`; the top row is transparent), and the
 switcher's `shell-switcher-bg` (`#151515e6`), `shell-switcher-border`,
@@ -201,7 +191,7 @@ other programs come from `highlight` and `bg-primary`
 | A palette token, or a colour not in `#rrggbb` or `#rrggbbaa` form | That token's default |
 | A font token, or a family that is not installed | The role's fallback family |
 | A shell token, or a spacing value not in `<number>px` form | That token's default |
-| A `theme/current.yaml` that does not match the theme schema | The bus restores no theme, and the shell publishes none because the file exists; applications draw the compile-time defaults until a theme is published from Kit (by choosing or editing a preset); until then Settings → Appearance changes no colours |
+| A `theme/current.yaml` that does not match the theme schema | The bus restores no theme, and the shell publishes none because the file exists; applications draw the compile-time defaults until a theme is published (`solactl emit Theme`), or the file is removed and the shell starts again |
 
 ## Appearance settings
 
@@ -210,11 +200,11 @@ Settings' **Appearance** page holds, top to bottom:
 | Section | Settings |
 |---|---|
 | Light or dark | **Mode**: **Dark** (at first) or **Light**: what web pages are told you prefer ([Browser](sola-browser.md#light-or-dark)). Sola's own windows stay dark |
-| Background picture | The picture's file name and **Clear**, or "None — the black ground." A picture is set from Paint (File → Set as Background) or `solactl background` |
+| Background picture | The picture's file name and **Clear**, or "None — the black ground."; under it every picture set before, each with the look it was worn with ([Kept pictures](#kept-pictures)). A picture is set from Paint (File → Set as Background), Browser, or `solactl background` |
 | Colors | **Adapt colors to the background**, **Strength**, and a card for each look |
 | Your colors | **Window**, **Panels**, **Highlight**, **Accent** |
 | Desk | **Opacity** of the windows, the bar and the top row over the background: 50–100%, 90% at first |
-| Idle | **Fade the windows when idle**, **Start after**, **Fade over**, **Then dim the background**, **Dim after**, **Dim over** |
+| Idle | **Fade the windows when idle**, **Start after**, **Fade over**, **Then dim the background**, **Dim after**, **Dim over**, **Lock when the windows have faded** ([Security](security.md#locking)) |
 
 The settings travel as the persistent topic `Appearance`, saved in
 `~/.config/sola/state.yaml`. The Shell acts on the colours, rewriting
@@ -294,10 +284,10 @@ rewrites these tokens: `bg-primary`, `bg-secondary`, `bg-tertiary`,
 `bg-hover`, `selection`, `highlight`, `border`, `border-subtle`,
 `text-primary`, `text-secondary`, `text-tertiary`, `text-muted`,
 `accent`, `text-accent`, `accent-dim`, `shell-menubar-bg`,
-`shell-switcher-bg` and `shell-flower`. An edit to one of them from Kit is
-replaced at once; Kit's edits to the rest (status colours, fonts, the
-other shell tokens) stay. With adapting off and no look of yours in use,
-the Shell leaves the theme alone.
+`shell-switcher-bg` and `shell-flower`. A `Theme` published with other
+values for these (`solactl emit Theme`) is replaced at once; the rest
+(status colours, fonts, the other shell tokens) stay. With adapting off
+and no look of yours in use, the Shell leaves the theme alone.
 
 ### Rims and rows
 
@@ -308,42 +298,29 @@ the scheme's or your highlight's hue (`#3d3d3d` on the grey theme). An
 unfocused rim is opaque: the window's face 7% lighter in its hue. The
 compositor draws the same rims around windows of other programs.
 
-## Editing the theme in Kit
+### Kept pictures
 
-Kit edits every token the toolkit reads, the fonts, and the shell tokens.
-Settings does not edit the fonts.
+Every picture you set stays in `~/.config/sola/background/`, and
+**Settings → Appearance → Background picture** shows them all, newest
+first: the picture set has the accent ring, and its file name with
+**Clear** (the black ground) is above them. Click another to set it
+again. Hover one for **×**, which deletes Sola's copy and what it kept.
 
-Kit's header holds the theme menu, **New Theme**, and **Delete**. The
-presets are **Default**, the built-in values, which is read-only (edits are
-ignored and **Delete** is disabled while it is selected), and your own,
-each a `CustomTheme` record in `~/.config/sola/theme/presets/<name>.yaml`.
+Each picture keeps the look you wore with it: adapting on or off, the
+strength, the scheme, your colors and your looks
+(`Appearance.pictures`). When the picture changes, from Settings, Paint,
+Browser or `solactl background`, the Shell keeps the outgoing picture's
+look and puts the incoming one's back. A picture never set before keeps
+the look already in use. Light or dark, the desk's opacity and the idle
+settings are the same for every picture.
 
-1. Choose **New Theme**, type a name of lowercase letters joined by single
-   hyphens (such as `solar-flare`), and press **Save**. Kit copies the
-   active preset under that name, saves it, and selects it.
-2. On the **Theme** page, pick a family for each font role (from the
-   families fontconfig reported when Kit started) and click a swatch to edit
-   one of the twelve colours; **reset** under a changed swatch restores its
-   default. On the **Shell** page, edit the eight shell colours (the picker
-   has an alpha rail) and the four spacing values: switcher padding 0 to
-   64 px, tile padding 0 to 48 px, launcher width 320 to 1280 px, launcher
-   row padding 0 to 32 px.
-3. Each change is published at once as `Theme`, so every running
-   application restyles as you edit and the bus saves it to
-   `theme/current.yaml`. The header shows **Edited •**.
-4. **Save** writes the preset file. **Revert** returns the preset to its
-   last saved state and publishes that.
+## Changing the theme
 
-Choosing another preset publishes it and discards unsaved edits to the one
-you leave. **Delete**, then **Confirm?**, removes the preset's file and
-publishes Default. Kit publishes nothing when it opens. It does not store
-which preset is live: it selects the preset whose values equal the live
-theme, and if none matches (after quitting with unsaved edits, which stay
-live, or while the Shell manages the colours) it shows Default while every
-application keeps drawing the live theme.
-
-A theme Kit publishes is its preset's values over the seed palette: the
-tokens no application reads go back to their seed values.
+Settings → Appearance is where the theme changes: the colors from the
+background picture, a scheme, your own colors and looks
+([above](#colors-from-the-background-picture)). The fonts, the shell's
+spacing and the other tokens stay at their defaults. There is no theme
+editor and there are no named themes.
 
 ## Following the theme in a new application
 
@@ -376,10 +353,8 @@ wiring.
   application runs is not available to it until it restarts.
 - Iced's default font, used by widgets that set no font, is chosen when an
   application starts, before the theme arrives: the default UI family in
-  most applications, Inter in Kit and the shell, the default mono family in
+  most applications, Inter in the shell, the default mono family in
   Terminal and Projects. It does not follow `font-ui`. Text that a
   component draws with a role does follow the theme.
-- While the Shell manages the colours, Kit cannot change the colour tokens
-  it rewrites.
 - There is no command to change one token. `solactl emit Theme` can
   publish a whole theme as JSON.

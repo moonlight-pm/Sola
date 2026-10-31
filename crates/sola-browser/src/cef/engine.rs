@@ -205,6 +205,7 @@ pub struct CefEngine {
     background_tabs: crate::engine::BackgroundTabsHandle,
     notifications: NotificationsHandle,
     js_dialogs: crate::engine::JsDialogsHandle,
+    file_dialogs: crate::engine::FileDialogsHandle,
     http_auth: crate::engine::HttpAuthHandle,
     favicons: crate::engine::FaviconsHandle,
     find_results: crate::engine::FindResultsHandle,
@@ -232,9 +233,14 @@ impl Engine for CefEngine {
     /// utility / zygote worker, `cef::execute_process` handles the
     /// worker loop and returns its exit code; we propagate it. The
     /// browser process gets `None` and continues normally.
+    ///
+    /// The API version is the bindings' newest versioned one, as
+    /// cef-rs's own init asks for, not `CEF_API_VERSION` (999999, the
+    /// experimental API, which CEF's headers call "not back/forward
+    /// compatible with different CEF versions").
     fn dispatch_subprocess(app_id: &'static str) -> Option<ExitCode> {
         unsafe {
-            cef::sys::cef_api_hash(cef::sys::CEF_API_VERSION, 0);
+            cef::sys::cef_api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
         }
         let args = cef::args::Args::new();
         let main_args = args.as_main_args();
@@ -285,6 +291,7 @@ impl Engine for CefEngine {
             background_tabs: handles.background_tabs,
             notifications: handles.notifications,
             js_dialogs: handles.js_dialogs,
+            file_dialogs: handles.file_dialogs,
             http_auth: handles.http_auth,
             favicons: handles.favicons,
             find_results: handles.find_results,
@@ -351,6 +358,10 @@ impl Engine for CefEngine {
 
     fn js_dialogs_handle(&self) -> crate::engine::JsDialogsHandle {
         self.js_dialogs.clone()
+    }
+
+    fn file_dialogs_handle(&self) -> crate::engine::FileDialogsHandle {
+        self.file_dialogs.clone()
     }
 
     fn http_auth_handle(&self) -> crate::engine::HttpAuthHandle {
@@ -425,15 +436,18 @@ struct CefThreadState {
     devtools_jobs: Arc<Mutex<Vec<DevToolsOpenJob>>>,
     frames: FrameReceiver<CefFrame>,
     cmd_rx: RefCell<Option<Receiver<Cmd<CefEngine>>>>,
-    /// Live tabs. Ordering is presentation order in the tab strip
-    /// (iced chrome controls insert/remove positions).
+    /// Live tabs, in the chrome's page order (it controls insert/remove
+    /// positions).
     tabs: RefCell<Vec<CefTabState>>,
     /// Active tab id, also mirrored in `active_atomic` for the
     /// iced subscription's frame filter.
     active: std::cell::Cell<TabId>,
+    /// While a [`Cmd::Target`] runs: the tab it acts on instead of the
+    /// active one (a window per page addresses each page's commands).
+    target: Cell<Option<TabId>>,
     cursor: Arc<std::sync::atomic::AtomicU32>,
-    /// Snapshot of `tabs` (id/url/title) — shared with iced for
-    /// rendering the tab strip + URL bar.
+    /// Snapshot of `tabs` (id/url/title) — shared with iced for the
+    /// window titles and URL bar.
     tabs_snapshot: Arc<Mutex<Vec<TabInfo>>>,
     /// Shared mirror of `active` for the iced side.
     active_atomic: Arc<std::sync::atomic::AtomicU64>,
@@ -446,6 +460,9 @@ struct CefThreadState {
     /// Live profile request context (cookies/storage). Unused when CEF
     /// root_cache_path is the active profile (global context).
     request_context: RefCell<Option<cef::RequestContext>>,
+    /// Light or dark for pages (`Cmd::ColorScheme`): each page is told as
+    /// it is made. `None` until chrome says (Design never does).
+    light: Cell<Option<bool>>,
     /// Live profile id (for parking under the right key).
     live_profile_id: RefCell<String>,
     /// Parked profile workspaces — CEF browsers kept alive so switching
@@ -476,6 +493,9 @@ struct CefThreadState {
     /// In-flight `OnJSDialog` / `OnBeforeUnloadDialog` callbacks.
     pending_js_dialog: RefCell<std::collections::HashMap<u64, (cef::JsdialogCallback, i32)>>,
     next_js_dialog_id: Cell<u64>,
+    /// In-flight `OnFileDialog` callbacks (a page's file chooser).
+    pending_file_dialog: RefCell<std::collections::HashMap<u64, cef::FileDialogCallback>>,
+    next_file_dialog_id: Cell<u64>,
     /// In-flight HTTP auth callbacks (IO thread posts to UI).
     pending_http_auth:
         RefCell<std::collections::HashMap<u64, (cef::AuthCallback, crate::http_auth::Key)>>,
@@ -588,6 +608,17 @@ struct CefTabState {
     agent_obs: RefCell<Option<cef::Registration>>,
     /// sola-design artboard view. `None` for every browser / wrapper tab.
     board: Cell<Option<BoardView>>,
+    /// A window per page (Next): this page's own view size, from a
+    /// [`Cmd::Target`] `Resize`. `None` shares [`CefThreadState::size`].
+    own_size: Cell<Option<(u32, u32)>>,
+    /// A window per page: the page's window is on screen, so it paints
+    /// whether or not it is the active tab ([`Cmd::ShowPage`]).
+    shown: Cell<bool>,
+    /// A web app's page: the app's start URL ([`Cmd::AppSite`]).
+    app_site: RefCell<Option<String>>,
+    /// Bumped by each resize or show of the page's window: a pending
+    /// [`check_page_size`] for an older one stands down.
+    size_seq: Cell<u64>,
 }
 
 /// Keep a board page zoomed to its raster scale (zoom is per host in
@@ -706,11 +737,13 @@ pub(super) fn run_worker(
         cmd_rx: RefCell::new(Some(cmd_rx)),
         tabs: RefCell::new(Vec::new()),
         active: std::cell::Cell::new(TabId(u64::MAX)),
+        target: Cell::new(None),
         cursor,
         tabs_snapshot,
         active_atomic,
         next_id,
         snapshot_dirty: std::cell::Cell::new(false),
+        light: Cell::new(None),
         request_context: RefCell::new(None),
         live_profile_id: RefCell::new(String::new()),
         parked: RefCell::new(std::collections::HashMap::new()),
@@ -727,6 +760,8 @@ pub(super) fn run_worker(
         next_media_id: Cell::new(1),
         pending_js_dialog: RefCell::new(std::collections::HashMap::new()),
         next_js_dialog_id: Cell::new(1),
+        pending_file_dialog: RefCell::new(std::collections::HashMap::new()),
+        next_file_dialog_id: Cell::new(1),
         pending_http_auth: RefCell::new(std::collections::HashMap::new()),
         next_http_auth_id: Cell::new(1),
         http_auth_offered: RefCell::new(std::collections::HashSet::new()),
@@ -886,13 +921,10 @@ cef::wrap_app! {
                 let origin_val = CefString::from("*");
                 cmd.append_switch_with_value(Some(&origin_key), Some(&origin_val));
 
-                // Chromium default autoplay needs a user gesture (or mute).
-                // Steam store trailers are clear DASH and call play() with
-                // audio on load; the WebKit host had
-                // media_playback_requires_user_gesture=false. Match that.
-                let autoplay_key = CefString::from("autoplay-policy");
-                let autoplay_val = CefString::from("no-user-gesture-required");
-                cmd.append_switch_with_value(Some(&autoplay_key), Some(&autoplay_val));
+                // Chromium's own autoplay policy: sound waits for the page's
+                // first click; muted videos play only while in view. With
+                // no-user-gesture-required, muted loops (Steam's description
+                // animations) all play at once, in view or not.
 
                 // Sliced/parallel downloads fail or stall on large files
                 // when the server mishandles range requests (FILE_TOO_SHORT
@@ -1107,9 +1139,9 @@ cef::wrap_render_handler! {
             let Some(tab) = tab_state_by_id(&state, tab_id) else {
                 return;
             };
-            // sola-design artboards paint side by side; everything else
-            // paints only while it is the active tab.
-            if state.active.get() != tab_id && tab.board.get().is_none() {
+            // sola-design artboards and shown page windows paint side by
+            // side; everything else paints only while it is the active tab.
+            if !paints(&state, &tab) {
                 return;
             }
             if is_popup {
@@ -1177,7 +1209,7 @@ cef::wrap_render_handler! {
 
         fn on_ime_composition_range_changed(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             _selected_range: Option<&cef::Range>,
             character_bounds: Option<&[cef::Rect]>,
         ) {
@@ -1186,19 +1218,23 @@ cef::wrap_render_handler! {
                 return;
             };
             let state = cef_state();
+            let tab_id = browser
+                .and_then(|b| tab_id_by_browser_id(&state, b.identifier()))
+                .map_or(0, |t| t.0);
             if let Some(tx) = &state.ipc_events {
                 let _ = tx.send(crate::cef::ipc::FromEngine::ImeCaret {
                     x: bounds.x,
                     y: bounds.y,
                     w: bounds.width.max(1),
                     h: bounds.height.max(1),
+                    tab_id,
                 });
             }
         }
 
         fn on_virtual_keyboard_requested(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             input_mode: cef::TextInputMode,
         ) {
             // Desktop IME is enabled whenever the page owns keys (chrome
@@ -1206,12 +1242,16 @@ cef::wrap_render_handler! {
             // Chromium says there is no text field.
             if *input_mode.as_ref() == cef::sys::cef_text_input_mode_t::CEF_TEXT_INPUT_MODE_NONE {
                 let state = cef_state();
+                let tab_id = browser
+                    .and_then(|b| tab_id_by_browser_id(&state, b.identifier()))
+                    .map_or(0, |t| t.0);
                 if let Some(tx) = &state.ipc_events {
                     let _ = tx.send(crate::cef::ipc::FromEngine::ImeCaret {
                         x: 0,
                         y: 0,
                         w: 0,
                         h: 0,
+                        tab_id,
                     });
                 }
             }
@@ -1460,6 +1500,7 @@ fn make_osr_client() -> cef::Client {
     let context_menu_handler = BrowserContextMenuHandler::new();
     let permission_handler = BrowserPermissionHandler::new();
     let jsdialog_handler = BrowserJsdialogHandler::new();
+    let dialog_handler = BrowserDialogHandler::new();
     let find_handler = BrowserFindHandler::new();
     BrowserClient::new(
         render_handler,
@@ -1471,6 +1512,7 @@ fn make_osr_client() -> cef::Client {
         context_menu_handler,
         permission_handler,
         jsdialog_handler,
+        dialog_handler,
         find_handler,
     )
 }
@@ -2224,11 +2266,11 @@ cef::wrap_request_handler! {
     impl RequestHandler {
         fn on_before_browse(
             &self,
-            _browser: Option<&mut cef::Browser>,
-            _frame: Option<&mut cef::Frame>,
+            browser: Option<&mut cef::Browser>,
+            frame: Option<&mut cef::Frame>,
             request: Option<&mut cef::Request>,
-            _user_gesture: ::std::os::raw::c_int,
-            _is_redirect: ::std::os::raw::c_int,
+            user_gesture: ::std::os::raw::c_int,
+            is_redirect: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
             let Some(req) = request else { return 0 };
             use cef::ImplRequest;
@@ -2238,6 +2280,18 @@ cef::wrap_request_handler! {
                 #[cfg(feature = "bitwarden")]
                 handle_webauthn_payload(&payload);
                 return 1;
+            }
+            // A web app's window: a link the user follows to another site
+            // opens as a browser page. Redirects stay in the window.
+            let main = frame.is_some_and(|f| f.is_main() != 0);
+            if main && user_gesture != 0 && is_redirect == 0 {
+                if let Some(b) = browser {
+                    if leaves_app_site(b.identifier(), &url) {
+                        tracing::info!(%url, "web app link opens as a browser page");
+                        request_chrome_tab(&cef_state(), url, true);
+                        return 1;
+                    }
+                }
             }
             0
         }
@@ -2299,13 +2353,13 @@ cef::wrap_context_menu_handler! {
             _browser: Option<&mut cef::Browser>,
             _frame: Option<&mut cef::Frame>,
             _params: Option<&mut cef::ContextMenuParams>,
-            model: Option<&mut cef::MenuModel>,
+            _model: Option<&mut cef::MenuModel>,
         ) {
-            // Empty model + run_context_menu=1: no native popup (OSR would
-            // otherwise paint a thin empty strip).
-            if let Some(model) = model {
-                let _ = model.clear();
-            }
+            // Leave CEF's model alone: an empty one means no menu at all,
+            // and `run_context_menu` never comes (the page menu never
+            // showed). That returns 1 and cancels, so CEF draws nothing of
+            // its own; the chrome draws the menu.
+            tracing::debug!("page context menu: before");
         }
 
         fn run_context_menu(
@@ -2331,6 +2385,7 @@ cef::wrap_context_menu_handler! {
             let Some(params) = params else {
                 return 1;
             };
+            tracing::debug!("page context menu: run");
             let nonempty = |s: cef::CefStringUserfree| {
                 let t = cef_string_userfree_display(&s);
                 if t.is_empty() { None } else { Some(t) }
@@ -2344,10 +2399,13 @@ cef::wrap_context_menu_handler! {
                 can_go_forward: false,
                 x: params.xcoord(),
                 y: params.ycoord(),
+                tab_id: 0,
+                image: params.media_type() == cef::ContextMenuMediaType::IMAGE,
             };
             if let Some(b) = browser {
                 ctx.can_go_back = b.can_go_back() != 0;
                 ctx.can_go_forward = b.can_go_forward() != 0;
+                ctx.tab_id = tab_id_by_browser_id(&cef_state(), b.identifier()).map_or(0, |t| t.0);
             }
             if let Some(tx) = &cef_state().ipc_events {
                 let _ = tx.send(crate::cef::ipc::FromEngine::PageContext(ctx));
@@ -2535,6 +2593,26 @@ fn apply_media_content_settings(origin: &str, granted: bool) {
     }
 }
 
+/// Light or dark for a page's `prefers-color-scheme`. CEF's own
+/// `set_chrome_color_scheme` does not reach windowless pages, so the page's
+/// DevTools session emulates the media feature; it holds across navigations.
+fn emulate_color_scheme(host: &cef::BrowserHost, light: bool) {
+    let (Some(mut params), Some(mut features), Some(mut feature)) = (
+        cef::dictionary_value_create(),
+        cef::list_value_create(),
+        cef::dictionary_value_create(),
+    ) else {
+        return;
+    };
+    let s = cef::CefString::from;
+    let value = if light { "light" } else { "dark" };
+    feature.set_string(Some(&s("name")), Some(&s("prefers-color-scheme")));
+    feature.set_string(Some(&s("value")), Some(&s(value)));
+    features.set_dictionary(0, Some(&mut feature));
+    params.set_list(Some(&s("features")), Some(&mut features));
+    crate::cef::agent::cdp(host, "Emulation.setEmulatedMedia", Some(&mut params));
+}
+
 fn apply_stored_media_content_settings() {
     let Some(profile) = crate::profiles::active_if_bound() else {
         return;
@@ -2688,6 +2766,75 @@ cef::wrap_jsdialog_handler! {
     }
 }
 
+cef::wrap_dialog_handler! {
+    pub struct BrowserDialogHandler {}
+
+    impl DialogHandler {
+        /// A page's file chooser: the chrome shows the kit's panel and
+        /// answers (`Cmd::FileDialog`). Handled (1) so CEF opens nothing.
+        fn on_file_dialog(
+            &self,
+            browser: Option<&mut cef::Browser>,
+            mode: cef::FileDialogMode,
+            title: Option<&cef::CefString>,
+            default_file_path: Option<&cef::CefString>,
+            accept_filters: Option<&mut cef::CefStringList>,
+            accept_extensions: Option<&mut cef::CefStringList>,
+            _accept_descriptions: Option<&mut cef::CefStringList>,
+            callback: Option<&mut cef::FileDialogCallback>,
+        ) -> ::std::os::raw::c_int {
+            let Some(callback) = callback else {
+                return 0;
+            };
+            let state = cef_state();
+            if !state.is_front.get() {
+                callback.cancel();
+                return 1;
+            }
+            let raw = *mode.as_ref();
+            let mode = if raw == cef::sys::cef_file_dialog_mode_t::FILE_DIALOG_OPEN_MULTIPLE {
+                crate::file_dialog::Mode::OpenMultiple
+            } else if raw == cef::sys::cef_file_dialog_mode_t::FILE_DIALOG_OPEN_FOLDER {
+                crate::file_dialog::Mode::OpenFolder
+            } else if raw == cef::sys::cef_file_dialog_mode_t::FILE_DIALOG_SAVE {
+                crate::file_dialog::Mode::Save
+            } else {
+                crate::file_dialog::Mode::Open
+            };
+            // `accept`: the page's filters, and any extensions CEF resolved
+            // for its MIME types.
+            let mut accept: Vec<String> = Vec::new();
+            for list in [accept_filters, accept_extensions].into_iter().flatten() {
+                let items: Vec<String> = list.clone().into_iter().collect();
+                for item in items {
+                    if !accept.contains(&item) {
+                        accept.push(item);
+                    }
+                }
+            }
+            let id = state.next_file_dialog_id.get();
+            state.next_file_dialog_id.set(id.saturating_add(1));
+            state
+                .pending_file_dialog
+                .borrow_mut()
+                .insert(id, callback.clone());
+            let ipc = crate::file_dialog::Ipc {
+                id,
+                tab_id: notify_tab_id(browser.as_ref().map(|b| &**b)),
+                mode,
+                title: title.map(|s| s.to_string()).unwrap_or_default(),
+                default_path: default_file_path.map(|s| s.to_string()).unwrap_or_default(),
+                accept,
+            };
+            tracing::info!(id, ?ipc.mode, accept = ?ipc.accept, "file dialog");
+            if let Some(tx) = &state.ipc_events {
+                let _ = tx.send(crate::cef::ipc::FromEngine::FileDialog(ipc));
+            }
+            1
+        }
+    }
+}
+
 fn js_dialog_kind(dialog_type: cef::JsdialogType) -> crate::js_dialog::Kind {
     let raw = *dialog_type.as_ref();
     if raw == cef::sys::cef_jsdialog_type_t::JSDIALOGTYPE_PROMPT {
@@ -2767,7 +2914,7 @@ cef::wrap_find_handler! {
     impl FindHandler {
         fn on_find_result(
             &self,
-            _browser: Option<&mut cef::Browser>,
+            browser: Option<&mut cef::Browser>,
             _identifier: ::std::os::raw::c_int,
             count: ::std::os::raw::c_int,
             _selection_rect: Option<&cef::Rect>,
@@ -2782,6 +2929,9 @@ cef::wrap_find_handler! {
                     crate::engine::FindResult {
                         count,
                         ordinal: active_match_ordinal,
+                        tab_id: browser
+                            .and_then(|b| tab_id_by_browser_id(&cef_state(), b.identifier()))
+                            .map_or(0, |t| t.0),
                     },
                 ));
             }
@@ -2948,6 +3098,7 @@ cef::wrap_client! {
         pub context_menu_handler: cef::ContextMenuHandler,
         pub permission_handler: cef::PermissionHandler,
         pub jsdialog_handler: cef::JsdialogHandler,
+        pub dialog_handler: cef::DialogHandler,
         pub find_handler: cef::FindHandler,
     }
 
@@ -2986,6 +3137,10 @@ cef::wrap_client! {
 
         fn jsdialog_handler(&self) -> Option<cef::JsdialogHandler> {
             Some(self.jsdialog_handler.clone())
+        }
+
+        fn dialog_handler(&self) -> Option<cef::DialogHandler> {
+            Some(self.dialog_handler.clone())
         }
 
         fn find_handler(&self) -> Option<cef::FindHandler> {
@@ -3266,7 +3421,8 @@ pub(super) fn reveal_agent_tab(browser_id: i32) {
     let Some(tab_id) = tab_id_by_browser_id(&state, browser_id) else {
         return;
     };
-    if tab_id == state.active.get() && state.is_front.get() {
+    let on_screen = tab_state_by_id(&state, tab_id).is_some_and(|t| t.shown.get());
+    if on_screen && state.is_front.get() {
         return;
     }
     if let Some(host) = host_for_browser_id(browser_id) {
@@ -3283,16 +3439,18 @@ pub(super) fn conceal_agent_tab() {
         return;
     }
     let state = cef_state();
-    let still_front =
-        tab_id_by_browser_id(&state, bid) == Some(state.active.get()) && state.is_front.get();
-    if still_front || is_board_browser(&state, bid) {
+    let shown_page = tab_id_by_browser_id(&state, bid)
+        .and_then(|id| tab_state_by_id(&state, id).map(|t| t.shown.get()))
+        .unwrap_or(false);
+    if (shown_page && state.is_front.get()) || is_board_browser(&state, bid) {
         return;
     }
     if let Some(host) = host_for_browser_id(bid) {
         set_host_hidden(&host, true);
     }
+    // The reveal took focus: give it back to the active tab, if on screen.
     if state.is_front.get() {
-        if let Some(tab) = active_tab(&state) {
+        if let Some(tab) = active_tab(&state).filter(|t| t.shown.get()) {
             if let Some(host) = tab.browser.host() {
                 set_host_hidden(&host, false);
             }
@@ -3376,6 +3534,32 @@ cef::wrap_task! {
 /// active tab here — no side-channel.
 fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
     match cmd {
+        Cmd::Target { tab, cmd } => {
+            let outer = state.target.replace(Some(tab));
+            let keep = process_cmd(state, *cmd);
+            state.target.set(outer);
+            return keep;
+        }
+        Cmd::ShowPage { id, shown } => show_page(state, id, shown),
+        Cmd::AppSite { id, start } => {
+            if let Some(tab) = tab_state_by_id(state, id) {
+                tab.app_site.replace(Some(start));
+            }
+        }
+        Cmd::ColorScheme { light } => {
+            state.light.set(Some(light));
+            for tab in state.tabs.borrow().iter() {
+                if let Some(host) = tab.browser.host() {
+                    emulate_color_scheme(&host, light);
+                }
+            }
+            tracing::info!(light, "color scheme");
+        }
+        Cmd::Resize { width, height, .. } if state.target.get().is_some() => {
+            if let Some(id) = state.target.get() {
+                resize_page(state, id, width, height);
+            }
+        }
         Cmd::Resize {
             width,
             height,
@@ -3528,6 +3712,24 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 continue_js_dialog(&cb, success, &input);
             } else {
                 tracing::warn!(id, success, "js dialog continue: no pending callback");
+            }
+        }
+        Cmd::FileDialog { id, paths } => {
+            let cb = state.pending_file_dialog.borrow_mut().remove(&id);
+            match (cb, paths) {
+                (Some(cb), Some(paths)) => {
+                    tracing::info!(id, files = paths.len(), "file dialog chosen");
+                    let mut list = cef::CefStringList::new();
+                    for p in &paths {
+                        list.append(p);
+                    }
+                    cb.cont(Some(&mut list));
+                }
+                (Some(cb), None) => {
+                    tracing::info!(id, "file dialog cancelled");
+                    cb.cancel();
+                }
+                (None, _) => tracing::warn!(id, "file dialog answer: no pending callback"),
             }
         }
         Cmd::HttpAuth {
@@ -3697,23 +3899,8 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
         Cmd::CloseDevTools => {
             close_devtools_session(state);
         }
-        Cmd::SwitchProfileWorkspace {
-            park_as_profile_id,
-            resume_profile_id,
-            cef_cache_path,
-            create_tabs,
-            active,
-        } => {
-            // Profile switch is exec_self (see App::switch_profile). This
-            // cmd is unused; keep the arm so the enum stays compilable.
-            let _ = (
-                park_as_profile_id,
-                resume_profile_id,
-                cef_cache_path,
-                create_tabs,
-                active,
-            );
-        }
+        // The router unwraps these; run the inner command if one arrives.
+        Cmd::InProfile { cmd, .. } => return process_cmd(state, *cmd),
         Cmd::DropParkedProfile { profile_id } => {
             drop_parked_profile(state, &profile_id);
         }
@@ -3759,8 +3946,155 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
 /// active id doesn't match any open tab — e.g. between
 /// SetActiveTab on the iced side and the corresponding cmd
 /// landing on the worker.
+/// The tab commands act on: a [`Cmd::Target`]'s tab while one runs, else
+/// the active tab.
 fn active_tab(state: &CefThreadState) -> Option<std::cell::Ref<'_, CefTabState>> {
-    tab_state_by_id(state, state.active.get())
+    tab_state_by_id(state, state.target.get().unwrap_or(state.active.get()))
+}
+
+/// A page's view size: its own (a window per page), else the shared one.
+fn page_size(state: &CefThreadState, tab: &CefTabState) -> (u32, u32) {
+    tab.own_size
+        .get()
+        .unwrap_or_else(|| *state.size.lock().unwrap())
+}
+
+/// Does this tab paint: active, a board, or a shown page window?
+fn paints(state: &CefThreadState, tab: &CefTabState) -> bool {
+    state.active.get() == tab.id || tab.board.get().is_some() || tab.shown.get()
+}
+
+/// A page window's size changed: the page takes its own size from now on.
+fn resize_page(state: &CefThreadState, id: TabId, width: u32, height: u32) {
+    let Some(tab) = tab_state_by_id(state, id) else {
+        return;
+    };
+    // The same size again: the window got a frame at another size (a
+    // stale paint), so repaint it whole at this one.
+    let again = tab.own_size.replace(Some((width, height))) == Some((width, height));
+    tracing::debug!(?id, width, height, again, "page window size");
+    if state.is_front.get() && paints(state, &tab) {
+        if let Some(host) = tab.browser.host() {
+            host.was_resized();
+            if again {
+                host.invalidate(cef::PaintElementType::VIEW);
+            }
+        }
+        watch_page_size(&tab);
+    }
+}
+
+/// How long a page window waits for a frame at its size before the page
+/// is nudged, and how many nudges it gets.
+const SIZE_CHECK_MS: i64 = 300;
+const SIZE_CHECK_TRIES: u32 = 3;
+
+/// Check, in a moment, that page `tab` painted at its window's size.
+fn watch_page_size(tab: &CefTabState) {
+    let seq = tab.size_seq.get() + 1;
+    tab.size_seq.set(seq);
+    schedule_size_check(tab.id, seq, 1);
+}
+
+fn schedule_size_check(id: TabId, seq: u64, attempt: u32) {
+    let mut task = PageSizeCheckTask::new(id.0, seq, attempt);
+    cef::post_delayed_task(
+        cef::ThreadId::from(cef::sys::cef_thread_id_t::TID_UI),
+        Some(&mut task),
+        SIZE_CHECK_MS,
+    );
+}
+
+cef::wrap_task! {
+    pub struct PageSizeCheckTask {
+        tab: u64,
+        seq: u64,
+        attempt: u32,
+    }
+
+    impl Task {
+        fn execute(&self) {
+            check_page_size(&cef_state(), TabId(self.tab), self.seq, self.attempt);
+        }
+    }
+}
+
+/// A page window resized (or shown) and still without a frame at its size.
+/// Resized several times in a row — a new window's default size, then its
+/// zone — CEF can be left with no frame at the last size, and a page that
+/// has stopped painting stays dark: `was_resized` and `invalidate` only
+/// re-capture the old picture. Hiding and showing the page has its
+/// renderer draw a new frame, at the size it has now.
+fn check_page_size(state: &CefThreadState, id: TabId, seq: u64, attempt: u32) {
+    let Some(tab) = tab_state_by_id(state, id) else {
+        return;
+    };
+    if tab.size_seq.get() != seq
+        || tab.board.get().is_some()
+        || !state.is_front.get()
+        || !paints(state, &tab)
+    {
+        return;
+    }
+    // A page that has not painted yet is still loading: its first frame
+    // comes at the size it has.
+    let want = page_size(state, &tab);
+    let Some(got) = tab.last_frame.borrow().as_ref().map(|f| (f.width, f.height)) else {
+        return;
+    };
+    if got.0.abs_diff(want.0) <= 1 && got.1.abs_diff(want.1) <= 1 {
+        return;
+    }
+    let Some(host) = tab.browser.host() else {
+        return;
+    };
+    tracing::info!(?id, ?got, ?want, attempt, "page has no frame at its window's size — nudging it");
+    host.was_hidden(1);
+    host.was_hidden(0);
+    host.was_resized();
+    host.invalidate(cef::PaintElementType::VIEW);
+    if attempt < SIZE_CHECK_TRIES {
+        schedule_size_check(id, seq, attempt + 1);
+    }
+}
+
+/// A page window went on or off screen. A shown page paints whether or not
+/// it is active; one off screen rests, the active tab too: hidden, CEF
+/// slows it to a frame a second and Chromium pauses its silent videos.
+fn show_page(state: &CefThreadState, id: TabId, shown: bool) {
+    let Some(tab) = tab_state_by_id(state, id) else {
+        return;
+    };
+    if tab.shown.replace(shown) == shown || tab.board.get().is_some() {
+        return;
+    }
+    if !state.is_front.get() {
+        return;
+    }
+    let visible = shown;
+    tracing::debug!(?id, shown, size = ?tab.own_size.get(), "page shown");
+    let Some(host) = tab.browser.host() else {
+        return;
+    };
+    set_host_hidden(&host, !visible);
+    if shown {
+        // Instant content when the last composite still fits.
+        let want = page_size(state, &tab);
+        let replayed = tab.last_frame.borrow().clone().is_some_and(|mut frame| {
+            let ok = frame.width.abs_diff(want.0) <= 1 && frame.height.abs_diff(want.1) <= 1;
+            if ok {
+                frame.dirty.clear();
+                frame.drag = false;
+                state.frames.push(TaggedFrame { tab_id: id, frame });
+            }
+            ok
+        });
+        if !replayed {
+            host.was_resized();
+            watch_page_size(&tab);
+        }
+        host.invalidate(cef::PaintElementType::VIEW);
+    }
 }
 
 pub(super) fn host_for_browser_id(browser_id: i32) -> Option<cef::BrowserHost> {
@@ -3989,7 +4323,18 @@ fn osr_view_size(state: &CefThreadState, browser: Option<&cef::Browser>) -> (u32
     if let Some(board) = board_view(state, browser) {
         return board.surface();
     }
+    if let Some(size) = browser.and_then(|b| own_view_size(state, b.identifier())) {
+        return size;
+    }
     *state.size.lock().unwrap()
+}
+
+/// A page window's own view size. `try_borrow`, as for [`board_view`].
+fn own_view_size(state: &CefThreadState, browser_id: i32) -> Option<(u32, u32)> {
+    let tabs = state.tabs.try_borrow().ok()?;
+    tabs.iter()
+        .find(|t| t.browser_id == browser_id)
+        .and_then(|t| t.own_size.get())
 }
 
 /// Board view for this browser, if it is a sola-design artboard. `try_borrow`
@@ -4076,6 +4421,10 @@ fn attach_devtools(state: &CefThreadState, browser: &cef::Browser) {
         popup: RefCell::new(OsrPopup::default()),
         agent_obs: RefCell::new(None),
         board: Cell::new(None),
+        own_size: Cell::new(None),
+        shown: Cell::new(false),
+        app_site: RefCell::new(None),
+        size_seq: Cell::new(0),
     };
     if let Some(host) = tab.browser.host() {
         let show = inspected == state.active.get() && state.is_front.get();
@@ -5012,8 +5361,8 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
             if let Some(host) = prev_tab.browser.host() {
                 // OSR multi-browser: hide inactive so CEF stops painting them
                 // and treats the next show as needing a full frame. Boards
-                // stay shown.
-                if prev_tab.board.get().is_none() {
+                // and shown page windows stay shown.
+                if prev_tab.board.get().is_none() && !prev_tab.shown.get() {
                     set_host_hidden(&host, true);
                 }
             }
@@ -5027,9 +5376,11 @@ fn activate_tab(state: &CefThreadState, id: TabId) {
 
     // Instant content: replay last composite only when it matches the
     // live widget. A 1280×800 park buffer stretched into a wide view
-    // is the half-width "slender" flash on tab switch.
-    if let Some(tab) = tab_state_by_id(state, id) {
-        let want = *state.size.lock().unwrap();
+    // is the half-width "slender" flash on tab switch. A page whose window
+    // is off screen stays at rest; `show_page` wakes it when it shows.
+    if let Some(tab) = tab_state_by_id(state, id).filter(|t| t.shown.get() || t.board.get().is_some())
+    {
+        let want = page_size(state, &tab);
         let replayed = if let Some(mut frame) = tab.last_frame.borrow().clone() {
             let ok = frame.width.abs_diff(want.0) <= 1 && frame.height.abs_diff(want.1) <= 1;
             if ok {
@@ -5295,6 +5646,21 @@ fn set_front(state: &CefThreadState, front: bool) {
     if state.tabs.borrow().iter().any(|t| t.id == id) {
         activate_tab(state, id);
     }
+    let shown: Vec<TabId> = state
+        .tabs
+        .borrow()
+        .iter()
+        .filter(|t| t.shown.get() && t.id != id)
+        .map(|t| t.id)
+        .collect();
+    for page in shown {
+        if let Some(tab) = tab_state_by_id(state, page) {
+            if let Some(host) = tab.browser.host() {
+                set_host_hidden(&host, false);
+                host.invalidate(cef::PaintElementType::VIEW);
+            }
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -5419,6 +5785,9 @@ fn push_tab(
         let show = (is_active || board.is_some()) && state.is_front.get();
         set_host_hidden(&host, !show);
         let obs = crate::cef::agent::attach(&mut host);
+        if let Some(light) = state.light.get() {
+            emulate_color_scheme(&host, light);
+        }
         if let Some(b) = board {
             apply_board_zoom(&host, &b);
             // Pin the layout to the board before the page lays out.
@@ -5444,6 +5813,10 @@ fn push_tab(
         popup: RefCell::new(OsrPopup::default()),
         agent_obs: RefCell::new(agent_obs),
         board: Cell::new(board),
+        own_size: Cell::new(None),
+        shown: Cell::new(false),
+        app_site: RefCell::new(None),
+        size_seq: Cell::new(0),
     });
     rebuild_snapshot(state);
     tracing::info!(?id, browser_id, url = %initial_url, active = is_active, "opened tab");
@@ -5482,7 +5855,7 @@ fn rebuild_snapshot(state: &CefThreadState) {
         .borrow()
         .iter()
         .map(|t| {
-            let (history, history_index) = if t.id == state.active.get() {
+            let (history, history_index) = if t.id == state.active.get() || t.shown.get() {
                 collect_history(&t.browser)
             } else {
                 (Vec::new(), 0)
@@ -5497,6 +5870,8 @@ fn rebuild_snapshot(state: &CefThreadState) {
                 load_progress: t.load_progress.get(),
                 history,
                 history_index,
+                // The router tags each page with its helper's profile.
+                profile: String::new(),
             }
         })
         .collect();
@@ -5544,6 +5919,19 @@ fn handle_link_hit(state: &CefThreadState, href: String) {
         state.cmd_click_opened.set(true);
         request_chrome_tab(state, href, false);
     }
+}
+
+/// Browser `browser_id` is a web app's page and `url` is on another site.
+fn leaves_app_site(browser_id: i32, url: &str) -> bool {
+    let state = cef_state();
+    let tabs = state.tabs.borrow();
+    let Some(tab) = tabs.iter().find(|t| t.browser_id == browser_id) else {
+        return false;
+    };
+    let start = tab.app_site.borrow();
+    start
+        .as_deref()
+        .is_some_and(|start| crate::popup::is_offsite_http(start, url))
 }
 
 fn request_chrome_tab(state: &CefThreadState, url: String, activate: bool) {
@@ -5831,7 +6219,7 @@ fn initialize_cef(app_id: &'static str) {
     let cache_root = cef_abs_path(&crate::profiles::active().cef_user_data_dir());
     tracing::info!(
         path = %cache_root,
-        profile = %crate::profiles::active().name,
+        profile = %crate::profiles::active().id,
         "CEF root_cache_path + cache_path (active profile)"
     );
 

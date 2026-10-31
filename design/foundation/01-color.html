@@ -2,1782 +2,226 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>SOLA / Foundation v1 / Graphite / 01 Color</title>
+<title>SOLA / Foundation / 01 Color</title>
 <link rel="stylesheet" href="../tokens.css">
-<link rel="stylesheet" href="components.css">
+<link rel="stylesheet" href="foundation.css">
+<script src="foundation.js"></script>
+<style>
+  /* Derived colors recomputed under the scheme (custom properties inherit
+   * their :root value otherwise). Board-local until foundation.css has it. */
+  .scheme-rose {
+    --chrome: color-mix(in srgb, var(--bg-secondary) 90%, var(--bg-primary));
+    --tb-fill: var(--bg-secondary);
+    --tb-fill-off: color-mix(in srgb, var(--bg-primary) 50%, var(--bg-secondary));
+    --pill: color-mix(in srgb, var(--text-primary) 14%, transparent);
+    --ink: var(--text-primary);
+    --ink-dim: color-mix(in srgb, var(--text-primary) 55%, transparent);
+    --ink-faint: color-mix(in srgb, var(--text-primary) 38%, transparent);
+    --ink-2: var(--text-secondary);
+    --ink-3: var(--text-tertiary);
+    --sheet: var(--bg-secondary);
+    --sheet-edge: color-mix(in srgb, white 10%, var(--bg-secondary));
+    --sheet-hot: color-mix(in srgb, var(--accent) 14%, transparent);
+    --tabbar-rim: color-mix(in srgb, white 12%, var(--bg-secondary));
+    --row-shown: color-mix(in srgb, white 5%, var(--bg-secondary));
+    --row-hover: color-mix(in srgb, white 7%, var(--bg-secondary));
+  }
+  .ladder { display: flex; align-items: flex-end; border-top: 1px solid var(--hairline); }
+  .step { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; padding: 14px 12px; border-right: 1px solid var(--hairline); }
+  .step:first-child { border-left: 1px solid var(--hairline); }
+  .tok { font: 400 12px/16px var(--f-mono); color: var(--ink); white-space: nowrap; }
+  .hex { font: 400 11px/14px var(--f-spec); color: var(--ink-2); }
+  .role { font: 400 11.5px/16px var(--f-chrome); color: var(--ink-2); }
+  .on-raised { background: var(--bg-secondary); border-radius: 10px; padding: 8px 22px; box-shadow: inset 0 0 0 1px var(--hairline); }
+  .trow { display: grid; grid-template-columns: 170px 1fr 110px 80px; align-items: baseline; gap: 18px; padding: 12px 0; border-bottom: 1px solid var(--hairline); }
+  .trow:last-child { border-bottom: 0; }
+  .trow .big { font: 400 17px/22px var(--f-chrome); }
+  .ratio { font: 400 12px/1 var(--f-spec); color: var(--ink-2); text-align: right; }
+  .sig { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .sig__solid { height: 64px; border-radius: 10px; display: flex; align-items: flex-end; padding: 10px 12px; font: 600 13px/1 var(--f-chrome); }
+  .sig__soft { margin-top: 8px; height: 34px; border-radius: 7px; display: flex; align-items: center; padding: 0 12px; font: 500 12.5px/1 var(--f-chrome); }
+  .chips { display: grid; grid-template-columns: repeat(var(--n, 4), 1fr); gap: 12px; }
+  .chip2 { display: flex; flex-direction: column; gap: 6px; }
+  .chip2 i { display: block; height: 44px; border-radius: 8px; box-shadow: inset 0 0 0 1px #ffffff14; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .col h4 { font: 600 15px/1.2 var(--f-chrome); margin: 0 0 4px; }
+  .col .note { margin-bottom: 14px; }
+  .rimdemo { position: relative; height: 150px; }
+  .ansi { display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px; }
+  .ansi > div { display: flex; flex-direction: column; gap: 5px; }
+  .ansi i { display: block; height: 36px; border-radius: 6px; box-shadow: inset 0 0 0 1px #ffffff14; }
+</style>
 </head>
-<body style="padding: 72px">
-<div
-  data-name="01 Color"
-  style="align-items: flex-start; background-color: var(--bg-primary); display: flex; flex-direction: column; flex-shrink: 0; gap: 36px; height: fit-content; width: 100%"
->
-  <div
-    data-name="Header"
-    style="align-items: flex-start; border-color: var(--hairline); border-style: solid; border-width: 1px 0px 0px 0px; display: flex; flex-direction: column; flex-shrink: 0; gap: 12px; height: 132.5px; margin: -0.5px 0px 0px 0px; padding: 24px 0px 0px 0px; width: 1296px"
-  >
-    <div
-      data-name="Title Row"
-      style="align-items: flex-end; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; width: fit-content"
-    >
-      <div
-        data-name="Number"
-        style="color: var(--accent); font-family: var(--font-mono); font-size: 13px; font-weight: 400; white-space: nowrap"
-      >
-        01
-      </div>
-      <div
-        data-name="Title"
-        style="color: var(--text-primary); font-family: var(--font-display); font-size: 30px; font-weight: 600; letter-spacing: -0.6px; line-height: 30px; white-space: nowrap"
-      >
-        Color
-      </div>
-    </div>
-    <div
-      data-name="Lead"
-      style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 14px; font-weight: 400; line-height: 22px; width: 760px"
-    >
-      Graphite is a ladder of cool blue-greys. Each step up is one level of depth. Cyan is the signal, three status hues report, and everything else is a tone of the same graphite. Token names are the bus palette keys, so a preset edits exactly these.
+<body class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num">01</span><div class="head__title">Color</div></div>
+    <div class="head__lead">A ladder of neutral greys, one accent, three status hues. Token names are the bus palette keys, so a theme edits exactly these. Every value on this board is read from <code>../tokens.css</code> as the page renders. A picture can tint the greys and move the accent; the status hues stay put.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">The ladder · each step up is one level of depth</div>
+    <div class="ladder" id="ladder"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Text on raised · contrast read live</div>
+    <div class="on-raised" id="text"></div>
+    <p class="note" style="margin-top:12px">The seed's tertiary is <span data-token="--text-tertiary"></span>, but the kit's muted text falls back to #949494 until a theme sets it, so a fresh desk shows the lighter grey. See 11.</p>
+  </div>
+
+  <div class="section">
+    <div class="label">Signal and status · solid, soft 14%, edge 28%</div>
+    <div class="sig" id="sig"></div>
+    <p class="note" style="margin-top:14px">Accent marks focus, the one primary action, live work and unread counts. Working is an accent ring, waiting a warning diamond, done a success check. Danger is for what cannot be undone.</p>
+  </div>
+
+  <div class="section">
+    <div class="label">The highlight and the rims</div>
+    <div class="two">
+      <div class="rimdemo" id="rims"></div>
+      <div class="facts" id="rimfacts"></div>
     </div>
   </div>
-  <div
-    data-name="The ladder"
-    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; width: 100%"
-  >
-    <div
-      data-name="Label"
-      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-    >
-      THE LADDER
+
+  <div class="section">
+    <div class="label">Shell tokens</div>
+    <div class="chips" id="shell" style="--n:5"></div>
+    <p class="note" style="margin-top:14px"><code>shell-menubar-bg</code> is still seeded and adapted, but nothing reads it: the top row is a transparent window and the islands carry their own fill. See 11.</p>
+  </div>
+
+  <div class="section">
+    <div class="label">The picture sets the colors · Settings → Appearance</div>
+    <div class="facts" style="margin-bottom:32px">
+      <span>Colors are modal</span><span>The shell samples the picture at 96 px and counts its colors in narrow OKLCH cells (10° of hue, 0.02 chroma, 0.1 lightness), scored by share and chroma. The most common colors win, not an average.</span>
+      <span>Up to four schemes</span><span>One per major hue, at first 90° apart, closing to no less than 30°. Each is named by its hue: Rose, Ember, Amber, Gold, Olive, Green, Teal, Sky, Blue, Violet, Magenta, or Grey.</span>
+      <span>The accent</span><span>At least 60° from the scheme's tint, at lightness 0.82 (stepping down to 0.68 to stay in gamut), chroma 0.06 to 0.14.</span>
+      <span>The surfaces</span><span>Keep their grey's lightness and take the tint at chroma up to 0.08 × strength, thinner below lightness 0.18. Text takes 30% of the tint. Status hues are untouched.</span>
+      <span>Strength</span><span>0 to 100%, 60 by default.</span>
+      <span>Order</span><span>The greys, then the scheme, then your colors on top.</span>
+      <span>Your colors</span><span>Window sets <code>bg-primary</code>; Panels sets <code>bg-secondary</code> and the switcher at 90%; Highlight sets <code>highlight</code>, and <code>selection</code> takes its hue at its own lightness; Accent sets <code>accent</code>, <code>text-accent</code> and <code>accent-dim</code> at 10%. A change made on a scheme saves a new look beside the schemes, up to six.</span>
     </div>
-    <div
-      data-name="Staircase"
-      style="align-items: flex-end; display: flex; flex-shrink: 0; height: fit-content; width: 100%"
-    >
-      <div
-        data-name="field-well"
-        style="align-items: flex-start; background-color: var(--field-well); border-color: var(--hairline); border-style: solid; border-width: 1px 1px 0px 0px; display: flex; flex-direction: column; flex: 1 1 0; gap: 4px; height: 96.5px; justify-content: flex-end; margin: -0.5px -0.5px 0px 0px; padding: 16px; width: 185.643px; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Token"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          field-well
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #050608
-        </div>
-        <div
-          data-name="Role"
-          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; width: 100%"
-        >
-          Field well, menubar
-        </div>
-      </div>
-      <div
-        data-name="bg-primary"
-        style="align-items: flex-start; background-color: var(--bg-primary); border-color: var(--hairline); border-style: solid; border-width: 1px 1px 0px 0px; display: flex; flex-direction: column; flex: 1 1 0; gap: 4px; height: 128.5px; justify-content: flex-end; margin: -0.5px -0.5px 0px 0px; padding: 16px; width: 185.643px; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Token"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          bg-primary
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #0c0e12
-        </div>
-        <div
-          data-name="Role"
-          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; width: 100%"
-        >
-          Window canvas
-        </div>
-      </div>
-      <div
-        data-name="bg-chrome"
-        style="align-items: flex-start; background-color: var(--bg-chrome); border-color: var(--hairline); border-style: solid; border-width: 1px 1px 0px 0px; display: flex; flex-direction: column; flex: 1 1 0; gap: 4px; height: 160.5px; justify-content: flex-end; margin: -0.5px -0.5px 0px 0px; padding: 16px; width: 185.643px; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Token"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          bg-chrome
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #121722
-        </div>
-        <div
-          data-name="Role"
-          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; width: 100%"
-        >
-          Rail column, chrome strip
-        </div>
-      </div>
-      <div
-        data-name="bg-secondary"
-        style="align-items: flex-start; background-color: var(--bg-secondary); border-color: var(--hairline); border-style: solid; border-width: 1px 1px 0px 0px; display: flex; flex-direction: column; flex: 1 1 0; gap: 4px; height: 192.5px; justify-content: flex-end; margin: -0.5px -0.5px 0px 0px; padding: 16px; width: 185.643px; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Token"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          bg-secondary
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #151922
-        </div>
-        <div
-          data-name="Role"
-          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; width: 100%"
-        >
-          Raised: menus, cards, titlebar
-        </div>
-      </div>
-      <div
-        data-name="bg-hover"
-        style="align-items: flex-start; background-color: var(--bg-hover); border-color: var(--hairline); border-style: solid; border-width: 1px 1px 0px 0px; display: flex; flex-direction: column; flex: 1 1 0; gap: 4px; height: 224.5px; justify-content: flex-end; margin: -0.5px -0.5px 0px 0px; padding: 16px; width: 185.643px; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Token"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          bg-hover
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #1e2533
-        </div>
-        <div
-          data-name="Role"
-          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; width: 100%"
-        >
-          Hover, launcher selection
-        </div>
-      </div>
-      <div
-        data-name="selection"
-        style="align-items: flex-start; background-color: var(--selection); border-color: var(--hairline); border-style: solid; border-width: 1px 1px 0px 0px; display: flex; flex-direction: column; flex: 1 1 0; gap: 4px; height: 256.5px; justify-content: flex-end; margin: -0.5px -0.5px 0px 0px; padding: 16px; width: 185.643px; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Token"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          selection
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #2c333e
-        </div>
-        <div
-          data-name="Role"
-          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; width: 100%"
-        >
-          Text selection, select menu
-        </div>
-      </div>
-      <div
-        data-name="border"
-        style="align-items: flex-start; background-color: var(--border); border-color: var(--hairline); border-style: solid; border-width: 1px 1px 0px 0px; display: flex; flex-direction: column; flex: 1 1 0; gap: 4px; height: 288.5px; justify-content: flex-end; margin: -0.5px -0.5px 0px 0px; padding: 16px; width: 185.643px; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Token"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          border
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #2a3344
-        </div>
-        <div
-          data-name="Role"
-          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; width: 100%"
-        >
-          Hard edges
-        </div>
-      </div>
+    <div class="two">
+      <div class="col"><h4>The grey base</h4><p class="note">No picture, or Adapt off.</p><div id="base"></div></div>
+      <div class="col scheme-rose"><h4>On the Cosmic Cliffs</h4><p class="note">canto's theme today (the third scheme, strength 52): surfaces tinted warm from the cliffs, the accent a blue from the sky.</p><div id="blue"></div></div>
     </div>
   </div>
-  <div
-    data-name="Text and signal"
-    style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 24px; height: fit-content; width: 100%"
-  >
-    <div
-      data-name="Text on raised"
-      style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; width: 520px"
-    >
-      <div
-        data-name="Label"
-        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-      >
-        TEXT ON RAISED
-      </div>
-      <div
-        data-name="Panel"
-        style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex-shrink: 0; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 8px 20px; width: 100%"
-      >
-        <div
-          data-name="text-primary"
-          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 57.5px; margin: 0px 0px -0.5px 0px; padding: 12px 0px; width: 480px"
-        >
-          <div
-            data-name="Sample"
-            style="color: var(--text-primary); flex-shrink: 0; font-family: var(--font-ui); font-size: 22px; font-weight: 500; width: 36px"
-          >
-            Aa
-          </div>
-          <div
-            data-name="Text"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 2px; height: fit-content; min-width: 0; min-height: 0"
-          >
-            <div
-              data-name="Token"
-              style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              text-primary&nbsp;&nbsp;#e9ecf2
-            </div>
-            <div
-              data-name="Role"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              Labels, values, titles
-            </div>
-          </div>
-          <div
-            data-name="Contrast"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-          >
-            14.9:1
-          </div>
-        </div>
-        <div
-          data-name="text-ghost"
-          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 57.5px; margin: 0px 0px -0.5px 0px; padding: 12px 0px; width: 480px"
-        >
-          <div
-            data-name="Sample"
-            style="color: var(--text-ghost); flex-shrink: 0; font-family: var(--font-ui); font-size: 22px; font-weight: 500; width: 36px"
-          >
-            Aa
-          </div>
-          <div
-            data-name="Text"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 2px; height: fit-content; min-width: 0; min-height: 0"
-          >
-            <div
-              data-name="Token"
-              style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              text-ghost&nbsp;&nbsp;#acb3c2
-            </div>
-            <div
-              data-name="Role"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              Ghost buttons at rest
-            </div>
-          </div>
-          <div
-            data-name="Contrast"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-          >
-            8.4:1
-          </div>
-        </div>
-        <div
-          data-name="text-secondary"
-          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 57.5px; margin: 0px 0px -0.5px 0px; padding: 12px 0px; width: 480px"
-        >
-          <div
-            data-name="Sample"
-            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 22px; font-weight: 500; width: 36px"
-          >
-            Aa
-          </div>
-          <div
-            data-name="Text"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 2px; height: fit-content; min-width: 0; min-height: 0"
-          >
-            <div
-              data-name="Token"
-              style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              text-secondary&nbsp;&nbsp;#8b94a8
-            </div>
-            <div
-              data-name="Role"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              Secondary labels, placeholders
-            </div>
-          </div>
-          <div
-            data-name="Contrast"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-          >
-            5.8:1
-          </div>
-        </div>
-        <div
-          data-name="text-tertiary"
-          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 57.5px; margin: 0px 0px -0.5px 0px; padding: 12px 0px; width: 480px"
-        >
-          <div
-            data-name="Sample"
-            style="color: var(--text-tertiary); flex-shrink: 0; font-family: var(--font-ui); font-size: 22px; font-weight: 500; width: 36px"
-          >
-            Aa
-          </div>
-          <div
-            data-name="Text"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 2px; height: fit-content; min-width: 0; min-height: 0"
-          >
-            <div
-              data-name="Token"
-              style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              text-tertiary&nbsp;&nbsp;#6b7385
-            </div>
-            <div
-              data-name="Role"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              Section caps, meta (≥ 13px only)
-            </div>
-          </div>
-          <div
-            data-name="Contrast"
-            style="color: var(--warning); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-          >
-            3.7:1
-          </div>
-        </div>
-        <div
-          data-name="accent"
-          style="align-items: center; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; padding: 12px 0px; width: 100%"
-        >
-          <div
-            data-name="Sample"
-            style="color: var(--accent); flex-shrink: 0; font-family: var(--font-ui); font-size: 22px; font-weight: 500; width: 36px"
-          >
-            Aa
-          </div>
-          <div
-            data-name="Text"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 2px; height: fit-content; min-width: 0; min-height: 0"
-          >
-            <div
-              data-name="Token"
-              style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              accent&nbsp;&nbsp;#3dd6f5
-            </div>
-            <div
-              data-name="Role"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              Signal text: links, live counts
-            </div>
-          </div>
-          <div
-            data-name="Contrast"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-          >
-            10.2:1
-          </div>
-        </div>
-      </div>
-    </div>
-    <div
-      data-name="Signal and status"
-      style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
-    >
-      <div
-        data-name="Label"
-        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-      >
-        SIGNAL AND STATUS
-      </div>
-      <div
-        data-name="Hues"
-        style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 12px; height: fit-content; width: 100%"
-      >
-        <div
-          data-name="accent"
-          style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex: 1 1 0; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); overflow: hidden; min-width: 0; min-height: 0"
-        >
-          <div
-            data-name="Swatch"
-            style="align-items: flex-start; background-color: var(--accent); display: flex; flex-direction: column; flex-shrink: 0; height: 112px; justify-content: flex-end; padding: 12px; width: 100%"
-          >
-            <div
-              data-name="Hex"
-              style="color: var(--on-accent); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              #3dd6f5
-            </div>
-          </div>
-          <div
-            data-name="Tints"
-            style="align-items: flex-start; display: flex; flex-shrink: 0; height: 28px; width: 100%"
-          >
-            <div
-              data-name="Soft"
-              style="align-items: flex-start; background-color: var(--accent-soft); display: flex; flex: 1 1 0; height: 100%; min-width: 0; min-height: 0"
-            ></div>
-            <div
-              data-name="Edge"
-              style="align-items: flex-start; background-color: var(--accent-edge); display: flex; flex: 1 1 0; height: 100%; min-width: 0; min-height: 0"
-            ></div>
-          </div>
-          <div
-            data-name="Body"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; padding: 12px; width: 100%"
-          >
-            <div
-              data-name="Token"
-              style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              accent
-            </div>
-            <div
-              data-name="Use"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-            >
-              Focus, primary, working, RX, unread
-            </div>
-            <div
-              data-name="On"
-              style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-            >
-              soft 14% · edge 28%
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="success"
-          style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex: 1 1 0; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); overflow: hidden; min-width: 0; min-height: 0"
-        >
-          <div
-            data-name="Swatch"
-            style="align-items: flex-start; background-color: var(--success); display: flex; flex-direction: column; flex-shrink: 0; height: 112px; justify-content: flex-end; padding: 12px; width: 100%"
-          >
-            <div
-              data-name="Hex"
-              style="color: #0c0e12; font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              #3ecf8e
-            </div>
-          </div>
-          <div
-            data-name="Tints"
-            style="align-items: flex-start; display: flex; flex-shrink: 0; height: 28px; width: 100%"
-          >
-            <div
-              data-name="Soft"
-              style="align-items: flex-start; background-color: var(--success-soft); display: flex; flex: 1 1 0; height: 100%; min-width: 0; min-height: 0"
-            ></div>
-            <div
-              data-name="Edge"
-              style="align-items: flex-start; background-color: var(--success-edge); display: flex; flex: 1 1 0; height: 100%; min-width: 0; min-height: 0"
-            ></div>
-          </div>
-          <div
-            data-name="Body"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; padding: 12px; width: 100%"
-          >
-            <div
-              data-name="Token"
-              style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              success
-            </div>
-            <div
-              data-name="Use"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-            >
-              Done, connected, TX, synced
-            </div>
-            <div
-              data-name="On"
-              style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-            >
-              soft 14% · edge 28%
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="warning"
-          style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex: 1 1 0; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); overflow: hidden; min-width: 0; min-height: 0"
-        >
-          <div
-            data-name="Swatch"
-            style="align-items: flex-start; background-color: var(--warning); display: flex; flex-direction: column; flex-shrink: 0; height: 112px; justify-content: flex-end; padding: 12px; width: 100%"
-          >
-            <div
-              data-name="Hex"
-              style="color: #0c0e12; font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              #e8b84a
-            </div>
-          </div>
-          <div
-            data-name="Tints"
-            style="align-items: flex-start; display: flex; flex-shrink: 0; height: 28px; width: 100%"
-          >
-            <div
-              data-name="Soft"
-              style="align-items: flex-start; background-color: var(--warning-soft); display: flex; flex: 1 1 0; height: 100%; min-width: 0; min-height: 0"
-            ></div>
-            <div
-              data-name="Edge"
-              style="align-items: flex-start; background-color: var(--warning-edge); display: flex; flex: 1 1 0; height: 100%; min-width: 0; min-height: 0"
-            ></div>
-          </div>
-          <div
-            data-name="Body"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; padding: 12px; width: 100%"
-          >
-            <div
-              data-name="Token"
-              style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              warning
-            </div>
-            <div
-              data-name="Use"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-            >
-              Waiting on you, meter warn
-            </div>
-            <div
-              data-name="On"
-              style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-            >
-              soft 14% · edge 28%
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="danger"
-          style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex: 1 1 0; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); overflow: hidden; min-width: 0; min-height: 0"
-        >
-          <div
-            data-name="Swatch"
-            style="align-items: flex-start; background-color: var(--danger); display: flex; flex-direction: column; flex-shrink: 0; height: 112px; justify-content: flex-end; padding: 12px; width: 100%"
-          >
-            <div
-              data-name="Hex"
-              style="color: var(--on-danger); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              #f07178
-            </div>
-          </div>
-          <div
-            data-name="Tints"
-            style="align-items: flex-start; display: flex; flex-shrink: 0; height: 28px; width: 100%"
-          >
-            <div
-              data-name="Soft"
-              style="align-items: flex-start; background-color: var(--danger-soft); display: flex; flex: 1 1 0; height: 100%; min-width: 0; min-height: 0"
-            ></div>
-            <div
-              data-name="Edge"
-              style="align-items: flex-start; background-color: var(--danger-edge); display: flex; flex: 1 1 0; height: 100%; min-width: 0; min-height: 0"
-            ></div>
-          </div>
-          <div
-            data-name="Body"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; padding: 12px; width: 100%"
-          >
-            <div
-              data-name="Token"
-              style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              danger
-            </div>
-            <div
-              data-name="Use"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-            >
-              Delete, failed, meter crit
-            </div>
-            <div
-              data-name="On"
-              style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-            >
-              soft 14% · edge 28%
-            </div>
-          </div>
-        </div>
-      </div>
+
+  <div class="section">
+    <div class="label">Fixed hues · not theme colors</div>
+    <div class="chips" id="fixed" style="--n:8"></div>
+    <p class="note" style="margin-top:14px">Enamel tints identities (projects, calendars, favicons). Sol is the flower's alone. Phosphor paints the spectrum, bottom row to top, and nothing else. The meters' warn and crit are their own yellow and red, not the theme's warning and danger; see 11.</p>
+  </div>
+
+  <div class="section">
+    <div class="label">The terminal · follows the theme (sola-terminal term_view.rs)</div>
+    <div class="ansi" id="ansi"></div>
+    <div class="facts" style="margin-top:24px">
+      <span>Ground and ink</span><span><code>bg-primary</code> and <code>text-primary</code>. A scheme change repaints every open terminal, Projects' panes too.</span>
+      <span>Cursor</span><span>Sol gold, #ffb800, on every theme.</span>
+      <span>Selection</span><span>The accent at 55%, over the cells.</span>
+      <span>Bright row</span><span>8 is a grey between 0 and 7; 9 to 14 are 1 to 6 lightened; 15 is <code>text-primary</code>.</span>
     </div>
   </div>
-  <div
-    data-name="Shell materials (alpha over whatever is behind)"
-    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; width: 100%"
-  >
-    <div
-      data-name="Label"
-      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-    >
-      SHELL MATERIALS (ALPHA OVER WHATEVER IS BEHIND)
-    </div>
-    <div
-      data-name="Tiles"
-      style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 12px; height: fit-content; width: 100%"
-    >
-      <div
-        data-name="shell-menubar-bg"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Demo"
-          style="background-color: var(--bg-primary); border-radius: var(--radius-md); flex-shrink: 0; height: 132px; outline-offset: -0.5px; outline: 1px solid var(--hairline); overflow: hidden; position: relative; width: 100%"
-        >
-          <div
-            data-name="Behind"
-            style="align-items: flex-start; display: flex; flex-direction: column; gap: 3px; height: fit-content; left: 12px; position: absolute; top: 12px; width: fit-content; z-index: 0"
-          >
-            <div
-              data-name="Line"
-              style="color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              $ cargo make build shell
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;&nbsp;Compiling sola-kit v0.1.0
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;&nbsp;Compiling sola-shell v0.1.0
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--success); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;&nbsp;&nbsp;Finished release in 41.2s
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              $ solactl workspaces ls
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;sola&nbsp;&nbsp;&nbsp;kit-foundation&nbsp;&nbsp;&nbsp;×2
-            </div>
-          </div>
-          <div
-            data-name="Plate"
-            style="background-color: var(--enamel-clay); border-radius: 6px; height: 60px; left: 180px; position: absolute; top: 58px; width: 120px; z-index: 1"
-          ></div>
-          <div
-            data-name="Material"
-            style="background-color: var(--shell-menubar-bg); height: 28px; left: 0px; position: absolute; top: 0px; width: 400px; z-index: 2"
-          ></div>
-        </div>
-        <div
-          data-name="Token"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          shell-menubar-bg&nbsp;&nbsp;#050608
-        </div>
-        <div
-          data-name="Role"
-          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-        >
-          Menubar strip. Opaque until compositor blur lands.
-        </div>
-      </div>
-      <div
-        data-name="shell-backdrop-dim"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Demo"
-          style="background-color: var(--bg-primary); border-radius: var(--radius-md); flex-shrink: 0; height: 132px; outline-offset: -0.5px; outline: 1px solid var(--hairline); overflow: hidden; position: relative; width: 100%"
-        >
-          <div
-            data-name="Behind"
-            style="align-items: flex-start; display: flex; flex-direction: column; gap: 3px; height: fit-content; left: 12px; position: absolute; top: 12px; width: fit-content; z-index: 0"
-          >
-            <div
-              data-name="Line"
-              style="color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              $ cargo make build shell
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;&nbsp;Compiling sola-kit v0.1.0
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;&nbsp;Compiling sola-shell v0.1.0
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--success); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;&nbsp;&nbsp;Finished release in 41.2s
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              $ solactl workspaces ls
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;sola&nbsp;&nbsp;&nbsp;kit-foundation&nbsp;&nbsp;&nbsp;×2
-            </div>
-          </div>
-          <div
-            data-name="Plate"
-            style="background-color: var(--enamel-clay); border-radius: 6px; height: 60px; left: 180px; position: absolute; top: 58px; width: 120px; z-index: 1"
-          ></div>
-          <div
-            data-name="Material"
-            style="background-color: var(--shell-backdrop-dim); height: 132px; left: 0px; position: absolute; top: 0px; width: 400px; z-index: 2"
-          ></div>
-        </div>
-        <div
-          data-name="Token"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          shell-backdrop-dim&nbsp;&nbsp;#00000099
-        </div>
-        <div
-          data-name="Role"
-          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-        >
-          Scrim under the launcher and every modal.
-        </div>
-      </div>
-      <div
-        data-name="shell-switcher-bg"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Demo"
-          style="background-color: var(--bg-primary); border-radius: var(--radius-md); flex-shrink: 0; height: 132px; outline-offset: -0.5px; outline: 1px solid var(--hairline); overflow: hidden; position: relative; width: 100%"
-        >
-          <div
-            data-name="Behind"
-            style="align-items: flex-start; display: flex; flex-direction: column; gap: 3px; height: fit-content; left: 12px; position: absolute; top: 12px; width: fit-content; z-index: 0"
-          >
-            <div
-              data-name="Line"
-              style="color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              $ cargo make build shell
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;&nbsp;Compiling sola-kit v0.1.0
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;&nbsp;Compiling sola-shell v0.1.0
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--success); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;&nbsp;&nbsp;Finished release in 41.2s
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              $ solactl workspaces ls
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;sola&nbsp;&nbsp;&nbsp;kit-foundation&nbsp;&nbsp;&nbsp;×2
-            </div>
-          </div>
-          <div
-            data-name="Plate"
-            style="background-color: var(--enamel-clay); border-radius: 6px; height: 60px; left: 180px; position: absolute; top: 58px; width: 120px; z-index: 1"
-          ></div>
-          <div
-            data-name="Material"
-            style="background-color: var(--shell-switcher-bg); border-radius: 14px; height: 72px; left: 60px; outline-offset: -0.5px; outline: 1px solid var(--shell-switcher-border); position: absolute; top: 30px; width: 240px; z-index: 2"
-          ></div>
-        </div>
-        <div
-          data-name="Token"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          shell-switcher-bg&nbsp;&nbsp;#151922e6
-        </div>
-        <div
-          data-name="Role"
-          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-        >
-          Switcher pill: raised graphite at 90%, 1px #ffffff1a edge.
-        </div>
-      </div>
-      <div
-        data-name="shell-switcher-icon-bg"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Demo"
-          style="background-color: var(--bg-primary); border-radius: var(--radius-md); flex-shrink: 0; height: 132px; outline-offset: -0.5px; outline: 1px solid var(--hairline); overflow: hidden; position: relative; width: 100%"
-        >
-          <div
-            data-name="Behind"
-            style="align-items: flex-start; display: flex; flex-direction: column; gap: 3px; height: fit-content; left: 12px; position: absolute; top: 12px; width: fit-content; z-index: 0"
-          >
-            <div
-              data-name="Line"
-              style="color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              $ cargo make build shell
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;&nbsp;Compiling sola-kit v0.1.0
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;&nbsp;Compiling sola-shell v0.1.0
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--success); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;&nbsp;&nbsp;Finished release in 41.2s
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--accent); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              $ solactl workspaces ls
-            </div>
-            <div
-              data-name="Line"
-              style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              &nbsp;&nbsp;sola&nbsp;&nbsp;&nbsp;kit-foundation&nbsp;&nbsp;&nbsp;×2
-            </div>
-          </div>
-          <div
-            data-name="Plate"
-            style="background-color: var(--enamel-clay); border-radius: 6px; height: 60px; left: 180px; position: absolute; top: 58px; width: 120px; z-index: 1"
-          ></div>
-          <div
-            data-name="Material"
-            style="background-color: var(--shell-switcher-icon-bg); border-radius: 10px; height: 72px; left: 100px; position: absolute; top: 30px; width: 72px; z-index: 2"
-          ></div>
-        </div>
-        <div
-          data-name="Token"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          shell-switcher-icon-bg&nbsp;&nbsp;#ffffff2e
-        </div>
-        <div
-          data-name="Role"
-          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-        >
-          Plate under the selected switcher icon.
-        </div>
-      </div>
-    </div>
-  </div>
-  <div
-    data-name="Enamel: identity, never status"
-    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; width: 100%"
-  >
-    <div
-      data-name="Label"
-      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-    >
-      ENAMEL: IDENTITY, NEVER STATUS
-    </div>
-    <div
-      data-name="Plates"
-      style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 12px; height: fit-content; width: 100%"
-    >
-      <div
-        data-name="patina teal"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Plate"
-          style="align-items: flex-start; background-color: var(--enamel-teal); border-radius: 6px; display: flex; flex-shrink: 0; height: 56px; outline-offset: -0.5px; outline: 1px solid #a7d3da; width: 100%"
-        ></div>
-        <div
-          data-name="Name"
-          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          patina teal
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #61adb8
-        </div>
-      </div>
-      <div
-        data-name="slate iris"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Plate"
-          style="align-items: flex-start; background-color: var(--enamel-iris); border-radius: 6px; display: flex; flex-shrink: 0; height: 56px; outline-offset: -0.5px; outline: 1px solid #b6bee2; width: 100%"
-        ></div>
-        <div
-          data-name="Name"
-          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          slate iris
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #7a8ac7
-        </div>
-      </div>
-      <div
-        data-name="kiln clay"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Plate"
-          style="align-items: flex-start; background-color: var(--enamel-clay); border-radius: 6px; display: flex; flex-shrink: 0; height: 56px; outline-offset: -0.5px; outline: 1px solid #d9c0b3; width: 100%"
-        ></div>
-        <div
-          data-name="Name"
-          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          kiln clay
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #b8856b
-        </div>
-      </div>
-      <div
-        data-name="oxidized sage"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Plate"
-          style="align-items: flex-start; background-color: var(--enamel-sage); border-radius: 6px; display: flex; flex-shrink: 0; height: 56px; outline-offset: -0.5px; outline: 1px solid #b6d0bc; width: 100%"
-        ></div>
-        <div
-          data-name="Name"
-          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          oxidized sage
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #75a380
-        </div>
-      </div>
-      <div
-        data-name="dusk enamel"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Plate"
-          style="align-items: flex-start; background-color: var(--enamel-dusk); border-radius: 6px; display: flex; flex-shrink: 0; height: 56px; outline-offset: -0.5px; outline: 1px solid #d4bac7; width: 100%"
-        ></div>
-        <div
-          data-name="Name"
-          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          dusk enamel
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #ad7a94
-        </div>
-      </div>
-      <div
-        data-name="olive brass"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Plate"
-          style="align-items: flex-start; background-color: var(--enamel-olive); border-radius: 6px; display: flex; flex-shrink: 0; height: 56px; outline-offset: -0.5px; outline: 1px solid #c8cdb0; width: 100%"
-        ></div>
-        <div
-          data-name="Name"
-          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          olive brass
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #949e66
-        </div>
-      </div>
-      <div
-        data-name="ink blue"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Plate"
-          style="align-items: flex-start; background-color: var(--enamel-ink); border-radius: 6px; display: flex; flex-shrink: 0; height: 56px; outline-offset: -0.5px; outline: 1px solid #adbed7; width: 100%"
-        ></div>
-        <div
-          data-name="Name"
-          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          ink blue
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #6685b3
-        </div>
-      </div>
-      <div
-        data-name="warm brass"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Plate"
-          style="align-items: flex-start; background-color: var(--enamel-brass); border-radius: 6px; display: flex; flex-shrink: 0; height: 56px; outline-offset: -0.5px; outline: 1px solid #dbcdb0; width: 100%"
-        ></div>
-        <div
-          data-name="Name"
-          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-        >
-          warm brass
-        </div>
-        <div
-          data-name="Hex"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          #bd9e66
-        </div>
-      </div>
-    </div>
-    <div
-      data-name="Note"
-      style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 13px; font-weight: 400; line-height: 20px; width: 760px"
-    >
-      A profile, theme, or project gets one plate, hashed from a stable seed. Eight kiln hues pulled toward graphite so they read as file-tab enamel, not avatar confetti. A plate names a thing; it never reports a state.
-    </div>
-  </div>
-  <div
-    data-name="Exceptions and terminal"
-    style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 24px; height: fit-content; width: 100%"
-  >
-    <div
-      data-name="Sol: the mark and the cursor"
-      style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
-    >
-      <div
-        data-name="Label"
-        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-      >
-        SOL: THE MARK AND THE CURSOR
-      </div>
-      <div
-        data-name="Panel"
-        style="align-items: center; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-shrink: 0; gap: 24px; height: 180px; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 24px; width: 100%"
-      >
-        <svg
-          data-name="Mark"
-          viewBox="-25 -32 561 561"
-          preserveAspectRatio="none"
-          style="flex-shrink: 0; height: 72px; overflow: visible; width: 72px"
-        >
-          <path
-            d="M242.641.561c-21.9 3.5-41.8 14-55.2 29.3-16.4 18.7-24.5 41.6-23.3 65.7 1.1 21 7.8 38.3 23.5 60.5 15.8 22.3 44.6 62.2 49 67.7 10.1 13 23.8 14.3 34.7 3.3 8.6-8.5 59.4-80.3 65.5-92.6 6.5-12.9 9.1-23.4 9.7-39 .8-19-1.6-30.9-8.8-45.3-12.5-24.6-34.1-41.6-61.1-48.1-7.8-1.9-26.4-2.7-34-1.5m-163.3 118.1c-36.5 5.3-67.3 32.9-76.6 68.7-2.7 10.2-3.5 26.9-1.9 36.9 5.9 36.8 33.6 67.6 69.5 77.3 10.1 2.7 28.9 3.8 37.7 2.1 9.8-1.9 103.9-33.5 111.4-37.4 7.1-3.7 11.4-11.3 11.4-20 0-5.300-.3-5.9-10.3-20.3-14.2-20.4-48.9-67.6-54.9-74.6-20.9-24.3-55-37.2-86.3-32.7m323 .3c-23.8 4.6-45.2 17.8-61 37.6-13 16.4-57.2 78.2-59.6 83.5-1 2.2-1.9 5.4-1.9 7.1 0 7.3 4.7 15.2 11.1 18.4 7.5 3.9 102.9 36.3 111.7 38 9.8 2 28.8.8 39.5-2.4 27.5-8.2 48.8-26.3 60.7-52 12.3-26.3 11.3-58.3-2.6-83.3-12.7-22.8-36.4-40.5-61.600-45.9-10.3-2.2-27.7-2.7-36.3-1m-185 163c-29.3 9.7-90.7 31.6-98.1 35.1-11.5 5.3-19.4 10.7-27.1 18.2-13.9 13.8-23.8 32.3-27.4 51.6-1.6 8.6-1.3 26.7.6 35.6 7.6 35.9 37.3 65.3 73.4 72.6 11.2 2.3 29.4 1.6 40.1-1.5 21-6 41.2-20.4 53.1-37.7 4.5-6.4 10.4-19.6 12.8-28.2 3.6-13.1 4.2-25.8 3.900-81.2l-.3-52.6-3-4.8c-5.8-9.3-14.6-11.5-28-7.1m56.7-.3c-4.7 2.4-8.3 6.6-10.1 11.8-1.8 5.5-1.5 113.4.4 124.2 6.4 36.9 30.8 64.7 66.2 75.6 7.9 2.4 10.3 2.7 24.3 2.7 14.1 0 16.3-.3 24.5-2.8 28-8.6 48.6-26.3 60.5-52 6.1-13.1 7.5-20.6 7.5-39.1 0-17.4-.9-22.5-6.5-35.9-6.7-16-20.2-32.3-34.9-42.1-11.2-7.4-20.6-11-91.1-35.1-29.9-10.2-33.5-10.9-40.8-7.3"
-            style="fill: var(--sol)"
-          ></path>
-        </svg>
-        <div
-          data-name="Text"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            data-name="Head"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="Token"
-              style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              sol&nbsp;&nbsp;#ffb800
-            </div>
-            <div class="badge-accent" data-name="Proposed">
-              <div class="badge-accent__label">
-                Proposed for the mark
-              </div>
-            </div>
-          </div>
-          <div
-            data-name="Body"
-            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 18px; width: 100%"
-          >
-            The terminal cursor is already this gold. Give the flower the same color and Sola has one warm point on a cold desk: top-left, where every menu starts. Sol is never status, never a fill, never text.
-          </div>
-          <div
-            data-name="Cursor sample"
-            style="align-items: center; background-color: var(--bg-primary); border-radius: var(--radius-sm); display: flex; flex-shrink: 0; height: fit-content; padding: 6px 8px; width: fit-content"
-          >
-            <div
-              data-name="Prompt"
-              style="color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; font-weight: 400; white-space: nowrap"
-            >
-              $ solactl screenshot&nbsp;
-            </div>
-            <div
-              data-name="Cursor"
-              style="background-color: var(--term-cursor); flex-shrink: 0; height: 15px; width: 7px"
-            ></div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div
-      data-name="Phosphor: the audio spectrum only"
-      style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
-    >
-      <div
-        data-name="Label"
-        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-      >
-        PHOSPHOR: THE AUDIO SPECTRUM ONLY
-      </div>
-      <div
-        data-name="Panel"
-        style="align-items: center; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-shrink: 0; gap: 24px; height: 180px; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 24px; width: 100%"
-      >
-        <div
-          data-name="Big LEDs"
-          style="align-items: flex-end; display: flex; flex-shrink: 0; gap: 6px; height: fit-content; width: fit-content"
-        >
-          <div
-            data-name="Band"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 3px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-3); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-2); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-1); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-          </div>
-          <div
-            data-name="Band"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 3px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-4); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-3); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-2); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-1); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-          </div>
-          <div
-            data-name="Band"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 3px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-5); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-4); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-3); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-2); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-1); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-          </div>
-          <div
-            data-name="Band"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 3px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-4); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-3); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-2); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-1); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-          </div>
-          <div
-            data-name="Band"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 3px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-4); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-3); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-2); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-1); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-          </div>
-          <div
-            data-name="Band"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 3px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-3); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-2); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-1); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-          </div>
-          <div
-            data-name="Band"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 3px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-3); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-2); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-1); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-          </div>
-          <div
-            data-name="Band"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 3px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-2); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-1); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-          </div>
-          <div
-            data-name="Band"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 3px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-3); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-2); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-1); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-          </div>
-          <div
-            data-name="Band"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 3px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-2); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-1); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-          </div>
-          <div
-            data-name="Band"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 3px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-1); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-          </div>
-          <div
-            data-name="Band"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 3px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--led-off); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-            <div
-              data-name="LED"
-              style="background-color: var(--phosphor-1); flex-shrink: 0; height: 6px; width: 10px"
-            ></div>
-          </div>
-        </div>
-        <div
-          data-name="Text"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 8px; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            data-name="Stack"
-            style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 4px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="P5"
-              style="background-color: var(--phosphor-5); border-radius: 2px; flex-shrink: 0; height: 12px; width: 20px"
-            ></div>
-            <div
-              data-name="P4"
-              style="background-color: var(--phosphor-4); border-radius: 2px; flex-shrink: 0; height: 12px; width: 20px"
-            ></div>
-            <div
-              data-name="P3"
-              style="background-color: var(--phosphor-3); border-radius: 2px; flex-shrink: 0; height: 12px; width: 20px"
-            ></div>
-            <div
-              data-name="P2"
-              style="background-color: var(--phosphor-2); border-radius: 2px; flex-shrink: 0; height: 12px; width: 20px"
-            ></div>
-            <div
-              data-name="P1"
-              style="background-color: var(--phosphor-1); border-radius: 2px; flex-shrink: 0; height: 12px; width: 20px"
-            ></div>
-          </div>
-          <div
-            data-name="Body"
-            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 18px; width: 100%"
-          >
-            Green base, teal, azure, violet, amber peak: the old-stereo analyzer. Every bar uses the same stack bottom to top. These five hues appear nowhere else.
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div
-    data-name="Terminal and Workspaces panes"
-    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; width: 100%"
-  >
-    <div
-      data-name="Label"
-      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-    >
-      TERMINAL AND WORKSPACES PANES
-    </div>
-    <div
-      data-name="Palette"
-      style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: 100%"
-    >
-      <div
-        data-name="bg"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 6px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Chip"
-          style="align-items: flex-start; background-color: var(--bg-primary); border-radius: var(--radius-sm); display: flex; flex-shrink: 0; height: 36px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
-        ></div>
-        <div
-          data-name="Slot"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          bg
-        </div>
-        <div
-          data-name="Src"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-        >
-          bg-primary
-        </div>
-      </div>
-      <div
-        data-name="fg"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 6px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Chip"
-          style="align-items: flex-start; background-color: var(--text-primary); border-radius: var(--radius-sm); display: flex; flex-shrink: 0; height: 36px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
-        ></div>
-        <div
-          data-name="Slot"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          fg
-        </div>
-        <div
-          data-name="Src"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-        >
-          text-primary
-        </div>
-      </div>
-      <div
-        data-name="red"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 6px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Chip"
-          style="align-items: flex-start; background-color: var(--danger); border-radius: var(--radius-sm); display: flex; flex-shrink: 0; height: 36px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
-        ></div>
-        <div
-          data-name="Slot"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          red
-        </div>
-        <div
-          data-name="Src"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-        >
-          danger
-        </div>
-      </div>
-      <div
-        data-name="green"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 6px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Chip"
-          style="align-items: flex-start; background-color: var(--success); border-radius: var(--radius-sm); display: flex; flex-shrink: 0; height: 36px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
-        ></div>
-        <div
-          data-name="Slot"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          green
-        </div>
-        <div
-          data-name="Src"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-        >
-          success
-        </div>
-      </div>
-      <div
-        data-name="yellow"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 6px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Chip"
-          style="align-items: flex-start; background-color: var(--warning); border-radius: var(--radius-sm); display: flex; flex-shrink: 0; height: 36px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
-        ></div>
-        <div
-          data-name="Slot"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          yellow
-        </div>
-        <div
-          data-name="Src"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-        >
-          warning
-        </div>
-      </div>
-      <div
-        data-name="blue"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 6px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Chip"
-          style="align-items: flex-start; background-color: var(--accent); border-radius: var(--radius-sm); display: flex; flex-shrink: 0; height: 36px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
-        ></div>
-        <div
-          data-name="Slot"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          blue
-        </div>
-        <div
-          data-name="Src"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-        >
-          accent
-        </div>
-      </div>
-      <div
-        data-name="magenta"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 6px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Chip"
-          style="align-items: flex-start; background-color: #aa33aa; border-radius: var(--radius-sm); display: flex; flex-shrink: 0; height: 36px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
-        ></div>
-        <div
-          data-name="Slot"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          magenta
-        </div>
-        <div
-          data-name="Src"
-          style="color: var(--warning); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-        >
-          #aa33aa hardcoded
-        </div>
-      </div>
-      <div
-        data-name="cyan"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 6px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Chip"
-          style="align-items: flex-start; background-color: #33aaaa; border-radius: var(--radius-sm); display: flex; flex-shrink: 0; height: 36px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
-        ></div>
-        <div
-          data-name="Slot"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          cyan
-        </div>
-        <div
-          data-name="Src"
-          style="color: var(--warning); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-        >
-          #33aaaa hardcoded
-        </div>
-      </div>
-      <div
-        data-name="cursor"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 6px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Chip"
-          style="align-items: flex-start; background-color: var(--term-cursor); border-radius: var(--radius-sm); display: flex; flex-shrink: 0; height: 36px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
-        ></div>
-        <div
-          data-name="Slot"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          cursor
-        </div>
-        <div
-          data-name="Src"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-        >
-          term-cursor
-        </div>
-      </div>
-      <div
-        data-name="selection"
-        style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 6px; height: fit-content; min-width: 0; min-height: 0"
-      >
-        <div
-          data-name="Chip"
-          style="align-items: flex-start; background-color: var(--accent-wash); border-radius: var(--radius-sm); display: flex; flex-shrink: 0; height: 36px; outline-offset: -0.5px; outline: 1px solid var(--hairline); width: 100%"
-        ></div>
-        <div
-          data-name="Slot"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-        >
-          selection
-        </div>
-        <div
-          data-name="Src"
-          style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-        >
-          accent-wash
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
+
+<script>
+  // color-mix() computes to color(srgb r g b / a) with 0–1 channels; the
+  // shared toHex reads only rgb(). Board-local until foundation.js has it.
+  function toHex(c) {
+    const s = c.match(/color\(srgb ([\d.e-]+) ([\d.e-]+) ([\d.e-]+)(?: \/ ([\d.e-]+))?\)/);
+    const n = s ? [...s.slice(1, 4).map((x) => Number(x) * 255), s[4] === undefined ? 1 : Number(s[4])] : (c.match(/[\d.]+/g) || []).map(Number);
+    if (n.length < 3) return c;
+    const h = (v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0");
+    return `#${h(n[0])}${h(n[1])}${h(n[2])}${n[3] === undefined || n[3] >= 1 ? "" : h(n[3] * 255)}`;
+  }
+  const swatch = (bg, tok, role, h) =>
+    `<div class="step" style="background:${bg};height:${h}px"><span class="tok">${tok}</span><span class="hex" data-token="${bg.slice(4, -1)}"></span><span class="role">${role}</span></div>`;
+  const LADDER = [
+    ["--field-well", "field-well", "Field wells"],
+    ["--bg-primary", "bg-primary", "Window face, terminals"],
+    ["--chrome", "chrome", "Sidebars, top bars (not a token: 90% to raised)"],
+    ["--bg-secondary", "bg-secondary", "Raised: titlebars, sheets, the tab bar"],
+    ["--island", "island", "Islands at rest"],
+    ["--bg-hover", "bg-hover", "Hover; an open island"],
+    ["--selection", "selection", "Text selection"],
+    ["--highlight", "highlight", "The focused row; a column's active row"],
+    ["--border", "border", "Borders"],
+  ];
+  document.getElementById("ladder").innerHTML = LADDER.map(([v, t, r], i) => swatch(`var(${v})`, t, r, 110 + i * 14)).join("");
+
+  const TEXT = [
+    ["--text-primary", "text-primary", "Titles, names, values"],
+    ["--text-secondary", "text-secondary", "Supporting copy, leads"],
+    ["--text-tertiary", "text-tertiary", "Captions, section caps, quiet titles"],
+    ["--text-ghost", "text-ghost", "Ghost buttons"],
+    ["--accent", "text-accent", "Links, counts, called-out values"],
+  ];
+  document.getElementById("text").innerHTML = TEXT.map(([v, t, r]) =>
+    `<div class="trow"><span class="tok">${t}</span><span class="big" style="color:var(${v})">${r}</span><span class="hex" data-token="${v}"></span><span class="ratio" data-on="${v}"></span></div>`).join("");
+
+  document.getElementById("sig").innerHTML = ["accent", "success", "warning", "danger"].map((s) =>
+    `<div><div class="sig__solid" style="background:var(--${s});color:${s === "accent" ? "var(--on-accent)" : s === "danger" ? "var(--on-danger)" : "#0b0b0b"}">${s}</div>
+      <div class="sig__soft" style="background:var(--${s}-soft);box-shadow:inset 0 0 0 1px var(--${s}-edge);color:var(--${s})">${s} soft · edge</div>
+      <div class="hex" style="margin-top:6px" data-token="--${s}"></div></div>`).join("");
+
+  // Two window corners and a tab-bar row: the rims and the highlight.
+  document.getElementById("rims").innerHTML = view(
+    `<div class="desk" style="width:640px;height:150px">
+      ${tabbar({ x: 10, y: 10, w: 200, h: 130, zones: { Left: [{ ic: "prompt", t: "Sola", focus: true }, { ic: "globe", t: "Primary — Claude" }] } })}
+      ${win("projects", { x: 220, y: 10, w: 200, h: 130, focus: true, tb: { menus: ["Projects", "Edit"], title: "" } })}
+      ${win("terminal", { x: 430, y: 10, w: 200, h: 130, tb: { menus: ["Terminal", "Shell"], title: "" } })}
+    </div>`, { w: 640, h: 150 });
+  const RIMS = [
+    ["Highlight", "--highlight", "The focused tab's pill; a list's selected row."],
+    ["Focus rim", "--rim-focus", "The highlight lifted 4% in its hue: white-ish on grey, tinted on a scheme."],
+    ["Resting rim", "--rim-rest", "The face lifted 7% in its hue. Opaque, so the picture cannot show at the edge."],
+    ["Tab bar rim", "--tabbar-rim", "Its fill lifted 12%."],
+  ];
+  document.getElementById("rimfacts").innerHTML = RIMS.map(([n, v, t]) =>
+    `<span>${n}</span><span><span class="hex" data-token="${v}"></span> — ${t}</span>`).join("");
+
+  const SHELL = [
+    ["--shell-switcher-bg", "shell-switcher-bg", "Switcher plate"],
+    ["--shell-switcher-border", "shell-switcher-border", "Its edge"],
+    ["--shell-switcher-icon-bg", "shell-switcher-icon-bg", "Picked tile"],
+    ["--shell-backdrop-dim", "shell-backdrop-dim", "Launcher backdrop"],
+    ["--shell-menubar-bg", "shell-menubar-bg", "Unread (see 11)"],
+  ];
+  const chip = ([v, t, r]) => `<div class="chip2"><i style="background:var(${v})"></i><span class="tok">${t}</span><span class="hex" data-token="${v}"></span><span class="role">${r}</span></div>`;
+  document.getElementById("shell").innerHTML = SHELL.map(chip).join("");
+
+  // The same swatches, read in the grey base and under the Blue scheme.
+  const SCHEME = [
+    ["--bg-primary", "bg-primary", ""], ["--chrome", "chrome", ""], ["--bg-secondary", "bg-secondary", ""], ["--bg-hover", "bg-hover", ""],
+    ["--highlight", "highlight", ""], ["--border", "border", ""], ["--text-secondary", "text-secondary", ""], ["--accent", "accent", ""],
+  ];
+  const mini = (o) => view(desk({ w: 960, h: 540, ...o, top: { l: [I.flower()], r: [I.meters({ gpu: false }), I.clock("14:32")] },
+    bar: { zones: { Left: [{ ic: "prompt", t: "Sola", focus: true }], Right: [{ ic: "terminal", t: "home", shown: true }, { ic: "settings", t: "Sola Settings" }] } } }),
+    { w: 600, h: 338, s: 0.625, picture: o.picture });
+  for (const [id, o] of [["base", {}], ["blue", { picture: true }]])
+    document.getElementById(id).innerHTML = `<div class="chips" style="--n:4;margin-bottom:18px">${SCHEME.map(chip).join("")}</div>${mini(o)}`;
+
+  const FIXED = [
+    ["--enamel-teal", "teal"], ["--enamel-iris", "iris"], ["--enamel-clay", "clay"], ["--enamel-sage", "sage"],
+    ["--enamel-dusk", "dusk"], ["--enamel-olive", "olive"], ["--enamel-ink", "ink"], ["--enamel-brass", "brass"],
+    ["--sol", "sol"], ["--phosphor-1", "phosphor 1"], ["--phosphor-2", "phosphor 2"], ["--phosphor-3", "phosphor 3"],
+    ["--phosphor-4", "phosphor 4"], ["--phosphor-5", "phosphor 5"],
+  ];
+  document.getElementById("fixed").innerHTML = FIXED.map(([v, t]) => chip([v, t, ""])).join("");
+
+  const ANSI = [
+    ["var(--bg-hover)", "0 black", "bg-hover"], ["var(--danger)", "1 red", "danger"], ["var(--success)", "2 green", "success"],
+    ["var(--warning)", "3 yellow", "warning"], ["var(--accent)", "4 blue", "accent"], ["#aa33aa", "5 magenta", "fixed"],
+    ["#33aaaa", "6 cyan", "fixed"], ["var(--text-tertiary)", "7 white", "muted text"],
+  ];
+  document.getElementById("ansi").innerHTML = ANSI.map(([c, n, s]) =>
+    `<div><i style="background:${c}"></i><span class="tok">${n}</span><span class="role">${s}</span></div>`).join("");
+
+  finish();
+  // Contrast against raised, from the live values.
+  const raised = tokenValue("--bg-secondary");
+  document.querySelectorAll("[data-on]").forEach((el) => {
+    el.textContent = contrast(tokenValue(el.dataset.on), raised).toFixed(1) + " : 1";
+  });
+</script>
 </body>
 </html>

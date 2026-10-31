@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sola_core::Encrypted;
 pub use sola_core::KeyChord;
 pub use sola_core::applications::{AppKind, Application, ApplicationsConfig};
-pub use sola_core::theme::{NamedTheme, Theme};
+pub use sola_core::theme::Theme;
 
 use crate::define_topics;
 
@@ -57,8 +57,7 @@ pub struct LaunchResultPayload {
 /// Request that the shell omit an app's surfaces from composition
 /// (River `hide`). Sticky and keyed by `app_id`: emit to hide, retract
 /// to show again. Super+H on the focused app emits this; restore via
-/// Super+Tab or the launcher (already-running). Also used to park Steam's
-/// client UI while a game runs under windowed gamescope.
+/// Super+Tab or the launcher (already-running).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppHidden {
     pub app_id: String,
@@ -150,10 +149,476 @@ pub struct FloatGeometry {
     pub height: i32,
 }
 
+/// The window a dialog or picker belongs to (sola-river → shell), from
+/// River's `parent` event. Carried by the sticky `Topic::WindowParent`,
+/// keyed by `window_id`; sola-river retracts it when the window closes or
+/// loses its parent. A separate topic rather than a field on [`Window`],
+/// because postcard is positional and every app decodes `Windows`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowParent {
+    pub window_id: u32,
+    pub parent: u32,
+}
+
+/// How a window is shown, for whoever draws around it (shell → sola-river
+/// and apps). Carried by the sticky `Topic::WindowChrome`, keyed by
+/// `window_id`; the shell retracts it when the window closes. `tiled`: the
+/// window sits in a zone (River `set_tiled`, so clients drop their
+/// shadows). `cinema`: it covers the whole output (a kit app drops its
+/// frame). `rim`: its app draws no frame of its own (it published no menu:
+/// not a Sola app), so sola-river borders it with a hairline. Separate from
+/// `WindowFloating`, which sola-river and every kit app already decode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowChrome {
+    pub window_id: u32,
+    pub tiled: bool,
+    pub cinema: bool,
+    pub rim: bool,
+}
+
+/// A window an app opens as a tab (app → shell), announced just before
+/// the window opens. Carried by the sticky `Topic::Tab`, keyed by `key`;
+/// the app retracts it when the tab closes. The shell pairs each process's
+/// tabs (by `seq`) with that process's new windows (sola-river ids follow
+/// creation order) and answers with [`TabWindow`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tab {
+    /// Unique and stable across restarts: `<app_id>/<the app's tab id>`.
+    pub key: String,
+    pub app_id: String,
+    pub pid: u32,
+    /// How many windows this process had opened, this one included (from 1).
+    pub seq: u32,
+    /// The window's sola-river id, once the shell has said ([`TabWindow`]).
+    /// The app announces the tab again with it, so a restarted shell pairs
+    /// the tab directly instead of by order.
+    pub window_id: Option<u32>,
+    /// Opened in the background (a ⌘-click): it joins its zone behind the
+    /// tab shown there and does not take focus.
+    pub background: bool,
+}
+
+/// Which sola-river window a [`Tab`] is (shell → apps). Sticky, keyed by
+/// `key`; retracted when the window closes. Sent again when `shown` changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabWindow {
+    pub key: String,
+    pub window_id: u32,
+    /// The window is on screen (its zone shows it, or it floats). An app can
+    /// rest a tab that is not (a browser page stops painting).
+    pub shown: bool,
+}
+
+/// Show a tab's window and focus it (app → shell): a notification click, a
+/// dialog in a page behind, `tab.focus`. Ephemeral.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShowTab {
+    pub key: String,
+}
+
+/// What a tab is doing, for its row in the shell's tab bar (app → shell):
+/// Projects marks a project window that has an agent working or waiting on
+/// a decision. Sticky, keyed by `key` (a [`Tab::key`]); sent on change, and
+/// first when the tab's window opens, so a restarted app clears what it
+/// left; retracted when the tab closes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabActivity {
+    pub key: String,
+    pub activity: Activity,
+}
+
+/// A [`TabActivity`]'s state. Waiting outranks working where an app rolls
+/// several up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Activity {
+    Idle,
+    Working,
+    /// Needs a decision from the user.
+    Waiting,
+}
+
+/// A run of the shell's tab bar as last saved: tabs next to each other in
+/// one zone, their keys in bar order, and which of them the zone shows (an
+/// index into `apps`; at most one run per zone has it). A workspace's runs
+/// in order are its bar, which mixes zones; a zone may have several runs
+/// (a layout saved before the bar mixed zones has one per zone). A key is
+/// a [`Tab::key`], or the app id for a window that is not an announced tab
+/// (and can then repeat: two windows of one app).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabLayoutZone {
+    pub zone: Zone,
+    pub apps: Vec<String>,
+    pub shown: Option<u32>,
+    /// The workspace this zone is on ([`Workspace::id`]); empty in a file
+    /// saved before workspaces: the first one.
+    #[serde(default)]
+    pub workspace: String,
+}
+
+/// Where the shell's tab bar puts windows (`Topic::TabLayout`, persistent).
+/// A window that comes back (its app restarted, or the session restored
+/// it) takes its place: its workspace, zone, and index. Also the
+/// workspaces themselves and which one shows, so the whole desk comes back
+/// together.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TabLayout {
+    pub zones: Vec<TabLayoutZone>,
+    /// The workspaces in order; empty before workspaces (one, "Main").
+    #[serde(default)]
+    pub workspaces: Vec<Workspace>,
+    /// The id of the workspace showing.
+    #[serde(default)]
+    pub showing: String,
+    /// The workspaces whose Full zone is on screen (the rest show their
+    /// halves).
+    #[serde(default)]
+    pub full: Vec<String>,
+}
+
+/// A desktop workspace (Next slice 5): a whole desk of windows. The id
+/// is stable for its life; the name is the user's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Workspace {
+    pub id: String,
+    pub name: String,
+}
+
+/// The workspaces in order and which one is showing (shell → apps).
+/// Carried by the sticky `Topic::Workspaces`; the browser picks the
+/// profile of the one showing for a new window.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Workspaces {
+    pub workspaces: Vec<Workspace>,
+    pub showing: String,
+}
+
+/// The workspace a window is on (shell → apps). Carried by the sticky
+/// `Topic::WindowWorkspace`, keyed by `window_id`; the shell retracts it
+/// when the window closes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowWorkspace {
+    pub window_id: u32,
+    pub workspace: String,
+}
+
+/// What a Projects session needs from you, as an island in the top row
+/// (Projects → shell; `docs/specs/2026-10-23-agent-islands-design.md`).
+/// Carried by the sticky `Topic::AgentIsland`, keyed by `key` (the
+/// session); Projects retracts it when the session works again, closes,
+/// is answered, or is looked at.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentIsland {
+    /// The session (Projects' pane id).
+    pub key: String,
+    /// The session's name, as its tab shows it.
+    pub name: String,
+    /// Its project's name.
+    pub project: String,
+    pub state: IslandState,
+    /// After the name on the island: "wants to run cargo make build",
+    /// "asks: Which layout?", "finished".
+    pub title: String,
+    /// The card's body: the whole ask, the question, or the last message.
+    pub body: String,
+    /// The answers to offer, in the prompt's order
+    /// ([`IslandAction::Choose`] names one by index).
+    pub choices: Vec<String>,
+    /// A text field: a reply to a finished session, or a question's own
+    /// answer ([`IslandAction::Reply`]).
+    pub reply: bool,
+    /// When it started to need you (unix ms).
+    pub since: u64,
+}
+
+/// An [`AgentIsland`]'s mark.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IslandState {
+    /// Asks: a permission or a question.
+    Waiting,
+    /// Finished its turn.
+    Done,
+}
+
+/// What you did with an island (shell → Projects): Projects types it into
+/// the session, or pulls its tab up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentIslandAction {
+    pub key: String,
+    pub action: IslandAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IslandAction {
+    /// One of [`AgentIsland::choices`], by index.
+    Choose(u32),
+    /// Text for the session, then Return.
+    Reply(String),
+    /// Select the session's tab and bring its window up (no answer).
+    Show,
+}
+
+/// The picture on the ground behind the windows (`Topic::Background`,
+/// persistent). Set by any app (Paint's Set as Background, `solactl
+/// background`); sola-river draws it. Retracted: the plain black ground.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Background {
+    /// Sola's own copy under `~/.config/sola/background/`
+    /// (`sola_core::background`), so the original can move or go.
+    pub path: String,
+    /// When it was set (unix ms): setting a file of the same name again is
+    /// still a change.
+    pub set_at: u64,
+}
+
+/// How the desk looks beyond the theme itself (`Topic::Appearance`,
+/// persistent). Settings → Appearance edits it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Appearance {
+    /// The theme's colors follow the background picture: the shell
+    /// rewrites them from its hues (`sola_core::theme::Scheme`), and puts
+    /// the greys back when this goes off or the picture is cleared.
+    pub adapt_theme: bool,
+    /// How strongly the surfaces take the picture's hue, 0–100 (% of the
+    /// picture's own colorfulness).
+    #[serde(default = "Appearance::default_strength")]
+    pub strength: u8,
+    /// Which of the picture's schemes (`Topic::ThemeVariations`), by index;
+    /// past the end, the last.
+    #[serde(default)]
+    pub variation: u8,
+    /// Fade the windows out when there is no input (sola-river draws the
+    /// background over them, rising over `fade_over_min`); any input
+    /// brings them back.
+    #[serde(default = "Appearance::default_fade_idle")]
+    pub fade_idle: bool,
+    /// Minutes of no input before the fade starts.
+    #[serde(default = "Appearance::default_fade_after")]
+    pub fade_after_min: u16,
+    /// Minutes the fade takes, from the first sign to fully faded.
+    #[serde(default = "Appearance::default_fade_over")]
+    pub fade_over_min: u16,
+    /// Once the fade is full and only the picture shows, dim the picture
+    /// too (sola-river draws black over it), to a tenth of its light.
+    #[serde(default = "Appearance::default_dim_idle")]
+    pub dim_idle: bool,
+    /// Minutes after the fade is full before the dim starts.
+    #[serde(default = "Appearance::default_dim_after")]
+    pub dim_after_min: u16,
+    /// Minutes the dim takes.
+    #[serde(default = "Appearance::default_dim_over")]
+    pub dim_over_min: u16,
+    /// How opaque the desk's surfaces are at rest, in % (the windows,
+    /// the bar, the top row): sola-river draws the background over them
+    /// at the rest, and the idle fade rises from there.
+    /// [`Appearance::MIN_OPACITY`]–100.
+    #[serde(default = "Appearance::default_opacity")]
+    pub opacity: u8,
+    /// Colors you set yourself, over the greys or the picture's scheme:
+    /// `window`, `panels`, `highlight`, `accent` → `#rrggbb`
+    /// (`sola_core::theme::Theme::customize`). Those of the custom look in
+    /// use (`custom`); empty with none.
+    #[serde(default)]
+    pub colors: std::collections::BTreeMap<String, String>,
+    /// The looks you made (Settings → Appearance): each your colors over
+    /// one of the picture's schemes. Kept when another look is picked.
+    #[serde(default)]
+    pub customs: Vec<CustomLook>,
+    /// The one of `customs` in use, by index; `variation` and `colors` are
+    /// then its own. `None`: the scheme alone.
+    #[serde(default)]
+    pub custom: Option<u8>,
+    /// Light mode: what the desk tells web pages it prefers
+    /// (`prefers-color-scheme`); off, dark. Sola's own windows stay dark.
+    #[serde(default)]
+    pub light: bool,
+    /// Lock the screen when the idle fade is complete (needs a password,
+    /// Oath's login service).
+    #[serde(default)]
+    pub lock_idle: bool,
+    /// The look each kept background picture (`sola_core::background`)
+    /// was last worn with, by its path. When the picture changes, the shell
+    /// keeps the outgoing one's here and puts the incoming one's back.
+    #[serde(default)]
+    pub pictures: std::collections::BTreeMap<String, PictureLook>,
+}
+
+/// What makes the theme's colors with a picture: the parts of
+/// [`Appearance`] a picture keeps (`Appearance.pictures`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PictureLook {
+    pub adapt_theme: bool,
+    pub strength: u8,
+    pub variation: u8,
+    #[serde(default)]
+    pub colors: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    pub customs: Vec<CustomLook>,
+    #[serde(default)]
+    pub custom: Option<u8>,
+}
+
+/// A look you made: your colors (`Appearance.colors`' keys) over one of the
+/// picture's schemes (`Appearance.variation`'s index).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomLook {
+    #[serde(default)]
+    pub variation: u8,
+    #[serde(default)]
+    pub colors: std::collections::BTreeMap<String, String>,
+}
+
+impl Appearance {
+    pub const DEFAULT_STRENGTH: u8 = 60;
+    pub const DEFAULT_FADE_AFTER_MIN: u16 = 5;
+    pub const DEFAULT_FADE_OVER_MIN: u16 = 30;
+    pub const DEFAULT_DIM_AFTER_MIN: u16 = 60;
+    pub const DEFAULT_DIM_OVER_MIN: u16 = 30;
+    pub const DEFAULT_OPACITY: u8 = 90;
+    /// The least opacity Settings offers: below it, text over a busy
+    /// picture stops reading.
+    pub const MIN_OPACITY: u8 = 50;
+    /// The most looks you can keep.
+    pub const MAX_CUSTOMS: usize = 6;
+
+    fn default_strength() -> u8 {
+        Self::DEFAULT_STRENGTH
+    }
+
+    fn default_fade_idle() -> bool {
+        true
+    }
+
+    fn default_fade_after() -> u16 {
+        Self::DEFAULT_FADE_AFTER_MIN
+    }
+
+    fn default_fade_over() -> u16 {
+        Self::DEFAULT_FADE_OVER_MIN
+    }
+
+    fn default_dim_idle() -> bool {
+        true
+    }
+
+    fn default_dim_after() -> u16 {
+        Self::DEFAULT_DIM_AFTER_MIN
+    }
+
+    fn default_dim_over() -> u16 {
+        Self::DEFAULT_DIM_OVER_MIN
+    }
+
+    fn default_opacity() -> u8 {
+        Self::DEFAULT_OPACITY
+    }
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            adapt_theme: false,
+            strength: Self::DEFAULT_STRENGTH,
+            variation: 0,
+            fade_idle: true,
+            fade_after_min: Self::DEFAULT_FADE_AFTER_MIN,
+            fade_over_min: Self::DEFAULT_FADE_OVER_MIN,
+            dim_idle: true,
+            dim_after_min: Self::DEFAULT_DIM_AFTER_MIN,
+            dim_over_min: Self::DEFAULT_DIM_OVER_MIN,
+            opacity: Self::DEFAULT_OPACITY,
+            colors: Default::default(),
+            customs: Vec::new(),
+            custom: None,
+            light: false,
+            lock_idle: false,
+            pictures: Default::default(),
+        }
+    }
+}
+
+impl Appearance {
+    /// The look worn now.
+    pub fn picture_look(&self) -> PictureLook {
+        PictureLook {
+            adapt_theme: self.adapt_theme,
+            strength: self.strength,
+            variation: self.variation,
+            colors: self.colors.clone(),
+            customs: self.customs.clone(),
+            custom: self.custom,
+        }
+    }
+
+    /// Wear `look`: the theme's colors as they were with its picture.
+    pub fn wear(&mut self, look: &PictureLook) {
+        self.adapt_theme = look.adapt_theme;
+        self.strength = look.strength;
+        self.variation = look.variation;
+        self.colors = look.colors.clone();
+        self.customs = look.customs.clone();
+        self.custom = look.custom;
+    }
+}
+
+/// The color schemes the background picture offers for the adapted theme
+/// (shell → Settings, `Topic::ThemeVariations`, sticky): one per color the
+/// picture is made of, the best first. `Appearance.variation` picks one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThemeVariations {
+    /// The picture they were sampled from (`Background.path`).
+    pub path: String,
+    pub choices: Vec<ThemeVariation>,
+}
+
+/// One scheme, as Settings shows it: its tint's hue name, three of its
+/// colors at the current strength, and the picture's color it comes from
+/// (`#rrggbb`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThemeVariation {
+    pub name: String,
+    pub base: String,
+    pub raised: String,
+    pub accent: String,
+    #[serde(default)]
+    pub source: String,
+}
+
+/// What the idle fade leaves uncovered (shell → sola-river,
+/// `Topic::IdleKeep`, sticky): the top row's left group — the flower and
+/// the agent islands, what you may want to answer — stays in full sight
+/// while everything else fades into the picture. Output-local logical
+/// pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdleKeep {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+}
+
+/// The desk is idle and fading (sola-river → Projects, the shell,
+/// `Topic::IdleFade`, sticky): no input for the fade's delay. While it is
+/// on, a session's tab that has the keyboard is not being looked at, so its
+/// island shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdleFade {
+    pub fading: bool,
+    /// The fade is full: the windows are out of sight under the picture.
+    /// The shell tells apps their tab windows are off screen (a browser
+    /// rests its pages) until input brings them back.
+    #[serde(default)]
+    pub out: bool,
+}
+
 /// Emitted by compositor when pointer enters a different surface/window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEnteredPayload {
     pub window_id: u32,
+    /// The pointer did not move: the window under it changed (a tab
+    /// switch, a close, a new window). Focus does not follow a still
+    /// pointer; sola-river sends the enter again, not still, once it moves.
+    #[serde(default)]
+    pub still: bool,
 }
 
 /// App menu definition, emitted as sticky by apps at startup.
@@ -224,7 +689,8 @@ pub enum Zone {
     /// Center + right columns combined (FullMiddle ∪ Right). Full height
     /// under the menubar — Meta+KP_Add.
     MiddleRight,
-    /// Fullscreen *under* the menubar — the standard "max window".
+    /// Fullscreen *under* the menubar — the standard "max window". On
+    /// Next, the tab bar's Full zone: the content area right of the bar.
     Fullscreen,
     /// True fullscreen including the menubar — the cinema / no-chrome
     /// view. The shell skips its menubar offset for this zone so the
@@ -434,6 +900,45 @@ pub struct CalendarConfig {
     /// Discovered calendars (from sola-calendar). Settings edits hidden /
     /// alias / colour; empty on an accounts-only publish means “leave as-is”.
     pub calendars: Vec<CalendarShelf>,
+}
+
+/// Calendar's coming days, for the menubar clock's panel (sola-calendar
+/// → shell, `Topic::CalendarAgenda`, persistent): the shown calendars'
+/// events from today through the next week, a day at a time, so the panel
+/// lists today's while Calendar is closed (what it last knew).
+/// Republished when the events, the calendars shown or the day change.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalendarAgenda {
+    pub days: Vec<AgendaDay>,
+}
+
+/// One local day of [`CalendarAgenda`]: an event over several days, or a
+/// repeat, shows on each day it covers.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgendaDay {
+    /// Local date, `YYYY-MM-DD`.
+    pub date: String,
+    /// All-day first, then by start, as Calendar lists them.
+    pub events: Vec<AgendaEvent>,
+}
+
+/// An event in [`AgendaDay`].
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgendaEvent {
+    /// Calendar's id for it; `NotificationActivate { app_id:
+    /// "sola-calendar", url: id }` opens it there.
+    pub id: String,
+    pub title: String,
+    /// Its calendar's colour, `#rrggbb`.
+    pub color: String,
+    pub all_day: bool,
+    /// Unix seconds (unused for an all-day event).
+    pub start: i64,
+    pub end: i64,
+    pub location: String,
 }
 
 /// One calendar as shown in Settings and the Calendar sidebar.
@@ -1129,17 +1634,10 @@ pub struct MailStatus {
 }
 
 define_topics! {
-    // TopicKind is postcard-encoded in Subscribe as a Vec. Inserting a
-    // variant *above* existing ones shifts discriminants (this broke
-    // Super+Tab). Append at the **end**.
-    //
-    // Appending is not enough against an *older bus host*: one unknown
-    // discriminant fails the whole Vec, the bus keeps the previous
-    // (empty) subscription, and the client is deaf (no OutputGeometry /
-    // Windows — shell never frames). `BusClient::subscribe` sends a
-    // prefix the prior generation can decode, then the full set. The
-    // host also skips unknown discriminants (`decode_subscribe_kinds`).
-    // Install `bus` in the same replace as any TopicKind growth.
+    // A subscription names its kinds (`crate::subscribe`), so adding or
+    // removing a kind renumbers nothing on the wire. Payloads are still
+    // postcard of their exact types: a changed payload needs the bus and
+    // its clients from one build.
     //
     // Window management list. Sticky: latest list from sola-river is
     // replayed to new subscribers.
@@ -1233,16 +1731,6 @@ define_topics! {
     #[persistent(namespace = "theme/current")]
     Theme(Theme),
 
-    // User-named theme presets persisted by sola-kit's storybook. Keyed
-    // by `name` so each preset lives at
-    // `~/.config/sola/theme/presets/<name>.yaml`. Emit to add/update,
-    // retract to unlink. `name` is constrained to kebab-case (see
-    // `sola_core::theme::is_valid_theme_name`) — it doubles as the
-    // filename. The hardcoded "Default" preset is owned by Rust
-    // constants and never travels through this topic.
-    #[persistent(keys = [name], namespace = "theme/presets/:name")]
-    CustomTheme(NamedTheme),
-
     // One launchable application (user-edited; built-ins live in code).
     // Keyed by `app_id` so each entry has its own item under
     // `Application:` in `state.yaml`: settings emits to add/update,
@@ -1324,50 +1812,109 @@ define_topics! {
     // Appended last so TopicKind postcard discriminants stay stable.
     #[persistent]
     CalendarConfig(CalendarConfig),
-}
 
-/// TopicKinds added after `MailStatus`. An older bus host cannot
-/// postcard-decode a Subscribe vec that includes these.
-pub fn topic_kind_is_after_mail_status(kind: TopicKind) -> bool {
-    matches!(
-        kind,
-        TopicKind::AppNotification | TopicKind::NotificationActivate | TopicKind::CalendarConfig
-    )
-}
+    // A dialog's parent window (sola-river → shell). Sticky, keyed by
+    // window_id; retracted on close. Appended last.
+    #[sticky(keys = [window_id])]
+    WindowParent(WindowParent),
 
-/// Decode a Subscribe payload. Unknown trailing discriminants (a newer
-/// client talking to this bus) are skipped so the rest of the set still
-/// applies. Empty / totally foreign payloads error.
-pub fn decode_subscribe_kinds(msg: &crate::Message) -> std::io::Result<Vec<TopicKind>> {
-    match crate::topic::decode_payload::<Vec<TopicKind>>(msg) {
-        Ok(kinds) => Ok(kinds),
-        Err(_) => {
-            let raw: Vec<u32> = crate::topic::decode_payload(msg)?;
-            let mut kinds = Vec::new();
-            let mut unknown = 0u32;
-            for d in raw {
-                if let Some(k) = TopicKind::ALL.get(d as usize).copied() {
-                    kinds.push(k);
-                } else {
-                    unknown += 1;
-                }
-            }
-            if unknown > 0 {
-                tracing::warn!(
-                    unknown,
-                    kept = kinds.len(),
-                    "subscribe: skipped unknown TopicKind discriminants"
-                );
-            }
-            if kinds.is_empty() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "subscribe: no known TopicKind",
-                ));
-            }
-            Ok(kinds)
-        }
-    }
+    // The shell's tab bar: zones, their tabs' app ids, what each shows.
+    // Shell owns it; persistent so the layout survives a restart. Own
+    // namespace so tab moves don't churn state.yaml. Appended last.
+    #[persistent(namespace = "shell/tabs")]
+    TabLayout(TabLayout),
+
+    // A window an app opens as a tab (app → shell). Sticky, keyed by key;
+    // retracted when the tab closes. Appended last.
+    #[sticky(keys = [key])]
+    Tab(Tab),
+
+    // Which sola-river window a tab is (shell → apps). Sticky, keyed by
+    // key; retracted when the window closes. Appended last.
+    #[sticky(keys = [key])]
+    TabWindow(TabWindow),
+
+    // Show a tab's window and focus it (app → shell). Appended last.
+    ShowTab(ShowTab),
+
+    // What a tab is doing, for its tab-bar row (app → shell). Sticky,
+    // keyed by key; retracted when the tab closes. Appended last.
+    #[sticky(keys = [key])]
+    TabActivity(TabActivity),
+
+    // How a window is shown: tiled, Cinema, compositor rim (shell →
+    // sola-river, apps). Sticky, keyed by window_id; retracted on close.
+    // Appended last.
+    #[sticky(keys = [window_id])]
+    WindowChrome(WindowChrome),
+
+    // The workspaces and the one showing (shell → apps). Sticky; the
+    // shell persists them inside `TabLayout`. Appended last.
+    #[sticky]
+    Workspaces(Workspaces),
+
+    // The workspace a window is on (shell → apps). Sticky, keyed by
+    // window_id; retracted on close. Appended last.
+    #[sticky(keys = [window_id])]
+    WindowWorkspace(WindowWorkspace),
+
+    // Close one window (by its sola-river id) as its own close would:
+    // sola-river sends `river_window_v1.close`, so the app gets a close
+    // request (shell → sola-river; the tab bar's stoplight on a window
+    // that is not a tab). Appended last.
+    CloseWindow(u32),
+
+    // Close a tab's window (by its key) as its own close would (shell →
+    // the app that opened it; the tab bar's stoplight). Not through the
+    // compositor: an app quitting gets close requests for every window,
+    // which must not close its tabs one by one. Appended last.
+    CloseTab(String),
+
+    // What a Projects session needs from you, for its island in the top
+    // row (Projects → shell). Sticky, keyed by key; retracted when it no
+    // longer does. Appended last.
+    #[sticky(keys = [key])]
+    AgentIsland(AgentIsland),
+
+    // An island's answer, reply or Show (shell → Projects). Appended last.
+    AgentIslandAction(AgentIslandAction),
+
+    // The picture behind the windows (any app → sola-river). Persistent so
+    // it survives a restart; retracted for the plain ground. Appended last.
+    #[persistent]
+    Background(Background),
+
+    // Appearance settings (Settings → shell, sola-river). Persistent.
+    // Appended last.
+    #[persistent]
+    Appearance(Appearance),
+
+    // The picture's schemes for the adapted theme (shell → Settings).
+    // Sticky. Appended last.
+    #[sticky]
+    ThemeVariations(ThemeVariations),
+
+    // What the idle fade keeps in sight (shell → sola-river). Sticky.
+    // Appended last.
+    #[sticky]
+    IdleKeep(IdleKeep),
+
+    // The desk is idle and fading (sola-river → Projects). Sticky.
+    // Appended last.
+    #[sticky]
+    IdleFade(IdleFade),
+
+    // Calendar's coming days for the menubar clock (sola-calendar →
+    // shell). Persistent in its own namespace, so the panel has today's
+    // events while Calendar is closed. Appended last.
+    #[persistent(namespace = "calendar/agenda")]
+    CalendarAgenda(CalendarAgenda),
+
+    // Show this sola-river window in its zone and focus it, as a click on
+    // its tab-bar row would (an app bringing itself forward → shell). Not
+    // `Focus`, which is the shell's word to sola-river and does not show
+    // a window its zone is not showing. Appended last.
+    ShowWindow(u32),
 }
 
 #[cfg(test)]
@@ -1418,6 +1965,162 @@ mod tests {
             other => panic!("expected MailStatus, got {other:?}"),
         }
         assert_eq!(TopicKind::MailStatus.as_str(), "MailStatus");
+    }
+
+    #[test]
+    fn tab_activity_is_sticky_per_tab() {
+        let activity = TabActivity {
+            key: "sola-projects/proj-sola".into(),
+            activity: Activity::Waiting,
+        };
+        let msg = Topic::TabActivity(activity.clone()).to_message();
+        assert!(TopicKind::TabActivity.behavior().is_sticky());
+        assert_eq!(msg.keys, vec!["sola-projects/proj-sola".to_string()]);
+        match Topic::parse(&msg) {
+            Some(Topic::TabActivity(back)) => assert_eq!(back, activity),
+            other => panic!("expected TabActivity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn agent_island_is_sticky_per_session() {
+        let island = AgentIsland {
+            key: "pane-7".into(),
+            name: "menubar-pass".into(),
+            project: "Sola".into(),
+            state: IslandState::Waiting,
+            title: "wants to run cargo make build".into(),
+            body: "cargo make build sola-shell".into(),
+            choices: vec!["Yes".into(), "No".into()],
+            reply: false,
+            since: 1,
+        };
+        let msg = Topic::AgentIsland(island.clone()).to_message();
+        assert!(TopicKind::AgentIsland.behavior().is_sticky());
+        assert_eq!(msg.keys, vec!["pane-7".to_string()]);
+        match Topic::parse(&msg) {
+            Some(Topic::AgentIsland(back)) => assert_eq!(back, island),
+            other => panic!("expected AgentIsland, got {other:?}"),
+        }
+        let act = AgentIslandAction {
+            key: "pane-7".into(),
+            action: IslandAction::Reply("go on".into()),
+        };
+        let msg = Topic::AgentIslandAction(act.clone()).to_message();
+        assert!(!TopicKind::AgentIslandAction.behavior().is_sticky());
+        match Topic::parse(&msg) {
+            Some(Topic::AgentIslandAction(back)) => assert_eq!(back, act),
+            other => panic!("expected AgentIslandAction, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn background_is_persistent() {
+        let bg = Background {
+            path: "/home/u/.config/sola/background/cliffs.jpg".into(),
+            set_at: 7,
+        };
+        let msg = Topic::Background(bg.clone()).to_message();
+        assert!(TopicKind::Background.behavior().is_persistent());
+        match Topic::parse(&msg) {
+            Some(Topic::Background(back)) => assert_eq!(back, bg),
+            other => panic!("expected Background, got {other:?}"),
+        }
+        let look = Appearance {
+            adapt_theme: true,
+            strength: 40,
+            ..Appearance::default()
+        };
+        let msg = Topic::Appearance(look.clone()).to_message();
+        assert!(TopicKind::Appearance.behavior().is_persistent());
+        match Topic::parse(&msg) {
+            Some(Topic::Appearance(back)) => assert_eq!(back, look),
+            other => panic!("expected Appearance, got {other:?}"),
+        }
+        // An Appearance saved before the fade settings reads with their
+        // defaults.
+        let old: Appearance = serde_yaml_ng::from_str("adapt_theme: true\nstrength: 30\n").unwrap();
+        assert_eq!(old.strength, 30);
+        assert!(old.fade_idle);
+        assert_eq!(old.fade_after_min, Appearance::DEFAULT_FADE_AFTER_MIN);
+        assert_eq!(old.fade_over_min, Appearance::DEFAULT_FADE_OVER_MIN);
+        assert!(old.dim_idle);
+        assert_eq!(old.dim_after_min, Appearance::DEFAULT_DIM_AFTER_MIN);
+        assert_eq!(old.dim_over_min, Appearance::DEFAULT_DIM_OVER_MIN);
+        assert_eq!(old.opacity, Appearance::DEFAULT_OPACITY);
+        assert!(old.customs.is_empty() && old.custom.is_none());
+        let mine = Appearance {
+            variation: 1,
+            colors: [("accent".to_string(), "#ff8800".to_string())].into(),
+            customs: vec![CustomLook {
+                variation: 1,
+                colors: [("accent".to_string(), "#ff8800".to_string())].into(),
+            }],
+            custom: Some(0),
+            ..Appearance::default()
+        };
+        match Topic::parse(&Topic::Appearance(mine.clone()).to_message()) {
+            Some(Topic::Appearance(back)) => assert_eq!(back, mine),
+            other => panic!("expected Appearance, got {other:?}"),
+        }
+        assert!(TopicKind::ThemeVariations.behavior().is_sticky());
+        let keep = IdleKeep {
+            x: 0,
+            y: 0,
+            w: 180,
+            h: 40,
+        };
+        match Topic::parse(&Topic::IdleKeep(keep).to_message()) {
+            Some(Topic::IdleKeep(back)) => assert_eq!(back, keep),
+            other => panic!("expected IdleKeep, got {other:?}"),
+        }
+        assert!(TopicKind::IdleKeep.behavior().is_sticky());
+        let fade = IdleFade { fading: true, out: true };
+        match Topic::parse(&Topic::IdleFade(fade).to_message()) {
+            Some(Topic::IdleFade(back)) => assert_eq!(back, fade),
+            other => panic!("expected IdleFade, got {other:?}"),
+        }
+        assert!(TopicKind::IdleFade.behavior().is_sticky());
+    }
+
+    #[test]
+    fn calendar_agenda_is_persistent_and_roundtrips() {
+        let agenda = CalendarAgenda {
+            days: vec![AgendaDay {
+                date: "2026-10-26".into(),
+                events: vec![AgendaEvent {
+                    id: "ev-1".into(),
+                    title: "Design review".into(),
+                    color: "#e8b84a".into(),
+                    all_day: false,
+                    start: 1_793_030_400,
+                    end: 1_793_032_200,
+                    location: String::new(),
+                }],
+            }],
+        };
+        match Topic::parse(&Topic::CalendarAgenda(agenda.clone()).to_message()) {
+            Some(Topic::CalendarAgenda(back)) => assert_eq!(back, agenda),
+            other => panic!("expected CalendarAgenda, got {other:?}"),
+        }
+        assert!(TopicKind::CalendarAgenda.behavior().is_persistent());
+    }
+
+    #[test]
+    fn window_chrome_is_sticky_per_window() {
+        let chrome = WindowChrome {
+            window_id: 42,
+            tiled: true,
+            cinema: false,
+            rim: true,
+        };
+        let msg = Topic::WindowChrome(chrome).to_message();
+        assert!(TopicKind::WindowChrome.behavior().is_sticky());
+        assert_eq!(msg.keys, vec!["42".to_string()]);
+        match Topic::parse(&msg) {
+            Some(Topic::WindowChrome(back)) => assert_eq!(back, chrome),
+            other => panic!("expected WindowChrome, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1525,27 +2228,6 @@ mod tests {
             TopicKind::NotificationActivate.as_str(),
             "NotificationActivate"
         );
-        assert!(topic_kind_is_after_mail_status(TopicKind::AppNotification));
-        assert!(!topic_kind_is_after_mail_status(TopicKind::MailStatus));
-        assert!(!topic_kind_is_after_mail_status(TopicKind::Windows));
-    }
-
-    #[test]
-    fn decode_subscribe_skips_unknown_discriminants() {
-        let mut raw: Vec<u32> = TopicKind::ALL
-            .iter()
-            .take(3)
-            .enumerate()
-            .map(|(i, _)| i as u32)
-            .collect();
-        raw.push(u32::MAX);
-        let msg = crate::Message::with_payload(
-            crate::CONTROL_SUBSCRIBE,
-            crate::topic::encode_payload(&raw),
-        );
-        let kinds = decode_subscribe_kinds(&msg).expect("kept known kinds");
-        assert_eq!(kinds.len(), 3);
-        assert_eq!(kinds[0], TopicKind::ALL[0]);
     }
 
     #[test]
@@ -1811,6 +2493,39 @@ mod tests {
                 assert_eq!(a.label, "Steam");
                 assert_eq!(a.kind, AppKind::Command);
                 assert_eq!(a.url, None);
+            }
+            other => panic!("expected Application, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn application_parse_accepts_the_record_before_profile() {
+        #[derive(serde::Serialize)]
+        struct ApplicationV2 {
+            app_id: String,
+            label: String,
+            command: String,
+            icon: String,
+            kind: AppKind,
+            url: Option<String>,
+        }
+        let old = ApplicationV2 {
+            app_id: "slack".into(),
+            label: "Slack".into(),
+            command: "/bin/sola-wrapper slack".into(),
+            icon: String::new(),
+            kind: AppKind::Web,
+            url: Some("https://app.slack.com".into()),
+        };
+        let bytes = postcard::to_allocvec(&old).unwrap();
+        let mut msg = crate::Message::with_payload("Application", bytes);
+        msg.keys = vec!["slack".into()];
+        msg.sticky = true;
+        match Topic::parse(&msg) {
+            Some(Topic::Application(a)) => {
+                assert_eq!(a.kind, AppKind::Web);
+                assert_eq!(a.url.as_deref(), Some("https://app.slack.com"));
+                assert_eq!(a.profile, None);
             }
             other => panic!("expected Application, got {other:?}"),
         }

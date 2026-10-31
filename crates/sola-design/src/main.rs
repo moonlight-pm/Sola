@@ -15,6 +15,7 @@ mod calls;
 mod camera;
 mod canvas;
 mod detail;
+mod dialogs;
 mod frames;
 mod glow;
 mod ime;
@@ -29,15 +30,16 @@ mod pace;
 mod plane;
 mod profile;
 mod projects;
-mod rail;
 mod report;
 mod routes;
 mod scene;
 mod select;
 mod serve;
 mod share;
+mod topbar;
 mod tour;
 mod watch;
+mod windows;
 
 use std::process::ExitCode;
 

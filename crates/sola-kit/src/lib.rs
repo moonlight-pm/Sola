@@ -13,9 +13,7 @@
 //! - window settings (no decorations, correct `xdg_toplevel.app_id`)
 //! - theme construction from the shared sola palette
 //!
-//! Active consumers: `sola-monitor`, `sola-settings`, `sola-shell`,
-//! `sola-terminal`, agent, browser-core, `sola-paint`, and this crate's
-//! storybook.
+//! Consumed by every Sola app.
 //!
 //! ## Theme protocol
 //!
@@ -39,12 +37,14 @@ pub mod components;
 pub mod float;
 pub mod fonts;
 pub mod menu;
+pub mod tabs;
 pub mod theme;
 
 pub use app::{BusSetup, QUIT_ACTION_ID, apply_theme_update, is_self_quit};
 pub use call::{CallSetup, call_subscription, install_observer, observe_subscription};
+pub use components::window_frame::{Chrome, window_frame};
 pub use float::{
-    FloatState, close_app, drag, drag_resize, theme_for, window_ready_task, wrap_if_floating,
+    FloatState, close_app, drag, drag_resize, show_window, theme_for, window_ready_task,
 };
 pub use menu::{
     WINDOW_MENU_LABEL, WindowAction, ensure_window_menu, parse_window_action, window_menu,

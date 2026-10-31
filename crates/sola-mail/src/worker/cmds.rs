@@ -3,7 +3,7 @@
 use sola_bus::topics::MailConfig;
 
 use crate::protocol::sender::Outgoing;
-use crate::protocol::{Folder, FolderRef, MailId, MessageBody, MessageSummary};
+use crate::protocol::{Folder, FolderRef, LetterImage, MailId, MessageBody, MessageSummary};
 
 /// How a list page relates to what the UI already shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +55,11 @@ pub enum MailCmd {
         also: Option<String>,
     },
     FetchBody(MailId),
+    /// The letter's pictures from the web (Load Images).
+    FetchImages {
+        id: MailId,
+        urls: Vec<String>,
+    },
     SetFlag {
         id: MailId,
         flag: Flag,
@@ -115,6 +120,13 @@ pub enum MailEvent {
         capped: bool,
     },
     Body(Box<MessageBody>),
+    /// One of a letter's web pictures, fetched and decoded.
+    Image {
+        id: MailId,
+        image: Box<LetterImage>,
+    },
+    /// Every web picture asked for has arrived or failed.
+    ImagesDone(MailId),
     Moved {
         id: MailId,
         dest: String,

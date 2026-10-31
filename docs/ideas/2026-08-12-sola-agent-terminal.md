@@ -4,7 +4,7 @@
 **Name:** `sola-workspaces` (locked 2026-08-14; this file keeps the research title).  
 **Out of scope by request:** `crates/sola-agent` (ACP / Grok-leader chat). That crate is a different product and is not a starting point.  
 **Living focus pointer:** root [`CURRENT.md`](../../CURRENT.md) **Now** item 1 (this branch).  
-**Session rule:** [`.grok/rules/workspaces-design.md`](../../.grok/rules/workspaces-design.md).
+**Session rule:** [`.grok/rules/projects-design.md`](../../.grok/rules/projects-design.md).
 
 This note is a research-backed sketch: what Orca actually is, what `sola-terminal` already is, and a *small* first version that keeps the parts that feel great and drops the rest.
 
@@ -384,5 +384,5 @@ These are product forks, not things to invent in an ideas file:
 | Status perf lesson | `docs/reference/renderer-agent-status-performance.md` |
 | sola-terminal engine | `crates/sola-terminal/src/{emulator,pty,term_view,state,tmux,sidebar}.rs` |
 | Kit status dots | `crates/sola-kit/src/components/sidebar.rs` (`SidebarIndicator`) — starting point, not law |
-| Design skills | `.grok/skills/impeccable`, frontend-design; rule `.grok/rules/workspaces-design.md` |
+| Design skills | `.grok/skills/impeccable`, frontend-design; rule `.grok/rules/projects-design.md` |
 | Tab persist (do not reuse) | `crates/sola-bus/src/topics.rs` (`TerminalSession`) |

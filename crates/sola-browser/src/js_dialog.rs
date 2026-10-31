@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use iced::widget::{Space, column, container, mouse_area, row, scrollable, stack, text};
+use iced::widget::{Space, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Element, Length};
 
 use sola_kit::components::button as kit_button;
@@ -16,6 +16,7 @@ use sola_kit::components::text_input::text_input;
 use sola_kit::fonts;
 
 use crate::notify;
+use sola_kit::components::scroll;
 
 /// True while a JS dialog overlay is on screen. The OSR shader checks this
 /// so page keys do not reach CEF under the modal. Kind flags are for the
@@ -120,7 +121,7 @@ pub fn overlay<'a, Message: Clone + 'a>(
     if !message.is_empty() {
         let body = text(message.to_string()).size(13).width(Length::Fill);
         col = col.push(
-            container(scrollable(body))
+            container(scroll::scrollable(body))
                 .width(Length::Fill)
                 .max_height(220.0),
         );

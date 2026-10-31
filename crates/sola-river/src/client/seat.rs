@@ -21,12 +21,15 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
         match event {
             Event::PointerEnter { window } => {
                 if let Some(&id) = state.windows_by_object.get(&window.id()) {
-                    debug!(window_id = id, "pointer_enter");
+                    let still = !state.pointer_moved;
+                    debug!(window_id = id, still, "pointer_enter");
                     // Hovered window (CSD resize corner fallback).
                     state.pointer_window = Some(id);
-                    state
-                        .bus
-                        .emit(Topic::MouseEntered(MouseEnteredPayload { window_id: id }));
+                    state.rehover = still;
+                    state.bus.emit(Topic::MouseEntered(MouseEnteredPayload {
+                        window_id: id,
+                        still,
+                    }));
                 }
             }
             Event::PointerLeave => {
@@ -38,6 +41,8 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
                 // Latest pointer position; used to pick the grabbed corner when
                 // an interactive resize starts.
                 state.pointer_pos = Some((x, y));
+                state.pointer_moved = true;
+                rehover(state);
             }
             Event::OpDelta { dx, dy } => {
                 // Total cumulative motion since the op started.
@@ -57,4 +62,21 @@ impl Dispatch<RiverSeatV1, ()> for AppData {
             _ => {}
         }
     }
+}
+
+/// The pointer moved: if focus left the window under it without the
+/// pointer (a still enter, a keyboard switch), announce that window again
+/// so focus can follow the pointer from here.
+fn rehover(state: &mut AppData) {
+    if !std::mem::take(&mut state.rehover) {
+        return;
+    }
+    let Some(id) = state.pointer_window.filter(|&id| state.focused_window != Some(id)) else {
+        return;
+    };
+    debug!(window_id = id, "pointer moved — re-announce hovered window");
+    state.bus.emit(Topic::MouseEntered(MouseEnteredPayload {
+        window_id: id,
+        still: false,
+    }));
 }

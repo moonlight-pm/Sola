@@ -2,12 +2,13 @@ mod client;
 mod message;
 mod registry;
 pub mod state;
+pub mod subscribe;
 pub mod topic;
 pub mod topics;
 pub mod transport;
 
 pub use client::BusClient;
-pub use message::{CONTROL_IDENTIFY, CONTROL_SUBSCRIBE, Message};
+pub use message::{CONTROL_IDENTIFY, CONTROL_SUBSCRIBE, CONTROL_SUBSCRIBE_NAMES, Message};
 pub use registry::{BusHandler, BusRegistry, Delivery};
 
 /// Returns the bus socket path from `$SOLA_BUS_PATH` or the default

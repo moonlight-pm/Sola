@@ -1,23 +1,52 @@
 //! Calendar panel — the dropdown shown when the menubar clock is clicked.
 //!
-//! A Sunday-start month grid with today highlighted, plus prev/next month
-//! navigation and a "Today" button. Rendered inside the shared Menu window
-//! (see `menu::view`), right-anchored under the clock. The displayed month is
-//! held in `Shell::calendar_month` (always the 1st of the month).
+//! The month on six fixed Sunday-first weeks (the days either side in a
+//! faint ink, so the card never changes height), today in an accent
+//! circle, and previous / Today / next at the right of the month's name.
+//! Type and inks are the stat panels' (`crate::stats::view`): 10 px caps
+//! for the weekdays, the theme's UI faces, never a family by name.
+//! Under the month, today's events from Calendar's agenda
+//! (`Topic::CalendarAgenda`): a row each, its calendar's bar, the time
+//! and the title; one that has ended dims; a click shows it in Calendar.
+//! Left out until Calendar has published.
+//! Rendered inside the shared Menu window (see `menu::view`),
+//! right-anchored under the clock. The displayed month is held in
+//! `Shell::calendar_month` (always the 1st of the month).
 
-use chrono::{Datelike, Months, NaiveDate};
-use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{button, column, container, row, text};
-use iced::{Element, Length, Padding};
+use chrono::{DateTime, Datelike, Duration, Local, Months, NaiveDate};
+use iced::widget::{Space, button, column, container, row, text};
+use iced::{Alignment, Color, Element, Length, Padding, Theme};
 
 use crate::app::Msg;
+use sola_bus::topics::AgendaEvent;
+use sola_kit::components::icon::{icon_handle, icon_svg_colored};
+use sola_kit::components::style::{HAIRLINE_A, mix, mix_white};
 use sola_kit::components::{button as kit_btn, popover};
-use sola_kit::fonts::INTER_MEDIUM;
+use sola_kit::fonts;
 
-/// Fixed width of the calendar card.
+/// Fixed width of the calendar card: seven 32 px days and the pad.
 pub const CARD_WIDTH: f32 = 248.0;
-/// Live overlay height (month grid + chrome). Caps at usable area.
-pub const CARD_HEIGHT: f32 = 320.0;
+/// The month alone: its card is about 252 tall.
+const MONTH_H: f32 = 252.0;
+/// Today's section without its rows: the gap, the rule, the caption.
+const TODAY_HEAD_H: f32 = 37.0;
+/// A row of today's events, with the gap under it.
+const EVENT_ROW_H: f32 = 24.0;
+/// Today's events listed; past that, a count opens Calendar.
+const TODAY_ROWS: usize = 5;
+/// The live overlay's room past the card.
+const SPARE: f32 = 24.0;
+
+/// Inside the card, as the stat panels.
+const PAD: f32 = 12.0;
+/// A week's row.
+const ROW_H: f32 = 30.0;
+/// Today's circle.
+const TODAY_D: f32 = 24.0;
+/// How far the days either side are from the card toward the ink.
+const FAINT: f32 = 0.38;
+/// Weeks on the card, whatever the month.
+const WEEKS: usize = 6;
 
 const WEEKDAYS: [&str; 7] = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
@@ -36,42 +65,12 @@ pub fn prev_month(month: NaiveDate) -> NaiveDate {
     month.checked_sub_months(Months::new(1)).unwrap_or(month)
 }
 
-fn days_in_month(year: i32, month: u32) -> u32 {
-    let (ny, nm) = if month == 12 {
-        (year + 1, 1)
-    } else {
-        (year, month + 1)
-    };
-    NaiveDate::from_ymd_opt(ny, nm, 1)
-        .and_then(|d| d.pred_opt())
-        .map(|d| d.day())
-        .unwrap_or(28)
-}
-
-/// Sunday-start weeks for the month containing `anchor`. Each row is 7 slots;
-/// slots before the 1st and after the last day of the month are `None`.
-pub fn month_weeks(anchor: NaiveDate) -> Vec<[Option<NaiveDate>; 7]> {
-    let (year, month) = (anchor.year(), anchor.month());
-    let first = NaiveDate::from_ymd_opt(year, month, 1).expect("day 1 valid");
-    let lead = first.weekday().num_days_from_sunday() as usize;
-    let total = days_in_month(year, month);
-
-    let mut weeks = Vec::new();
-    let mut week: [Option<NaiveDate>; 7] = [None; 7];
-    let mut col = lead;
-    for day in 1..=total {
-        week[col] = NaiveDate::from_ymd_opt(year, month, day);
-        col += 1;
-        if col == 7 {
-            weeks.push(week);
-            week = [None; 7];
-            col = 0;
-        }
-    }
-    if col != 0 {
-        weeks.push(week);
-    }
-    weeks
+/// Six Sunday-start weeks from the Sunday on or before the 1st of `month`:
+/// the month, and the days either side to fill the grid.
+pub fn month_grid(month: NaiveDate) -> [[NaiveDate; 7]; WEEKS] {
+    let first = first_of_month(month);
+    let start = first - Duration::days(first.weekday().num_days_from_sunday() as i64);
+    std::array::from_fn(|w| std::array::from_fn(|d| start + Duration::days((w * 7 + d) as i64)))
 }
 
 fn month_name(month: u32) -> &'static str {
@@ -94,98 +93,272 @@ fn month_name(month: u32) -> &'static str {
     .unwrap_or("")
 }
 
-/// Lower-contrast text (weekday headers) — a dimmed copy of the base text
-/// colour, which is reliably visible on the card (unlike `kit_text::muted`).
-fn dim(theme: &iced::Theme) -> iced::widget::text::Style {
-    iced::widget::text::Style {
-        color: Some(iced::Color {
-            a: 0.5,
-            ..theme.palette().text
-        }),
+/// The card's inks: the theme's text at the stat panels' steps. The days
+/// either side are opaque, the design's ink-4: a translucent white reads
+/// brighter through iced's linear blending (the kit's hairline note).
+struct Inks {
+    text: Color,
+    figure: Color,
+    dim: Color,
+    faint: Color,
+    rule: Color,
+}
+
+fn inks(theme: &Theme) -> Inks {
+    let p = theme.extended_palette();
+    let text = p.background.base.text;
+    Inks {
+        text,
+        figure: Color { a: 0.78, ..text },
+        dim: Color { a: 0.55, ..text },
+        faint: mix(text, p.background.weaker.color, FAINT),
+        rule: mix_white(p.background.weaker.color, HAIRLINE_A),
     }
 }
 
-fn nav_button(glyph: &str, msg: Msg) -> Element<'static, Msg> {
-    button(text(glyph.to_string()).size(16))
+fn tint(c: Color) -> impl Fn(&Theme) -> iced::widget::text::Style {
+    move |_| iced::widget::text::Style { color: Some(c) }
+}
+
+/// A chevron that steps the month.
+fn step(icon: &str, msg: Msg, ink: &Inks) -> Element<'static, Msg> {
+    button(icon_svg_colored(icon_handle(icon), 14, ink.dim))
         .style(kit_btn::ghost)
-        .padding([2, 8])
+        .padding(5)
         .on_press(msg)
         .into()
 }
 
-fn weekday_cell(label: &'static str) -> Element<'static, Msg> {
-    container(text(label).size(11).style(dim))
-        .width(Length::Fill)
-        .align_x(Horizontal::Center)
+/// The month and year, and previous / Today / next. Today rests dim while
+/// the current month shows.
+fn header(month: NaiveDate, today: NaiveDate, ink: &Inks) -> Element<'static, Msg> {
+    let away = first_of_month(today) != month;
+    let today_btn = button(text("Today").font(fonts::chrome()).size(12))
+        .style(kit_btn::ghost)
+        .padding([3, 7])
+        .on_press_maybe(away.then_some(Msg::CalendarToday));
+    row![
+        text(month_name(month.month()))
+            .font(fonts::ui_medium())
+            .size(13)
+            .style(tint(ink.text)),
+        text(month.year().to_string())
+            .font(fonts::ui())
+            .size(13)
+            .style(tint(ink.dim)),
+        Space::new().width(Length::Fill),
+        step("lucide/chevron-left", Msg::CalendarPrevMonth, ink),
+        today_btn,
+        step("lucide/chevron-right", Msg::CalendarNextMonth, ink),
+    ]
+    .spacing(5)
+    .padding(Padding::ZERO.left(6))
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// The weekdays in the panels' caption: 10 px caps, dim.
+fn weekdays(ink: &Inks) -> Element<'static, Msg> {
+    row(WEEKDAYS.into_iter().map(|d| {
+        container(
+            text(d.to_uppercase())
+                .font(fonts::ui_medium())
+                .size(10)
+                .style(tint(ink.dim)),
+        )
+        .center_x(Length::Fill)
+        .into()
+    }))
+    .into()
+}
+
+/// A day: the month's in the figure ink, the days either side faint,
+/// today medium on an accent circle, a dark label as on a filled button.
+fn day(date: NaiveDate, month: NaiveDate, today: NaiveDate, ink: &Inks) -> Element<'static, Msg> {
+    let n = text(date.day().to_string()).size(13);
+    let inner: Element<'static, Msg> = if date == today {
+        container(n.font(fonts::ui_medium()))
+            .center(Length::Fixed(TODAY_D))
+            .style(|theme: &Theme| {
+                let p = theme.extended_palette();
+                container::Style {
+                    background: Some(p.primary.base.color.into()),
+                    // The card's surface: the shell's base is see-through.
+                    text_color: Some(p.background.weaker.color),
+                    border: iced::Border {
+                        radius: (TODAY_D / 2.0).into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            })
+            .into()
+    } else if date.month() == month.month() {
+        n.font(fonts::chrome()).style(tint(ink.figure)).into()
+    } else {
+        n.font(fonts::chrome()).style(tint(ink.faint)).into()
+    };
+    container(inner)
+        .center_x(Length::Fill)
+        .center_y(Length::Fixed(ROW_H))
         .into()
 }
 
-fn day_cell(date: Option<NaiveDate>, is_today: bool) -> Element<'static, Msg> {
-    let inner: Element<'static, Msg> = match date {
-        Some(d) => text(format!("{}", d.day())).size(13).into(),
-        None => text("").into(),
+/// Live overlay height for a card listing `today` events (`None`: no
+/// agenda, the month alone).
+pub fn card_height(today: Option<usize>) -> f32 {
+    let rows = match today {
+        None => return MONTH_H + SPARE,
+        Some(0) => 1,
+        Some(n) if n > TODAY_ROWS => TODAY_ROWS + 1,
+        Some(n) => n,
     };
-    let cell = container(inner)
-        .width(Length::Fill)
-        .height(Length::Fixed(26.0))
-        .align_x(Horizontal::Center)
-        .align_y(Vertical::Center);
-    if is_today {
-        cell.style(|theme: &iced::Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(
-                theme.extended_palette().primary.base.color,
-            )),
-            text_color: Some(theme.palette().background),
+    MONTH_H + TODAY_HEAD_H + rows as f32 * EVENT_ROW_H + SPARE
+}
+
+/// A row of today's: its calendar's bar, the time (or "all day"), the
+/// title. An event that has ended dims; one under way is full ink.
+fn event_row(e: &AgendaEvent, now: i64, ink: &Inks) -> Element<'static, Msg> {
+    let color = sola_kit::theme::try_parse(&e.color).unwrap_or(ink.dim);
+    let time = if e.all_day {
+        "all day".to_string()
+    } else {
+        DateTime::from_timestamp(e.start, 0)
+            .map(|t| t.with_timezone(&Local).format("%H:%M").to_string())
+            .unwrap_or_default()
+    };
+    let title = match (e.all_day, now) {
+        (false, now) if e.end <= now => ink.dim,
+        (false, now) if e.start <= now => ink.text,
+        _ => ink.figure,
+    };
+    let bar = container(Space::new())
+        .width(Length::Fixed(3.0))
+        .height(Length::Fixed(14.0))
+        .style(move |_: &Theme| container::Style {
+            background: Some(color.into()),
             border: iced::Border {
-                radius: 6.0.into(),
+                radius: 1.5.into(),
                 ..Default::default()
             },
             ..Default::default()
+        });
+    button(
+        row![
+            bar,
+            text(time)
+                .font(fonts::MONO)
+                .size(11)
+                .width(Length::Fixed(44.0))
+                .style(tint(ink.dim)),
+            text(e.title.clone())
+                .font(fonts::chrome())
+                .size(12.5)
+                .wrapping(iced::widget::text::Wrapping::None)
+                .style(tint(title)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .style(kit_btn::ghost)
+    .padding([3, 6])
+    .width(Length::Fill)
+    .clip(true)
+    .on_press(Msg::CalendarOpenEvent(e.id.clone()))
+    .into()
+}
+
+/// Today's events under a rule: "Today" in the caption, how many at the
+/// right, a row each (at most [`TODAY_ROWS`], then a count that opens
+/// Calendar), or "Nothing today".
+fn today_section(events: &[AgendaEvent], now: i64, ink: &Inks) -> Element<'static, Msg> {
+    let count = match events.len() {
+        0 => String::new(),
+        1 => "1 event".to_string(),
+        n => format!("{n} events"),
+    };
+    let head = row![
+        text("TODAY")
+            .font(fonts::ui_medium())
+            .size(10)
+            .style(tint(ink.dim)),
+        Space::new().width(Length::Fill),
+        text(count).font(fonts::MONO).size(11).style(tint(ink.dim)),
+    ]
+    .padding(Padding::ZERO.left(6).right(6))
+    .align_y(Alignment::Center);
+    let body: Element<'static, Msg> = if events.is_empty() {
+        text("Nothing today")
+            .font(fonts::chrome())
+            .size(12.5)
+            .style(tint(ink.dim))
+            .width(Length::Fill)
+            .into()
+    } else {
+        let mut rows = column(events.iter().take(TODAY_ROWS).map(|e| event_row(e, now, ink)));
+        if events.len() > TODAY_ROWS {
+            rows = rows.push(
+                button(
+                    text(format!("{} more in Calendar", events.len() - TODAY_ROWS))
+                        .font(fonts::chrome())
+                        .size(12)
+                        .style(tint(ink.dim)),
+                )
+                .style(kit_btn::ghost)
+                .padding([3, 6])
+                .width(Length::Fill)
+                .on_press(Msg::CalendarOpenEvent(String::new())),
+            );
+        }
+        rows.spacing(2).into()
+    };
+    let body = container(body).padding(Padding::ZERO.left(if events.is_empty() { 6 } else { 0 }));
+    column![rule(ink), column![head, body].spacing(6)]
+        .spacing(8)
+        .into()
+}
+
+fn rule(ink: &Inks) -> Element<'static, Msg> {
+    let c = ink.rule;
+    container(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fixed(1.0))
+        .style(move |_: &Theme| container::Style {
+            background: Some(c.into()),
+            ..Default::default()
         })
         .into()
-    } else {
-        cell.into()
-    }
 }
 
 /// Build the calendar card for `month` (1st of the displayed month) with
-/// `today` highlighted.
-pub fn view(month: NaiveDate, today: NaiveDate) -> Element<'static, Msg> {
-    let header = row![
-        nav_button("\u{2039}", Msg::CalendarPrevMonth), // ‹
-        container(
-            text(format!("{} {}", month_name(month.month()), month.year()))
-                .font(INTER_MEDIUM)
-                .size(14)
-        )
-        .width(Length::Fill)
-        .align_x(Horizontal::Center),
-        nav_button("\u{203A}", Msg::CalendarNextMonth), // ›
-        button(text("Today").size(12))
-            .style(kit_btn::ghost)
-            .padding([2, 8])
-            .on_press(Msg::CalendarToday),
+/// `today` marked, and today's events under it when Calendar has said
+/// (`Some`, possibly empty).
+pub fn view(
+    month: NaiveDate,
+    today: NaiveDate,
+    now: DateTime<Local>,
+    events: Option<&[AgendaEvent]>,
+    theme: &Theme,
+) -> Element<'static, Msg> {
+    let ink = inks(theme);
+    let grid = column(
+        month_grid(month)
+            .into_iter()
+            .map(|week| row(week.into_iter().map(|d| day(d, month, today, &ink))).into()),
+    );
+    let mut parts = column![
+        header(month, today, &ink),
+        column![weekdays(&ink), grid].spacing(4),
     ]
-    .align_y(Vertical::Center)
-    .spacing(2);
-
-    let weekday_row = row(WEEKDAYS.into_iter().map(weekday_cell).collect::<Vec<_>>());
-
-    let mut rows: Vec<Element<'static, Msg>> = vec![header.into(), weekday_row.into()];
-    for week in month_weeks(month) {
-        let cells: Vec<Element<'static, Msg>> = week
-            .iter()
-            .map(|d| day_cell(*d, *d == Some(today)))
-            .collect();
-        rows.push(row(cells).into());
+    .spacing(10)
+    .width(Length::Fill);
+    if let Some(events) = events {
+        parts = parts.push(today_section(events, now.timestamp(), &ink));
     }
-
-    let content = column(rows).spacing(2).width(Length::Fill);
-
-    popover(content)
-        .padding(Padding::new(8.0))
-        .width(Length::Fixed(CARD_WIDTH))
-        .into()
+    popover(parts)
+    .padding(Padding::new(PAD))
+    .width(Length::Fixed(CARD_WIDTH))
+    .into()
 }
 
 #[cfg(test)]
@@ -208,33 +381,31 @@ mod tests {
     }
 
     #[test]
-    fn june_2026_grid_layout() {
-        // June 1 2026 is a Monday → one leading blank (Sunday), 30 days.
-        let weeks = month_weeks(ymd(2026, 6, 1));
-        assert_eq!(weeks[0][0], None); // Sunday blank
-        assert_eq!(weeks[0][1], Some(ymd(2026, 6, 1))); // Monday = 1st
-        // 1 lead + 30 days = 31 slots → 5 weeks (35 slots).
-        assert_eq!(weeks.len(), 5);
-        assert_eq!(weeks[4][2], Some(ymd(2026, 6, 30))); // last day
-        assert_eq!(weeks[4][3], None); // trailing blank
+    fn june_2026_grid_starts_the_sunday_before() {
+        // June 1 2026 is a Monday: the grid opens on Sunday May 31.
+        let g = month_grid(ymd(2026, 6, 1));
+        assert_eq!(g[0][0], ymd(2026, 5, 31));
+        assert_eq!(g[0][1], ymd(2026, 6, 1));
+        assert_eq!(g[4][2], ymd(2026, 6, 30));
+        assert_eq!(g[5][6], ymd(2026, 7, 11));
     }
 
     #[test]
-    fn february_leap_and_common() {
-        assert_eq!(days_in_month(2024, 2), 29);
-        assert_eq!(days_in_month(2026, 2), 28);
-        assert_eq!(days_in_month(2026, 12), 31);
+    fn a_month_starting_on_sunday_opens_on_its_first() {
+        // November 1 2026 is a Sunday.
+        assert_eq!(month_grid(ymd(2026, 11, 1))[0][0], ymd(2026, 11, 1));
     }
 
     #[test]
-    fn every_day_appears_exactly_once() {
-        let weeks = month_weeks(ymd(2026, 6, 1));
-        let mut days: Vec<u32> = weeks
-            .iter()
-            .flatten()
-            .filter_map(|d| d.map(|d| d.day()))
-            .collect();
-        days.sort_unstable();
-        assert_eq!(days, (1..=30).collect::<Vec<_>>());
+    fn every_day_of_the_month_appears_once_in_order() {
+        for (y, m, days) in [(2026, 6, 30), (2026, 2, 28), (2024, 2, 29), (2026, 10, 31), (2026, 8, 31)] {
+            let ours: Vec<u32> = month_grid(ymd(y, m, 1))
+                .iter()
+                .flatten()
+                .filter(|d| d.month() == m)
+                .map(|d| d.day())
+                .collect();
+            assert_eq!(ours, (1..=days).collect::<Vec<_>>(), "{y}-{m}");
+        }
     }
 }

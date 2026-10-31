@@ -66,7 +66,7 @@ in
       gst_all_1.gst-plugins-ugly
       gst_all_1.gst-libav
 
-      # sola-spotify local playback (librespot rodio/cpal + Pulse/PipeWire).
+      # The browser's sound: libcef links ALSA and opens libpulse.
       alsa-lib
       libpulseaudio
     ] ++ lib.optional cfg.installRelease cfg.package;
@@ -79,7 +79,7 @@ in
       jetbrains-mono
     ];
 
-    # CEF (sola-browser / sola-wrapper) needs ~26 transitive native
+    # CEF (sola-browser, sola-design) needs ~26 transitive native
     # libs at runtime. We collate them via nix-ld's dispatch dir and
     # patch libcef.so's DT_RUNPATH to point at it — see
     # docs/vault/Distribution.md. cargo make install-cef patches the
@@ -160,15 +160,13 @@ in
       });
     '';
 
-    # sola-kvm (evdev backend) needs RW on /dev/input/event* for EVIOCGRAB
-    # while remote. Re-plug creates *new* nodes that do not inherit old ACLs,
-    # so a one-shot setfacl always rots. TAG+="uaccess" lets logind grant the
-    # active seat user RW on every (re)plug; GROUP=input is a belt-and-braces
-    # path for users who are also in the input group.
+    # sola-shell's mouse battery chip reads the receiver's hidraw node.
+    # TAG+="uaccess" lets logind grant the active seat user RW on every
+    # (re)plug; GROUP=input is a belt-and-braces path for users who are also
+    # in the input group. (sola-kvm captures through the compositor and needs
+    # no input nodes.)
     users.groups.input = { };
     services.udev.extraRules = ''
-      # sola-kvm: seat user can open input event nodes after re-plug
-      SUBSYSTEM=="input", KERNEL=="event[0-9]*", MODE="0660", GROUP="input", TAG+="uaccess"
       # sola-shell: menubar mouse battery asks the Lamzu 4K receiver over hidraw
       KERNEL=="hidraw*", ATTRS{idVendor}=="3554", ATTRS{idProduct}=="f510", MODE="0660", GROUP="input", TAG+="uaccess"
     '';

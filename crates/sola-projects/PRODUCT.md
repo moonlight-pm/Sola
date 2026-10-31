@@ -1,0 +1,116 @@
+# Product
+
+<!-- impeccable:product-schema 1 -->
+
+## Platform
+
+linux
+
+Native Sola Wayland app (iced / sola-kit). Not web, iOS, or Android.
+
+## Stack
+
+delegated: iced 0.14 + sola-kit + sola-terminal lib + tmux, because that is the
+Sola app chassis and the proven PTY grid. No WebView. No Electron.
+
+## Users
+
+The person at this desk who already runs several CLI coding agents (Grok and
+Codex first) across isolated git checkouts, grouped by product (Sola, Illuno,
+Wicket, …).
+They glance at many panes and need to know which are working, waiting, or done
+without opening each one.
+
+## Product Purpose
+
+Run CLI coding agents in real terminals, grouped by **project** and
+**tab** (one checkout each). Status is visible at a glance. **Spawn sibling** creates a
+parallel checkout + pane, optionally already briefed. Success is: open a
+project, see every live tab’s state, type the next prompt or spawn a
+sibling, restart the app and nothing is gone.
+
+## Positioning
+
+A native Sola tool whose sidebar *is* the orchestrator. Not an IDE. Not an ACP
+chat GUI (retired `sola-agent`). Not Orca-the-Electron-suite. Neighbors cannot copy “the
+PTY is the agent, the mark is the truth, spawn is the only fan-out verb” without
+becoming this product.
+
+## Operating Context
+
+- Physical TTY → Sola desktop; this app is one window among kit apps
+- Sibling checkouts live under `<project-root>/.worktrees/<name>`
+- Agents are CLI TUIs in PTYs (Grok, Codex, Claude). Orca may be installed alongside; hooks
+  must not fight (`sola-status.json` vs `orca-status.json`). Codex hooks merge
+  into `~/.codex/hooks.json` and leave Impeccable groups alone. Claude hooks
+  merge into `~/.claude/settings.json` and leave permissions, plugins, and
+  other hooks alone.
+- `sola-terminal` remains the untitled shell on tmux socket `sola`
+
+## Capabilities and Constraints
+
+**In:** projects, tabs (main / worktree / root / folder), agent-aware panes,
+spawn sibling (UI: name only, selects the new tab in its project's window; `solactl projects tab.spawn`
+is background unless `--select`; can pass `--agent grok|codex|claude` + `--prompt` /
+`--prompt-file`; exec/send is a tmux paste then Enter), kit pane splits, Grok,
+Codex, and Claude hooks + OSC 9999 + process-tree presence, quiet `×N` rolled up across Grok,
+Codex, and Claude panes in a tab, sola-call owner `projects` (`solactl projects …` is
+first-class — verbs stay in lockstep with the app), per-project startup
+script after spawn (Project → Startup Script…),
+tmux persist on socket `sola-ws` (a Grok or Claude pane’s session id is in
+`last-status.json`; a lost tmux after reboot runs `grok -r` or
+`claude --resume` when that agent was still running and the session
+is still on disk), unfocused desk card
+(title `{project} · {tab}`, body `grok is done` / `codex is done` /
+`claude is done` / `needs attention`),
+`tab.rm --worktree` (tab then git checkout off the iced thread; gone paths reap the tab),
+`tab.set --name` (`git worktree move` to `.worktrees/<name>`;
+`--title` is the tab label, defaulting to that slug; `--branch` is
+`git branch -m`; `--before` reorders in the project).
+Hover pencil / double-click on a worktree tab is `--title`. Drag reorders
+tabs inside a project. A project is a folder of `~/Projects`; Projects
+keeps only the open ones, and closing a project's window ends its
+sessions and forgets it (2026-10-28).
+
+**First-class CLI:** **Grok, Codex, and Claude.** Implement and test Grok first whenever
+adding agent support. OpenCode stays presence-only.
+
+**Another computer (2026-10-28, branch `next`):** a project may be a folder
+in another computer's `~/Projects` (Joshua's ask): its tabs are tmux
+sessions there, over ssh, so they run there, and they work as tabs here do
+— a link per host brings their hooks back; worktrees, startup scripts and
+the pane CLI reach them.
+
+**Out (v1):** editor, browser, issue trackers, mobile, ACP chat,
+mailbox orchestration, 15 hook adapters. OpenCode `--agent`.
+
+**Undecided (do not invent):** App-down is fail (call plane). Codex and
+Claude are decided: first-class. D4 is closed.
+
+## Brand Commitments
+
+- Crate / app id: `sola-projects`. Window title: **Projects** (named
+  Workspaces until 2026-10-21; "workspace" now means a desktop workspace).
+- Design law: impeccable Operate + frontend-design before UI; kit may be refined
+- Theme rides the Sola bus; do not silently restyle other apps
+- Voice: operator-plain. “Spawn sibling,” “working,” “done.” No marketplace copy
+
+## Evidence on Hand
+
+- Idea: `docs/ideas/2026-08-12-sola-agent-terminal.md` (Orca + sola-terminal research)
+- Freeze: `docs/specs/2026-08-13-sola-agent-terminal-design.md`
+- Incumbent grid: `crates/sola-terminal`
+- Incumbent kit: `crates/sola-kit` (atoms, `SidebarIndicator`, `status_mark`, `SidebarPanel`)
+- Surface record: `crates/sola-projects/DESIGN.md` (status chrome)
+- Grok hooks: `~/.grok/hooks/sola-status.json` (do not touch `orca-status.json`)
+- Codex hooks: merged into `~/.codex/hooks.json` (do not drop Impeccable groups)
+- No customer quotes, screenshots of this app, or usage stats. Do not fabricate.
+
+## Product Principles
+
+1. The sidebar is the orchestrator; status is the product.
+2. Spawn sibling is the only fan-out protocol; a prompt file is the handoff.
+   `solactl projects` is the same protocol agents use.
+3. Terminals stay terminals — no inferred state from titles.
+4. One signature (the status mark); everything else is quiet and scannable.
+5. Refuse Orca cruft. Refuse rebuilding `sola-agent`.

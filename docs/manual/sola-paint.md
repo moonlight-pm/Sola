@@ -67,8 +67,10 @@ The name field is the file name, not the whole path.
 the windows. Sola keeps its own copy in `~/.config/sola/background/`, so
 the picture stays when the file moves or goes: the file as saved, or, with
 unsaved edits (a crop), what is on screen as a PNG. The status line says
-**Set as background**. It fills the screen, centre-cropped. To go back to
-the black ground: `solactl background clear`.
+**Set as background**. It fills the screen, centre-cropped. Settings →
+Appearance lists every picture kept, to set one again
+([Kept pictures](theme.md#kept-pictures)). To go back to the black
+ground: **Clear** there, or `solactl background clear`.
 
 Formats: PNG, JPEG, GIF, WebP, BMP, TIFF.
 

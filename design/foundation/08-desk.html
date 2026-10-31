@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Foundation / 08 The desk</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="foundation.css">
+<script src="foundation.js"></script>
+<style>
+  .credit { margin-top: 10px; }
+  .turns { display: grid; grid-template-columns: repeat(4, 1fr); gap: 28px; }
+</style>
+</head>
+<body class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num">08</span><div class="head__title">The desk</div></div>
+    <div class="head__lead">canto's 1920 × 1080 output at 1:1, as it runs today: the Cosmic Cliffs under everything, the Rose scheme the picture gave (its accent a blue from the sky), the tab bar on the left, two halves, the islands across the top. Every window wears a titlebar with its own menus and sits one gap from its neighbors and the edges.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">On the picture · the Rose scheme at 52 · 1:1</div>
+    <div id="live"></div>
+    <div class="spec credit">Background: Cosmic Cliffs, NASA, ESA, CSA, STScI (Webb, 2022). canto's own pick, set from Paint; Sola ships no default picture.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">With no picture · the grey base · 1:1.5</div>
+    <div id="grey"></div>
+    <div class="legend" style="margin-top:28px">
+      <div><span class="n">1</span><div><b>One gap, everywhere</b><span>10 px at the edges, between tiles, above and below the islands. Tiles and the tab bar start at y 48.</span></div></div>
+      <div><span class="n">2</span><div><b>Menus ride the window</b><span>Close, the app's name in bold, its menus, then the title at the right in tertiary ink. No global menubar.</span></div></div>
+      <div><span class="n">3</span><div><b>Focus is the window</b><span>The focused titlebar is a step brighter, its close dot red, its rim the highlight. Others dim to 55% and keep their place.</span></div></div>
+      <div><span class="n">4</span><div><b>The top row is islands</b><span>The flower and agent islands at the left, the toast in the center, an island per instrument group at the right. Nothing behind them.</span></div></div>
+      <div><span class="n">5</span><div><b>One tab list</b><span>The tab bar lists the showing workspace's windows by zone. Its head is the workspace switcher.</span></div></div>
+      <div><span class="n">6</span><div><b>The ground is the picture</b><span>Or black. Corners of windows, the bar and the islands show it. Only floats cast a shadow.</span></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">Zones take turns · 1:6</div>
+    <div class="turns" id="turns"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">The numbers</div>
+    <div class="facts">
+      <span>Gap</span><span>10 px — <code>zoning.rs GAP</code>. The top row's window is 48 tall: gap, a 28 px island, gap.</span>
+      <span>Tab bar</span><span>240 wide at x 10, y 48, a gap from the bottom. The content area starts at x 260.</span>
+      <span>Halves</span><span>Left and Right split what is left, a gap between: 820 + 10 + 820 on canto.</span>
+      <span>Windows</span><span>12 px corners, a 38 px titlebar, a 1 px opaque rim. Foreign tiles get the same corners and rim, painted by sola-river.</span>
+      <span>Floats</span><span>Over the tiles, the only shadow on the desk: 28%, y 3, blur 11. Foreign floats stay square.</span>
+      <span>Cinema</span><span>One window, the whole output, no titlebar, square — so it can scan out.</span>
+    </div>
+  </div>
+
+<script>
+  const wins = [
+    { app: "projects", zone: "left", focus: true },
+    { app: "terminal", zone: "right" },
+  ];
+  document.getElementById("live").innerHTML =
+    view(desk({ picture: true, scheme: "rose", wins, top: { gpu: false } }), { w: 1920, h: 1080 });
+  document.getElementById("grey").innerHTML =
+    view(desk({ wins: [
+      { app: "projects", zone: "left", focus: true },
+      { app: "browser", zone: "right" },
+      { app: "paint", rect: { x: 1160, y: 560, w: 560, h: 420 }, float: true, tb: { menus: ["Paint", "File", "Edit", "View", "Window"] } },
+    ], top: { l: [I.flower(), I.agent(mark.diamond(), "Sola", "root", "wants to run cargo make build"), I.agent(mark.check(), "Oath", "root")] } }),
+      { w: 1296, h: 729, s: 0.675 });
+
+  const turn = (title, text, o) => `<div class="sample">${view(desk({ ...o, top: { l: [I.flower()], r: [I.clock("14:32")] } }), { w: 320, h: 180, s: 1 / 6 })}<h4>${title}</h4><p>${text}</p></div>`;
+  const R = zoneRects(1920, 1080);
+  document.getElementById("turns").innerHTML = [
+    turn("Halves", "Left and Right, half each. A lone half keeps its half; the other side shows the ground.", { wins: [{ app: "projects", zone: "left", focus: true }, { app: "terminal", zone: "right" }] }),
+    turn("Full", "Full takes the whole content area. While it shows, the halves wait; their front tabs read bright in the bar.", { wins: [{ app: "browser", zone: "full", focus: true }] }),
+    turn("A float", "Any window can float over the tiles, with the only shadow.", { wins: [{ app: "projects", zone: "left" }, { app: "terminal", zone: "right" }, { app: "paint", rect: { x: 700, y: 300, w: 640, h: 460 }, float: true, focus: true }] }),
+    turn("The ground", "Nothing tiled: the picture shows, and the islands sit on it.", { picture: true, scheme: "rose", wins: [] }),
+  ].join("");
+  finish();
+</script>
+</body>
+</html>

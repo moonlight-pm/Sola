@@ -20,9 +20,22 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     // sola-river restart). Without this, `floating` stays empty and
     // titlebar drag bails at the "not floating" guard.
     TopicKind::WindowFloating,
+    // Tiled hints and the rim for foreign windows. Sticky: replays on a
+    // sola-river restart.
+    TopicKind::WindowChrome,
     TopicKind::RegisteredChords,
     TopicKind::CloseApp,
+    TopicKind::CloseWindow,
     TopicKind::Shutdown,
+    // The background picture. Persistent: replays on a sola-river restart.
+    TopicKind::Background,
+    // The idle fade's settings. Persistent.
+    TopicKind::Appearance,
+    // The focus rim's color (the theme's highlight). Persistent.
+    TopicKind::Theme,
+    // What the idle fade keeps in sight (the top row's left islands).
+    // Sticky.
+    TopicKind::IdleKeep,
 ];
 
 pub struct BusClient {

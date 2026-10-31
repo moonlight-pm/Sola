@@ -19,7 +19,7 @@ sits among Sola's processes is in [Architecture](architecture.md).
 | Process | `sola-bus`. On Oath, PID 1 runs it as the service `svc:sola-bus` |
 | Socket | `$SOLA_BUS_PATH`, else `sola-bus` in the runtime directory: `$XDG_RUNTIME_DIR`, else `/run/user/<uid>` when that directory exists, else `/tmp` |
 | Framing | 4-byte little-endian length, then one postcard-encoded message |
-| Topics | 64 kinds, fixed when Sola is built: 26 ephemeral, 19 sticky, 19 persistent ([`topics.rs`](../../crates/sola-bus/src/topics.rs)) |
+| Topics | 63 kinds, fixed when Sola is built: 26 ephemeral, 19 sticky, 18 persistent ([`topics.rs`](../../crates/sola-bus/src/topics.rs)) |
 | Disk | `~/.config/sola/state.yaml` and per-topic YAML files |
 | Rust client | `sola_bus::BusClient`; kit apps use `sola_kit::app` |
 | Log | `sola.log` in Sola's log directory, lines tagged `[bus]`. On Oath that is `~/.local/state/sola/` (`$XDG_STATE_HOME/sola`; `SOLA_LOG_DIR` overrides it) |
@@ -52,26 +52,34 @@ Varints are postcard's unsigned varints (7 bits per byte, low bits first).
 | `keys` | list of strings | varint count, then each string | The values of the topic's key fields as text (`window_id` 42 is `"42"`); empty for unkeyed topics |
 
 Payloads are positional postcard with no field names, so a payload decodes
-only as the exact type it was encoded from, and every process on the bus
-must be built from the same `sola-bus` source. Only `Application` and
-`MailConfig` also accept older layouts.
+only as the exact type it was encoded from. A process built from another
+`sola-bus` source reads only the topics whose payloads kept their layout;
+only `Application` and `MailConfig` also accept older layouts. Keep every
+process on the bus on one build.
 
-Two topic names that start with `$` are instructions to the bus. It never
-forwards or answers them.
+Three topic names that start with `$` are instructions to the bus. It
+never forwards or answers them.
 
 | Topic | Payload | Effect |
 |---|---|---|
 | `$identify` | postcard string: the app id | Names this connection |
-| `$subscribe` | postcard list of `TopicKind` | Replaces this connection's subscription set |
+| `$subscribe-names` | postcard list of strings: topic names | Replaces this connection's subscription set |
+| `$subscribe` | postcard list of integers: topic numbers | The same, for a bus from before `$subscribe-names`; ignored from a connection that has sent `$subscribe-names` |
 
-A `TopicKind` travels as a varint: its index in the enum that `sola-bus`
-generates from the topic list. The generator orders kinds by retention
-(ephemeral, then sticky, then persistent) and, within each, puts kinds
-without a payload first, keeping source order otherwise. The index is
-therefore not the position in `topics.rs`, and adding a topic can renumber
-others. When the list does not decode, the bus reads it as plain integers,
-skips indices it does not know, and applies the rest; when nothing usable
-remains, the connection keeps its previous set.
+`$subscribe-names` names each kind as its messages do (`TabLayout`), so a
+bus and a client from different builds agree on what was asked for. The
+bus skips names it does not know, a newer client's topics, and applies the
+rest.
+
+`$subscribe` carries each kind as its index in a list frozen at the last
+build that sent only numbers (`subscribe::NUMBERED`, 64 names). That
+build's numbers were the kinds' order in the enum `sola-bus` generates,
+which groups them by retention, so adding a topic renumbered others; the
+frozen list keeps those numbers, including `CustomTheme`'s, a topic since
+removed. The bus skips numbers it cannot place and applies the rest; when
+nothing usable remains, the connection keeps its previous set. A kind
+added after the freeze has no number, and a bus from before names never
+receives a subscription to it.
 
 ## Connecting and identifying
 
@@ -100,10 +108,10 @@ Subscription is by kind only, with no filter on keys, payload, or source. A
 client subscribed to `MenuAction` receives every app's menu actions and
 keeps those whose `app_id` is its own.
 
-`BusClient::subscribe` sends two frames when the set mixes the kinds added
-after `MailStatus` (`AppNotification` through `ShowWindow`, 23 of them)
-with older ones: the set without the newer kinds, then the full set, which
-replaces the first.
+`BusClient::subscribe` sends two frames: `$subscribe-names`, then
+`$subscribe` with the kinds the frozen list has. A current bus applies the
+first and ignores the second; a bus from before names logs `broadcast
+dropping unknown topic` for the first and applies the second.
 
 ## Publishing
 
@@ -165,7 +173,6 @@ an absolute path, otherwise `~/.config/sola`.
 | `SessionApps`, `MailConfig`, `CalendarConfig`, `Background`, `Appearance`, `Zones`, `TerminalConfig`, `MonitorConfig` | `state.yaml` | A top-level key named after the topic, holding the payload |
 | `FloatGeometry`, `Application`, `TerminalSession` | `state.yaml` | A top-level key holding a list, one entry per record |
 | `Theme` | `theme/current.yaml` | The whole file |
-| `CustomTheme` | `theme/presets/<name>.yaml` | One file per record |
 | `TabLayout` | `shell/tabs.yaml` | The whole file |
 | `CalendarAgenda` | `calendar/agenda.yaml` | The whole file |
 | `PaintSession` | `paint.yaml` | The whole file |
@@ -175,8 +182,7 @@ an absolute path, otherwise `~/.config/sola`.
 The bus rewrites a file each time one of its records changes (a temporary
 file renamed into place), and a retraction removes the entry or deletes the
 file. It does not write a record whose key would make an unsafe file name
-(empty, or containing `/`, NUL, or `..`), or a `CustomTheme` whose name is
-not lowercase letters joined by single hyphens; it logs a warning instead.
+(empty, or containing `/`, NUL, or `..`); it logs a warning instead.
 
 The bus reads these files only at startup, skipping with a warning anything
 that is not a persistent topic or does not match its schema. An edit made
@@ -192,7 +198,7 @@ no longer load; the bus skips them with a warning.
 ## Topic reference
 
 *Acted on by* lists the processes that use a topic. Many apps (Shell,
-Settings, Monitor, Paint, Calendar, Arcade, and others) subscribe to every
+Settings, Monitor, Paint, Calendar, and others) subscribe to every
 kind and ignore most. "Apps with a window per tab" are Terminal, Browser
 (its pages and web apps), Paint, Projects and Design, which do it through
 the kit's `TabWindows`.
@@ -201,9 +207,9 @@ the kit's `TabWindows`.
 
 | Topic | Payload | Published by | Acted on by | Kept |
 |---|---|---|---|---|
-| `Windows` | Every window: `window_id`, `app_id`, `title`, `pid` (when known) | `sola-river` | Shell, `sola-session`, Settings, Arcade; kit apps, to learn their own window ids | Sticky |
-| `OutputGeometry` | The output's logical `width` and `height` | `sola-river`, when the compositor reports the output size and after a bus reconnect | Shell, Arcade, Browser | Sticky |
-| `WindowGeometry` | One window's `window_id`, `x`, `y`, `width`, `height` | `sola-river`, when the window's size or position changes; retracted when it closes | Shell, Arcade | Sticky by `window_id` |
+| `Windows` | Every window: `window_id`, `app_id`, `title`, `pid` (when known) | `sola-river` | Shell, `sola-session`, Settings; kit apps, to learn their own window ids | Sticky |
+| `OutputGeometry` | The output's logical `width` and `height` | `sola-river`, when the compositor reports the output size and after a bus reconnect | Shell, Browser | Sticky |
+| `WindowGeometry` | One window's `window_id`, `x`, `y`, `width`, `height` | `sola-river`, when the window's size or position changes; retracted when it closes | Shell | Sticky by `window_id` |
 | `WindowParent` | A dialog's or picker's `window_id` and the `parent` window it belongs to | `sola-river`, from the compositor's `parent` event; retracted when the window closes or loses its parent | Shell (no row in the bar; composed above its parent) | Sticky by `window_id` |
 | `WindowFloating` | `window_id`, `floating` | Shell; `sola-river` re-sends its floating windows after a bus reconnect | `sola-river` (move, resize, shadow); kit apps (a float's frame resizes from its edges) | Sticky by `window_id` |
 | `WindowChrome` | `window_id`; `tiled` (in a tiled zone), `cinema` (covering the output), `rim` (its app published no menu, so it draws no frame of its own) | Shell; retracted when the window closes | `sola-river` (tiled state, the rim, rounded corners); kit apps (no frame in Cinema) | Sticky by `window_id` |
@@ -229,7 +235,7 @@ What `sola-river` does with these is in [Compositor](compositor.md).
 | `TabWindow` | A tab's `key`, its `window_id`, and `shown` (its window is on screen) | Shell; sent again when `shown` changes, retracted when the window closes | The tab's app (a browser page that is not shown stops painting) | Sticky by `key` |
 | `TabActivity` | A tab's `key` and its `activity`: `Idle`, `Working`, or `Waiting` (needs a decision) | Projects (a project window with an agent working or waiting), Design (a project window an agent is working in); sent first when the window opens, retracted when the tab closes | Shell (the mark in the row's icon slot) | Sticky by `key` |
 | `ShowTab` | A tab's `key` | Browser, Paint, Projects, Design (a notification click, a dialog in a page behind, `tab.focus`) | Shell: shows the tab's window in its zone, on its workspace, and focuses it | Ephemeral |
-| `ShowWindow` | A `window_id` | Calendar, Arcade (an app bringing its own window forward) | Shell: as for `ShowTab` | Ephemeral |
+| `ShowWindow` | A `window_id` | Calendar (an app bringing its own window forward) | Shell: as for `ShowTab` | Ephemeral |
 | `CloseTab` | A tab's `key` | Shell (a bar row's stoplight) | The app that opened the tab: closes its window as its own close button would | Ephemeral |
 | `TabLayout` | The bar as last saved: `zones`, its runs in order (each a `zone`, its `apps` as tab keys, or app ids for windows that are not tabs, `shown`, the index of the tab the zone shows, and its `workspace`); `workspaces` (`id`, `name`); `showing`; `full` (the workspaces whose Full zone is on screen) | Shell | Shell, at its next start: returning windows take their places | Persistent |
 | `Workspaces` | The `workspaces` in order (`id`, `name`) and the one `showing` | Shell | Browser (a new page window opens under the showing workspace's profile) | Sticky |
@@ -242,13 +248,13 @@ The bar is described in [Shell § The bar](sola-shell.md#the-bar), its zones in 
 
 | Topic | Payload | Published by | Acted on by | Kept |
 |---|---|---|---|---|
-| `LaunchApp` | `app_id`, `command` | Shell (launcher, the Projects chooser), Arcade, Browser (`--app` when no browser is running) | `sola-session` | Ephemeral |
-| `LaunchResult` | `app_id`, `command`, `ok`, `error` | `sola-session` | Shell, Arcade | Ephemeral |
-| `UserAppExited` | `app_id`, `command`, exit `code` or `signal` | `sola-session` | Shell, Arcade | Ephemeral |
-| `CloseApp` | An `app_id` | Shell (Super+Q); kit apps closing themselves (a single-window app's close button, the Browser's last page); Arcade (Stop) | `sola-session` (stops it), `sola-river` (asks its windows to close), the named app (quits), Browser (closes a web app's windows) | Ephemeral |
+| `LaunchApp` | `app_id`, `command` | Shell (launcher, the Projects chooser), Browser (`--app` when no browser is running) | `sola-session` | Ephemeral |
+| `LaunchResult` | `app_id`, `command`, `ok`, `error` | `sola-session` | Shell | Ephemeral |
+| `UserAppExited` | `app_id`, `command`, exit `code` or `signal` | `sola-session` | Shell | Ephemeral |
+| `CloseApp` | An `app_id` | Shell (Super+Q); kit apps closing themselves (a single-window app's close button, the Browser's last page) | `sola-session` (stops it), `sola-river` (asks its windows to close), the named app (quits), Browser (closes a web app's windows) | Ephemeral |
 | `SessionApps` | Open apps: `app_id`, `command` | `sola-session` | `sola-session`, at its next start | Persistent |
-| `Application` | A launcher entry: `app_id`, `label`, `command`, `icon`, `kind`, `url`, `profile` | Settings; Browser (web apps); Arcade (a running game's label, retracted when it stops) | Shell, Settings, Browser | Persistent by `app_id` |
-| `SetAppMenu` | `app_id` and its menus: labels and items (action id, label, shortcut, disabled, checked) or dividers | Each app with a menu, at start; Arcade (a running game's, retracted when it stops) | Shell (registers the focused app's Super shortcuts; an app with no menu gets the compositor's rim) | Sticky by `app_id` |
+| `Application` | A launcher entry: `app_id`, `label`, `command`, `icon`, `kind`, `url`, `profile` | Settings; Browser (web apps) | Shell, Settings, Browser | Persistent by `app_id` |
+| `SetAppMenu` | `app_id` and its menus: labels and items (action id, label, shortcut, disabled, checked) or dividers | Each app with a menu, at start | Shell (registers the focused app's Super shortcuts; an app with no menu gets the compositor's rim) | Sticky by `app_id` |
 | `MenuAction` | `app_id`, `action_id` of a chosen item or shortcut | Shell (a Super shortcut of the focused app's menu); a kit app's titlebar Window menu; a second launch of Terminal or Projects, to the running one | The app named by `app_id`; the Shell for Window-menu actions, which it applies to the focused window | Ephemeral |
 | `Shutdown` | None | Shell (Exit Sola, then the shell exits) | `sola-session` (stops the apps it started, then exits), `sola-river` (exits) | Ephemeral |
 
@@ -260,10 +266,9 @@ titlebar; the kit draws them from the app's own copy, not from the bus.
 
 | Topic | Payload | Published by | Acted on by | Kept |
 |---|---|---|---|---|
-| `Theme` | The active theme ([Theme and toolkit](theme.md)) | Kit (its theme editor); Shell (at start when no saved theme exists, and the colors rewritten from the picture while *Adapt colors to the background* is on) | Every kit app; `sola-river` (the rim's colors) | Persistent |
-| `CustomTheme` | A theme preset: `name`, `theme` | Kit | Kit | Persistent by `name` |
-| `Background` | `path` (Sola's copy under `~/.config/sola/background/`), `set_at` (unix ms, so setting a file of the same name again is a change) | Paint (File → Set as Background), Browser (Use as Desktop Background), `solactl background set`; retracted by Settings → Appearance (Clear) and `solactl background clear`, for the black ground | `sola-river` (draws it behind the windows), Shell (the theme's colors), Settings | Persistent |
-| `Appearance` | `adapt_theme` (the theme's colors follow the picture), `strength` (0–100, default 60), `variation` (which of the picture's schemes), `colors` (your `window`, `panels`, `highlight`, `accent` as `#rrggbb`), `customs` (your looks: a `variation` and `colors` each), `custom` (the look in use, or none), `opacity` (the desk at rest, 50–100 %, default 90), `fade_idle` (default on), `fade_after_min` (default 5), `fade_over_min` (default 30), `dim_idle` (default on), `dim_after_min` (default 60), `dim_over_min` (default 30), `light` (web pages are told light; off, dark; default off) | Settings → Appearance | Shell (the theme's colors); `sola-river` (the desk's opacity, the idle fade and dim); Browser (`light`: every page's `prefers-color-scheme`) | Persistent |
+| `Theme` | The active theme ([Theme and toolkit](theme.md)) | Shell (at start when no saved theme exists, and the colors rewritten from the picture while *Adapt colors to the background* is on) | Every kit app; `sola-river` (the rim's colors) | Persistent |
+| `Background` | `path` (Sola's copy under `~/.config/sola/background/`), `set_at` (unix ms, so setting a file of the same name again is a change) | Paint (File → Set as Background), Browser (Use as Desktop Background), Settings → Appearance (a kept picture), `solactl background set`; retracted by Settings → Appearance (Clear) and `solactl background clear`, for the black ground | `sola-river` (draws it behind the windows), Shell (the theme's colors), Settings | Persistent |
+| `Appearance` | `adapt_theme` (the theme's colors follow the picture), `strength` (0–100, default 60), `variation` (which of the picture's schemes), `colors` (your `window`, `panels`, `highlight`, `accent` as `#rrggbb`), `customs` (your looks: a `variation` and `colors` each), `custom` (the look in use, or none), `opacity` (the desk at rest, 50–100 %, default 90), `fade_idle` (default on), `fade_after_min` (default 5), `fade_over_min` (default 30), `dim_idle` (default on), `dim_after_min` (default 60), `dim_over_min` (default 30), `light` (web pages are told light; off, dark; default off), `lock_idle` (lock once the idle fade is complete; default off), `pictures` (each kept picture's path → the look it was last worn with: `adapt_theme`, `strength`, `variation`, `colors`, `customs`, `custom`) | Settings → Appearance; Shell (`pictures`, and a kept picture's look put back when it is set again) | Shell (the theme's colors; `lock_idle`); `sola-river` (the desk's opacity, the idle fade and dim); Browser (`light`: every page's `prefers-color-scheme`) | Persistent |
 | `ThemeVariations` | `path` (the picture), `choices` (per scheme: `name`, and `base`, `raised`, `accent`, and `source`, the picture's color it comes from) | Shell | Settings (the scheme cards) | Sticky |
 | `IdleKeep` | `x`, `y`, `w`, `h`: output-local logical pixels, the top row's flower and agent islands | Shell | `sola-river` (that part stays at the desk's rest during the fade) | Sticky |
 | `IdleFade` | `fading` (no input for the fade's delay), `out` (the fade is full: the windows are out of sight) | `sola-river` | Projects (a focused session's island shows); Shell (on `out`, reports every tab window off screen in `TabWindow`) | Sticky |

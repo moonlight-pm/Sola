@@ -52,21 +52,66 @@ pub const SPACE_MD: f32 = 8.0;
 pub const SPACE_LG: f32 = 12.0;
 pub const SPACE_XL: f32 = 16.0;
 
+/// An app's bar under its titlebar — a strip of tabs (Projects, Design), a
+/// toolbar (Browser, Paint, Preview, Scope, Monitor), a heading with its
+/// controls (Mail, Calendar, Bots). One height, so windows side by side
+/// line up under their titlebars.
+pub const BAR_H: f32 = 42.0;
+
 /// Regular control content padding `[vertical, horizontal]` — buttons,
 /// default actions. Prefer this over inventing pad literals in apps.
 pub const PAD_CONTROL: [u16; 2] = [7, 14];
 /// Compact control padding — toolbar, steppers, dense chrome.
 pub const PAD_CONTROL_SM: [u16; 2] = [5, 11];
 
-/// Cool graphite used for sidebar columns and the full-width chrome
-/// strip (OD `--material-sidebar` `#121722`). One surface so a top bar
+/// The surface of sidebar columns and the full-width chrome strip (Next
+/// `--bg-chrome`, `#141414` on the grey theme). One surface so a top bar
 /// that spans the window meets the tab column without a colour step.
-pub const CHROME_SURFACE: Color = Color::from_rgb(0.071, 0.090, 0.133);
+/// Follows the theme (an adapted theme tints it): nine tenths of the way
+/// from the base to the raised fill, set by [`install_chrome_surface`].
+pub fn chrome_surface() -> Color {
+    CHROME.read().map_or(CHROME_DEFAULT, |c| *c)
+}
+
+/// Set [`chrome_surface`] from the theme's base and raised fills. The
+/// kit's theme paths call it (`theme::install_atoms`).
+pub fn install_chrome_surface(base: Color, raised: Color) {
+    let t = 0.9;
+    let c = Color {
+        r: base.r + (raised.r - base.r) * t,
+        g: base.g + (raised.g - base.g) * t,
+        b: base.b + (raised.b - base.b) * t,
+        a: 1.0,
+    };
+    if let Ok(mut guard) = CHROME.write() {
+        *guard = c;
+    }
+}
+
+/// `#141414`: the grey theme's base and raised fills mixed as above.
+const CHROME_DEFAULT: Color = Color::from_rgb(20.0 / 255.0, 20.0 / 255.0, 20.0 / 255.0);
+static CHROME: std::sync::RwLock<Color> = std::sync::RwLock::new(CHROME_DEFAULT);
 
 /// Soft hairline weight — OD `--hairline` (white 7% in sRGB over surface).
 pub const HAIRLINE_A: f32 = 0.07;
 /// Stronger hairline — OD `--hairline-strong` (white 12% in sRGB).
 pub const HAIRLINE_STRONG_A: f32 = 0.12;
+
+/// Lighten `surface` as [`mix_white`] does but keep its hue and chroma
+/// (perceptual lightness from the white mix, `sola_core::theme::keep_hue`):
+/// on a grey the same colour, on a tinted surface (an adapted theme) a
+/// lighter tint instead of a washed-out grey.
+pub fn lift_in_hue(surface: Color, amount: f32) -> Color {
+    let lifted = mix_white(surface, amount);
+    let [r, g, b] =
+        sola_core::theme::keep_hue([surface.r, surface.g, surface.b], [lifted.r, lifted.g, lifted.b]);
+    Color {
+        r,
+        g,
+        b,
+        a: surface.a,
+    }
+}
 
 /// CSS `color-mix(in srgb, #fff amount, surface)` as an **opaque** colour.
 /// Use this for edges instead of `Color { a: amount, ..WHITE }`.
@@ -118,8 +163,7 @@ pub fn primary_fill(accent: Color) -> Background {
     linear_bg(180.0, &[(0.0, mix_white(accent, 0.08)), (1.0, accent)])
 }
 
-/// Quiet panel face — same whisper as [`card_fill`]. Kept as a named
-/// helper so storybook desks share one fill. Accent/selection are unused:
+/// Quiet panel face — same whisper as [`card_fill`]. Accent/selection are unused:
 /// mixing neon toward graphite produced the muddy “dark cyan” we dropped.
 pub fn hero_fill(_bg: Color, raised: Color, _selection: Color) -> Background {
     card_fill(raised)
@@ -131,10 +175,10 @@ pub fn stage_fill(_bg: Color, raised: Color, _accent: Color) -> Background {
     card_fill(raised)
 }
 
-/// Optional soft canvas wash — **not** used as the storybook page fill.
+/// Optional soft canvas wash.
 ///
 /// OD layers dual *radials* that fade to transparent over solid `--bg`
-/// (`#0c0e12`). A full-pane linear with a strong selection stop reads as a
+/// (`#0b0b0b`). A full-pane linear with a strong selection stop reads as a
 /// grey/teal gradient. Prefer solid `background.base` for app canvas; keep
 /// this helper only for deliberate accent panels (hero / stage).
 pub fn canvas_ambient(bg: Color, accent: Color, selection: Color) -> Background {
@@ -499,7 +543,7 @@ mod tests {
 
     #[test]
     fn mix_white_matches_css_srgb_mix() {
-        let surface = Color::from_rgb(0.082, 0.098, 0.133); // ~#151922
+        let surface = Color::from_rgb(0.082, 0.082, 0.082); // ~#151515
         let c = mix_white(surface, 0.07);
         // 0.07*1 + 0.93*channel
         assert!((c.r - (surface.r * 0.93 + 0.07)).abs() < 1e-5);
@@ -508,7 +552,7 @@ mod tests {
 
     #[test]
     fn bevel_ring_is_gradient_tl_darker_than_br() {
-        let surface = Color::from_rgb(0.082, 0.098, 0.133);
+        let surface = Color::from_rgb(0.082, 0.082, 0.082);
         let Background::Gradient(g) = bevel_ring(surface) else {
             panic!("bevel_ring must be a gradient");
         };
@@ -541,7 +585,7 @@ mod tests {
     #[test]
     fn on_color_picks_white_ink_on_black() {
         assert_eq!(on_color(Color::BLACK), Color::WHITE);
-        assert_eq!(on_color(Color::from_rgb(0.07, 0.09, 0.13)), Color::WHITE);
+        assert_eq!(on_color(Color::from_rgb(0.078, 0.078, 0.078)), Color::WHITE);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use sola_bus::topics::{
     AppMenuPayload, ApplicationsConfig, CompositionEntry, FocusTarget, FrameUpdate,
-    MenuActionPayload, MenuItem, RegisteredChord, Topic, Window, Zone,
+    MenuActionPayload, RegisteredChord, TabLayout, Topic, Window, Zone,
 };
 use sola_core::{KeyChord, KeyCode};
 use sola_kit::theme;
@@ -20,14 +20,19 @@ use crate::menubar;
 use crate::menubar::{FlashTarget, MenubarState};
 use crate::selection::state::SelectionState;
 use crate::shortcuts::state::ShortcutsState;
-use crate::switcher::state::SwitcherState;
+use crate::stacks::Stacks;
 use crate::zoning::ZoningState;
 
+pub mod adapt;
+pub mod agents;
 pub mod bus;
+pub mod chooser;
+pub mod web;
+pub mod workspaces;
 
-/// Set by flower **Quit Sola** so `main` can exit 0. Compositor death
-/// and **Restart Shell** leave this false so the process manager
-/// restarts us.
+/// Set by flower **Exit Sola** so `main` can exit 0. Compositor death
+/// leaves this false so the supervisor restarts us
+/// (`restart=on-failure` on Oath; NixOS process manager always respawns).
 static CLEAN_SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn mark_clean_shutdown() {
@@ -49,19 +54,37 @@ fn with_bus(f: impl FnOnce(&mut sola_bus::BusClient)) {
     }
 }
 
+/// Calendar's app id: the clock's panel opens its events there.
+const CALENDAR_APP: &str = "sola-calendar";
+
+/// Ask Calendar to show event `id` (as a reminder card's click does).
+fn emit_calendar_event(id: String) {
+    with_bus(|bus| {
+        let _ = bus.emit(Topic::NotificationActivate(
+            sola_bus::topics::NotificationActivate {
+                id: format!("clock:{id}"),
+                app_id: CALENDAR_APP.into(),
+                tab_id: None,
+                url: Some(id),
+            },
+        ));
+    });
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowKind {
     Menubar,
     Menu,
     Launcher,
-    Switcher,
     Selection,
     Notify,
     Shortcuts,
+    /// The tab bar (Next), docked left.
+    TabBar,
 }
 
-/// Live-swapchain slots: menu, launcher, switcher, selection, notify, shortcuts.
-const OVERLAY_LIVE_SLOTS: usize = 6;
+/// Live-swapchain slots: menu, launcher, selection, notify, shortcuts.
+const OVERLAY_LIVE_SLOTS: usize = 5;
 
 #[derive(Clone, Debug)]
 pub enum Msg {
@@ -94,11 +117,6 @@ pub enum Msg {
         app_id: String,
         action_id: String,
     },
-    /// Menubar view reports the laid-out X position of a label at `index`.
-    MenuLabelPosition {
-        index: usize,
-        x: f32,
-    },
     /// Clock subscription tick.
     ClockTick,
     /// New system-stats sample from the background sampler.
@@ -113,9 +131,13 @@ pub enum Msg {
     CalendarNextMonth,
     /// Reset the calendar to the current month.
     CalendarToday,
+    /// An event in the clock's panel: show it in Calendar (an empty id
+    /// just opens Calendar).
+    CalendarOpenEvent(String),
     /// Expire the toast for `generation` if it matches the current generation.
-    /// Also clears a matching pending launch (opening feedback timeout).
     ToastExpire(u64),
+    /// A launch's ghost row times out (its window never came).
+    LaunchExpire(u64),
     /// End a menubar shortcut-flash for `generation` if it's still current.
     MenuFlashExpire(u64),
     // --- Launcher messages ---
@@ -133,6 +155,32 @@ pub enum Msg {
     Launch,
     /// Launch a specific app by id (row click — not the keyboard selection).
     LaunchApp(String),
+    /// Escape in the launcher: a stage back (naming → projects → apps),
+    /// else close.
+    LauncherEscape,
+    /// A row of the Projects chooser clicked.
+    LauncherPick(usize),
+    /// Projects' `project.list`, for the chooser's open marks: each
+    /// project's host (`None`: here), root, and what Projects says of it.
+    ProjectsKnown(
+        Result<
+            Vec<(
+                Option<String>,
+                std::path::PathBuf,
+                crate::launcher::projects::Known,
+            )>,
+            String,
+        >,
+    ),
+    /// New's folder made on a host (or why not).
+    RemoteCreated(String, Result<std::path::PathBuf, String>),
+    /// A host's `~/Projects`, listed over ssh for the chooser (or why not).
+    RemoteListed(
+        String,
+        Result<crate::launcher::remote::Listing, String>,
+    ),
+    /// Projects answered `project.open`.
+    ProjectOpened(Result<(), String>),
     /// Super+K / flower menu: show the keyboard-shortcuts overlay.
     OpenShortcuts,
     /// Dismiss the shortcuts overlay and restore prior focus.
@@ -173,33 +221,44 @@ pub enum Msg {
     BluetoothUi(crate::bluetooth::UiMsg),
     /// Battery answer (or silence) from the Lamzu receiver.
     Mouse(crate::mouse::Event),
-    // --- Switcher messages ---
-    /// Cycle switcher selection forward (next=true) or backward (next=false).
-    SwitcherNav {
-        next: bool,
-    },
-    /// Icon the pointer entered. Applied only after the pointer moves
-    /// (`SwitcherPointer`); the open-time enter is not a choice.
-    SwitcherHover {
-        index: usize,
-    },
-    /// Overlay-local pointer sample while the switcher is up.
-    SwitcherPointer {
-        x: f32,
-        y: f32,
-    },
-    /// Confirm selection: focus the MRU window of the selected app, deactivate.
-    SwitcherConfirm,
-    /// Cancel without focus change: deactivate.
-    SwitcherCancel,
     /// Focus-follows-mouse delay fired: focus `window_id` (no raise) if
     /// `generation` still matches.
     FocusHoverFire {
         window_id: u32,
         generation: u64,
     },
-    /// Cycle to the next window of the currently focused app (Meta+`).
-    CycleAppWindows,
+    /// Show the next (or, `back`, previous) tab in the workspace's bar
+    /// order, whatever its zone (Super+` / Super+Shift+`).
+    CycleTabs { back: bool },
+    /// A tab bar row was clicked: show that window in its zone.
+    ShowTab(u32),
+    /// A tab bar row's stoplight: close that window, as its own close would.
+    CloseWindow(u32),
+    /// Open (or close) an agent island's card.
+    AgentIslandOpen(String),
+    /// The +N island: the agent islands that did not fit.
+    AgentIslandList,
+    /// The open card's choice, by index.
+    AgentIslandChoose(u32),
+    /// The open card's reply field changed / was sent.
+    AgentIslandReplyInput(String),
+    AgentIslandReply,
+    /// The open card's Show: pull the session's tab up.
+    AgentIslandShow,
+    /// The background picture was sampled for the adapted theme.
+    AdaptSampled(
+        sola_bus::topics::Background,
+        Result<Vec<sola_core::theme::Scheme>, String>,
+    ),
+    /// Open (or close) the workspace menu (the tab bar's head) for the
+    /// showing workspace.
+    WorkspaceMenu(usize),
+    /// The rename field changed.
+    WorkspaceRenameInput(String),
+    /// Return in the rename field.
+    WorkspaceRenameCommit,
+    /// Tab bar pointer / drag gesture.
+    TabBar(sola_kit::components::SidebarMsg),
     /// Super+Shift+4: freeze the output, then open the selection marquee.
     OpenSelection,
     /// RGBA freeze for Super+Shift+4 finished (call plane). Overlay opens
@@ -258,6 +317,14 @@ pub enum Panel {
     NotifyPile,
     Bluetooth,
     Audio,
+    /// The workspace menu, under the tab bar's head.
+    Workspace(usize),
+    /// Renaming a workspace (`workspace.renaming`).
+    RenameWorkspace,
+    /// An agent island's card (`agents.open`).
+    AgentIsland,
+    /// The agent islands that did not fit (the +N island).
+    AgentIslands,
 }
 
 /// In-flight launcher spawn waiting for a first matching window (or timeout).
@@ -269,22 +336,23 @@ pub enum Panel {
 pub struct PendingLaunch {
     /// Catalog `app_id` from the launcher entry.
     pub app_id: String,
-    /// `MenubarState::toast_generation` at the moment the opening toast was
-    /// pushed — used to ignore stale timeouts and clear only our toast.
-    pub toast_generation: u64,
+    /// The app's name, for the tab bar's ghost row.
+    pub label: String,
+    /// Bumped per launch: a timeout clears only its own.
+    pub generation: u64,
     /// Window ids already present for this app at launch time. A resolve
     /// requires a **new** window so re-launching an already-open app does not
     /// dismiss against the existing surface.
     pub existing_wids: HashSet<u32>,
 }
 
-/// How long the "Opening …" toast stays up if no matching window appears.
-const OPENING_TOAST_SECS: u64 = 20;
+/// How long the ghost row waits for the app's window before it goes.
+const OPENING_SECS: u64 = 20;
 
 pub struct Shell {
     pub theme: iced::Theme,
     /// Shell-specific chrome (shell-* tokens) — colors with alpha +
-    /// switcher/launcher spacing. Refreshed alongside `theme` on every
+    /// launcher spacing. Refreshed alongside `theme` on every
     /// Topic::Theme delivery.
     pub style: theme::ShellStyle,
 
@@ -292,18 +360,54 @@ pub struct Shell {
     pub menubar_window_id: Option<iced::window::Id>,
     pub menu_window_id: Option<iced::window::Id>,
     pub launcher_window_id: Option<iced::window::Id>,
-    pub switcher_window_id: Option<iced::window::Id>,
     pub selection_window_id: Option<iced::window::Id>,
     pub notify_window_id: Option<iced::window::Id>,
     pub shortcuts_window_id: Option<iced::window::Id>,
+    pub tabbar_window_id: Option<iced::window::Id>,
+
+    /// The tab bar's model: zones, their tabs, what each shows.
+    pub tabs: Stacks,
+    /// Announced tabs (`Topic::Tab`) and the windows they are.
+    pub pairing: crate::pairing::Pairing,
+    /// What each tab is doing (`Topic::TabActivity`), by tab key: the
+    /// mark on its bar row.
+    pub tab_activity: HashMap<String, sola_bus::topics::Activity>,
+    /// Agent sessions' islands in the top row and the card open.
+    pub agents: crate::agents::AgentIslands,
+    /// The theme's colors following the background picture.
+    pub adapt: crate::adapt::Adapt,
+    /// The look each background picture keeps (`Appearance.pictures`).
+    pub pictures: crate::pictures::Pictures,
+    /// Last on-screen state sent for each tab window (`TabWindow.shown`).
+    tab_shown_sent: HashMap<u32, bool>,
+    /// The idle fade is full (`IdleFade.out`): every window is out of
+    /// sight, so no tab window counts as on screen.
+    pub desk_out: bool,
+    /// Lock when the idle fade is complete (`Appearance.lock_idle`).
+    pub lock_idle: bool,
+    pub tabbar: crate::tabbar::TabBarState,
+    /// Each window's last published `Topic::WindowChrome`.
+    pub window_chrome: crate::chrome::ChromeState,
+    /// Workspace focus memory, what was published, a rename in progress.
+    pub workspace: workspaces::WorkspaceState,
+    /// The saved `TabLayout` was taken (later replays are our own echo).
+    tab_layout_loaded: bool,
+    /// Safe to save the layout: the saved one was read, or there is none.
+    tab_layout_ready: bool,
+    /// Last `TabLayout` emitted; skip identical re-emits.
+    last_tab_layout: Option<TabLayout>,
+    /// `WindowParent` that came before its window's `Windows` entry.
+    pending_parents: HashMap<u32, u32>,
+    /// The first `Windows` list has been placed (windows in it were up
+    /// before this shell started).
+    windows_seen: bool,
 
     // Focus
     pub focused_app_id: Option<String>,
     pub focused_window_id: Option<u32>,
     /// Window currently under the pointer (`Topic::MouseEntered` /
-    /// `MouseLeft`). Used to re-apply focus-follows-mouse after programmatic
-    /// focus steals (new map, close fallback) — River does not re-send
-    /// `pointer_enter` if the cursor never left the old surface.
+    /// `MouseLeft`); the focus-follows-mouse dwell fires only if the
+    /// pointer is still on its window.
     pub pointer_window_id: Option<u32>,
     /// Generation counter for the focus-follows-mouse dwell timer. Bumped on
     /// every enter/leave so a superseded `FocusHoverFire` is a no-op — gives
@@ -312,7 +416,7 @@ pub struct Shell {
 
     // MRU (most-recently-used)
     pub mru_apps: Vec<String>,
-    /// Most-recently-focused window per app, for switcher restore.
+    /// Most-recently-focused window per app, for raising an app.
     pub mru_window_by_app: HashMap<String, u32>,
 
     // Window registry (from Topic::Windows — sola-river)
@@ -355,7 +459,6 @@ pub struct Shell {
     pub open_panel: Option<Panel>,
     /// The month shown in the calendar — always the 1st of that month.
     pub calendar_month: chrono::NaiveDate,
-    pub switcher: SwitcherState,
     pub launcher: LauncherState,
     pub shortcuts: ShortcutsState,
     pub selection: SelectionState,
@@ -392,7 +495,13 @@ pub struct Shell {
     /// Last `Topic::MailStatus` inbox unread. Chip shows only when mail
     /// is mapped and this is `Some(n)` with `n > 0`.
     pub inbox_unread: Option<u32>,
-    /// Iced-reported live swapchain for menu / launcher / switcher /
+    /// Calendar's coming days (`Topic::CalendarAgenda`): the clock's
+    /// panel lists today's. `None` until Calendar has published.
+    pub calendar_agenda: Option<sola_bus::topics::CalendarAgenda>,
+    /// An event to show once Calendar's window appears (the clock's panel
+    /// launched it to open one).
+    pub calendar_event_pending: Option<String>,
+    /// Iced-reported live swapchain for menu / launcher /
     /// selection / notify / shortcuts. Composition waits on this so River
     /// does not show a stretched 2×2.
     overlay_iced_live: [bool; OVERLAY_LIVE_SLOTS],
@@ -402,7 +511,7 @@ impl Shell {
     /// Wayland app_id / bus app_id for the shell's own surfaces.
     pub const APP_ID: &'static str = "sola-shell";
 
-    /// Boot the daemon: menubar first. Menu / launcher / switcher / selection
+    /// Boot the daemon: menubar first. Menu / launcher / selection
     /// park at 2×2 after the menubar maps so show is Frame + iced resize,
     /// not a new map — without keeping 5K swapchains while dismissed.
     pub fn boot() -> (Self, iced::Task<Msg>) {
@@ -425,6 +534,13 @@ impl Shell {
             }
         }
 
+        // Save the tab bar's layout only after the saved one replays — or
+        // right away when there is none (then any later delivery is our
+        // own echo, not a layout to load).
+        let tab_layout_ready = !sola_bus::topics::Topic::TabLayout(TabLayout::default())
+            .path_for()
+            .exists();
+
         let (menubar_id, menubar_task) = menubar::open_window();
         let task = menubar_task.map(|id| Msg::WindowOpened(WindowKind::Menubar, id));
 
@@ -434,10 +550,27 @@ impl Shell {
             menubar_window_id: Some(menubar_id),
             menu_window_id: None,
             launcher_window_id: None,
-            switcher_window_id: None,
             selection_window_id: None,
             notify_window_id: None,
             shortcuts_window_id: None,
+            tabbar_window_id: None,
+            tabs: Stacks::new(),
+            pairing: crate::pairing::Pairing::default(),
+            tab_activity: HashMap::new(),
+            agents: Default::default(),
+            adapt: Default::default(),
+            pictures: Default::default(),
+            tab_shown_sent: HashMap::new(),
+            desk_out: false,
+            lock_idle: false,
+            tabbar: crate::tabbar::TabBarState::default(),
+            window_chrome: crate::chrome::ChromeState::default(),
+            workspace: workspaces::WorkspaceState::default(),
+            tab_layout_loaded: tab_layout_ready,
+            tab_layout_ready,
+            last_tab_layout: None,
+            pending_parents: HashMap::new(),
+            windows_seen: false,
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -460,7 +593,6 @@ impl Shell {
             current_open_is_system: false,
             open_panel: None,
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
-            switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
             shortcuts: ShortcutsState::default(),
             selection: SelectionState::default(),
@@ -480,6 +612,8 @@ impl Shell {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
+            calendar_agenda: None,
+            calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
 
@@ -559,27 +693,155 @@ impl Shell {
         crate::menu::state::effective_app_menu(&self.menus, app_id, &label)
     }
 
-    /// Snap the focused window to `zone` (numpad, Window menu, Super+K).
+    /// The zone keys and the Window menu's zone items, for the focused tab:
+    /// Full (`Zone::Fullscreen`) / Left / Right move it there, Float floats
+    /// it, Cinema toggles showing it over the whole output. The other zones
+    /// have no place on this layout.
     pub fn snap_focused_zone(&mut self, zone: Zone) -> iced::Task<Msg> {
-        let Some(frame) = self.zoning.apply_zone(zone, self.focused_window_id) else {
+        let Some(wid) = self.focused_window_id else {
             return iced::Task::none();
         };
-        let float_fg = match (self.focused_window_id, self.focused_app_id.clone()) {
-            (Some(wid), Some(app_id)) if self.zoning.is_floating(wid) => {
-                self.zoning.float_geometry.get(&app_id).cloned()
+        let wid = self.tabs.parent_of(wid).unwrap_or(wid);
+        match zone {
+            Zone::Fullscreen | Zone::Left | Zone::Right | Zone::Float => {
+                self.move_tab(wid, zone)
+            }
+            Zone::Cinema => {
+                let cinema = self.tabs.toggle_cinema(wid);
+                tracing::info!(window_id = wid, cinema, "cinema");
+                if !cinema && self.tabs.is_floating(wid) {
+                    // Back to the float's own rectangle.
+                    if let Some(g) = self
+                        .known_windows
+                        .iter()
+                        .find(|w| w.window_id == wid)
+                        .and_then(|w| self.zoning.float_geometry.get(&w.app_id))
+                    {
+                        Self::emit_frames(vec![FrameUpdate {
+                            window_id: wid,
+                            x: g.x,
+                            y: g.y,
+                            width: g.width,
+                            height: g.height,
+                            fullscreen: false,
+                        }]);
+                    }
+                }
+                self.emit_all_frames();
+                self.last_composition.clear();
+                self.emit_composition();
+            }
+            other => tracing::info!(?other, "no such zone on the Full / halves layout"),
+        }
+        iced::Task::none()
+    }
+
+    /// Move a tab to `zone` (its row keeps its place in the bar), show it
+    /// there and focus it. Floating it shrinks it in place from its tile.
+    pub(crate) fn move_tab(&mut self, wid: u32, zone: Zone) {
+        let Some(app_id) = self
+            .known_windows
+            .iter()
+            .find(|w| w.window_id == wid)
+            .map(|w| w.app_id.clone())
+        else {
+            return;
+        };
+        let from = self.tabs.zone_of(wid);
+        let tile = match (from, self.zoning.output_size) {
+            (Some(z), Some((w, h))) if z != Zone::Float => {
+                let f = crate::zoning::tile_frame(wid, z, w, h);
+                Some((f.x, f.y, f.width, f.height))
             }
             _ => None,
         };
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-            let _ = bus.emit(Topic::Frame(frame));
-            if let Some(zones) = self.zoning.take_zones_update() {
-                let _ = bus.emit(Topic::Zones(zones));
+        if !self.tabs.move_to(wid, zone) {
+            return;
+        }
+        tracing::info!(window_id = wid, %app_id, ?from, to = ?zone, "move tab");
+        if zone == Zone::Float {
+            if from != Some(Zone::Float) {
+                if let Some(f) = self.zoning.float_in_place(&app_id, wid, tile) {
+                    let fg = self.zoning.float_geometry.get(&app_id).cloned();
+                    with_bus(|bus| {
+                        let _ = bus.emit(Topic::Frame(f));
+                        if let Some(fg) = fg {
+                            let _ = bus.emit(Topic::FloatGeometry(fg));
+                        }
+                    });
+                }
             }
-            if let Some(fg) = float_fg {
-                let _ = bus.emit(Topic::FloatGeometry(fg));
+        } else {
+            self.zoning.unfloat(wid);
+            // Out of Floating: its app stops coming back as a float.
+            if from == Some(Zone::Float) && self.zoning.forget_float(&app_id) {
+                with_bus(|bus| {
+                    let _ = bus.retract(Topic::FloatGeometry(sola_bus::topics::FloatGeometry {
+                        app_id: app_id.clone(),
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                    }));
+                });
             }
         }
         self.sync_window_floating();
+        self.emit_all_frames();
+        self.raise_window_from_click(wid);
+    }
+
+    /// Save the tab bar's layout when it changed — only once the saved one
+    /// has been read, so a start before its replay cannot wipe it.
+    pub(crate) fn persist_tabs(&mut self) {
+        if !self.tab_layout_ready {
+            return;
+        }
+        let layout = self.tabs.layout(std::time::Instant::now());
+        if self.last_tab_layout.as_ref() == Some(&layout) {
+            return;
+        }
+        self.last_tab_layout = Some(layout.clone());
+        with_bus(|bus| {
+            let _ = bus.emit(Topic::TabLayout(layout));
+        });
+    }
+
+    fn open_tabbar(&mut self) -> iced::Task<Msg> {
+        if self.tabbar_window_id.is_some() {
+            return iced::Task::none();
+        }
+        let (id, task) = crate::tabbar::open_window();
+        self.tabbar_window_id = Some(id);
+        task.map(|opened| Msg::WindowOpened(WindowKind::TabBar, opened))
+    }
+
+    /// A tab bar gesture finished: show a row, or move a dragged row in
+    /// the bar (its window keeps its zone).
+    fn on_tabbar_event(&mut self, ev: sola_kit::components::SidebarEvent) -> iced::Task<Msg> {
+        use crate::tabbar::window_of_row;
+        use sola_kit::components::{Dest, SidebarEvent};
+        match ev {
+            SidebarEvent::Activate { id } => {
+                if let Some(wid) = window_of_row(&id) {
+                    self.activate_window(wid);
+                }
+            }
+            SidebarEvent::Drop(drop) => {
+                let Some(wid) = window_of_row(&drop.id) else {
+                    return iced::Task::none();
+                };
+                // The bar has no groups: every drop is among loose rows.
+                if let Dest::Loose { before } = drop.dest {
+                    let before = before.as_deref().and_then(window_of_row);
+                    if self.tabs.reorder(wid, before) {
+                        tracing::info!(window_id = wid, ?before, "reorder tab");
+                        self.persist_tabs();
+                    }
+                }
+            }
+            _ => {}
+        }
         iced::Task::none()
     }
 
@@ -589,7 +851,7 @@ impl Shell {
                 self.hide_focused_app();
                 iced::Task::none()
             }
-            sola_kit::WindowAction::Cycle => iced::Task::done(Msg::CycleAppWindows),
+            sola_kit::WindowAction::Cycle => iced::Task::done(Msg::CycleTabs { back: false }),
             sola_kit::WindowAction::Zone(zone) => self.snap_focused_zone(zone),
         }
     }
@@ -605,22 +867,6 @@ impl Shell {
         match row.action {
             ShortcutAction::OpenShortcuts => iced::Task::none(),
             ShortcutAction::OpenLauncher => iced::Task::done(Msg::OpenLauncher),
-            ShortcutAction::OpenSwitcher => {
-                if let Some(id) = self.focused_app_id.clone() {
-                    self.ack_notify_badge(&id);
-                }
-                crate::switcher::state::rebuild_apps(
-                    &mut self.switcher,
-                    &self.mru_apps.clone(),
-                    &self.known_windows.clone(),
-                );
-                self.switcher.active = true;
-                self.switcher.selected = if self.switcher.apps.len() > 1 { 1 } else { 0 };
-                self.switcher.prepare_open();
-                self.emit_registered_chords();
-                self.emit_composition();
-                iced::Task::none()
-            }
             ShortcutAction::Hide => {
                 self.hide_focused_app();
                 iced::Task::none()
@@ -633,7 +879,19 @@ impl Shell {
                 }
                 iced::Task::none()
             }
-            ShortcutAction::Cycle => iced::Task::done(Msg::CycleAppWindows),
+            ShortcutAction::Cycle => iced::Task::done(Msg::CycleTabs { back: false }),
+            ShortcutAction::ShowWorkspace(index) => {
+                self.show_workspace(index);
+                iced::Task::none()
+            }
+            ShortcutAction::SendToWorkspace(index) => {
+                self.send_focused_to_workspace(index);
+                iced::Task::none()
+            }
+            ShortcutAction::StepWorkspace { back } => {
+                self.step_workspace(back);
+                iced::Task::none()
+            }
             ShortcutAction::ScreenshotFull => {
                 self.arm_screenshot_handoff();
                 crate::screenshot::full()
@@ -678,6 +936,7 @@ impl Shell {
         self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
         self.hidden_apps
             .insert(app_id.to_ascii_lowercase(), app_id.clone());
+        self.emit_all_frames();
         with_bus(|bus| {
             let _ = bus.emit(Topic::AppHidden(sola_bus::topics::AppHidden {
                 app_id: app_id.clone(),
@@ -690,13 +949,9 @@ impl Shell {
         }) {
             self.pointer_window_id = None;
         }
-        let next = self
-            .mru_apps
-            .iter()
-            .find(|id| id.as_str() != Self::APP_ID && !self.is_app_hidden(id))
-            .cloned();
-        if let Some(next) = next {
-            self.raise_app(&next);
+        // The next window on this workspace; never another workspace's.
+        if let Some(next) = self.mru_window_on_showing(Some(&app_id)) {
+            self.raise_window_from_click(next);
         } else {
             self.focused_app_id = None;
             self.focused_window_id = None;
@@ -737,26 +992,73 @@ impl Shell {
         if self.mail_is_mapped() { Some(n) } else { None }
     }
 
-    /// Super+Tab numeral: Mail uses inbox unread; everyone else unseen
-    /// live + pile. Visiting the app or opening the pile marks items seen.
-    pub fn switcher_badge(&self, app_id: &str) -> Option<u32> {
-        if app_id.eq_ignore_ascii_case("sola-mail") {
-            return self.mail_unread_badge();
-        }
-        let n = self.notify.attention_count(app_id);
-        (n > 0).then_some(n)
-    }
-
-    fn ack_notify_badge(&mut self, app_id: &str) {
-        self.notify.ack_app(app_id);
-    }
-
     /// Raise sola-mail (unhide first if it is composition-hidden).
     pub fn activate_mail(&mut self) {
         if self.is_app_hidden("sola-mail") {
             self.unhide_app("sola-mail");
         }
         self.raise_app("sola-mail");
+    }
+
+    /// Today's events from Calendar's agenda, if it has published a span
+    /// that covers today.
+    pub fn today_events(&self, today: chrono::NaiveDate) -> Option<&[sola_bus::topics::AgendaEvent]> {
+        let date = today.format("%Y-%m-%d").to_string();
+        self.calendar_agenda
+            .as_ref()?
+            .days
+            .iter()
+            .find(|d| d.date == date)
+            .map(|d| d.events.as_slice())
+    }
+
+    /// Show event `id` in Calendar: raise it and ask, or launch it and ask
+    /// once its window appears ([`Self::flush_calendar_event`]). An empty
+    /// id only brings Calendar forward.
+    fn open_calendar_event(&mut self, id: String) -> iced::Task<Msg> {
+        let _ = self.dismiss_open_menu();
+        let mut opening = iced::Task::none();
+        let wanted = (!id.is_empty()).then_some(id);
+        if self.calendar_is_mapped() {
+            if self.is_app_hidden(CALENDAR_APP) {
+                self.unhide_app(CALENDAR_APP);
+            }
+            self.raise_app(CALENDAR_APP);
+            if let Some(id) = wanted {
+                emit_calendar_event(id);
+            }
+        } else if let Some(app) = self.applications.get(CALENDAR_APP) {
+            let (command, label) = (app.command.clone(), app.label.clone());
+            self.calendar_event_pending = wanted;
+            if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                let _ = bus.emit(Topic::LaunchApp(sola_bus::topics::LaunchAppPayload {
+                    app_id: CALENDAR_APP.to_string(),
+                    command,
+                }));
+            }
+            opening = self.begin_opening(CALENDAR_APP, &label);
+        }
+        self.emit_overlay_frames();
+        self.emit_composition();
+        self.emit_registered_chords();
+        opening
+    }
+
+    fn calendar_is_mapped(&self) -> bool {
+        self.known_windows
+            .iter()
+            .any(|w| w.app_id.eq_ignore_ascii_case(CALENDAR_APP))
+    }
+
+    /// The event the clock's panel asked for, once Calendar's window is up
+    /// (it subscribes before it maps, and holds the ask until its store
+    /// loads).
+    pub fn flush_calendar_event(&mut self) {
+        if self.calendar_event_pending.is_some() && self.calendar_is_mapped() {
+            if let Some(id) = self.calendar_event_pending.take() {
+                emit_calendar_event(id);
+            }
+        }
     }
 
     fn activate_notification(&mut self, id: &str) -> iced::Task<Msg> {
@@ -799,17 +1101,9 @@ impl Shell {
     }
 
     fn push_notification(&mut self, n: sola_bus::topics::AppNotification) -> iced::Task<Msg> {
-        let app_id = n.app_id.clone();
         let persist = n.persists();
         let now = std::time::Instant::now();
         let generation = self.notify.push(n, now);
-        if self
-            .focused_app_id
-            .as_deref()
-            .is_some_and(|id| id.eq_ignore_ascii_case(&app_id))
-        {
-            self.ack_notify_badge(&app_id);
-        }
         let expire = if persist {
             iced::Task::none()
         } else {
@@ -822,7 +1116,23 @@ impl Shell {
 
     /// Flower-menu Restart Computer / Shut Down. Dismisses the menu, then
     /// asks logind. Toast on failure; success means the machine is going
-    /// down (systemd SIGTERM is the same graceful path as Quit Sola).
+    /// down (systemd SIGTERM is the same graceful path as Exit Sola).
+    /// Lock the screen (`sola-lock`); a toast says why not.
+    pub(crate) fn lock_screen(&mut self, why: &'static str) -> iced::Task<Msg> {
+        let _ = self.dismiss_open_menu();
+        self.emit_overlay_frames();
+        self.emit_composition();
+        self.emit_registered_chords();
+        if let Err(msg) = crate::lock::lock(why) {
+            self.menubar.push_toast(msg);
+            let toast_gen = self.menubar.toast_generation;
+            return iced::Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+                Msg::ToastExpire(toast_gen)
+            });
+        }
+        iced::Task::none()
+    }
+
     fn request_machine_power(&mut self, kind: crate::power::Kind) -> iced::Task<Msg> {
         let _ = self.dismiss_open_menu();
         self.emit_overlay_frames();
@@ -848,11 +1158,18 @@ impl Shell {
         self.menu_open = false;
         self.current_open_index = None;
         self.current_open_is_system = false;
+        if self.open_panel == Some(Panel::RenameWorkspace) {
+            // The rename field had the keyboard: hand it back.
+            self.workspace.renaming = None;
+            if let Some(wid) = self.focused_window_id {
+                self.emit_focus(wid, None);
+            }
+        }
         self.set_open_panel(None);
         true
     }
 
-    /// Dismiss launcher / switcher / shortcuts / menubar panels.
+    /// Dismiss launcher / shortcuts / menubar panels.
     /// Does not touch the selection overlay (Super+Shift+4 freeze).
     pub(crate) fn dismiss_chrome_overlays(&mut self) -> bool {
         let mut changed = self.dismiss_open_menu();
@@ -864,15 +1181,11 @@ impl Shell {
             self.shortcuts.active = false;
             changed = true;
         }
-        if self.switcher.active {
-            self.switcher.active = false;
-            changed = true;
-        }
         changed
     }
 
     /// Dismiss transient shell overlays so a capture doesn't leave the
-    /// switcher/launcher/selection holding the scene (and keyboard routing).
+    /// launcher/selection holding the scene (and keyboard routing).
     pub fn dismiss_transient_overlays(&mut self) {
         let mut changed = self.dismiss_chrome_overlays();
         if self.selection.active || self.selection.pending {
@@ -969,8 +1282,7 @@ impl Shell {
             let app_id = w.app_id.clone();
             self.focused_window_id = Some(window_id);
             self.focused_app_id = Some(app_id.clone());
-            self.mru_window_by_app.insert(app_id.clone(), window_id);
-            self.ack_notify_badge(&app_id);
+            self.mru_window_by_app.insert(app_id, window_id);
         }
     }
 
@@ -998,16 +1310,57 @@ impl Shell {
             .is_some_and(|a| a.app_id == pending_app_id)
     }
 
-    /// Emit LaunchApp for `app_id`, show opening toast, close launcher.
-    /// A composition-hidden running app is unhidden and raised instead of
-    /// spawned again.
+    /// Apps whose launch is a new window (their ⌘N): the launcher starts
+    /// them even while they have windows. Every other app that has one is
+    /// brought forward instead (the Dock's way).
+    const NEW_WINDOW_APPS: &'static [&'static str] = &["sola-browser", "sola-terminal"];
+
+    /// The window to bring forward for `app_id`: its last used, else its
+    /// newest.
+    pub fn running_window_of(&self, app_id: &str) -> Option<u32> {
+        let windows: Vec<&Window> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Self::APP_ID && self.matches_pending_app(&w.app_id, app_id))
+            .collect();
+        windows
+            .iter()
+            .find_map(|w| {
+                self.mru_window_by_app
+                    .get(&w.app_id)
+                    .copied()
+                    .filter(|m| windows.iter().any(|x| x.window_id == *m))
+            })
+            .or_else(|| windows.last().map(|w| w.window_id))
+    }
+
+    /// Emit LaunchApp for `app_id`, show the opening ghost, close launcher.
+    /// A running app comes forward instead of starting again (Browser and
+    /// Terminal open a new window); a composition-hidden one is unhidden.
     fn launch_from_launcher(&mut self, app_id: Option<&str>) -> iced::Task<Msg> {
+        // Projects opens a project, not another Projects: its chooser.
+        if app_id == Some(crate::launcher::projects::APP_ID) {
+            return self.enter_projects_chooser();
+        }
+        // Browser asks where to, not for a blank page.
+        if app_id == Some(crate::launcher::web::APP_ID) {
+            return self.enter_web_chooser();
+        }
         let mut opening = iced::Task::none();
         if let Some(id) = app_id {
             if let Some(hidden) = self.mapped_hidden_app_id(id) {
                 self.launcher.active = false;
                 self.unhide_app(&hidden);
                 self.emit_registered_chords();
+                return iced::Task::none();
+            }
+            if !Self::NEW_WINDOW_APPS.contains(&id)
+                && let Some(wid) = self.running_window_of(id)
+            {
+                self.launcher.active = false;
+                self.emit_composition();
+                self.emit_registered_chords();
+                self.activate_window(wid);
                 return iced::Task::none();
             }
             if let Some(app) = self.applications.get(id) {
@@ -1033,8 +1386,9 @@ impl Shell {
         opening
     }
 
-    /// Push `Opening {label}…`, record pending launch state, schedule a 20s
-    /// timeout that clears both toast and pending if still current.
+    /// Record the pending launch: the tab bar shows a ghost row where the
+    /// window will land until it maps, the launch fails, or [`OPENING_SECS`]
+    /// pass.
     pub fn begin_opening(&mut self, app_id: &str, label: &str) -> iced::Task<Msg> {
         let existing_wids: HashSet<u32> = self
             .known_windows
@@ -1042,17 +1396,30 @@ impl Shell {
             .filter(|w| self.matches_pending_app(&w.app_id, app_id))
             .map(|w| w.window_id)
             .collect();
-        self.menubar.push_toast(format!("Opening {label}…"));
-        let toast_generation = self.menubar.toast_generation;
+        let generation = self
+            .pending_launch
+            .as_ref()
+            .map_or(0, |p| p.generation)
+            .wrapping_add(1);
         self.pending_launch = Some(PendingLaunch {
             app_id: app_id.to_string(),
-            toast_generation,
+            label: label.to_string(),
+            generation,
             existing_wids,
         });
         iced::Task::perform(
-            tokio::time::sleep(Duration::from_secs(OPENING_TOAST_SECS)),
-            move |_| Msg::ToastExpire(toast_generation),
+            tokio::time::sleep(Duration::from_secs(OPENING_SECS)),
+            move |_| Msg::LaunchExpire(generation),
         )
+    }
+
+    /// The ghost row for a launch in flight: its index in the bar and name.
+    pub fn launch_ghost(&self) -> Option<(usize, &str)> {
+        let p = self.pending_launch.as_ref()?;
+        let floats =
+            crate::zoning::floats_by_default(&p.app_id) || self.zoning.remembers(&p.app_id);
+        let (_, at, _) = self.tabs.landing_slot(floats);
+        Some((at, p.label.as_str()))
     }
 
     /// Drop pending launch (and its toast, if still current) when a matching
@@ -1063,33 +1430,16 @@ impl Shell {
         };
         let app_id = pending.app_id.clone();
         let existing = pending.existing_wids.clone();
-        let toast_gen = pending.toast_generation;
         let appeared = self.known_windows.iter().any(|w| {
             !existing.contains(&w.window_id) && self.matches_pending_app(&w.app_id, &app_id)
         });
         if appeared {
-            self.clear_pending_launch(Some(toast_gen));
-        }
-    }
-
-    /// Clear `pending_launch`. When `toast_generation` is `Some` and still
-    /// matches the menubar toast, expire that toast too. When `None`, clear
-    /// pending without touching a toast that may already have been replaced
-    /// (caller will push a failure/exit toast next).
-    pub fn clear_pending_launch(&mut self, toast_generation: Option<u64>) {
-        let Some(pending) = self.pending_launch.take() else {
-            return;
-        };
-        if let Some(toast_gen) = toast_generation {
-            if pending.toast_generation == toast_gen {
-                self.menubar.expire_toast(toast_gen);
-            }
+            self.pending_launch = None;
         }
     }
 
     /// If there is a pending launch for `app_id` (case-insensitive), take it
-    /// without expiring its toast — the caller will push a replacement toast
-    /// or clear the opening toast via the returned generation.
+    /// (its ghost row goes; the caller may toast a failure).
     pub fn take_pending_for_app(&mut self, app_id: &str) -> Option<PendingLaunch> {
         let matches = self
             .pending_launch
@@ -1108,58 +1458,75 @@ impl Shell {
 
     /// Build the composition list (bottom to top). See [`Self::emit_composition`].
     fn build_composition_entries(&self) -> Vec<CompositionEntry> {
-        let mut entries: Vec<CompositionEntry> = Vec::new();
+        let mut order: Vec<u32> = Vec::new();
 
-        // 1. Menubar — always at the bottom.
-        if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
-            entries.push(CompositionEntry { window_id: wid });
+        // 1. Menubar and the tab bar — always at the bottom.
+        for title in ["menubar", "tabbar"] {
+            if let Some(wid) = self.lookup_window_id(Self::APP_ID, title) {
+                order.push(wid);
+            }
         }
 
-        let mru_set: HashSet<&str> = self.mru_apps.iter().map(String::as_str).collect();
+        // 2. The shown tab of each zone on screen — Full, or the halves (a
+        //    Super+H'd app gives way to the zone's next tab); the other
+        //    tabs stay out, so River hides them.
+        let hidden = |app: &str| self.is_app_hidden(app);
+        let in_cinema = self.tabs.cinema();
+        let mut cinema = None;
+        for zone in self.tabs.on_screen(&hidden) {
+            let Some(wid) = self.tabs.visible_shown(zone, &hidden) else {
+                continue;
+            };
+            if in_cinema == Some(wid) {
+                cinema = Some(wid);
+            } else {
+                self.push_with_dialogs(&mut order, wid);
+            }
+        }
 
-        // 2. Apps not yet in MRU — bottom of the app stack (never auto-raised).
-        //    Skip composition-hidden apps (AppHidden sticky → River hide).
+        // 3. Floats, least recently raised first.
+        for &wid in self.tabs.float_order() {
+            if self.window_app_hidden(wid) {
+                continue;
+            }
+            if in_cinema == Some(wid) {
+                cinema = Some(wid);
+            } else {
+                self.push_with_dialogs(&mut order, wid);
+            }
+        }
+
+        // 4. Anything the bar has not placed (a dialog whose parent is
+        //    unknown), so nothing is lost; then a Cinema tab over it all.
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID
-                || mru_set.contains(w.app_id.as_str())
+                || order.contains(&w.window_id)
+                || self.tabs.zone_of(w.window_id).is_some()
                 || self.is_app_hidden(&w.app_id)
             {
                 continue;
             }
-            entries.push(CompositionEntry {
-                window_id: w.window_id,
-            });
+            let parent_placed = self
+                .tabs
+                .parent_of(w.window_id)
+                .is_some_and(|p| self.known_windows.iter().any(|k| k.window_id == p));
+            if !parent_placed {
+                order.push(w.window_id);
+            }
+        }
+        if let Some(wid) = cinema {
+            self.push_with_dialogs(&mut order, wid);
         }
 
-        // 3. App windows ordered by MRU (least recent first = bottom of raised stack).
-        // Within each app, the per-app MRU window sits on top of its siblings.
-        for app_id in self.mru_apps.iter().rev() {
-            if app_id.as_str() == Self::APP_ID || self.is_app_hidden(app_id) {
-                continue;
-            }
-            let top_wid = self.mru_window_by_app.get(app_id).copied();
-            for w in &self.known_windows {
-                if w.app_id == *app_id && Some(w.window_id) != top_wid {
-                    entries.push(CompositionEntry {
-                        window_id: w.window_id,
-                    });
-                }
-            }
-            if let Some(wid) = top_wid {
-                if self
-                    .known_windows
-                    .iter()
-                    .any(|w| w.window_id == wid && w.app_id == *app_id)
-                {
-                    entries.push(CompositionEntry { window_id: wid });
-                }
-            }
-        }
+        let mut entries: Vec<CompositionEntry> = order
+            .into_iter()
+            .map(|window_id| CompositionEntry { window_id })
+            .collect();
 
         // 4. Shell overlays on top when active *and* already live-sized.
         //    Framing to the output happens while still hidden; joining the
         //    stack at 2×2 is the first-show flash.
-        //    Notify sits above apps but below menu/launcher/switcher/selection.
+        //    Notify sits above apps but below menu/launcher/selection.
         if self.overlay_should_compose("notify", self.notify.visible()) {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "notify") {
                 entries.push(CompositionEntry { window_id: wid });
@@ -1167,11 +1534,6 @@ impl Shell {
         }
         if self.overlay_should_compose("menu", self.menu_open) {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menu") {
-                entries.push(CompositionEntry { window_id: wid });
-            }
-        }
-        if self.overlay_should_compose("switcher", self.switcher.active) {
-            if let Some(wid) = self.lookup_window_id(Self::APP_ID, "switcher") {
                 entries.push(CompositionEntry { window_id: wid });
             }
         }
@@ -1197,17 +1559,38 @@ impl Shell {
         entries
     }
 
+    /// `wid`, then its dialogs, unless its app is hidden.
+    fn push_with_dialogs(&self, order: &mut Vec<u32>, wid: u32) {
+        if self.window_app_hidden(wid) {
+            return;
+        }
+        order.push(wid);
+        for child in self.tabs.children_of(wid) {
+            if !self.window_app_hidden(child)
+                && self.known_windows.iter().any(|w| w.window_id == child)
+            {
+                order.push(child);
+            }
+        }
+    }
+
+    fn window_app_hidden(&self, wid: u32) -> bool {
+        self.known_windows
+            .iter()
+            .find(|w| w.window_id == wid)
+            .is_some_and(|w| self.is_app_hidden(&w.app_id))
+    }
+
     /// Build the composition list (bottom to top) and emit Topic::Composition.
     ///
     /// Stack order (bottom → top):
-    ///   1. Shell menubar — always at bottom.
-    ///   2. App windows not yet in MRU (never raised) — under everything raised,
-    ///      so focus-follows-mouse without a raise cannot leave an external app
-    ///      permanently stuck on top of activated windows.
-    ///   3. App windows ordered by MRU (least recent first), per-app MRU window
-    ///      on top of its siblings. Only click / switcher / map activation bumps
-    ///      MRU (raise).
-    ///   4. Shell overlays when active (menu, switcher, launcher, selection —
+    ///   1. Shell menubar, then the tab bar.
+    ///   2. The shown tab of each zone on screen (Full, or the halves),
+    ///      with its dialogs; every other tab is left out, so River hides
+    ///      it.
+    ///   3. Floats, least recently raised first.
+    ///   4. Unplaced windows, then a Cinema tab.
+    ///   5. Shell overlays when active (menu, launcher, selection —
     ///      selection on top while capturing).
     ///
     /// No-op when the stack order is identical to the last emit — title-only
@@ -1215,6 +1598,7 @@ impl Shell {
     pub fn emit_composition(&mut self) {
         let entries = self.build_composition_entries();
         let order: Vec<u32> = entries.iter().map(|e| e.window_id).collect();
+        self.sync_workspaces();
         if order == self.last_composition {
             tracing::debug!(count = order.len(), "skip Composition (unchanged)");
             return;
@@ -1223,38 +1607,20 @@ impl Shell {
         with_bus(|bus| {
             let _ = bus.emit(Topic::Composition(entries));
         });
+        self.sync_tab_shown();
     }
 
-    /// Which top-level menu of `app_id` contains `action_id`, as a position
-    /// in its menu list (0 = the app-name slot shown as the title). `None`
-    /// if the app has no cached menu or the action isn't found.
-    fn menu_index_for_action(&self, app_id: &str, action_id: &str) -> Option<usize> {
-        let payload = self.effective_app_menu(app_id);
-        payload.menus.iter().position(|menu| {
-            menu.items
-                .iter()
-                .any(|item| matches!(item, MenuItem::Action { id, .. } if id == action_id))
-        })
-    }
-
-    /// Briefly flash the menubar label that owns `(app_id, action_id)` — the
-    /// macOS "command went through the menu" feedback. The shell's own actions
-    /// live under the system flower; a focused app's actions map to its title
-    /// (index 0) or one of its menu labels. Returns the timer task that ends
-    /// the pulse, or `Task::none()` if there's no label to flash.
-    fn flash_menu_action(&mut self, app_id: &str, action_id: &str) -> iced::Task<Msg> {
-        let target = if app_id == Self::APP_ID {
-            FlashTarget {
-                is_system: true,
-                index: 0,
-            }
-        } else if let Some(index) = self.menu_index_for_action(app_id, action_id) {
-            FlashTarget {
-                is_system: false,
-                index,
-            }
-        } else {
+    /// Briefly flash the flower when a shortcut runs one of the shell's own
+    /// actions — the macOS "command went through the menu" feedback. App
+    /// menus are in their windows' titlebars, so their shortcuts flash
+    /// nothing here. Returns the timer task that ends the pulse.
+    fn flash_menu_action(&mut self, app_id: &str, _action_id: &str) -> iced::Task<Msg> {
+        if app_id != Self::APP_ID {
             return iced::Task::none();
+        }
+        let target = FlashTarget {
+            is_system: true,
+            index: 0,
         };
         let generation = self.menubar.begin_flash(target);
         iced::Task::perform(tokio::time::sleep(Duration::from_millis(150)), move |_| {
@@ -1274,12 +1640,6 @@ impl Shell {
                 chords.push(alt);
             }
         }
-        // Bare Super_L (no modifiers) so we receive ChordReleased when the user
-        // lets the Super key go — used to confirm the app switcher.
-        chords.push(RegisteredChord {
-            keysym: keys::KEYSYM_SUPER_L,
-            modifiers: 0,
-        });
         // Global media keys (play/pause, mute, next/prev, volume). Bare
         // keysyms, registered unconditionally so they work regardless of
         // focus or overlay state; `on_chord` runs them via `solactl media`.
@@ -1294,7 +1654,6 @@ impl Shell {
         // the overlay closes so terminal apps keep their Escape.
         if self.launcher.active
             || self.shortcuts.active
-            || self.switcher.active
             || self.menu_open
             || self.selection.active
             || self.selection.pending
@@ -1304,13 +1663,6 @@ impl Shell {
                 modifiers: 0,
             });
         }
-        // While the switcher is up, Super is held (Meta+Tab). Grab Meta+←/→ so
-        // River delivers them; `on_chord` already maps Left/Right to SwitcherNav.
-        // Deregistered on dismiss so bare apps keep their own arrow bindings.
-        if self.switcher.active {
-            chords.push(keys::to_registered(&KeyCode::LEFT.meta()));
-            chords.push(keys::to_registered(&KeyCode::RIGHT.meta()));
-        }
         chords.sort_by_key(|c| (c.modifiers, c.keysym));
         chords.dedup();
         chords
@@ -1319,10 +1671,8 @@ impl Shell {
     /// Emit Topic::RegisteredChords based on current overlay state and focused app.
     ///
     /// Base set: shell key chords (Meta+Space, Meta+Tab, Meta+Q, Meta+H, Meta+Grave,
-    /// Meta+Numpad{…}), focused-app menu shortcuts (meta-bound only). Bare Super_L
-    /// always registered so ChordReleased fires for switcher confirm. Escape
-    /// registered only while an overlay is active. Meta+Left/Right registered
-    /// only while the switcher is active.
+    /// Meta+Numpad{…}), focused-app menu shortcuts (meta-bound only). Escape
+    /// registered only while an overlay is active.
     ///
     /// No-op when the chord set is identical to the last emit — avoids a River
     /// manage cycle on every title-only `Windows` rebroadcast.
@@ -1336,7 +1686,6 @@ impl Shell {
         tracing::info!(
             count = chords.len(),
             launcher = self.launcher.active,
-            switcher = self.switcher.active,
             "emitting RegisteredChords"
         );
         with_bus(|bus| {
@@ -1346,7 +1695,7 @@ impl Shell {
 
     /// Build the list of chords the shell wants River to grab.
     pub fn shell_key_chords(&self) -> Vec<KeyChord> {
-        // Shell-own menu bindings (meta-bound items only; Quit Sola has none).
+        // Shell-own menu bindings (meta-bound items only; Exit Sola has none).
         let mut bindings: Vec<KeyChord> = self
             .menus
             .key_bindings_for(Self::APP_ID)
@@ -1356,7 +1705,11 @@ impl Shell {
 
         // Focused app's menu shortcuts (meta-bound only, only while focused so
         // River doesn't grab them globally when other clients have focus).
-        if let Some(focused) = self.focused_app_id.as_deref() {
+        // Not while the launcher or the shortcuts overlay is up: their field
+        // has the keyboard, and Super+V / C / X / A must reach it (the modal
+        // eats a grabbed chord).
+        let modal = self.launcher.active || self.shortcuts.active;
+        if let Some(focused) = self.focused_app_id.as_deref().filter(|_| !modal) {
             if focused != Self::APP_ID {
                 bindings.extend(
                     self.menus
@@ -1368,12 +1721,20 @@ impl Shell {
         }
 
         // Fixed shell chords.
-        bindings.push(KeyCode::TAB.meta()); // Meta+Tab → switcher
-        bindings.push(KeyCode::GRAVE.meta()); // Meta+` → cycle windows of focused app
+        bindings.push(KeyCode::TAB.meta()); // Meta+Tab → next workspace
+        bindings.push(KeyCode::TAB.meta().shift()); // Meta+Shift+Tab → previous workspace
+        bindings.push(KeyCode::GRAVE.meta()); // Meta+` → next tab in the bar
+        bindings.push(KeyCode::GRAVE.meta_shift()); // Meta+Shift+` → previous tab
         bindings.push(KeyCode::SPACE.meta()); // Meta+Space → launcher
         bindings.push(KeyCode::K.meta()); // Meta+K → keyboard shortcuts (Omarchy)
         bindings.push(KeyCode::Q.meta()); // Meta+Q → close focused app
         bindings.push(KeyCode::H.meta()); // Meta+H → hide focused app
+        // Workspaces: Meta+1…9 show, Meta+Ctrl+1…9 send the focused window
+        // (Meta+(Shift+)Tab steps, above).
+        for key in crate::keys::WORKSPACE_KEYS {
+            bindings.push(key.meta());
+            bindings.push(key.meta().ctrl());
+        }
         // Super+Shift+3 full / +4 selection / +5 focused window (macOS order).
         bindings.push(KeyCode::KEY_3.meta_shift());
         bindings.push(KeyCode::KEY_4.meta_shift());
@@ -1392,14 +1753,15 @@ impl Shell {
         bindings
     }
 
-    /// Emit Topic::Frame for mapped shell windows and zoned app windows.
+    /// Emit Topic::Frame for the menubar, the tab bar, the overlays, and
+    /// every tiled tab.
     ///
     /// Overlays stay mapped: live size while visible, 2×2 while dismissed
-    /// (menu/shortcuts/notify are card-sized; launcher/switcher/selection
+    /// (menu/shortcuts/notify are card-sized; launcher/selection
     /// still use [`crate::zoning::overlay_frame`]). Lookup misses until
     /// River publishes the surface — a later `Windows` / `WindowOpened`
     /// fills in.
-    pub fn emit_all_frames(&self) {
+    pub fn emit_all_frames(&mut self) {
         let mut frames: Vec<FrameUpdate> = Vec::new();
 
         if let Some(wid) = self.lookup_window_id(Self::APP_ID, "menubar") {
@@ -1407,24 +1769,46 @@ impl Shell {
                 frames.push(f);
             }
         }
+        if let (Some(wid), Some((w, h))) = (
+            self.lookup_window_id(Self::APP_ID, "tabbar"),
+            self.zoning.output_size,
+        ) {
+            frames.push(crate::zoning::bar_frame(wid, w, h));
+        }
         self.collect_overlay_frames(&mut frames);
-        for w in &self.known_windows {
-            if w.app_id == Self::APP_ID {
-                continue;
+        frames.extend(self.tab_frames());
+        Self::emit_frames(frames);
+        self.sync_window_chrome();
+    }
+
+    /// Every tiled tab's zone rectangle — tabs off screen too, so showing
+    /// one needs no resize — and the rectangle of a tab in Cinema. Floats
+    /// keep their own size.
+    fn tab_frames(&self) -> Vec<FrameUpdate> {
+        let Some((w, h)) = self.zoning.output_size else {
+            return Vec::new();
+        };
+        let mut frames = Vec::new();
+        // Every workspace, so showing one needs no resize either.
+        for ws in 0..self.tabs.workspace_count() {
+            let cinema = self.tabs.cinema_on(ws);
+            for t in self.tabs.bar_on(ws) {
+                if !crate::stacks::TILED.contains(&t.zone) {
+                    continue;
+                }
+                frames.push(if cinema == Some(t.window_id) {
+                    crate::zoning::cinema_frame(t.window_id, w, h)
+                } else {
+                    crate::zoning::tile_frame(t.window_id, t.zone, w, h)
+                });
             }
-            // Floating windows (assigned Float or default-float with no zone)
-            // keep client-requested / restore size — never re-frame them.
-            // Unassigned sola-* apps used to get default_app_frame (full usable
-            // area), which treated them like a zone; they now default-float.
-            if self.zoning.is_floating(w.window_id) {
-                continue;
-            }
-            if let Some(f) = self.zoning.window_frame(w.window_id) {
-                frames.push(f);
+            if let Some(wid) = cinema.filter(|wid| {
+                self.tabs.zone_of(*wid) == Some(sola_bus::topics::Zone::Float)
+            }) {
+                frames.push(crate::zoning::cinema_frame(wid, w, h));
             }
         }
-
-        Self::emit_frames(frames);
+        frames
     }
 
     fn collect_overlay_frames(&self, frames: &mut Vec<FrameUpdate>) {
@@ -1451,7 +1835,6 @@ impl Shell {
         }
         for (title, visible, cover_menubar) in [
             ("launcher", self.launcher.active, false),
-            ("switcher", self.switcher.active, false),
             ("selection", self.selection.active, true),
         ] {
             let Some(wid) = self.lookup_window_id(Self::APP_ID, title) else {
@@ -1487,11 +1870,10 @@ impl Shell {
         match kind {
             WindowKind::Menu => Some(0),
             WindowKind::Launcher => Some(1),
-            WindowKind::Switcher => Some(2),
-            WindowKind::Selection => Some(3),
-            WindowKind::Notify => Some(4),
-            WindowKind::Shortcuts => Some(5),
-            WindowKind::Menubar => None,
+            WindowKind::Selection => Some(2),
+            WindowKind::Notify => Some(3),
+            WindowKind::Shortcuts => Some(4),
+            WindowKind::Menubar | WindowKind::TabBar => None,
         }
     }
 
@@ -1499,7 +1881,6 @@ impl Shell {
         [
             WindowKind::Menu,
             WindowKind::Launcher,
-            WindowKind::Switcher,
             WindowKind::Selection,
             WindowKind::Notify,
             WindowKind::Shortcuts,
@@ -1512,10 +1893,9 @@ impl Shell {
         let idx = match title {
             "menu" => 0,
             "launcher" => 1,
-            "switcher" => 2,
-            "selection" => 3,
-            "notify" => 4,
-            "shortcuts" => 5,
+            "selection" => 2,
+            "notify" => 3,
+            "shortcuts" => 4,
             _ => return false,
         };
         self.overlay_iced_live[idx]
@@ -1544,7 +1924,6 @@ impl Shell {
         self.emit_composition();
         for (title, want) in [
             ("launcher", self.launcher.active),
-            ("switcher", self.switcher.active),
             (
                 "selection",
                 self.selection.active && self.selection.presentable,
@@ -1557,9 +1936,6 @@ impl Shell {
             if let Some(wid) = self.lookup_window_id(Self::APP_ID, title) {
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
                     let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                }
-                if title == "switcher" {
-                    self.focused_window_id = Some(wid);
                 }
             }
         }
@@ -1590,9 +1966,6 @@ impl Shell {
         if Some(window) == self.launcher_window_id {
             return "launcher".to_string();
         }
-        if Some(window) == self.switcher_window_id {
-            return "switcher".to_string();
-        }
         if Some(window) == self.selection_window_id {
             return "selection".to_string();
         }
@@ -1602,140 +1975,55 @@ impl Shell {
         if Some(window) == self.shortcuts_window_id {
             return "shortcuts".to_string();
         }
+        if Some(window) == self.tabbar_window_id {
+            return "tabbar".to_string();
+        }
         Self::APP_ID.to_string()
     }
 
     /// Per-window chrome theme.
     ///
-    /// - Menubar: permanently black background; foreground text/icons follow
-    ///   the real palette.
-    /// - Overlays (menu, launcher, switcher): transparent window fill so the
+    /// - Menubar: no fill — the top row's islands sit on the ground (Next
+    ///   board 03); foreground text/icons follow the real palette.
+    /// - Tab bar: no fill — the island paints its face and clears its
+    ///   corners, so the ground shows there.
+    /// - Overlays (menu, launcher): transparent window fill so the
     ///   OS background shows through, but all non-base palette tiers remain
     ///   opaque so kit components (card, popover, button) render correctly.
     pub fn theme(&self, window: iced::window::Id) -> iced::Theme {
         if Some(window) == self.menubar_window_id {
-            return theme::menubar(&self.theme, self.style.menubar_bg);
+            return theme::menubar(&self.theme, iced::Color::TRANSPARENT);
         }
         theme::overlay(&self.theme)
     }
 
-    /// Laid-out left edge of a menubar title, if measured.
-    fn menu_anchor(positions: &[f32], index: usize, is_system: bool) -> Option<f32> {
-        if is_system {
-            return Some(0.0);
-        }
-        positions
-            .get(index)
-            .copied()
-            .filter(|x| x.is_finite() && *x > 0.0)
+    /// Where the top row's right-hand items sit ([`crate::menubar::anchors`]).
+    fn right_edges(&self) -> crate::menubar::anchors::Edges {
+        let clock = crate::components::clock::format_clock(&self.menubar.clock_now);
+        crate::menubar::anchors::edges(&crate::menubar::anchors::Right {
+            output_w: self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0),
+            clock: &clock,
+            gpu: self.stats.gpu.is_some(),
+            spectrum: crate::audio::bar_icon(&self.audio.snapshot).is_some(),
+        })
     }
 
-    /// Estimate the left-edge X of the menubar element identified by
-    /// `(index, is_system)`.
-    ///
-    /// Font-metric math, not a post-layout measurement. Good enough for
-    /// anchoring a dropdown until real geometry arrives via
-    /// MenuLabelPosition events.
-    ///
-    /// Layout:
-    ///   [system-btn ~34px] [app-title: (chars×7.5)+16] [label[1]: ...] ...
-    ///
-    /// - `is_system=true`  → 0 (system icon is the leftmost element)
-    /// - `index=0`         → SYSTEM_BTN_W (left edge of app title)
-    /// - `index=n` (n≥1)   → after app title and labels [1..n]
-    pub fn estimate_label_x(&self, index: usize, is_system: bool) -> f32 {
-        const CHAR_WIDTH: f32 = 6.5;
-        const PAD_H: f32 = crate::menubar::MENU_PAD_H * 2.0;
-        const SYSTEM_BTN_W: f32 =
-            crate::menubar::ICON_SIZE as f32 + crate::menubar::MENU_PAD_H * 2.0;
-
-        if is_system {
-            return 0.0;
-        }
-
-        if index == 0 {
-            return SYSTEM_BTN_W;
-        }
-
-        // Width of the app title label (index 0 slot).
-        let title_label = self
-            .focused_app_id
-            .as_deref()
-            .and_then(|id| self.menus.get_menu(id))
-            .and_then(|p| p.menus.first())
-            .map(|m| m.label.as_str())
-            .unwrap_or("");
-        let title_w = title_label.len() as f32 * CHAR_WIDTH + PAD_H;
-
-        let app_id = self.focused_app_id.as_deref().unwrap_or("");
-        let owned = if app_id.is_empty() {
-            None
-        } else {
-            Some(self.effective_app_menu(app_id))
-        };
-
-        let mut x = SYSTEM_BTN_W + title_w;
-        for i in 1..index {
-            let label_len = owned
-                .as_ref()
-                .and_then(|p| p.menus.get(i))
-                .map(|m| m.label.len())
-                .unwrap_or(6); // fallback 6 chars
-            x += label_len as f32 * CHAR_WIDTH + PAD_H;
-        }
-        x
-    }
-
-    /// Estimate the left-edge X of the system-stat indicator for `metric`.
-    ///
-    /// The stat cluster ([CPU] [GPU?] [MEM] [RX] [TX] [clock]) is right-aligned,
-    /// so we walk it right-to-left from the screen edge. Font-metric math, not a
-    /// post-layout measurement — good enough to drop a panel under its
-    /// indicator (the caller clamps so the card never runs off-screen).
+    /// Left edge of the stat item for `metric`, for hanging its panel.
     pub fn estimate_stat_x(&self, metric: crate::stats::Metric) -> f32 {
         use crate::stats::Metric;
-
-        // Keep in sync with menubar cluster phrases (pad lives inside chip_w).
-        const CLOCK_W: f32 = 166.0; // "%H:%M %a %Y-%m-%d" + MENU_PAD_H
-        let stat_w = crate::menubar::percent_chip_w();
-        let rate_w = crate::menubar::rate_chip_w();
-        let phrase = crate::menubar::PHRASE_GAP;
-
-        let output_w = self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
-        let has_gpu = self.stats.gpu.is_some();
-
-        // Cluster right edge sits at the screen edge; subtract leftward.
-        // Phrases L→R: extras · percents · rates · clock
-        let clock_left = output_w - CLOCK_W;
-        let tx_left = clock_left - phrase - rate_w;
-        let rx_left = tx_left - rate_w;
-        let mem_left = rx_left - phrase - stat_w;
-        let (gpu_left, cpu_left) = if has_gpu {
-            let g = mem_left - stat_w;
-            (g, g - stat_w)
-        } else {
-            (mem_left, mem_left - stat_w)
-        };
-
+        let e = self.right_edges();
         match metric {
-            Metric::Cpu => cpu_left,
-            Metric::Gpu => gpu_left,
-            Metric::Mem => mem_left,
-            Metric::Rx => rx_left,
-            Metric::Tx => tx_left,
+            Metric::Cpu => e.cpu,
+            Metric::Gpu => e.gpu,
+            Metric::Mem => e.mem,
+            Metric::Rx => e.rx,
+            Metric::Tx => e.tx,
         }
     }
 
-    /// Left edge of the Bluetooth chip (left of the spectrum when that
-    /// chip is shown, otherwise immediately left of CPU). Spectrum is its
-    /// own phrase, so a PHRASE_GAP sits between Bluetooth and the bars.
+    /// Left edge of the Bluetooth item (the extras island's last).
     pub fn estimate_bluetooth_x(&self) -> f32 {
-        let chip = crate::menubar::extra_chip_w();
-        if crate::audio::bar_icon(&self.audio.snapshot).is_some() {
-            self.estimate_audio_x() - crate::menubar::PHRASE_GAP - chip
-        } else {
-            self.estimate_stat_x(crate::stats::Metric::Cpu) - crate::menubar::PHRASE_GAP - chip
-        }
+        self.right_edges().bluetooth
     }
 
     /// Card-sized live frame for Super+K (not the full usable area).
@@ -1751,13 +2039,16 @@ impl Shell {
 
     /// Card-sized live frame for the menu overlay (not the full output).
     fn menu_overlay_spec(&self) -> crate::zoning::MenuOverlaySpec {
-        const GUTTER: f32 = 8.0;
+        // A panel at the right edge lines up with the row's islands.
+        const GUTTER: f32 = crate::zoning::GAP as f32;
         let ow = self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0);
         let clamp_x = |x: f32, w: f32| x.min((ow - w - GUTTER).max(0.0)).max(0.0);
         let (x, width, height) = match self.open_panel {
             Some(Panel::Calendar) => {
                 let w = crate::calendar::CARD_WIDTH;
-                (clamp_x(ow - w - GUTTER, w), w, crate::calendar::CARD_HEIGHT)
+                let today = self.menubar.clock_now.date_naive();
+                let h = crate::calendar::card_height(self.today_events(today).map(<[_]>::len));
+                (clamp_x(ow - w - GUTTER, w), w, h)
             }
             Some(Panel::Stat(m)) => {
                 let w = crate::stats::view::CARD_WIDTH;
@@ -1794,6 +2085,39 @@ impl Shell {
                     crate::audio::view::CARD_HEIGHT,
                 )
             }
+            // Under the tab bar's head, not the menubar.
+            Some(Panel::Workspace(_)) => {
+                let (x, y) = crate::tabbar::head::menu_anchor();
+                return crate::zoning::MenuOverlaySpec {
+                    x: x.round() as i32,
+                    y: y.round() as i32,
+                    width: crate::tabbar::head::MENU_WIDTH.round() as i32,
+                    height: crate::menu::workspace::menu_height(self).round() as i32,
+                };
+            }
+            Some(Panel::AgentIsland) => {
+                let w = crate::agents::view::CARD_WIDTH;
+                let x = crate::agents::view::anchor_x(self, self.agents.open.as_deref());
+                let h = self
+                    .agents
+                    .opened()
+                    .map_or(200.0, crate::agents::view::card_height);
+                (clamp_x(x, w), w, h)
+            }
+            Some(Panel::AgentIslands) => {
+                let w = crate::agents::view::CARD_WIDTH;
+                let x = crate::agents::view::anchor_x(self, None);
+                (clamp_x(x, w), w, crate::agents::view::list_height(self))
+            }
+            Some(Panel::RenameWorkspace) => {
+                let (x, y) = crate::tabbar::head::menu_anchor();
+                return crate::zoning::MenuOverlaySpec {
+                    x: x.round() as i32,
+                    y: y.round() as i32,
+                    width: crate::tabbar::head::MENU_WIDTH.round() as i32,
+                    height: crate::menu::workspace::RENAME_HEIGHT.round() as i32,
+                };
+            }
             None => {
                 let w = crate::menu::view::MENU_WIDTH;
                 (
@@ -1805,16 +2129,15 @@ impl Shell {
         };
         crate::zoning::MenuOverlaySpec {
             x: x.round() as i32,
+            y: crate::zoning::MENUBAR_HEIGHT,
             width: width.round() as i32,
             height: height.round() as i32,
         }
     }
 
-    /// Left edge of the spectrum phrase (immediately left of CPU).
+    /// Left edge of the spectrum island.
     pub fn estimate_audio_x(&self) -> f32 {
-        self.estimate_stat_x(crate::stats::Metric::Cpu)
-            - crate::menubar::PHRASE_GAP
-            - crate::menubar::audio_chip_w()
+        self.right_edges().spectrum
     }
 
     /// Change `open_panel`, stopping Bluetooth discovery and clearing the
@@ -1869,7 +2192,7 @@ impl Shell {
                 Event::KeyPressed {
                     key: Key::Named(Named::Escape),
                     ..
-                } => Msg::CloseLauncher,
+                } => Msg::LauncherEscape,
                 _ => Msg::Noop,
             }
         });
@@ -1892,7 +2215,6 @@ impl Shell {
         iced::Task::batch([
             self.open_overlay(WindowKind::Menu),
             self.open_overlay(WindowKind::Launcher),
-            self.open_overlay(WindowKind::Switcher),
             self.open_overlay(WindowKind::Selection),
             self.open_overlay(WindowKind::Notify),
             self.open_overlay(WindowKind::Shortcuts),
@@ -1904,10 +2226,10 @@ impl Shell {
             WindowKind::Menubar => self.menubar_window_id,
             WindowKind::Menu => self.menu_window_id,
             WindowKind::Launcher => self.launcher_window_id,
-            WindowKind::Switcher => self.switcher_window_id,
             WindowKind::Selection => self.selection_window_id,
             WindowKind::Notify => self.notify_window_id,
             WindowKind::Shortcuts => self.shortcuts_window_id,
+            WindowKind::TabBar => self.tabbar_window_id,
         }
     }
 
@@ -1916,19 +2238,18 @@ impl Shell {
             WindowKind::Menubar => &mut self.menubar_window_id,
             WindowKind::Menu => &mut self.menu_window_id,
             WindowKind::Launcher => &mut self.launcher_window_id,
-            WindowKind::Switcher => &mut self.switcher_window_id,
             WindowKind::Selection => &mut self.selection_window_id,
             WindowKind::Notify => &mut self.notify_window_id,
             WindowKind::Shortcuts => &mut self.shortcuts_window_id,
+            WindowKind::TabBar => &mut self.tabbar_window_id,
         }
     }
 
     fn overlay_want(&self, kind: WindowKind) -> bool {
         match kind {
-            WindowKind::Menubar => true,
+            WindowKind::Menubar | WindowKind::TabBar => true,
             WindowKind::Menu => self.menu_open,
             WindowKind::Launcher => self.launcher.active,
-            WindowKind::Switcher => self.switcher.active,
             WindowKind::Selection => self.selection.active,
             WindowKind::Notify => self.notify.visible(),
             WindowKind::Shortcuts => self.shortcuts.active,
@@ -1939,7 +2260,6 @@ impl Shell {
         [
             self.menu_open,
             self.launcher.active,
-            self.switcher.active,
             self.selection.active,
             self.notify.visible(),
             self.shortcuts.active,
@@ -1947,17 +2267,18 @@ impl Shell {
     }
 
     fn open_overlay(&mut self, kind: WindowKind) -> iced::Task<Msg> {
-        if matches!(kind, WindowKind::Menubar) || self.overlay_id(kind).is_some() {
+        if matches!(kind, WindowKind::Menubar | WindowKind::TabBar)
+            || self.overlay_id(kind).is_some()
+        {
             return iced::Task::none();
         }
         let (id, task) = match kind {
             WindowKind::Menu => crate::menu::open_window(),
             WindowKind::Launcher => crate::launcher::open_window(),
-            WindowKind::Switcher => crate::switcher::open_window(),
             WindowKind::Selection => crate::selection::open_window(),
             WindowKind::Notify => crate::notify::open_window(),
             WindowKind::Shortcuts => crate::shortcuts::open_window(),
-            WindowKind::Menubar => return iced::Task::none(),
+            WindowKind::Menubar | WindowKind::TabBar => return iced::Task::none(),
         };
         *self.overlay_id_mut(kind) = Some(id);
         task.map(move |opened| Msg::WindowOpened(kind, opened))
@@ -1967,7 +2288,7 @@ impl Shell {
         self.emit_all_frames();
         self.emit_composition();
         if kind == WindowKind::Menubar {
-            return self.ensure_overlay_windows();
+            return iced::Task::batch([self.ensure_overlay_windows(), self.open_tabbar()]);
         }
         if kind == WindowKind::Launcher && self.launcher.active {
             return iced::widget::operation::focus::<Msg>(iced::widget::Id::new(
@@ -1990,7 +2311,6 @@ impl Shell {
         if !self.last_composition.is_empty()
             && (self.menu_window_id.is_none()
                 || self.launcher_window_id.is_none()
-                || self.switcher_window_id.is_none()
                 || self.selection_window_id.is_none()
                 || self.notify_window_id.is_none()
                 || self.shortcuts_window_id.is_none())
@@ -2098,6 +2418,7 @@ impl Shell {
                 self.calendar_month = crate::calendar::next_month(self.calendar_month);
                 iced::Task::none()
             }
+            Msg::CalendarOpenEvent(id) => self.open_calendar_event(id),
             Msg::CalendarToday => {
                 self.calendar_month =
                     crate::calendar::first_of_month(self.menubar.clock_now.date_naive());
@@ -2105,10 +2426,13 @@ impl Shell {
             }
             Msg::ToastExpire(toast_gen) => {
                 self.menubar.expire_toast(toast_gen);
+                iced::Task::none()
+            }
+            Msg::LaunchExpire(generation) => {
                 if self
                     .pending_launch
                     .as_ref()
-                    .is_some_and(|p| p.toast_generation == toast_gen)
+                    .is_some_and(|p| p.generation == generation)
                 {
                     self.pending_launch = None;
                 }
@@ -2132,9 +2456,9 @@ impl Shell {
                     return iced::Task::none();
                 }
 
-                self.menu_anchor_x =
-                    Self::menu_anchor(&self.menubar.label_positions, index, is_system)
-                        .unwrap_or_else(|| self.estimate_label_x(index, is_system));
+                // Only the flower opens a menubar dropdown now (app menus are
+                // in their windows' titlebars); its island starts a gap in.
+                self.menu_anchor_x = crate::zoning::GAP as f32;
                 self.menu_open = true;
                 self.current_open_index = Some(index);
                 self.current_open_is_system = is_system;
@@ -2151,9 +2475,9 @@ impl Shell {
                 let same = self.current_open_index == Some(index)
                     && self.current_open_is_system == is_system;
                 if self.menu_open && !same {
-                    self.menu_anchor_x =
-                        Self::menu_anchor(&self.menubar.label_positions, index, is_system)
-                            .unwrap_or_else(|| self.estimate_label_x(index, is_system));
+                    // Only the flower opens a menubar dropdown now (app menus are
+                    // in their windows' titlebars); its island starts a gap in.
+                    self.menu_anchor_x = crate::zoning::GAP as f32;
                     self.current_open_index = Some(index);
                     self.current_open_is_system = is_system;
                     self.set_open_panel(None);
@@ -2169,12 +2493,8 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::MenuAction { app_id, action_id } => {
-                // Restart this process only. `sola` (process manager)
-                // respawns managed `sola-shell` on exit — used after
-                // font/theme changes that don't require a reinstall.
-                if app_id == Self::APP_ID && action_id == "restart" {
-                    tracing::info!("restart shell requested via menu");
-                    return iced::exit();
+                if app_id == Self::APP_ID && action_id == crate::lock::ACTION_LOCK {
+                    return self.lock_screen("key");
                 }
                 if app_id == Self::APP_ID && action_id == crate::power::ACTION_RESTART_COMPUTER {
                     return self.request_machine_power(crate::power::Kind::Reboot);
@@ -2190,12 +2510,24 @@ impl Shell {
                     self.emit_registered_chords();
                     return iced::Task::done(Msg::OpenLauncher);
                 }
+                // Flower menu: Settings comes forward, or starts.
+                if app_id == Self::APP_ID && action_id == crate::menu::state::ACTION_SETTINGS {
+                    let _ = self.dismiss_open_menu();
+                    self.emit_overlay_frames();
+                    self.launcher.prior_focus = self.focused_window_id;
+                    return self.launch_from_launcher(Some(crate::builtins::SETTINGS));
+                }
                 if app_id == Self::APP_ID && action_id == "shortcuts" {
                     let _ = self.dismiss_open_menu();
                     self.emit_overlay_frames();
                     self.emit_composition();
                     self.emit_registered_chords();
                     return iced::Task::done(Msg::OpenShortcuts);
+                }
+                if app_id == Self::APP_ID {
+                    if let Some(action) = crate::menu::workspace::parse(&action_id) {
+                        return self.on_workspace_menu(action);
+                    }
                 }
                 if let Some(action) = sola_kit::parse_window_action(&action_id) {
                     let _ = self.dismiss_open_menu();
@@ -2206,8 +2538,13 @@ impl Shell {
                 }
                 if let Ok(mut bus) = sola_kit::app::bus().lock() {
                     if app_id == Self::APP_ID && (action_id == "exit" || action_id == "quit") {
+                        // Broadcast so sola-river (and later session) exit,
+                        // then exit 0 ourselves: under a supervisor that
+                        // restarts on failure (Oath's PID 1) a clean quit
+                        // stays down.
                         mark_clean_shutdown();
                         let _ = bus.emit(Topic::Shutdown);
+                        return iced::exit();
                     } else if action_id == "_close" {
                         if let Some(ref focused) = self.focused_app_id.clone() {
                             let _ = bus.emit(Topic::CloseApp(focused.clone()));
@@ -2223,28 +2560,10 @@ impl Shell {
                 self.emit_registered_chords();
                 iced::Task::none()
             }
-            Msg::MenuLabelPosition { index, x } => {
-                if self.menubar.label_positions.len() <= index {
-                    self.menubar.label_positions.resize(index + 1, 0.0);
-                }
-                self.menubar.label_positions[index] = x;
-                if self.menu_open
-                    && !self.current_open_is_system
-                    && self.current_open_index == Some(index)
-                    && (self.menu_anchor_x - x).abs() >= 0.5
-                {
-                    self.menu_anchor_x = x;
-                    self.emit_overlay_frames();
-                }
-                iced::Task::none()
-            }
             // --- Launcher ---
             Msg::OpenShortcuts => {
                 if self.launcher.active {
                     self.launcher.active = false;
-                }
-                if self.switcher.active {
-                    self.switcher.active = false;
                 }
                 let _ = self.dismiss_open_menu();
                 self.shortcuts.prior_focus = self.focused_window_id;
@@ -2302,6 +2621,9 @@ impl Shell {
                 }
                 self.launcher.prior_focus = self.focused_window_id;
                 self.launcher.active = true;
+                self.launcher.chooser = None;
+                self.launcher.hosts = None;
+                self.launcher.web = None;
                 let apps = self.applications.clone();
                 self.launcher.apply_query(&apps, "");
                 self.emit_composition();
@@ -2321,6 +2643,9 @@ impl Shell {
                     return iced::Task::none();
                 }
                 self.launcher.active = false;
+                self.launcher.chooser = None;
+                self.launcher.hosts = None;
+                self.launcher.web = None;
                 self.emit_composition();
                 self.emit_registered_chords();
                 // Restore focus to the previously focused app window.
@@ -2332,6 +2657,27 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::LauncherQuery(text) => {
+                if let Some(web) = self.launcher.web.as_mut() {
+                    web.apply_query(&text);
+                    self.launcher.query = text;
+                    self.launcher.selected = 0;
+                    return iced::Task::none();
+                }
+                if let Some(hosts) = self.launcher.hosts.as_mut() {
+                    hosts.apply_query(&text);
+                    hosts.error = None;
+                    self.launcher.query = text;
+                    self.launcher.selected = 0;
+                    return iced::Task::none();
+                }
+                if let Some(chooser) = self.launcher.chooser.as_mut() {
+                    if !chooser.naming {
+                        chooser.apply_query(&text);
+                    }
+                    self.launcher.query = text;
+                    self.launcher.selected = 0;
+                    return iced::Task::none();
+                }
                 let apps = self.applications.clone();
                 self.launcher.apply_query(&apps, &text);
                 iced::Task::none()
@@ -2346,7 +2692,12 @@ impl Shell {
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
-                let len = self.launcher.filtered_ids.len();
+                let len = match (&self.launcher.web, &self.launcher.hosts, &self.launcher.chooser) {
+                    (Some(web), _, _) => web.rows().len(),
+                    (None, Some(hosts), _) => hosts.rows().len(),
+                    (None, None, Some(chooser)) => chooser.rows().len(),
+                    (None, None, None) => self.launcher.filtered_ids.len(),
+                };
                 if len == 0 {
                     return iced::Task::none();
                 }
@@ -2363,6 +2714,15 @@ impl Shell {
                 }
                 if !self.launcher.active {
                     return iced::Task::none();
+                }
+                if self.launcher.web.is_some() {
+                    return self.web_pick(self.launcher.selected);
+                }
+                if self.launcher.hosts.is_some() {
+                    return self.hosts_pick(self.launcher.selected);
+                }
+                if self.launcher.chooser.is_some() {
+                    return self.chooser_pick(self.launcher.selected);
                 }
                 let app_id = self
                     .launcher
@@ -2385,6 +2745,49 @@ impl Shell {
                     self.launcher.selected = i;
                 }
                 self.launch_from_launcher(Some(&app_id))
+            }
+            Msg::LauncherEscape => {
+                if self.shortcuts.active {
+                    return iced::Task::done(Msg::CloseShortcuts);
+                }
+                if !self.launcher.active {
+                    return iced::Task::none();
+                }
+                self.launcher_back()
+            }
+            Msg::LauncherPick(i) => {
+                if !self.launcher.active {
+                    return iced::Task::none();
+                }
+                self.launcher.selected = i;
+                if self.launcher.web.is_some() {
+                    return self.web_pick(i);
+                }
+                if self.launcher.hosts.is_some() {
+                    return self.hosts_pick(i);
+                }
+                self.chooser_pick(i)
+            }
+            Msg::RemoteListed(host, listed) => self.on_remote_listed(host, listed),
+            Msg::RemoteCreated(host, made) => self.on_remote_created(host, made),
+            Msg::ProjectsKnown(known) => {
+                match (known, self.launcher.chooser.as_mut()) {
+                    (Ok(known), Some(chooser)) => {
+                        chooser.known = known
+                            .into_iter()
+                            .filter(|(host, _, _)| *host == chooser.host)
+                            .map(|(_, root, k)| (root, k))
+                            .collect()
+                    }
+                    (Err(e), _) => tracing::debug!(error = %e, "project chooser: project.list"),
+                    _ => {}
+                }
+                iced::Task::none()
+            }
+            Msg::ProjectOpened(Ok(())) => iced::Task::none(),
+            Msg::ProjectOpened(Err(e)) => {
+                tracing::warn!(error = %e, "project chooser: project.open");
+                self.chooser_toast(format!("Projects: {e}"))
             }
             Msg::RaiseMail => {
                 self.activate_mail();
@@ -2514,41 +2917,6 @@ impl Shell {
                 }
                 iced::Task::none()
             }
-            // --- Switcher ---
-            Msg::SwitcherNav { next } => {
-                if next {
-                    self.switcher.select_next();
-                } else {
-                    self.switcher.select_prev();
-                }
-                iced::Task::none()
-            }
-            Msg::SwitcherHover { index } => {
-                self.switcher.note_hover(index);
-                iced::Task::none()
-            }
-            Msg::SwitcherPointer { x, y } => {
-                self.switcher.note_pointer(x, y);
-                iced::Task::none()
-            }
-            Msg::SwitcherConfirm => {
-                let app_id = self.switcher.selected_app_id().map(|s| s.to_string());
-                self.switcher.active = false;
-
-                if let Some(ref app_id) = app_id {
-                    // Unhide if Super+H parked this app, then raise (MRU + seat).
-                    self.raise_app(app_id);
-                }
-                self.emit_composition();
-                self.emit_registered_chords();
-                iced::Task::none()
-            }
-            Msg::SwitcherCancel => {
-                self.switcher.active = false;
-                self.emit_composition();
-                self.emit_registered_chords();
-                iced::Task::none()
-            }
             Msg::FocusHoverFire {
                 window_id,
                 generation,
@@ -2646,46 +3014,92 @@ impl Shell {
                 crate::screenshot::crop_freeze(handle, rx, ry, rw, rh)
             }
             Msg::ScreenshotDone(result) => self.on_screenshot_done(result),
-            Msg::CycleAppWindows => {
-                // Find all windows of the focused app and cycle to the next.
-                let Some(ref app_id) = self.focused_app_id.clone() else {
-                    return iced::Task::none();
-                };
-                let mut app_windows: Vec<u32> = self
-                    .known_windows
-                    .iter()
-                    .filter(|w| &w.app_id == app_id && w.app_id != Self::APP_ID)
-                    .map(|w| w.window_id)
-                    .collect();
-                app_windows.sort(); // deterministic ordering
-                if app_windows.len() <= 1 {
-                    // Single window or no windows — nothing to cycle.
-                    return iced::Task::none();
+            Msg::CycleTabs { back } => {
+                let from = self.focused_window_id;
+                if let Some(next) = self.tabs.step(from, back) {
+                    tracing::info!(?from, to = next, back, "Super+` — next tab in the bar");
+                    self.activate_window(next);
                 }
-                let current_idx = self
-                    .focused_window_id
-                    .and_then(|wid| app_windows.iter().position(|&w| w == wid))
-                    .unwrap_or(0);
-                let next_idx = (current_idx + 1) % app_windows.len();
-                let next_wid = app_windows[next_idx];
-                tracing::info!(
-                    app_id = %app_id,
-                    from = ?self.focused_window_id,
-                    to = next_wid,
-                    "Meta+` — cycling app window"
-                );
-                self.focused_window_id = Some(next_wid);
-                self.mru_window_by_app.insert(app_id.clone(), next_wid);
-                if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                    let _ = bus.emit(sola_bus::topics::Topic::Focus(
-                        sola_bus::topics::FocusTarget {
-                            window_id: next_wid,
-                        },
-                    ));
-                }
-                self.emit_composition();
                 iced::Task::none()
             }
+            Msg::WorkspaceMenu(index) => {
+                if self.menu_open && self.open_panel == Some(Panel::Workspace(index)) {
+                    let _ = self.dismiss_open_menu();
+                } else {
+                    let _ = self.dismiss_open_menu();
+                    self.menu_open = true;
+                    self.set_open_panel(Some(Panel::Workspace(index)));
+                }
+                self.emit_overlay_frames();
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::WorkspaceRenameInput(name) => {
+                if let Some((_, typed)) = self.workspace.renaming.as_mut() {
+                    *typed = name;
+                }
+                iced::Task::none()
+            }
+            Msg::WorkspaceRenameCommit => {
+                self.commit_workspace_rename();
+                let _ = self.dismiss_open_menu();
+                self.emit_overlay_frames();
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::AgentIslandOpen(key) => self.open_agent_island(key),
+            Msg::AgentIslandList => {
+                if self.menu_open && self.open_panel == Some(Panel::AgentIslands) {
+                    let _ = self.dismiss_open_menu();
+                } else {
+                    let _ = self.dismiss_open_menu();
+                    self.menu_open = true;
+                    self.set_open_panel(Some(Panel::AgentIslands));
+                }
+                self.emit_overlay_frames();
+                self.emit_composition();
+                self.emit_registered_chords();
+                iced::Task::none()
+            }
+            Msg::AgentIslandChoose(i) => {
+                self.agent_island_act(sola_bus::topics::IslandAction::Choose(i))
+            }
+            Msg::AgentIslandReplyInput(text) => {
+                self.agents.reply = text;
+                iced::Task::none()
+            }
+            Msg::AgentIslandReply => {
+                let text = std::mem::take(&mut self.agents.reply);
+                if text.trim().is_empty() {
+                    return iced::Task::none();
+                }
+                self.agent_island_act(sola_bus::topics::IslandAction::Reply(text))
+            }
+            Msg::AgentIslandShow => self.agent_island_act(sola_bus::topics::IslandAction::Show),
+            Msg::AdaptSampled(picture, scheme) => self.adapt_sampled(picture, scheme),
+            Msg::CloseWindow(wid) => {
+                // A tab's window: its app closes it (not through the
+                // compositor, whose close requests also mean "quit").
+                let close = match self.pairing.key_of(wid) {
+                    Some(key) => Topic::CloseTab(key.to_string()),
+                    None => Topic::CloseWindow(wid),
+                };
+                tracing::info!(window_id = wid, ?close, "close window from the tab bar");
+                with_bus(|bus| {
+                    let _ = bus.emit(close);
+                });
+                iced::Task::none()
+            }
+            Msg::ShowTab(wid) => {
+                self.activate_window(wid);
+                iced::Task::none()
+            }
+            Msg::TabBar(m) => match self.tabbar.gestures.update(m) {
+                Some(ev) => self.on_tabbar_event(ev),
+                None => iced::Task::none(),
+            },
             Msg::Noop => iced::Task::none(),
         }
     }
@@ -2701,9 +3115,6 @@ impl Shell {
         if Some(window) == self.launcher_window_id {
             return crate::launcher::view::view(self);
         }
-        if Some(window) == self.switcher_window_id {
-            return crate::switcher::view::view(self);
-        }
         if Some(window) == self.selection_window_id {
             return crate::selection::view::view(self);
         }
@@ -2712,6 +3123,9 @@ impl Shell {
         }
         if Some(window) == self.shortcuts_window_id {
             return crate::shortcuts::view::view(self);
+        }
+        if Some(window) == self.tabbar_window_id {
+            return crate::tabbar::view::view(self);
         }
         // Fallback — shouldn't happen under normal operation.
         iced::widget::container(iced::widget::text(""))
@@ -2747,10 +3161,27 @@ mod pending_launch_tests {
             menubar_window_id: None,
             menu_window_id: None,
             launcher_window_id: None,
-            switcher_window_id: None,
             selection_window_id: None,
             notify_window_id: None,
             shortcuts_window_id: None,
+            tabbar_window_id: None,
+            tabs: Stacks::new(),
+            pairing: crate::pairing::Pairing::default(),
+            tab_activity: HashMap::new(),
+            agents: Default::default(),
+            adapt: Default::default(),
+            pictures: Default::default(),
+            tab_shown_sent: HashMap::new(),
+            desk_out: false,
+            lock_idle: false,
+            tabbar: crate::tabbar::TabBarState::default(),
+            window_chrome: crate::chrome::ChromeState::default(),
+            workspace: workspaces::WorkspaceState::default(),
+            tab_layout_loaded: false,
+            tab_layout_ready: false,
+            last_tab_layout: None,
+            pending_parents: HashMap::new(),
+            windows_seen: false,
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
@@ -2778,7 +3209,6 @@ mod pending_launch_tests {
             current_open_is_system: false,
             open_panel: None,
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
-            switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
             shortcuts: ShortcutsState::default(),
             selection: SelectionState::default(),
@@ -2792,7 +3222,8 @@ mod pending_launch_tests {
             menubar: MenubarState::new(),
             pending_launch: Some(PendingLaunch {
                 app_id: "sola-terminal".into(),
-                toast_generation: 1,
+                label: "Terminal".into(),
+                generation: 1,
                 existing_wids: HashSet::from([1]),
             }),
             stats: std::sync::Arc::new(crate::stats::Snapshot::default()),
@@ -2802,15 +3233,15 @@ mod pending_launch_tests {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
+            calendar_agenda: None,
+            calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
         };
-        shell.menubar.toast_generation = 1;
-        shell.menubar.toast = Some("Opening Terminal…".into());
-
-        // Existing window only — still pending.
+        // Existing window only — still pending, the ghost in the tab bar.
         shell.resolve_pending_launch_if_window();
         assert!(shell.pending_launch.is_some());
-        assert_eq!(shell.menubar.toast.as_deref(), Some("Opening Terminal…"));
+        assert_eq!(shell.launch_ghost().map(|(_, label)| label), Some("Terminal"));
+        assert!(shell.menubar.toast.is_none());
 
         // New matching window resolves.
         shell.known_windows.push(Window {
@@ -2821,13 +3252,14 @@ mod pending_launch_tests {
         });
         shell.resolve_pending_launch_if_window();
         assert!(shell.pending_launch.is_none());
-        assert!(shell.menubar.toast.is_none());
+        assert!(shell.launch_ghost().is_none());
     }
 }
 
 #[cfg(test)]
 mod hide_tests {
     use super::*;
+    use sola_bus::topics::MenuItem;
 
     fn win(id: u32, app: &str, title: &str) -> Window {
         Window {
@@ -2855,16 +3287,33 @@ mod hide_tests {
                 .find(|w| w.app_id == app)
                 .map(|w| w.window_id)
         });
-        Shell {
+        let mut shell = Shell {
             theme: theme::default_theme(),
             style: theme::ShellStyle::default(),
             menubar_window_id: None,
             menu_window_id: None,
             launcher_window_id: None,
-            switcher_window_id: None,
             selection_window_id: None,
             notify_window_id: None,
             shortcuts_window_id: None,
+            tabbar_window_id: None,
+            tabs: Stacks::new(),
+            pairing: crate::pairing::Pairing::default(),
+            tab_activity: HashMap::new(),
+            agents: Default::default(),
+            adapt: Default::default(),
+            pictures: Default::default(),
+            tab_shown_sent: HashMap::new(),
+            desk_out: false,
+            lock_idle: false,
+            tabbar: crate::tabbar::TabBarState::default(),
+            window_chrome: crate::chrome::ChromeState::default(),
+            workspace: workspaces::WorkspaceState::default(),
+            tab_layout_loaded: false,
+            tab_layout_ready: false,
+            last_tab_layout: None,
+            pending_parents: HashMap::new(),
+            windows_seen: false,
             focused_app_id: focused.map(str::to_string),
             focused_window_id,
             pointer_window_id: focused_window_id,
@@ -2887,7 +3336,6 @@ mod hide_tests {
             current_open_is_system: false,
             open_panel: None,
             calendar_month: crate::calendar::first_of_month(chrono::Local::now().date_naive()),
-            switcher: SwitcherState::default(),
             launcher: LauncherState::default(),
             shortcuts: ShortcutsState::default(),
             selection: SelectionState::default(),
@@ -2907,10 +3355,32 @@ mod hide_tests {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
+            calendar_agenda: None,
+            calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
+        };
+        // Tabs: the first app on the Left, the second on the Right, the
+        // rest Left; the focused window shows.
+        let now = std::time::Instant::now();
+        let apps: Vec<&Window> = shell
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Shell::APP_ID)
+            .collect();
+        let placed: Vec<(u32, String)> = apps
+            .iter()
+            .map(|w| (w.window_id, w.app_id.clone()))
+            .collect();
+        for (i, (wid, app)) in placed.iter().enumerate() {
+            shell.tabs.place(*wid, app, app, false, false, now);
+            let zone = if i == 1 { Zone::Right } else { Zone::Left };
+            shell.tabs.move_to(*wid, zone);
         }
+        if let Some(wid) = shell.focused_window_id {
+            shell.tabs.show(wid);
+        }
+        shell
     }
-
     fn desktop() -> Shell {
         test_shell(
             vec![
@@ -2944,6 +3414,26 @@ mod hide_tests {
     }
 
     #[test]
+    fn shell_key_chords_include_super_l_to_lock() {
+        let mut shell = desktop();
+        // The shell's own menu comes back to it over the bus at start.
+        shell.menus.set_menu(sola_bus::topics::AppMenuPayload {
+            app_id: Shell::APP_ID.into(),
+            menus: vec![crate::menu::state::system_menu()],
+        });
+        assert!(
+            shell
+                .shell_key_chords()
+                .iter()
+                .any(|c| c.keycode == KeyCode::L && c.meta && !c.shift && !c.ctrl && !c.alt),
+            "Super+L (the flower menu's Lock Screen) must be a registered shell chord"
+        );
+        let chord = KeyCode::L.meta();
+        let action = shell.menus.lookup_shortcut(&chord, Shell::APP_ID);
+        assert_eq!(action.map(|a| a.action_id), Some(crate::lock::ACTION_LOCK.to_string()));
+    }
+
+    #[test]
     fn shell_key_chords_include_super_k() {
         let shell = desktop();
         assert!(
@@ -2953,6 +3443,31 @@ mod hide_tests {
                 .any(|c| c.keycode == KeyCode::K && c.meta && !c.shift && !c.ctrl && !c.alt),
             "Super+K must be a registered shell chord (Omarchy cheatsheet)"
         );
+    }
+
+    #[test]
+    fn the_launcher_leaves_the_focused_apps_paste_to_its_field() {
+        let mut shell = desktop();
+        shell.menus.set_menu(sola_bus::topics::AppMenuPayload {
+            app_id: "sola-terminal".into(),
+            menus: vec![sola_bus::topics::MenuDefinition {
+                label: "Edit".into(),
+                items: vec![MenuItem::Action {
+                    id: "edit-paste".into(),
+                    label: "Paste".into(),
+                    shortcut: Some(KeyCode::V.meta()),
+                    disabled: false,
+                    checked: false,
+                }],
+            }],
+        });
+        let paste = |s: &Shell| s.shell_key_chords().contains(&KeyCode::V.meta());
+        assert!(paste(&shell), "the focused app's Super+V is grabbed");
+        shell.launcher.active = true;
+        assert!(!paste(&shell), "the launcher's field takes Super+V");
+        shell.launcher.active = false;
+        shell.shortcuts.active = true;
+        assert!(!paste(&shell), "the shortcuts filter takes Super+V");
     }
 
     #[test]
@@ -3008,7 +3523,7 @@ mod hide_tests {
     #[test]
     fn hide_omits_app_from_composition_and_focuses_next() {
         let mut shell = desktop();
-        assert_eq!(composed_apps(&shell), vec![1, 3, 2]); // menubar, browser, terminal (MRU top)
+        assert_eq!(composed_apps(&shell), vec![1, 2, 3]); // menubar, terminal (Left), browser (Right)
 
         shell.hide_focused_app();
 
@@ -3062,9 +3577,7 @@ mod hide_tests {
 
         assert!(!shell.is_app_hidden("sola-terminal"));
         assert_eq!(shell.focused_app_id.as_deref(), Some("sola-terminal"));
-        let composed = composed_apps(&shell);
-        assert!(composed.contains(&2), "terminal must be in composition");
-        assert_eq!(*composed.last().unwrap(), 2, "unhide raises to top");
+        assert_eq!(composed_apps(&shell), vec![1, 2, 3], "terminal is back in its zone");
     }
 
     #[test]
@@ -3077,6 +3590,26 @@ mod hide_tests {
 
         assert!(!shell.is_app_hidden("sola-terminal"));
         assert_eq!(shell.focused_app_id.as_deref(), Some("sola-terminal"));
+    }
+
+    #[test]
+    fn a_running_app_is_brought_forward_not_started_again() {
+        let mut shell = test_shell(
+            vec![
+                win(1, Shell::APP_ID, "menubar"),
+                win(2, "sola-calendar", "Calendar"),
+                win(3, "sola-paint", "a.png"),
+                win(4, "sola-paint", "b.png"),
+            ],
+            Some("sola-calendar"),
+            &["sola-calendar", "sola-paint"],
+        );
+        assert_eq!(shell.running_window_of("sola-calendar"), Some(2));
+        // The last used of several.
+        shell.mru_window_by_app.insert("sola-paint".into(), 4);
+        assert_eq!(shell.running_window_of("sola-paint"), Some(4));
+        assert_eq!(shell.running_window_of("sola-mail"), None);
+        assert!(Shell::NEW_WINDOW_APPS.contains(&"sola-browser"));
     }
 
     #[test]

@@ -25,7 +25,7 @@ use iced::gradient::Linear;
 use iced::{Background, Border, Color, Element, Event, Length, Radians, Rectangle, Size};
 
 /// Side of the saturation/value field, logical px. Sized to a compact
-/// popover, not a storybook stage.
+/// popover.
 const SQUARE_W: f32 = 196.0;
 const SQUARE_H: f32 = 140.0;
 /// Long edge / thickness of the 1D strips (match the square width).

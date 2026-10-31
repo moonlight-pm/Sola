@@ -4,15 +4,20 @@
 //! compositor so we avoid scattered magic numbers.
 
 pub mod applications;
+pub mod background;
 pub mod config;
 pub mod encrypted;
 pub mod env;
 pub mod keys;
 pub mod log;
+pub mod login;
+pub mod omnibox;
 pub mod open_calendar;
 pub mod open_image;
 pub mod open_url;
+pub mod paths;
 pub mod process;
+pub mod ssh;
 pub mod theme;
 pub mod watcher;
 

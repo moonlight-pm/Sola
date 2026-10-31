@@ -18,7 +18,7 @@
 //! position as of that event in wire order, so a later motion cannot pull the
 //! click to a newer point.
 
-use crate::seal::{Channel, Seal};
+use crate::link::{Keys, Responder, Taken};
 use std::io;
 use std::net::UdpSocket;
 use std::os::fd::AsRawFd;
@@ -49,9 +49,8 @@ struct StampedDiscrete {
     at: Option<(i32, i32)>,
 }
 
-/// `key`: the pair key; with one, only input and clipboard sealed with it
-/// are taken.
-pub fn run(bind: &str, key: Option<[u8; 32]>) -> Result<(), AgentError> {
+/// Takes input and clipboard only from the paired server (`keys`).
+pub fn run(bind: &str, keys: Keys) -> Result<(), AgentError> {
     let sock = UdpSocket::bind(bind).map_err(AgentError::Io)?;
     let local = sock.local_addr().ok();
     info!(?local, "sola-kvm-mac listening (UDP)");
@@ -62,7 +61,7 @@ pub fn run(bind: &str, key: Option<[u8; 32]>) -> Result<(), AgentError> {
     crate::inject::check_accessibility_at_startup();
 
     // TCP clipboard on the same bind address/port as UDP (different protocol).
-    let clip = match clip::spawn(bind, key) {
+    let clip = match clip::spawn(bind, keys.clone()) {
         Ok(h) => {
             info!("clipboard worker up (TCP, sync on Leave → novus)");
             Some(h)
@@ -98,7 +97,7 @@ pub fn run(bind: &str, key: Option<[u8; 32]>) -> Result<(), AgentError> {
         discrete_tx,
         Arc::clone(&running),
         clip,
-        key.map(|k| Seal::new(&k, Channel::Input)),
+        Responder::new(keys),
     );
 
     running.store(false, Ordering::SeqCst);
@@ -143,10 +142,11 @@ fn recv_loop(
     discrete_tx: Sender<StampedDiscrete>,
     running: Arc<AtomicBool>,
     clip: Option<ClipHandle>,
-    seal: Option<Seal>,
+    mut link: Responder,
 ) -> Result<(), AgentError> {
     let mut buf = [0u8; 512];
-    // Dropped (unpaired or forged) input: logged at most this often.
+    // Dropped input (not from the paired server, or replayed): logged at
+    // most this often.
     let mut dropped_logged: Option<Instant> = None;
     let mut last_seq: Option<u32> = None;
     let mut ok_count: u64 = 0;
@@ -181,28 +181,28 @@ fn recv_loop(
         loop {
             match sock.recv_from(&mut buf) {
                 Ok((n, src)) => {
-                    let opened;
-                    let bytes = match &seal {
-                        Some(seal) => match seal.open(&buf[..n]) {
-                            Ok(plain) => {
-                                opened = plain;
-                                &opened[..]
+                    let plain = match link.take(&buf[..n], Instant::now()) {
+                        Ok(Taken::Data(plain)) => plain,
+                        Ok(Taken::Reply(reply)) => {
+                            debug!(%src, "link: handshake from the paired server");
+                            if let Err(e) = sock.send_to(&reply, src) {
+                                warn!(%src, error = %e, "link: handshake reply");
                             }
-                            Err(e) => {
-                                if dropped_logged
-                                    .map_or(true, |at| at.elapsed() >= Duration::from_secs(10))
-                                {
-                                    warn!(%src, "input dropped: {e}");
-                                    dropped_logged = Some(Instant::now());
-                                }
-                                continue;
+                            continue;
+                        }
+                        Err(e) => {
+                            if dropped_logged
+                                .map_or(true, |at| at.elapsed() >= Duration::from_secs(10))
+                            {
+                                warn!(%src, "input dropped: {e}");
+                                dropped_logged = Some(Instant::now());
                             }
-                        },
-                        None => &buf[..n],
+                            continue;
+                        }
                     };
                     src_for_log.get_or_insert(src);
                     if let Some((_seq, packet)) =
-                        take_decoded(bytes, src, &mut last_seq, &mut ok_count, &mut err_count)
+                        take_decoded(&plain, src, &mut last_seq, &mut ok_count, &mut err_count)
                     {
                         raw.push(packet);
                     }

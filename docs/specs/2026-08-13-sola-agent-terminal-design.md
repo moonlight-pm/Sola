@@ -2,11 +2,14 @@
 
 **Date:** 2026-08-13  
 **Renamed:** 2026-08-14 — crate / app id / face from `sola-agent-terminal` / `at` to `sola-workspaces` / `ws` (D4.1)  
+**Renamed (2026-10-21, branch `next`):** the app is Projects (`sola-projects`, owner `projects`, `solactl projects`); a workspace is now a tab (`tab.*`, `--tab`, JSON `tabs` / `tab` / `tab_name`). Runtime names (tmux `sola-ws` / `sws-`, `SOLA_WS_PATH`, `ws-*` ids) are unchanged. The body below uses the old names.  
+**Another computer (2026-10-28, branch `next`):** remote is no longer out — a project may be on an ssh host (Joshua: "open a project on another computer"; "remote projects should be identical in operation as local ones"); each tab is a tmux session there (socket `sola-ws-remote`), a link per host brings hooks back, a `Machine` seam runs git / scripts / session reads there. As built in the `projects` capability row.  
+**Projects are folders (2026-10-28, branch `next`):** a project is a folder of `~/Projects`; Projects keeps only the open ones, and closing a project's window ends its sessions and forgets it — the "Drop workspace" lock below is now closing the window (Joshua: "We don't need a 'Drop Project' anymore … Projects are jut whatever is in the ~/Projects directory").  
 **Branch:** base on master; polish on `workspaces-polish`  
 **Status:** approved for implementation (promoted from idea)  
 **Idea:** [`docs/ideas/2026-08-12-sola-agent-terminal.md`](../ideas/2026-08-12-sola-agent-terminal.md)  
-**Product record:** [`crates/sola-workspaces/PRODUCT.md`](../../crates/sola-workspaces/PRODUCT.md)  
-**Design law (session):** [`.grok/rules/workspaces-design.md`](../../.grok/rules/workspaces-design.md)
+**Product record:** [`crates/sola-projects/PRODUCT.md`](../../crates/sola-projects/PRODUCT.md)  
+**Design law (session):** [`.grok/rules/projects-design.md`](../../.grok/rules/projects-design.md)
 
 **Implementation:** persist + spawn modal + done/waiting desk card (title `{project} · {tab}`, body `grok is done` / `codex is done` / `claude is done`) + sola-call owner `workspaces`; Add project expands `~`; groups stack at the top; no agent label on the workspace row; kit hover × on siblings (not root); kit pane splits (⌘⇧↓ / ⌘⇧→) stay in the grid (one rail row per workspace; Grok/Codex/Claude mark rolls up waiting > working > done > idle); ⌘W close pane; Drop Project menu-only (`project.rm`); dead last pane **Start new shell** (split leaf exit retracts; hover does not spawn; switch attaches every leaf); quiet `×N` on the workspace row is the loudest Grok, Codex, or Claude session (Grok: session dir segments/checkpoints; `signals.json` can stay 0; Codex: rollout jsonl `type: compacted`; Claude: transcript `compact_boundary`); restart binds tmux by `SOLA_WS_PATH` / cwd (quarantine leftovers); a Grok pane’s session id is in `last-status.json`; a *new* tmux (reboot) execs `grok -r <id>` or `claude --resume <id>` when that agent was running and the session is still on disk; shell launcher builtin **Workspaces**; ⌘T/⌘N; working ring spins. Grok lead hooks (`SessionStart`, `UserPromptSubmit`) reclaim the pane after `/new` / `grok -r` (SessionStart idles a leftover working ring); Codex hooks merge into `~/.codex/hooks.json` (`PermissionRequest` → waiting, `Interrupt` → done); Claude hooks merge into `~/.claude/settings.json` (`PermissionRequest` / `AskUserQuestion` → waiting, `StopFailure` → done, `agent_id` subagent hooks ignored); `StopCancelled` maps to done; child `subagentType` events ignored. `workspace.rm` replies before tmux teardown; the tab drops on the next tick, then `tmux kill-session` / `git worktree remove` run off the iced thread; `--worktree` also `git worktree remove`s; a gone checkout reaps the tab. `pane.send` / exec `--prompt` bracketed-paste then Enter. Grid selection follows scrolled PTY text (`sel_follow`; CUP rewrite + local scrollback; drag + page-sized TUI wheel). **CLI control plane:** [`2026-08-18-workspaces-cli-design.md`](2026-08-18-workspaces-cli-design.md) (`workspace.spawn` background unless `--select`; `--agent grok|codex|claude`)  
 **Dogfood:** app installed (`workspaces` release 2026-09-10, TUI selection follow + split-leaf Ctrl-D + Codex first-class). Rail, splits, drop-project, dead-pane, and Grok `×N` smoked on `workspaces-polish`. Codex `×N` **installed** `workspaces` release 2026-09-21 (unsmoked). Session-reclaim fix installed. Super-chord no longer latches LOGO (⌘T/⌘V used to kill typing until quit). Exiting Grok back to the shell idles the mark (grey disc; was stuck on done). Grid selection follow (`sel_follow`) drag + page-wheel 2026-09-10. `solactl workspaces` still needs a desk smoke. Grok `-r` after reboot is in code, not smoked. Codex `/hooks` trust unsmoked. Split-leaf Ctrl-D desk smoke next. Claude first-class **installed** `workspaces` release 2026-10-08 (unsmoked; hooks written to `~/.claude/settings.json`).  
@@ -65,8 +68,8 @@ Decision points: [`open-questions.md`](../open-questions.md) D4.
 
 ## Non-goals (v1)
 
-Embedded editor, browser, Design Mode, Linear/GitHub/Jira, SSH/WSL/remote,
-mobile, plugins, ACP chat, mailbox orchestration, 15 hook adapters, usage
+Embedded editor, browser, Design Mode, Linear/GitHub/Jira, WSL (remote over
+SSH landed 2026-10-28, see the header), mobile, plugins, ACP chat, mailbox orchestration, 15 hook adapters, usage
 dashboards, auto-rename, unread badges, setup-hook runners, sparse checkouts.
 
 `sola-terminal` remains the untitled-shell app.

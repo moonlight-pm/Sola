@@ -2,8 +2,8 @@
 
 **Date:** 2026-09-08  
 **Branch:** sola-calendar  
-**Status:** implemented (partial) — first-pass kit app: month / week / day, local store, Google Calendar API, iCloud / generic CalDAV, ICS/webcal URLs. **Installed** `bus`+`settings`+`calendar` release 2026-09-08 (unsmoked). Reminders **smoked** `shell`+`calendar` release 2026-10-12  
-**Gaps:** no RSVP (an opened `.ics` becomes a new draft — 2026-10-26; one date of a series); no provider alarm sync (reminders are local); Apple/CalDAV repeating events are display-only (series edit later); URL feeds are read-only; no drag-resize; no timezone picker (local); menubar clock is still a date grid, not this app; reminder delivery needs Calendar running
+**Status:** implemented (partial) — first-pass kit app: month / week / day, local store, Google Calendar API, iCloud / generic CalDAV, ICS/webcal URLs. **Installed** `bus`+`settings`+`calendar` release 2026-09-08 (unsmoked). Reminders **smoked** `shell`+`calendar` release 2026-10-12. On `next` 2026-10-26: the board in Next's look (`ui/board.rs`), a layout by window width (the inspector floats as a card over the board in a half tile — still not a modal), `Topic::CalendarAgenda` for the menubar clock, and Calendar in `pkg:sola` on Oath; applied and smoked on canto  
+**Gaps:** no RSVP (an opened `.ics` becomes a new draft — 2026-10-26; one date of a series); no provider alarm sync (reminders are local); Apple/CalDAV repeating events are display-only (series edit later); URL feeds are read-only; no drag-resize; no timezone picker (local); an event over several days is a chip per day, not one bar; reminder delivery needs Calendar running
 
 ## Goal
 

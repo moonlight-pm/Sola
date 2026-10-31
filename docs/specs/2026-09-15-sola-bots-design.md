@@ -10,6 +10,17 @@
 | **Dogfood** | desk + phone used; write-fence escape **installed** 2026-09-21; ACP dies on `cargo make install bots` |
 | **Gaps** | session-roll; Grok not tmux-backed (child of daemon); iOS SSH codesign flaky |
 
+**Changed 2026-10-28 (Joshua):** a bot is its directory in `~/Bots`
+(`bot.json`), listed by scanning `~/Bots` like Projects, not a catalog in
+`~/.config/sola/bots/`. Each bot runs on the AI chosen when it is made —
+Grok (ACP, below), Claude (Claude Code on the subscription), or Gab AI
+(the API, chat only) — and keeps it ("let's assume for now that a bot
+cannot change AI's after its created"); there is no default AI. The HTTP
+API moved to a Unix socket with no token (D7: "If its local why not a
+socket file — we'll use a cloudflare tunnel later for remote access"), so
+the HTTP `:27419`, bearer token and `bot.sola.computer` below are
+history until the tunnel. As built: [manual](../manual/solactl.md#bots-solactl-bots).
+
 ---
 
 ## Intent

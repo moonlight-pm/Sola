@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Foundation / 11 Open</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="foundation.css">
+<script src="foundation.js"></script>
+<style>
+  .items { border-top: 1px solid var(--hairline); }
+  .item { display: grid; grid-template-columns: 260px 1fr 330px; gap: 24px; padding: 13px 0; border-bottom: 1px solid var(--hairline); align-items: baseline; }
+  .item h4 { font: 500 13px/20px var(--f-chrome); margin: 0; color: var(--ink); }
+  .item p { font: 400 13px/20px var(--f-chrome); color: var(--ink-2); margin: 0; }
+  .item .where { font: 400 11px/17px var(--f-spec); color: var(--ink-3); }
+  .item .tag { margin-right: 8px; vertical-align: 1px; }
+</style>
+</head>
+<body class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num">11</span><div class="head__title">Open</div></div>
+    <div class="head__lead">The rest of this sheet is what is built. This board is what is not: what Next decided and the build has not reached, where the build disagrees with itself, and where Graphite's ten proposals stand. Each line names the code to touch. None of it is product policy until it is asked and answered.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">Decided in Next, not built</div>
+    <div class="items" id="next"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Where the build disagrees with itself</div>
+    <div class="items" id="drift"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Graphite v1's proposals (P1–P10)</div>
+    <div class="items" id="graphite"></div>
+  </div>
+
+<script>
+  const rows = (list) => list.map(([tag, h, p, where]) =>
+    `<div class="item"><h4>${tag ? `<span class="tag${tag === "done" ? " tag--built" : tag === "open" ? " tag--open" : ""}">${tag}</span>` : ""}${h}</h4><p>${p}</p><span class="where">${where}</span></div>`).join("");
+
+  document.getElementById("next").innerHTML = rows([
+    ["", "The zone glyph", "A 16 × 12 glyph at the titlebar's right showing where the window sits; a click opens the Window menu.", "Next 01 · kit window_frame/bar.rs"],
+    ["", "Menus fold into ···", "A narrow tile folds its menus right to left into ···, then into the name. Today the ones that do not fit are left off.", "Next 01 · window_frame/bar.rs:66-70"],
+    ["", "The live center", "One live thing in the center of the top row: an agent working or waiting, a meeting, what is playing. Today only the toast lives there.", "Next 03 · menubar/view.rs:257"],
+    ["", "The launcher grows from the flower", "The flower island widens and drops into the launcher, its top-left corner fixed. Today it is a centered modal over a dim.", "Next 03 · launcher/view.rs"],
+    ["", "A workspace overview", "Every workspace's desk as thumbnails, grown from the switcher.", "Next 04 · spec: later"],
+    ["", "A window on every workspace", "A window that follows you across workspaces. Every window is on exactly one today.", "Next 04 Ask C"],
+    ["", "The tab bar, folded", "Other workspaces as folded rows, fold everything, a stack count in the titlebar, a drop placeholder, + on a zone header (the kit has on_add).", "Next 05–06 · shell tabbar/"],
+    ["", "Foreign titlebars", "sola-river drawing a titlebar for SSD apps (Steam, Xwayland). Today they get the corners and rim only.", "Next 01 · sola-river client/"],
+    ["", "Blur under the islands", "Next's wallpaper option asked for blur behind the islands. The picture shows through between them, unblurred.", "Next 02"],
+  ]);
+
+  document.getElementById("drift").innerHTML = rows([
+    ["", "Muted text has two values", "The kit's muted text falls back to #949494 and a fresh desk writes that; turning adapting off restores the seed's #737373.", "kit theme.rs:420-425, :308 · core adapt.rs:315-321"],
+    ["", "Muted controls inherit it", "Ghost and secondary buttons take their ink from text-tertiary, so they carry the same two values.", "kit theme.rs:170-173"],
+    ["", "Two menu styles", "A window's dropdown: a radius-12 sheet, 26 px rows at radius 7, an accent hover at 14%. The shell's menus (flower, workspace): a radius-7 popover, rows 3 × 10 at radius 5, a grey hover.", "kit window_frame/paint.rs:79 · kit button.rs:302"],
+    ["", "Three radii for what floats", "Popovers 7 (panels, notices, shell menus, the agent card), window dropdowns 12, the launcher and switcher 14.", "kit popover.rs:38 · window_frame · card.rs"],
+    ["", "Selection drawn two ways", "The launcher's selected row is the hover grey; the tab bar and Projects' chips use the highlight.", "kit button.rs:259-273 · launcher/view.rs"],
+    ["", "The Window menu's zones", "The kit's Window menu still offers Top, Bottom, Top / Full / Bottom Middle and Middle Right. The shell has Full, Left, Right and Floating: a click on the others only logs “no such zone”, and their keypad chords do nothing.", "kit menu.rs:140-220 · shell zoning.rs:606-614, app.rs:692"],
+    ["", "Notices off the grid", "Notice cards sit 12 from the right edge and at y 44; the grid is 10 and 48.", "shell zoning.rs:119-121, :137"],
+    ["", "Sliders are iced's", "Settings' sliders (Strength, the idle times) use iced's default style; every other control is the kit's.", "sola-settings appearance/mod.rs:186, :194"],
+    ["", "Primary hover is iced's", "A primary button's hover is iced's generated primary.strong, not a kit color.", "kit components/style.rs:401-407"],
+    ["", "canto has neither face", "Neither SF Pro nor Inter is installed on canto, so the kit sets the UI in Noto Sans there.", "kit fonts.rs · docs/manual/distribution.md"],
+    ["", "Seeded, never read", "The bus text-* sizes (11/12/13/16/20) and shell-menubar-bg. The kit draws its own sizes; the top row is transparent.", "core theme/palette.rs:121-140 · shell app.rs:1931"],
+    ["", "Spacing names one step apart", "The bus's space-xs is 4; the kit's SPACE_XS is 2.", "kit components/style.rs:49-59"],
+    ["", "Stale comments", "The top row's doc comment still draws workspace pills; zoning.rs still names the workspaces; Zone::MiddleRight and keys.rs still describe the middle columns.", "menubar/view.rs:5-6 · zoning.rs:13-14 · bus topics.rs:570-572 · keys.rs:151"],
+    ["", "The workspace menu's width", "head.rs says 220; it is drawn in the shell's 240-wide menu card. Not checked on screen.", "shell tabbar/head.rs MENU_WIDTH"],
+  ]);
+
+  document.getElementById("graphite").innerHTML = rows([
+    ["done", "P1 Sol gold mark", "The flower is amber.", "shell menubar/view.rs:31"],
+    ["open", "P2 SF Pro Display at 20 px and up", "Display is SF Pro Text Medium.", "kit fonts.rs"],
+    ["open", "P3 Type tokens the kit reads", "See “Seeded, never read”.", "core palette.rs · kit text.rs"],
+    ["open", "P4 A focus halo on fields", "The focused field lights its edge (accent 55% into the well); no halo.", "kit text_input/mod.rs"],
+    ["open", "P5 Tertiary text at 4.5:1", "#737373 on raised is under 4:1. See “Muted text has two values”.", "core palette.rs"],
+    ["done", "P6 Meters in kit hues", "Meters and their panels take the theme's warning and danger (2026-10-24).", "shell stats/mod.rs level_color"],
+    ["gone", "P7 One scrim", "The rail it was about is gone. The launcher dims with shell-backdrop-dim; menus and panels dismiss on a clear backdrop.", "—"],
+    ["done", "P8 Selection without #00d4ff", "The selection overlay takes no hard-coded cyan now.", "shell selection/view.rs"],
+    ["open", "P9 Terminal magenta and cyan", "Still #aa33aa and #33aaaa; the other ANSI slots follow the theme.", "sola-terminal term_view.rs:242-253"],
+    ["open", "P10 Calendar's fallback blue", "#7aa3f7 when a calendar has no color.", "sola-calendar ui.rs:523, :932"],
+  ]);
+  finish();
+</script>
+</body>
+</html>

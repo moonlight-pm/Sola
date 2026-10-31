@@ -22,14 +22,19 @@
 //! scoped `--sola-<component>-<slot>` vars exclusively; atoms are an
 //! implementation detail of the `:root` block.
 
+mod adapt;
 mod css;
 mod palette;
+mod slate;
 mod types;
 mod validate;
 
+pub use adapt::{
+    CUSTOM_COLORS, MAX_VARIATIONS, Scheme, custom_color_token, focus_rim, highlight_rgb, keep_hue,
+    lifted, rest_rim, token_rgb,
+};
 pub use types::{
-    Binding, ComponentBindings, NamedTheme, Palette, SlotName, Theme, Token, TokenKind, TokenName,
-    is_valid_theme_name,
+    Binding, ComponentBindings, Palette, SlotName, Theme, Token, TokenKind, TokenName,
 };
 pub use validate::ValidationError;
 
@@ -104,27 +109,6 @@ mod tests {
             )),
             "expected GroupNotInToken error, got: {err:?}"
         );
-    }
-
-    #[test]
-    fn is_valid_theme_name_accepts_kebab() {
-        assert!(is_valid_theme_name("alpha"));
-        assert!(is_valid_theme_name("solar-flare"));
-        assert!(is_valid_theme_name("a"));
-        assert!(is_valid_theme_name("a-b-c-d-e"));
-    }
-
-    #[test]
-    fn is_valid_theme_name_rejects_non_kebab() {
-        assert!(!is_valid_theme_name(""), "empty");
-        assert!(!is_valid_theme_name("Alpha"), "uppercase");
-        assert!(!is_valid_theme_name("alpha2"), "digit");
-        assert!(!is_valid_theme_name("-alpha"), "leading hyphen");
-        assert!(!is_valid_theme_name("alpha-"), "trailing hyphen");
-        assert!(!is_valid_theme_name("alpha--beta"), "double hyphen");
-        assert!(!is_valid_theme_name("alpha bravo"), "space");
-        assert!(!is_valid_theme_name("alpha/bravo"), "slash");
-        assert!(!is_valid_theme_name("alpha_bravo"), "underscore");
     }
 
     #[test]

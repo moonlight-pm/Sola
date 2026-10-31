@@ -11,14 +11,16 @@ impl App {
     /// used the key — single-letter shortcuts must not fire then.
     pub(super) fn on_key(&mut self, key: Key, mods: Modifiers, captured: bool) -> Task<Msg> {
         let escape = matches!(key, Key::Named(Named::Escape));
+        // The panel takes its own keys (FilePicker::keys).
         if self.picker.is_some() {
-            if escape {
-                self.picker = None;
-            }
             return Task::none();
         }
         if escape && self.confirm.is_some() {
             self.confirm = None;
+            return Task::none();
+        }
+        if escape && self.mailbox_menu {
+            self.mailbox_menu = false;
             return Task::none();
         }
         if let Some(c) = self.compose.as_mut() {
@@ -48,7 +50,7 @@ impl App {
             return Task::none();
         }
         if escape {
-            if self.list.search.is_some() || !self.search_input.is_empty() {
+            if self.searching() {
                 return self.update(Msg::SearchClear);
             }
             return Task::none();
@@ -72,6 +74,7 @@ impl App {
             "u" => self.update(Msg::Undo),
             "w" => self.select_prev(false),
             "s" => self.select_next(false),
+            "/" => self.update(Msg::SearchFocus),
             _ => Task::none(),
         }
     }

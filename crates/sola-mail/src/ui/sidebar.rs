@@ -7,15 +7,16 @@ use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::{SidebarItem, SidebarSection, sidebar};
 
-use super::format::truncate;
-use super::widgets::status_dot;
+use super::format::{format_count, truncate};
+use super::bar::mailbox_icon;
+use super::widgets::{muted_icon, status_dot};
 use super::{App, Msg, style};
 use crate::protocol::FolderRef;
 use crate::protocol::boxes::is_canonical;
-use crate::protocol::types::{folder_label, unread_badge};
+use crate::protocol::types::folder_label;
 use crate::worker::LinkState;
 
-const SIDEBAR_W: f32 = 200.0;
+pub const SIDEBAR_W: f32 = 200.0;
 
 #[derive(Debug, Clone)]
 pub struct AccountLink {
@@ -35,6 +36,7 @@ impl App {
                 let target = FolderRef::Mailbox(f.name.clone());
                 let mut item =
                     SidebarItem::new(folder_label(&f.name), Msg::SelectFolder(target.clone()))
+                        .leading(muted_icon(mailbox_icon(&f.name), 14.0))
                         .active(*selected == target);
                 if let Some(badge) = unread_badge(f.unread) {
                     item = item.secondary(badge);
@@ -51,6 +53,7 @@ impl App {
                     let target = FolderRef::Smart(f.name.clone());
                     let mut item =
                         SidebarItem::new(f.name.clone(), Msg::SelectFolder(target.clone()))
+                            .leading(muted_icon(mailbox_icon(""), 14.0))
                             .active(*selected == target);
                     if let Some(badge) = unread_badge(f.unread) {
                         item = item.secondary(badge);
@@ -63,6 +66,7 @@ impl App {
         container(sidebar(sections))
             .width(Length::Fixed(SIDEBAR_W))
             .height(Length::Fill)
+            .style(style::raised)
             .into()
     }
 
@@ -118,4 +122,9 @@ impl App {
             .style(style::card)
             .into()
     }
+}
+
+/// The sidebar's badge: unread only, thousands grouped; none when read.
+fn unread_badge(unread: u32) -> Option<String> {
+    (unread > 0).then(|| format_count(unread))
 }

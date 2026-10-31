@@ -91,6 +91,11 @@ impl App {
             if self.fit_pending {
                 self.fit();
             }
+        } else if let Some(p) = self.live_mut(key).and_then(|l| l.parked.as_mut()) {
+            // Another window draws it: a pick on a board that went goes.
+            if p.selection.as_ref().is_some_and(|s| !tabs.contains(&s.tab)) {
+                p.selection = None;
+            }
         }
         self.settle_rasters(key);
         self.details.poke(Instant::now());
@@ -320,7 +325,7 @@ impl App {
         if change.layout {
             // New boards on the human's screen always open; elsewhere they
             // wait for room.
-            let admit = if self.is_shown(key) { Admit::Always } else { Admit::IfRoom };
+            let admit = if self.displayed(key).is_some() { Admit::Always } else { Admit::IfRoom };
             self.relayout(key, admit);
         }
         if change.content && self.boards_stale(key) {

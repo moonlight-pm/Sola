@@ -155,7 +155,7 @@ cargo make install        # builds the workspace, copies to /opt/sola/bin
 `cargo make install` already builds. You do not need a separate
 `cargo make build` first.
 
-**`install-cef` is not optional.** `sola-browser` and `sola-wrapper` `build.rs`
+**`install-cef` is not optional.** `sola-browser` and `sola-design` `build.rs`
 fail with “run `cargo make install-cef`” if `libcef.so` is missing. That
 command downloads the public CEF tarball (~500MB compressed), extracts it,
 runs `patchelf` so libcef’s RUNPATH hits nix-ld + `/run/opengl-driver/lib`,
@@ -225,7 +225,7 @@ Canonical map: `AGENTS.md` and `docs/architecture.md`. Headline pieces:
 - `crates/sola-shell/` — menubar, launcher, switcher, zoning.
 - `crates/sola-river/` — River ↔ bus bridge.
 - `crates/sola-kit/` — Iced app kit + storybook.
-- `crates/sola-*` — apps (browser, terminal, mail, workspaces, settings, …).
+- `crates/sola-*` — apps (browser, terminal, mail, projects, settings, …).
 - `crates/sola-make/` — `cargo make …`.
 - `crates/sola-assets/` — third-party icon/cursor pulls (fonts are **not**
   bundled; see `docs/manual/distribution.md`).

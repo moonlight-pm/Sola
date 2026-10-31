@@ -46,10 +46,10 @@ mod float_clip;
 pub mod form;
 pub mod icon;
 pub mod json;
-pub mod number_input;
 pub mod popover;
 pub mod prose;
 pub mod readable;
+pub mod scroll;
 pub mod select;
 pub mod sidebar;
 pub mod spectrum;
@@ -59,8 +59,8 @@ pub mod style;
 pub mod swatch;
 pub mod text;
 pub mod text_input;
-pub mod titlebar;
 pub mod toolbar;
+pub mod window_frame;
 
 pub use badge::{COUNT_MARK_H, Tone, badge, count_label, count_mark};
 pub use button::confirm_button;
@@ -78,7 +78,6 @@ pub use file_picker::{
 pub use form::{checkbox_style, form_row, toggle_style};
 pub use icon::{icon, icon_colored, icon_handle, icon_svg, icon_svg_colored};
 pub use json::{line as json_line, pretty as json_pretty};
-pub use number_input::number_input;
 pub use popover::{Placement, popover, popover_anchored};
 pub use prose::{
     ProseBlock, ProseRun, flatten as flatten_prose, parse_markdown, parse_plain, prose,
@@ -96,5 +95,5 @@ pub use spectrum::{GradientStrip, SvSquare, alpha_strip, hue_strip, sv_square};
 pub use split::{split, split_with};
 pub use status_mark::{STATUS_MARK_SLOT, SidebarIndicator, status_mark};
 pub use swatch::{swatch, swatch_sized};
-pub use titlebar::{floating_frame, titlebar};
 pub use toolbar::{toolbar_button, toolbar_button_msg, toolbar_icon, toolbar_icon_tip};
+pub use window_frame::{Chrome, WindowFrame, island, window_frame};

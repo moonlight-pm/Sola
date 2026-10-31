@@ -1,117 +1,120 @@
-//! Menubar window view.
+//! Menubar window view: the top row of islands (Next board 03, "a bubble
+//! per group").
 //!
-//! Layout (left-to-right):
-//!   [≡] [App Name] [Menu1] [Menu2] … ──────── [mail?] [stats] [clock]
-//!    ^system-menu  ^app-title  ^menu-labels (index 0 is the app name menu)
+//! Layout (left-to-right), a gap in from every edge, the ground between:
+//!   (✿) (1 Main  2 Mail ◆)        (toast)        (✉ 🔔 ᛒ) (spectrum)
+//!                                            (CPU GPU MEM) (RX TX) (clock)
 //!
-//! Transient toasts are overlaid at the **horizontal center** of the bar
-//! (not in the right cluster), so short status like "Opening Terminal…"
-//! reads as bar-level feedback rather than a trailing status item.
+//! Each group is one island: [`ISLAND_H`] tall, a pill, [`ISLAND_GAP`]
+//! apart, with a lit top edge. An island whose panel is showing lifts a
+//! step. Its items are the hit targets (each opens its own panel). App
+//! menus are not here: each app carries its own in its window's titlebar
+//! (kit `window_frame`, Next slice 6).
 //!
-//! Type matches macOS menu bar: one chrome face throughout (labels, stats,
-//! clock). Focused-app name is bold (macOS application menu title). Colours
-//! come from the live theme palette (no view-local hex). Mono is for
-//! code/detail panels, not menubar status values.
-//!
-//! Hit targets are full bar height ([`BAR_H`] = window height) so a pointer
-//! at y=0 on the screen still activates a menu title.
+//! Colours come from the live theme palette; the flower is its own
+//! `shell-flower` token (Sola's amber unless a look recolors it).
 
-use iced::widget::{container, mouse_area, row, stack, text};
-use iced::{Alignment, Color, Element, Length, Padding, Theme};
-use sola_kit::components::button as kit_btn;
+use iced::widget::{Space, container, mouse_area, row, stack, text};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_kit::components::icon_colored;
+use sola_kit::components::style::{linear_bg, mix, mix_white};
 use sola_kit::fonts;
 
 use crate::app::Msg;
 use crate::components::clock::clock_widget;
 use crate::components::toast::toast_widget;
-use crate::menu::state::synthesized_menu;
 use crate::menubar::{
-    EXTRA_PAD_H, FlashTarget, ICON_SIZE, MENU_PAD_H, PHRASE_GAP, STAT_INNER_SPACING, STAT_PAD_H,
-    WINDOW_HEIGHT,
+    CHROME_SIZE, EDGE, FlashTarget, ICON_SIZE, ISLAND_GAP, ISLAND_H, ISLAND_PAD_H, ITEM_GAP,
+    SPECTRUM_PAD_H, STAT_INNER_SPACING, WINDOW_HEIGHT,
 };
 
-// ── Density (logical px) ────────────────────────────────────────────────
-// macOS menu bar ~13pt system chrome, regular weight; app name bold.
-// Left titles keep MENU_PAD_H. The right cluster is four phrases (extras,
-// percents, rates, clock): tight pad inside a phrase, PHRASE_GAP between.
-// Bar height stays at `WINDOW_HEIGHT` (28) for zoning.
-const CHROME_SIZE: f32 = 13.0;
-/// Full window height — every interactive label uses this so the hit box
-/// reaches the top edge of the screen (y=0), not a short centred chip.
-const BAR_H: f32 = WINDOW_HEIGHT as f32;
-fn menu_pad() -> Padding {
-    Padding {
-        top: 0.0,
-        right: MENU_PAD_H,
-        bottom: 0.0,
-        left: MENU_PAD_H,
-    }
-}
-fn extra_pad() -> Padding {
-    Padding {
-        top: 0.0,
-        right: EXTRA_PAD_H,
-        bottom: 0.0,
-        left: EXTRA_PAD_H,
-    }
-}
-fn stat_pad() -> Padding {
-    Padding {
-        top: 0.0,
-        right: STAT_PAD_H,
-        bottom: 0.0,
-        left: STAT_PAD_H,
-    }
-}
 /// 14px lucide/SVG and LED matrices: iced centers the layout box, which
 /// hangs below 13pt cap height, so marks sit low. Same lift for icons
 /// and pixel graphs.
 const CHROME_NUDGE_UP: f32 = 2.0;
 
-/// Bold chrome for the focused-app title (macOS application menu name).
-fn app_title_font() -> iced::Font {
-    iced::Font {
-        weight: iced::font::Weight::Bold,
-        ..fonts::chrome()
+/// An island of the top row: a pill on the ground with a lit top edge,
+/// lifted a step while `open` (its panel shows). `pad_h` either side of
+/// its content.
+pub(crate) fn island<'a>(
+    content: impl Into<Element<'a, Msg>>,
+    open: bool,
+    pad_h: f32,
+) -> Element<'a, Msg> {
+    // The face starts 1 px down (the rim); a pixel off its bottom centers
+    // the content on the whole pill.
+    let face = container(content.into())
+        .padding(Padding {
+            top: 0.0,
+            right: pad_h,
+            bottom: 1.0,
+            left: pad_h,
+        })
+        .height(Length::Fill)
+        .align_y(Alignment::Center)
+        .style(move |theme: &Theme| {
+            let fill = island_fill(theme, open);
+            let sheen = if open { 0.08 } else { 0.04 };
+            container::Style {
+                background: Some(linear_bg(
+                    180.0,
+                    &[(0.0, mix_white(fill, sheen)), (0.55, fill), (1.0, fill)],
+                )),
+                border: Border {
+                    radius: (ISLAND_H / 2.0).into(),
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            }
+        });
+    // The rim shows as the 1 px the face leaves at the top: thin over the
+    // middle, gone down the round ends — an inset highlight.
+    container(face)
+        .padding(Padding {
+            top: 1.0,
+            ..Padding::ZERO
+        })
+        .height(Length::Fixed(ISLAND_H))
+        .style(move |theme: &Theme| container::Style {
+            background: Some(Background::Color(mix_white(island_fill(theme, open), 0.12))),
+            border: Border {
+                radius: (ISLAND_H / 2.0).into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+/// An island's face: between the raised and hover greys at rest, the
+/// hover grey while open.
+fn island_fill(theme: &Theme, open: bool) -> Color {
+    let p = theme.extended_palette();
+    if open {
+        p.background.strong.color
+    } else {
+        mix(p.background.weak.color, p.background.strong.color, 0.5)
     }
 }
 
-/// Full-height menubar control: button is exactly [`BAR_H`] tall so layout
-/// (and hit testing) spans y=0…BAR_H of the window.
-///
-/// Iced buttons pin their child at the top of the padded area — wrap the
-/// label in a Fill-height container so the text is vertically centred while
-/// the hit box stays full-height.
-fn bar_button<'a>(
-    content: impl Into<Element<'a, Msg>>,
-    active: bool,
-    on_press: Msg,
-    pad: Padding,
-) -> iced::widget::Button<'a, Msg> {
+/// An item inside an island: its full height is the hit target, nothing
+/// drawn (the island shows open).
+pub(crate) fn item<'a>(content: impl Into<Element<'a, Msg>>, on_press: Msg) -> Element<'a, Msg> {
     let centered = container(content.into())
-        .width(Length::Shrink)
         .height(Length::Fill)
         .align_y(Alignment::Center);
     iced::widget::button(centered)
-        .style(kit_btn::menubar(active))
-        .padding(pad)
-        .height(Length::Fixed(BAR_H))
+        .style(|theme: &Theme, _status| iced::widget::button::Style {
+            background: None,
+            text_color: theme.palette().text,
+            border: Border::default(),
+            shadow: Default::default(),
+            snap: false,
+        })
+        .padding(0)
+        .height(Length::Fill)
         .on_press(on_press)
-}
-
-/// Full-height hit target with optional hover-to-switch while a menu is open.
-fn bar_item<'a>(
-    content: impl Into<Element<'a, Msg>>,
-    active: bool,
-    on_press: Msg,
-    on_enter: Option<Msg>,
-) -> Element<'a, Msg> {
-    let btn = bar_button(content, active, on_press, menu_pad());
-    match on_enter {
-        Some(enter) => mouse_area(btn).on_enter(enter).into(),
-        None => btn.into(),
-    }
+        .into()
 }
 
 /// Render the menubar for `shell`.
@@ -122,139 +125,46 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // same face/size as the value, just lower opacity (not a second size).
     let muted = Color { a: 0.62, ..fg };
 
-    // ── System-menu icon ──────────────────────────────────────────────
-    let system_active =
+    // ── Left: the flower ─────────────────────────────────────────────
+    let system_open =
         (shell.menu_open && shell.current_open_is_system) || flashing(shell, true, 0);
-    // Extra bottom pad optically lifts the flower into the text baseline
-    // band without changing the outer hit target height.
-    let flower = extra_icon("sola/flower", fg);
-    let system_btn: Element<'_, Msg> = bar_item(
-        flower,
-        system_active,
-        Msg::OpenMenu {
-            index: 0,
-            is_system: true,
-        },
-        Some(Msg::HoverMenu {
-            index: 0,
-            is_system: true,
-        }),
-    );
-
-    // ── Focused-app title ─────────────────────────────────────────────
-    // Bold — matches macOS application menu title vs regular menu labels.
-    let app_title_str = focused_app_title(shell);
-    let clickable = has_menu(shell);
-    let title_active =
-        (shell.menu_open && !shell.current_open_is_system && shell.current_open_index == Some(0))
-            || flashing(shell, false, 0);
-    let app_title: Element<'_, Msg> = if clickable {
-        crate::menubar::report::ReportX::wrap(
-            0,
-            bar_item(
-                text(app_title_str).font(app_title_font()).size(CHROME_SIZE),
-                title_active,
+    let flower = mouse_area(
+        container(island(
+            item(
+                container(chrome_nudge(icon_colored(
+                    "sola/flower",
+                    ICON_SIZE,
+                    shell.style.flower,
+                )))
+                .width(Length::Fill)
+                .align_x(Alignment::Center),
                 Msg::OpenMenu {
                     index: 0,
-                    is_system: false,
+                    is_system: true,
                 },
-                Some(Msg::HoverMenu {
-                    index: 0,
-                    is_system: false,
-                }),
             ),
-        )
-    } else {
-        container(text(app_title_str).font(app_title_font()).size(CHROME_SIZE))
-            .padding(menu_pad())
-            .height(Length::Fixed(BAR_H))
-            .align_y(Alignment::Center)
-            .into()
-    };
-
-    // ── App-menu labels (menus[1..]) ──────────────────────────────────
-    let menu_labels: Vec<Element<'_, Msg>> = app_menu_labels(shell);
-
-    // ── Right cluster: stats + clock (toast is centered overlay) ─────
-    let clock_active = panel_active(shell, crate::app::Panel::Calendar);
-    let clock: Element<'_, Msg> = bar_button(
-        clock_widget(&mb.clock_now),
-        clock_active,
-        Msg::ToggleCalendar,
-        menu_pad(),
+            system_open,
+            0.0,
+        ))
+        .width(Length::Fixed(ISLAND_H)),
     )
-    .into();
+    .on_enter(Msg::HoverMenu {
+        index: 0,
+        is_system: true,
+    });
+    // Then an island per agent session that asks or has finished.
+    let left = row![flower]
+        .extend(crate::agents::view::row_islands(shell))
+        .spacing(ISLAND_GAP)
+        .align_y(Alignment::Center);
 
-    // ── System-stat indicators (left of clock) ───────────────────────
-    let cpu_btn: Element<'_, Msg> = bar_button(
-        stat_graph(
-            "CPU",
-            shell.cpu_hist.to_vec(),
-            100.0,
-            crate::stats::pixel::Tint::Level,
-            muted,
-            &shell.theme,
-        ),
-        panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Cpu)),
-        Msg::ToggleStatPanel(crate::stats::Metric::Cpu),
-        stat_pad(),
-    )
-    .into();
-
-    let mem_btn: Element<'_, Msg> = bar_button(
-        stat_graph(
-            "MEM",
-            shell.mem_hist.to_vec(),
-            100.0,
-            crate::stats::pixel::Tint::Level,
-            muted,
-            &shell.theme,
-        ),
-        panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Mem)),
-        Msg::ToggleStatPanel(crate::stats::Metric::Mem),
-        stat_pad(),
-    )
-    .into();
-
-    let rx_peak = shell.net_down_hist.peak().max(1.0);
-    let tx_peak = shell.net_up_hist.peak().max(1.0);
-    let rx_btn: Element<'_, Msg> = bar_button(
-        stat_graph(
-            "RX",
-            shell.net_down_hist.to_vec(),
-            rx_peak,
-            crate::stats::pixel::Tint::Rx,
-            muted,
-            &shell.theme,
-        ),
-        panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Rx)),
-        Msg::ToggleStatPanel(crate::stats::Metric::Rx),
-        stat_pad(),
-    )
-    .into();
-    let tx_btn: Element<'_, Msg> = bar_button(
-        stat_graph(
-            "TX",
-            shell.net_up_hist.to_vec(),
-            tx_peak,
-            crate::stats::pixel::Tint::Tx,
-            muted,
-            &shell.theme,
-        ),
-        panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Tx)),
-        Msg::ToggleStatPanel(crate::stats::Metric::Tx),
-        stat_pad(),
-    )
-    .into();
-
-    // ── Assemble ──────────────────────────────────────────────────────
-    let mut left = vec![system_btn, app_title];
-    left.extend(menu_labels);
+    // ── Right: an island per group ───────────────────────────────────
+    let mut islands: Vec<Element<'_, Msg>> = Vec::new();
 
     let mut extras: Vec<Element<'_, Msg>> = Vec::new();
     if let Some(unread) = shell.mail_unread_badge() {
         let accent = shell.theme.extended_palette().primary.base.color;
-        extras.push(mail_unread_chip(unread, accent));
+        extras.push(item(extra_badge("lucide/mail", unread, accent), Msg::RaiseMail));
     }
     if shell.notify.pile_count() > 0 {
         let tint = if shell.notify.unseen {
@@ -262,100 +172,115 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         } else {
             fg
         };
-        extras.push(notify_pile_chip(shell.notify.pile_count(), tint));
-    }
-    // Left of Bluetooth: overlay anchors walk right-to-left from CPU, so
-    // nothing anchored moves when this chip comes and goes.
-    if let Some(chip) = crate::mouse::bar_chip(&shell.mouse) {
-        extras.push(mouse_chip(chip, fg, muted));
-    }
-    if let Some(icon) = crate::bluetooth::bar_icon(&shell.bluetooth.snapshot) {
-        extras.push(bluetooth_chip(
-            icon,
-            fg,
-            muted,
-            panel_active(shell, crate::app::Panel::Bluetooth),
+        extras.push(item(
+            extra_badge("lucide/bell", shell.notify.pile_count(), tint),
+            Msg::ToggleNotifyPile,
         ));
     }
-    let spectrum = crate::audio::bar_icon(&shell.audio.snapshot).map(|icon| {
-        audio_chip(
-            icon.muted,
-            panel_active(shell, crate::app::Panel::Audio),
-            &shell.theme,
-        )
-    });
-
-    let mut percents: Vec<Element<'_, Msg>> = vec![cpu_btn];
-    if shell.stats.gpu.is_some() {
-        percents.push(
-            bar_button(
-                stat_graph(
-                    "GPU",
-                    shell.gpu_hist.to_vec(),
-                    100.0,
-                    crate::stats::pixel::Tint::Level,
-                    muted,
-                    &shell.theme,
-                ),
-                panel_active(shell, crate::app::Panel::Stat(crate::stats::Metric::Gpu)),
-                Msg::ToggleStatPanel(crate::stats::Metric::Gpu),
-                stat_pad(),
-            )
-            .into(),
-        );
+    // Left of Bluetooth: panel anchors walk right-to-left, so nothing
+    // anchored moves when this comes and goes.
+    if let Some(chip) = crate::mouse::bar_chip(&shell.mouse) {
+        extras.push(mouse_chip(chip, fg, muted, &shell.theme));
     }
-    percents.push(mem_btn);
-
-    // Phrases, not nine beads: extras · spectrum · percents · rates · clock.
-    // Spectrum is its own phrase so PHRASE_GAP matches both neighbours
-    // (Bluetooth on the left, CPU on the right).
-    let mut phrases: Vec<Element<'_, Msg>> = Vec::new();
+    if let Some(icon) = crate::bluetooth::bar_icon(&shell.bluetooth.snapshot) {
+        let tint = if icon.muted { muted } else { fg };
+        extras.push(item(extra_icon(icon.name, tint), Msg::ToggleBluetooth));
+    }
+    let extras_open = panel_active(shell, crate::app::Panel::Bluetooth)
+        || panel_active(shell, crate::app::Panel::NotifyPile);
     if !extras.is_empty() {
-        phrases.push(row(extras).height(Length::Fixed(BAR_H)).into());
+        islands.push(island(items(extras), extras_open, ISLAND_PAD_H));
     }
-    if let Some(chip) = spectrum {
-        phrases.push(chip);
-    }
-    phrases.push(row(percents).height(Length::Fixed(BAR_H)).into());
-    phrases.push(row![rx_btn, tx_btn].height(Length::Fixed(BAR_H)).into());
-    phrases.push(clock);
 
-    // Base chrome: left menus | flexible gap | right phrases.
-    // Fixed BAR_H root — matches the window size so children with Fixed(BAR_H)
-    // are not shrink-wrapped / vertically centred with a dead band at y=0.
+    // Alone in its island: centered as is (no lift to a text band), inset
+    // the same all round so its round ends follow the pill's.
+    if let Some(icon) = crate::audio::bar_icon(&shell.audio.snapshot) {
+        islands.push(island(
+            item(
+                crate::audio::wave::visualizer(icon.muted, &shell.theme),
+                Msg::ToggleAudio,
+            ),
+            panel_active(shell, crate::app::Panel::Audio),
+            SPECTRUM_PAD_H,
+        ));
+    }
+
+    use crate::stats::Metric;
+    use crate::stats::pixel::Tint;
+    let stat = |label: &'static str, hist: Vec<f32>, max: f32, tint: Tint, metric: Metric| {
+        item(
+            stat_graph(label, hist, max, tint, muted, &shell.theme),
+            Msg::ToggleStatPanel(metric),
+        )
+    };
+    let stat_open = |metrics: &[Metric]| {
+        metrics
+            .iter()
+            .any(|m| panel_active(shell, crate::app::Panel::Stat(*m)))
+    };
+    let mut meters = vec![stat("CPU", shell.cpu_hist.to_vec(), 100.0, Tint::Level, Metric::Cpu)];
+    if shell.stats.gpu.is_some() {
+        meters.push(stat("GPU", shell.gpu_hist.to_vec(), 100.0, Tint::Level, Metric::Gpu));
+    }
+    meters.push(stat("MEM", shell.mem_hist.to_vec(), 100.0, Tint::Level, Metric::Mem));
+    islands.push(island(
+        items(meters),
+        stat_open(&[Metric::Cpu, Metric::Gpu, Metric::Mem]),
+        ISLAND_PAD_H,
+    ));
+
+    let rx_peak = shell.net_down_hist.peak().max(1.0);
+    let tx_peak = shell.net_up_hist.peak().max(1.0);
+    let net = vec![
+        stat("RX", shell.net_down_hist.to_vec(), rx_peak, Tint::Rx, Metric::Rx),
+        stat("TX", shell.net_up_hist.to_vec(), tx_peak, Tint::Tx, Metric::Tx),
+    ];
+    islands.push(island(
+        items(net),
+        stat_open(&[Metric::Rx, Metric::Tx]),
+        ISLAND_PAD_H,
+    ));
+
+    islands.push(island(
+        item(clock_widget(&mb.clock_now), Msg::ToggleCalendar),
+        panel_active(shell, crate::app::Panel::Calendar),
+        ISLAND_PAD_H,
+    ));
+
     let base: Element<'_, Msg> = row![
-        row(left).height(Length::Fixed(BAR_H)),
-        iced::widget::Space::new().width(Length::Fill),
-        iced::widget::row(phrases)
-            .spacing(PHRASE_GAP)
-            .height(Length::Fixed(BAR_H)),
+        left,
+        Space::new().width(Length::Fill),
+        row(islands).spacing(ISLAND_GAP).align_y(Alignment::Center),
     ]
     .width(Length::Fill)
-    .height(Length::Fixed(BAR_H))
+    .height(Length::Fixed(ISLAND_H))
+    .align_y(Alignment::Center)
     .into();
 
-    // Toast sits in the true horizontal center of the bar (window mid-line),
-    // layered above left/right chrome so asymmetric clusters don't pull it
-    // off center. Only stacked when a message is active so the fill overlay
-    // cannot sit idle over the chrome.
+    // The toast is the one live thing, an island in the true center of the
+    // row (layered over it, so uneven sides do not pull it off center).
     let bar: Element<'_, Msg> = if mb.toast.is_some() {
-        let toast_layer: Element<'_, Msg> = container(toast_widget(mb.toast.as_deref()))
+        let toast = container(island(toast_widget(mb.toast.as_deref()), false, ISLAND_PAD_H))
             .width(Length::Fill)
-            .height(Length::Fixed(BAR_H))
-            .center_x(Length::Fill)
-            .align_y(Alignment::Center)
-            .into();
-        stack![base, toast_layer]
+            .height(Length::Fixed(ISLAND_H))
+            .center_x(Length::Fill);
+        stack![base, toast]
             .width(Length::Fill)
-            .height(Length::Fixed(BAR_H))
+            .height(Length::Fixed(ISLAND_H))
             .into()
     } else {
         base
     };
 
     container(bar)
+        .padding(Padding {
+            top: EDGE,
+            right: EDGE,
+            bottom: 0.0,
+            left: EDGE,
+        })
         .width(Length::Fill)
-        .height(Length::Fixed(BAR_H))
+        .height(Length::Fixed(WINDOW_HEIGHT as f32))
         .into()
 }
 
@@ -363,116 +288,24 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn focused_app_title(shell: &crate::app::Shell) -> String {
-    let Some(ref app_id) = shell.focused_app_id else {
-        return String::new();
-    };
-
-    if let Some(payload) = shell.menus.get_menu(app_id) {
-        if let Some(first) = payload.menus.first() {
-            if !first.label.is_empty() {
-                return first.label.clone();
-            }
-        }
-    }
-    // Empty host app_id (pre-inference gamescope) — try gamescope menu.
-    if app_id.is_empty() {
-        if let Some(payload) = shell.menus.get_menu("gamescope") {
-            if let Some(first) = payload.menus.first() {
-                if !first.label.is_empty() {
-                    return first.label.clone();
-                }
-            }
-        }
-    }
-
-    let synth = synthesized_menu(app_id, &display_label(shell, app_id));
-    synth
-        .menus
-        .first()
-        .map(|d| d.label.clone())
-        .unwrap_or_else(|| app_id.clone())
-}
-
-fn has_menu(shell: &crate::app::Shell) -> bool {
-    shell.focused_app_id.is_some()
+/// An island's items, [`ITEM_GAP`] apart.
+fn items(items: Vec<Element<'_, Msg>>) -> Element<'_, Msg> {
+    row(items)
+        .spacing(ITEM_GAP)
+        .height(Length::Fill)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 fn flashing(shell: &crate::app::Shell, is_system: bool, index: usize) -> bool {
     shell.menubar.flash == Some(FlashTarget { is_system, index })
 }
 
-/// Chip highlight only while that panel is actually showing. `open_panel`
-/// can lag `menu_open` on chord/focus dismiss — requiring both stops the
-/// volume (and other) chips from staying filled after the popover is gone.
+/// An island shows open only while its panel is actually showing.
+/// `open_panel` can lag `menu_open` on chord/focus dismiss — requiring
+/// both stops an island from staying lifted after the popover is gone.
 fn panel_active(shell: &crate::app::Shell, panel: crate::app::Panel) -> bool {
     shell.menu_open && shell.open_panel == Some(panel)
-}
-
-fn app_menu_labels(shell: &crate::app::Shell) -> Vec<Element<'_, Msg>> {
-    let Some(ref app_id) = shell.focused_app_id else {
-        return Vec::new();
-    };
-
-    let payload = shell.effective_app_menu(app_id);
-
-    payload
-        .menus
-        .iter()
-        .enumerate()
-        .skip(1)
-        .map(|(index, menu)| {
-            let active = (shell.menu_open
-                && !shell.current_open_is_system
-                && shell.current_open_index == Some(index))
-                || flashing(shell, false, index);
-            crate::menubar::report::ReportX::wrap(
-                index,
-                bar_item(
-                    text(menu.label.clone())
-                        .font(fonts::chrome())
-                        .size(CHROME_SIZE),
-                    active,
-                    Msg::OpenMenu {
-                        index,
-                        is_system: false,
-                    },
-                    Some(Msg::HoverMenu {
-                        index,
-                        is_system: false,
-                    }),
-                ),
-            )
-        })
-        .collect()
-}
-
-fn display_label(shell: &crate::app::Shell, app_id: &str) -> String {
-    if let Some(app) = shell.applications.get_for_window(app_id) {
-        return app.label.clone();
-    }
-    // gamescope sometimes maps with empty app_id before river infers it —
-    // still prefer the Arcade-published gamescope catalog label.
-    if app_id.is_empty() {
-        if let Some(app) = shell.applications.get_for_window("gamescope") {
-            return app.label.clone();
-        }
-        // Fall back to a non-empty window title if we have one.
-        if let Some(t) = shell
-            .known_windows
-            .iter()
-            .find(|w| w.app_id.is_empty() && !w.title.is_empty())
-            .map(|w| w.title.clone())
-        {
-            return t;
-        }
-        return String::new();
-    }
-    let mut chars = app_id.chars();
-    match chars.next() {
-        Some(c) => c.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
 }
 
 /// Status indicator: muted chrome label + fixed btop-style pixel graph.
@@ -490,10 +323,8 @@ fn stat_graph<'a>(
             .size(CHROME_SIZE)
             .style(move |_: &Theme| iced::widget::text::Style { color: Some(muted) }),
         container(crate::stats::pixel::graph(samples, max, tint, theme)).padding(Padding {
-            top: 0.0,
-            right: 0.0,
             bottom: CHROME_NUDGE_UP,
-            left: 0.0,
+            ..Padding::ZERO
         }),
     ]
     .spacing(STAT_INNER_SPACING)
@@ -526,62 +357,25 @@ fn extra_badge(name: &'static str, count: u32, color: Color) -> Element<'static,
 fn chrome_nudge<'a>(content: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
     container(content.into())
         .padding(Padding {
-            top: 0.0,
-            right: 0.0,
             bottom: CHROME_NUDGE_UP,
-            left: 0.0,
+            ..Padding::ZERO
         })
         .into()
 }
 
-fn mail_unread_chip(unread: u32, accent: Color) -> Element<'static, Msg> {
-    bar_button(
-        extra_badge("lucide/mail", unread, accent),
-        false,
-        Msg::RaiseMail,
-        extra_pad(),
-    )
-    .into()
-}
-
-fn audio_chip<'a>(muted: bool, active: bool, theme: &Theme) -> Element<'a, Msg> {
-    bar_button(
-        container(crate::audio::wave::visualizer(muted, theme)).padding(Padding {
-            top: 0.0,
-            right: 0.0,
-            bottom: CHROME_NUDGE_UP,
-            left: 0.0,
-        }),
-        active,
-        Msg::ToggleAudio,
-        extra_pad(),
-    )
-    .into()
-}
-
-fn bluetooth_chip(
-    icon: crate::bluetooth::BarIcon,
+/// Mouse glyph + battery percent. Not a button: there is no panel.
+fn mouse_chip(
+    chip: crate::mouse::BarChip,
     fg: Color,
     muted: Color,
-    active: bool,
+    theme: &Theme,
 ) -> Element<'static, Msg> {
-    let tint = if icon.muted { muted } else { fg };
-    bar_button(
-        extra_icon(icon.name, tint),
-        active,
-        Msg::ToggleBluetooth,
-        extra_pad(),
-    )
-    .into()
-}
-
-/// Mouse glyph + battery percent. Not a button: there is no panel.
-fn mouse_chip(chip: crate::mouse::BarChip, fg: Color, muted: Color) -> Element<'static, Msg> {
     use crate::mouse::Tone;
+    let p = theme.extended_palette();
     let color = match chip.tone {
         Tone::Normal => fg,
-        Tone::Low => crate::stats::AMBER,
-        Tone::Critical => crate::stats::RED,
+        Tone::Low => p.warning.base.color,
+        Tone::Critical => p.danger.base.color,
         Tone::Stale => muted,
     };
     container(chrome_nudge(
@@ -595,18 +389,7 @@ fn mouse_chip(chip: crate::mouse::BarChip, fg: Color, muted: Color) -> Element<'
         .spacing(STAT_INNER_SPACING)
         .align_y(Alignment::Center),
     ))
-    .padding(extra_pad())
-    .height(Length::Fixed(BAR_H))
+    .height(Length::Fill)
     .align_y(Alignment::Center)
-    .into()
-}
-
-fn notify_pile_chip(count: u32, accent: Color) -> Element<'static, Msg> {
-    bar_button(
-        extra_badge("lucide/bell", count, accent),
-        false,
-        Msg::ToggleNotifyPile,
-        extra_pad(),
-    )
     .into()
 }

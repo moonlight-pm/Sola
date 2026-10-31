@@ -13,20 +13,11 @@ edition = "2024"
 #   - shared font constants + loading helper
 #   - reusable iced widgets / styles under `sola_kit::components`
 #
-# Library + the storybook binary. Consumed by sola-monitor,
-# sola-settings, sola-shell, sola-terminal, agent, browser-core,
-# and the in-tree storybook.
+# A library only (the storybook app was retired 2026-10-30), consumed by
+# every Sola app.
 
 [lib]
 # default — uses src/lib.rs
-
-# Storybook binary. Each kit-shipped component gets a showcase page so
-# the kit itself is dogfooded — every regression shows up here first.
-# Apps consume the kit by path-depending on it; the storybook is just
-# another iced consumer that happens to live in-tree.
-[[bin]]
-name = "sola-kit"
-path = "src/main.rs"
 
 [dependencies]
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg", "image", "advanced", "canvas"] }

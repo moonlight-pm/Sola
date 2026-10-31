@@ -1,0 +1,23 @@
+[package]
+name = "sola-lock"
+version.workspace = true
+edition.workspace = true
+description = "Sola's lock screen: ext-session-lock-v1, the password checked by Oath's login service"
+
+[[bin]]
+name = "sola-lock"
+path = "src/main.rs"
+
+[dependencies]
+sola-core = { path = "../sola-core" }
+# Lock surfaces: iced / winit cannot make them, so the lock draws itself.
+smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
+wayland-client = "0.31"
+xkbcommon = "0.8"
+tiny-skia = "0.11"
+cosmic-text = "0.15"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+serde_yaml_ng = { workspace = true }
+rustix = { version = "1", features = ["fs"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+tracing = "0.1"

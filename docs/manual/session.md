@@ -125,16 +125,12 @@ ignoring case. Each entry has:
 ### Built-in entries
 
 The shell defines these in code: Oath, Settings, Monitor, Terminal,
-Projects, Browser, Kit, Preview, Paint, Mail, Calendar, Bots, Arcade,
-Scope, Design, and Spotify. Oath is listed only on Oath (where
-`/oath/INDEX.md` exists). Each app id is `sola-` and the name in lower
-case (`sola-settings`, `sola-browser`), and each runs `/bin/<app_id>`.
+Projects, Browser, Preview, Paint, Mail, Calendar, Bots, Scope, and
+Design. Oath is listed only on Oath (where `/oath/INDEX.md` exists). Each
+app id is `sola-` and the name in lower case (`sola-settings`,
+`sola-browser`), and each runs `/bin/<app_id>`.
 They are not stored, they do not appear in Settings, and they cannot be
 edited there.
-
-Monitor, Kit, Preview, Arcade, Scope, and Spotify are not in Sola's Oath
-packages ([Architecture](architecture.md#packages)): on Oath, choosing one
-fails with a launch error.
 
 An entry you add with the same app id as a built-in replaces the built-in
 in the launcher.
@@ -162,8 +158,9 @@ Entries with no command never appear in the launcher.
 
 An entry of kind `web` runs `/bin/sola-browser --app <app_id>`. Browser
 writes these entries when you wrap a page and retracts them when you
-remove the app; Settings does not list them. A running Browser opens the
-app's window. With none running, the `--app` process sends `LaunchApp` for
+remove the app. Settings lists them under Applications → Web apps, where
+one can be renamed or removed. A running Browser opens the app's window.
+With none running, the `--app` process sends `LaunchApp` for
 `sola-browser`, so `sola-session` starts, tracks, and restores the Browser
 itself, then hands the app over and exits. See [Web apps](web-apps.md).
 
@@ -236,14 +233,25 @@ a persistent, sorted list of `{app_id, command}` with one entry per app id.
 It publishes the list again after every launch, close, and exit. An
 application you close, or one that quits or crashes, leaves the list.
 
+An application that exits because its compositor went (rivulet restarted
+under the running desk, say by an `oath apply` that moved `pkg:rivulet`)
+did not
+close: it stays on the list, and once a new compositor has answered for
+2 s it is started again. `sola-session` tells by the compositor's Wayland
+socket: the one the application was launched on no longer answers, or a
+new one has taken its place. The log says `app went with its display` and
+`the display is back: starting it again`.
+
 When it starts, `sola-session` spends 750 ms collecting the stored
 `SessionApps` and the current `Windows`. Then it launches every listed
 application that has no window with that app id and is not already
 tracked, once, with its stored command. A stored entry for an application
 that has since been renamed launches under the new name (`sola-workspaces`
 runs as `sola-projects`). After a fresh start everything on the list
-opens. After a restart of `sola-session` alone, the applications that
-still have windows are not launched again.
+opens. After a restart of `sola-session` alone, the applications are
+still open and nothing is launched: the listed ones that have windows
+stay on the list (`keeping the saved apps already running`) until their
+windows have been gone for 3 s.
 
 ### Tabs
 
@@ -393,9 +401,9 @@ Call methods, owner `session` (also the MCP tools `session_launch` and
 
 | What restarts | What happens |
 |---|---|
-| `sola-session` | The new one does not know the applications the previous one started: no `UserAppExited`, `solactl session close` does not find them, and they leave `SessionApps` at the next launch, close, or exit. Super+Q still closes their windows. Restore launches only listed applications that have no window. |
+| `sola-session` | Open applications keep running, but the new `sola-session` did not start them: no `UserAppExited`, and `solactl session close` does not find them. The listed ones with windows stay in `SessionApps` while they have windows (3 s grace). Super+Q still closes their windows. Restore launches only listed applications that have no window. An apply that moves `pkg:sola` stops `sola-session`, which closes the applications as at **Exit Sola**; the new one opens them again. |
 | `sola-bus` | `sola-session` reconnects and subscribes again. A `LaunchApp` sent while the bus was down is lost. |
-| The compositor | See [Architecture](architecture.md#when-a-part-stops). |
+| The compositor | The applications lose their display and exit; they stay in `SessionApps` and start again on the new compositor. See [Architecture](architecture.md#when-a-part-stops). |
 
 ## Logs
 

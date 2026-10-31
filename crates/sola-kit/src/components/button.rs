@@ -58,15 +58,21 @@ pub fn labeled_sm<'a, Message: Clone + 'a>(
 
 /// Filled accent action. Keep **one primary per group** — cyan is product
 /// identity, but sparse (HIG: accent for the single default action).
-/// Dark label + soft glow approximate the OD gradient primary.
+/// Dark label + soft glow approximate the OD gradient primary; a dark
+/// accent (one you picked) takes a white label instead.
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let p = theme.extended_palette();
+    let ink = if style::relative_luminance(p.primary.base.color) > 0.179 {
+        ON_FILL_DARK
+    } else {
+        Color::WHITE
+    };
     style::filled_with(
         p.primary.base,
         p.primary.strong,
         p.primary.weak,
         status,
-        ON_FILL_DARK,
+        ink,
         Some(accent_glow(p.primary.base.color)),
     )
 }
@@ -338,5 +344,23 @@ pub fn menubar(active: bool) -> impl Fn(&Theme, button::Status) -> button::Style
             shadow: Default::default(),
             snap: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn theme_with_accent(accent: Color) -> Theme {
+        let mut atoms = crate::theme::Atoms::default();
+        atoms.accent = accent;
+        crate::theme::build_theme(&atoms)
+    }
+
+    #[test]
+    fn a_primary_label_reads_on_its_accent() {
+        let label = |accent| primary(&theme_with_accent(accent), button::Status::Active).text_color;
+        assert_eq!(label(Color::from_rgb8(0x3d, 0xd6, 0xf5)), ON_FILL_DARK);
+        assert_eq!(label(Color::from_rgb8(0x7a, 0x30, 0x14)), Color::WHITE);
     }
 }

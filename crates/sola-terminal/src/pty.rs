@@ -31,7 +31,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::io::{IntoRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
@@ -166,6 +166,10 @@ pub struct PtyBackend {
     master_fd: OwnedFd,
     child_pid: i32,
     tmux_session: String,
+    /// The computer the tmux session runs on, when it is not this one: the
+    /// child is ssh there ([`crate::remote`]).
+    host: Option<String>,
+    started: Instant,
     /// Input path for keyboard / wheel / paste. Sends into the writer thread;
     /// never blocks the iced UI on a full PTY buffer.
     write_tx: mpsc::Sender<Vec<u8>>,
@@ -224,17 +228,6 @@ impl PtyBackend {
         env: &[(&str, &str)],
         exec: &[&str],
     ) -> std::io::Result<Self> {
-        let winsize = libc::winsize {
-            ws_row: rows,
-            ws_col: cols,
-            ws_xpixel: 0,
-            ws_ypixel: 0,
-        };
-
-        let pty = nix::pty::openpty(Some(&winsize), None)
-            .map_err(|e| std::io::Error::other(format!("openpty failed: {e}")))?;
-        let slave_fd = pty.slave.into_raw_fd();
-
         let mut cmd = crate::tmux::tmux_cmd();
         // Do not use `new-session -A -s name`: `-A` attaches with tmux's
         // default *prefix* match, so a dead `sws-ws-foo` would steal
@@ -267,6 +260,82 @@ impl PtyBackend {
                 cmd.args(exec);
             }
         }
+        let backend = Self::spawn_in_pty(
+            tab_id,
+            cmd,
+            tmux_session,
+            None,
+            cols,
+            rows,
+            term,
+            cursor,
+            notify,
+            exit,
+        )?;
+        for (key, val) in env {
+            crate::tmux::set_environment(tmux_session, key, val);
+        }
+        Ok(backend)
+    }
+
+    /// A tab whose tmux runs on `host`: ssh there with a terminal, then
+    /// attach `tmux_session`, or make it in `cwd` running `exec` (else the
+    /// login shell), `env` stamped on it. See [`crate::remote`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_remote(
+        tab_id: &str,
+        host: &str,
+        tmux_session: &str,
+        cols: u16,
+        rows: u16,
+        cwd: &str,
+        term: Arc<FairMutex<Term<Listener>>>,
+        cursor: Arc<std::sync::RwLock<crate::emulator::CursorSnap>>,
+        notify: mpsc::Sender<String>,
+        exit: mpsc::Sender<String>,
+        env: &[(&str, &str)],
+        exec: &[&str],
+    ) -> std::io::Result<Self> {
+        let cmd = crate::remote::attach(host, tmux_session, cwd, env, exec)?;
+        Self::spawn_in_pty(
+            tab_id,
+            cmd,
+            tmux_session,
+            Some(host.to_string()),
+            cols,
+            rows,
+            term,
+            cursor,
+            notify,
+            exit,
+        )
+    }
+
+    /// Run `cmd` on a new pty sized `cols`×`rows`, register the write
+    /// queue, and start the reader + writer threads.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_in_pty(
+        tab_id: &str,
+        mut cmd: std::process::Command,
+        tmux_session: &str,
+        host: Option<String>,
+        cols: u16,
+        rows: u16,
+        term: Arc<FairMutex<Term<Listener>>>,
+        cursor: Arc<std::sync::RwLock<crate::emulator::CursorSnap>>,
+        notify: mpsc::Sender<String>,
+        exit: mpsc::Sender<String>,
+    ) -> std::io::Result<Self> {
+        let winsize = libc::winsize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+
+        let pty = nix::pty::openpty(Some(&winsize), None)
+            .map_err(|e| std::io::Error::other(format!("openpty failed: {e}")))?;
+        let slave_fd = pty.slave.into_raw_fd();
 
         // SAFETY: pre_exec runs in the child between fork and exec; the libc
         // calls here are async-signal-safe.
@@ -300,14 +369,11 @@ impl PtyBackend {
         debug!(
             tab_id = %tab_id,
             tmux_session = %tmux_session,
+            host = host.as_deref().unwrap_or("local"),
             child_pid,
             master_fd = master_fd.as_raw_fd(),
             "spawned PTY"
         );
-
-        for (key, val) in env {
-            crate::tmux::set_environment(tmux_session, key, val);
-        }
 
         // Writer thread: owns a dup'd master fd + drains the per-tab queue.
         // Keyboard/wheel/paste and Listener replies all serialise here so the
@@ -400,8 +466,15 @@ impl PtyBackend {
             master_fd,
             child_pid,
             tmux_session: tmux_session.to_string(),
+            host,
+            started: Instant::now(),
             write_tx,
         })
+    }
+
+    /// How long since this pty's child started.
+    pub fn age(&self) -> Duration {
+        self.started.elapsed()
     }
 
     /// Enqueue bytes for the master fd (keyboard / wheel / paste → shell).
@@ -443,7 +516,10 @@ impl PtyBackend {
                 std::io::Error::last_os_error()
             );
         }
-        crate::tmux::resize_window(&self.tmux_session, cols, rows);
+        // A remote tmux follows its client: ssh carries the new size.
+        if self.host.is_none() {
+            crate::tmux::resize_window(&self.tmux_session, cols, rows);
+        }
     }
 
     /// Send SIGWINCH to the child's process group so TUIs redraw.
@@ -470,7 +546,13 @@ impl PtyBackend {
     pub fn close(&self) {
         debug!(tab_id = %self.tab_id, child_pid = self.child_pid, "closing PTY");
         unregister_writer(&self.tab_id);
-        crate::tmux::kill_session(&self.tmux_session);
+        match self.host.clone() {
+            None => crate::tmux::kill_session(&self.tmux_session),
+            Some(host) => {
+                let session = self.tmux_session.clone();
+                std::thread::spawn(move || crate::remote::kill_session(&host, &session));
+            }
+        }
 
         let pid = self.child_pid;
         unsafe {

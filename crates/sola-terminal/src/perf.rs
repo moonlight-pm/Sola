@@ -16,8 +16,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// Log path (same dir as other sola app logs).
-const LOG_PATH: &str = "/opt/sola/log/sola-terminal-perf.log";
+/// Log file name, in the same dir as other sola app logs.
+const LOG_FILE: &str = "sola-terminal-perf.log";
 
 /// Events at or above this duration get an immediate line.
 const SLOW_US: u64 = 4_000; // 4 ms — half a 60 Hz frame
@@ -80,8 +80,9 @@ fn state() -> std::sync::MutexGuard<'static, Option<State>> {
         });
         if enabled {
             let _ = writeln_raw(&format!(
-                "perf: start enabled=1 verbose={} slow_us={SLOW_US} log={LOG_PATH}",
-                verbose as u8
+                "perf: start enabled=1 verbose={} slow_us={SLOW_US} log={}",
+                verbose as u8,
+                sola_core::paths::log_path(LOG_FILE).display()
             ));
         }
     }
@@ -92,7 +93,7 @@ fn writeln_raw(line: &str) -> std::io::Result<()> {
     let mut f = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(LOG_PATH)?;
+        .open(sola_core::paths::log_path(LOG_FILE))?;
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64())

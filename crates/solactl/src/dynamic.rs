@@ -49,7 +49,7 @@ pub fn run(args: Vec<String>) -> i32 {
     }
     match params_from_args(spec, &rest) {
         Ok(mut params) => {
-            if entry.owner == "workspaces" {
+            if entry.owner == "projects" {
                 inject_ws_context(method, &mut params);
             }
             if entry.owner == "design" {
@@ -117,7 +117,6 @@ fn bot_browser_policy(
         "key",
         "scroll",
         "tab.close",
-        "tab.move",
     ];
     if NEED_TAB.contains(&method) {
         let tab = params.get("tab").and_then(|v| {
@@ -163,7 +162,7 @@ pub(crate) fn inject_ws_context(method: &str, params: &mut serde_json::Value) {
             }
         }
     }
-    if method == "workspace.spawn" && !map.contains_key("parent") {
+    if method == "tab.spawn" && !map.contains_key("parent") {
         if let Ok(p) = std::env::var("SOLA_PANE_ID") {
             if !p.is_empty() {
                 map.insert("parent".into(), serde_json::Value::String(p));
@@ -463,7 +462,7 @@ mod tests {
 
     fn spawn_spec() -> MethodSpec {
         MethodSpec {
-            name: "workspace.spawn".into(),
+            name: "tab.spawn".into(),
             summary: String::new(),
             args: vec![
                 ArgSpec {

@@ -17,7 +17,7 @@ use super::platform;
 use super::proto::{
     AckStatus, MIME_TEXT_UTF8, Message, Role, hash_text, read_message, write_message,
 };
-use crate::seal::{Channel, Seal};
+use crate::link::{self, Keys};
 
 const MAX_BYTES: u32 = 8 * 1024 * 1024;
 const ACK_WAIT: Duration = Duration::from_secs(3);
@@ -40,36 +40,32 @@ impl ClipHandle {
     }
 }
 
-/// Paired: every frame sealed with the pair key. Set once by [`spawn`].
-static SEAL: std::sync::OnceLock<Option<Seal>> = std::sync::OnceLock::new();
+/// How long a connection's handshake may take.
+const HANDSHAKE: Duration = Duration::from_secs(2);
 
-/// Read one message (sealed when paired).
-fn recv(r: &mut dyn std::io::Read) -> std::io::Result<(u32, Message)> {
-    match SEAL.get().and_then(Option::as_ref) {
-        Some(seal) => {
-            let plain = seal.read_frame(r, MAX_BYTES)?;
-            read_message(&mut std::io::Cursor::new(plain), MAX_BYTES)
-        }
-        None => read_message(r, MAX_BYTES),
-    }
+/// The paired server's connection: the socket and its Noise session.
+struct Peer {
+    tcp: TcpStream,
+    link: link::Conn,
 }
 
-/// Write one message (sealed when paired).
-fn send(w: &mut dyn std::io::Write, seq: u32, msg: &Message) -> std::io::Result<()> {
-    match SEAL.get().and_then(Option::as_ref) {
-        Some(seal) => {
-            let mut plain = Vec::new();
-            write_message(&mut plain, seq, msg)?;
-            seal.write_frame(w, &plain)
-        }
-        None => write_message(w, seq, msg),
+impl Peer {
+    /// Read one message. A read that times out keeps what came so far.
+    fn recv(&mut self) -> std::io::Result<(u32, Message)> {
+        let plain = self.link.read_frame(&mut self.tcp, MAX_BYTES)?;
+        read_message(&mut std::io::Cursor::new(plain), MAX_BYTES)
+    }
+
+    fn send(&mut self, seq: u32, msg: &Message) -> std::io::Result<()> {
+        let mut plain = Vec::new();
+        write_message(&mut plain, seq, msg)?;
+        self.link.write_frame(&mut self.tcp, &plain)
     }
 }
 
 /// Spawn TCP listener on `bind` (e.g. `0.0.0.0:4242`) and clip worker.
-/// `key`: the pair key; with one, only sealed frames are read.
-pub fn spawn(bind: &str, key: Option<[u8; 32]>) -> std::io::Result<ClipHandle> {
-    let _ = SEAL.set(key.map(|k| Seal::new(&k, Channel::Clipboard)));
+/// Only the paired server (`keys`) gets a connection.
+pub fn spawn(bind: &str, keys: Keys) -> std::io::Result<ClipHandle> {
     let listener = TcpListener::bind(bind)?;
     listener.set_nonblocking(true)?;
     let local = listener.local_addr().ok();
@@ -78,7 +74,7 @@ pub fn spawn(bind: &str, key: Option<[u8; 32]>) -> std::io::Result<ClipHandle> {
     let (tx, rx) = mpsc::channel::<ClipJob>();
     thread::Builder::new()
         .name("kvm-clip".into())
-        .spawn(move || worker_main(listener, rx))
+        .spawn(move || worker_main(listener, rx, keys))
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     Ok(ClipHandle { tx })
 }
@@ -101,15 +97,15 @@ impl Cache {
     }
 }
 
-fn arm_poll_read(s: &TcpStream) {
-    s.set_read_timeout(Some(POLL_READ)).ok();
+fn arm_poll_read(s: &Peer) {
+    s.tcp.set_read_timeout(Some(POLL_READ)).ok();
 }
 
-fn arm_ack_wait(s: &TcpStream) {
-    s.set_read_timeout(Some(ACK_WAIT)).ok();
+fn arm_ack_wait(s: &Peer) {
+    s.tcp.set_read_timeout(Some(ACK_WAIT)).ok();
     // Keep socket blocking for writes — short read timeouts on Darwin can
     // surface as EAGAIN on subsequent write_all if we leave weird state.
-    s.set_nonblocking(false).ok();
+    s.tcp.set_nonblocking(false).ok();
 }
 
 fn is_soft_timeout(e: &std::io::Error) -> bool {
@@ -119,9 +115,9 @@ fn is_soft_timeout(e: &std::io::Error) -> bool {
     ) || e.raw_os_error() == Some(35) // EAGAIN on Darwin
 }
 
-fn worker_main(listener: TcpListener, jobs: Receiver<ClipJob>) {
+fn worker_main(listener: TcpListener, jobs: Receiver<ClipJob>, keys: Keys) {
     let mut cache = Cache::new();
-    let mut peer: Option<TcpStream> = None;
+    let mut peer: Option<Peer> = None;
     let mut out_seq: u32 = 1;
     // Leave sprays 3× UDP Leaves → 3 jobs; only push once per burst.
     let mut last_push = Instant::now()
@@ -133,13 +129,22 @@ fn worker_main(listener: TcpListener, jobs: Receiver<ClipJob>) {
     loop {
         // Accept
         match listener.accept() {
-            Ok((mut s, addr)) => {
+            Ok((mut tcp, addr)) => {
                 info!(%addr, "clipboard TCP accept");
-                s.set_nodelay(true).ok();
-                s.set_nonblocking(false).ok();
-                s.set_read_timeout(Some(Duration::from_millis(500))).ok();
+                tcp.set_nodelay(true).ok();
+                tcp.set_nonblocking(false).ok();
+                tcp.set_read_timeout(Some(HANDSHAKE)).ok();
+                let link = match link::Conn::accept(&mut tcp, &keys) {
+                    Ok(link) => link,
+                    Err(e) => {
+                        warn!(%addr, %e, "clip connection refused: not the paired server");
+                        continue;
+                    }
+                };
+                let mut s = Peer { tcp, link };
+                s.tcp.set_read_timeout(Some(Duration::from_millis(500))).ok();
                 // Expect Hello from novus, reply.
-                match recv(&mut s) {
+                match s.recv() {
                     Ok((_, Message::Hello { role })) => {
                         info!(?role, "clip hello from novus");
                     }
@@ -148,7 +153,7 @@ fn worker_main(listener: TcpListener, jobs: Receiver<ClipJob>) {
                 }
                 let seq = out_seq;
                 out_seq = out_seq.wrapping_add(1);
-                if let Err(e) = send(&mut s, seq, &Message::Hello { role: Role::Ember }) {
+                if let Err(e) = s.send(seq, &Message::Hello { role: Role::Ember }) {
                     warn!(%e, "clip hello reply failed");
                 } else {
                     arm_poll_read(&s);
@@ -225,7 +230,7 @@ fn worker_main(listener: TcpListener, jobs: Receiver<ClipJob>) {
         // Inbound from novus (Enter push)
         if let Some(ref mut s) = peer {
             arm_poll_read(s);
-            match recv(s) {
+            match s.recv() {
                 Ok((seq, Message::Offer { mime, hash, body })) => {
                     info!(
                         seq,
@@ -237,9 +242,7 @@ fn worker_main(listener: TcpListener, jobs: Receiver<ClipJob>) {
                     let ok = apply_inbound(mime, hash, &body, &mut cache);
                     let aseq = out_seq;
                     out_seq = out_seq.wrapping_add(1);
-                    if let Err(e) = send(
-                        s,
-                        aseq,
+                    if let Err(e) = s.send(aseq,
                         &Message::Ack {
                             of_seq: seq,
                             status: if ok { AckStatus::Ok } else { AckStatus::Reject },
@@ -256,9 +259,7 @@ fn worker_main(listener: TcpListener, jobs: Receiver<ClipJob>) {
                     info!("clip cleared from novus Empty");
                     let aseq = out_seq;
                     out_seq = out_seq.wrapping_add(1);
-                    if let Err(e) = send(
-                        s,
-                        aseq,
+                    if let Err(e) = s.send(aseq,
                         &Message::Ack {
                             of_seq: seq,
                             status: AckStatus::Ok,
@@ -286,8 +287,8 @@ fn worker_main(listener: TcpListener, jobs: Receiver<ClipJob>) {
     }
 }
 
-fn push_local(s: &mut TcpStream, cache: &mut Cache, out_seq: &mut u32) -> std::io::Result<()> {
-    s.set_nonblocking(false).ok();
+fn push_local(s: &mut Peer, cache: &mut Cache, out_seq: &mut u32) -> std::io::Result<()> {
+    s.tcp.set_nonblocking(false).ok();
     let text = platform::read_text().unwrap_or_default();
     if text.len() as u32 > MAX_BYTES {
         warn!(bytes = text.len(), "clip local too large; skip");
@@ -300,9 +301,9 @@ fn push_local(s: &mut TcpStream, cache: &mut Cache, out_seq: &mut u32) -> std::i
         }
         let seq = *out_seq;
         *out_seq = out_seq.wrapping_add(1);
-        send(s, seq, &Message::Empty)?;
+        s.send(seq, &Message::Empty)?;
         arm_ack_wait(s);
-        match recv(s) {
+        match s.recv() {
             Ok(_) => info!("clip Empty → novus"),
             Err(e) if is_soft_timeout(&e) => {
                 warn!(%e, "clip Empty Ack soft-timeout");
@@ -324,9 +325,7 @@ fn push_local(s: &mut TcpStream, cache: &mut Cache, out_seq: &mut u32) -> std::i
     let seq = *out_seq;
     *out_seq = out_seq.wrapping_add(1);
     info!(seq, hash, bytes = text.len(), "clip sending Offer → novus");
-    send(
-        s,
-        seq,
+    s.send(seq,
         &Message::Offer {
             mime: MIME_TEXT_UTF8,
             hash,
@@ -336,7 +335,7 @@ fn push_local(s: &mut TcpStream, cache: &mut Cache, out_seq: &mut u32) -> std::i
     arm_ack_wait(s);
     let deadline = Instant::now() + ACK_WAIT;
     loop {
-        match recv(s) {
+        match s.recv() {
             Ok((
                 _,
                 Message::Ack {
@@ -372,9 +371,7 @@ fn push_local(s: &mut TcpStream, cache: &mut Cache, out_seq: &mut u32) -> std::i
                 let ok = apply_inbound(imime, ih, &body, cache);
                 let aseq = *out_seq;
                 *out_seq = out_seq.wrapping_add(1);
-                let _ = send(
-                    s,
-                    aseq,
+                let _ = s.send(aseq,
                     &Message::Ack {
                         of_seq: iseq,
                         status: if ok { AckStatus::Ok } else { AckStatus::Reject },

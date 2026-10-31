@@ -1,13 +1,87 @@
-//! Shared menubar menus that kit apps can include (and replace).
+//! An app's menus: the ones its window titlebars show, and the shared
+//! **Window** menu.
+//!
+//! An app publishes its menus once with [`BusSetup`](crate::app::BusSetup)
+//! or, when they change at runtime, with [`publish`]. The kit keeps the
+//! latest payload for the titlebars
+//! ([`crate::components::window_frame`]) and the shell caches the same
+//! payload for keyboard shortcuts. A titlebar choice comes back through
+//! [`choose`]: a Window item goes to the shell, anything else to the app's
+//! own bus stream as a `MenuAction`, so an app handles a click and a
+//! shortcut the same way.
 //!
 //! The **Window** menu is the mouse path for compositor actions that used
 //! to live only on Super+numpad / Super+H / Super+`. Apps publish it via
 //! [`window_menu`] / [`BusSetup::window_menu`](crate::app::BusSetup::window_menu);
-//! the shell injects the same definition when an app omits it, so XWayland
-//! and other external windows still get a Window menu.
+//! titlebars add it last when an app omits it ([`ensure_window_menu`]).
 
-use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem, Zone};
+use std::sync::RwLock;
+
+use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, Zone};
 use sola_core::{KeyChord, KeyCode};
+
+/// This process's latest published menus.
+static APP_MENU: RwLock<Option<AppMenuPayload>> = RwLock::new(None);
+
+/// Publish this app's menus: kept for its titlebars and sent to the shell.
+/// Call again whenever they change.
+pub fn publish(payload: AppMenuPayload) {
+    remember(payload.clone());
+    let Some(bus) = crate::app::try_bus() else {
+        return;
+    };
+    if let Ok(mut bus) = bus.lock() {
+        if let Err(e) = bus.emit(Topic::SetAppMenu(payload)) {
+            tracing::warn!("publish app menu failed: {e}");
+        }
+    }
+}
+
+/// Send the menus of an app this process hosts (a web app's windows in the
+/// browser) to the shell, for its shortcuts. The process's own menus stay;
+/// those windows pass theirs to their titlebars
+/// ([`WindowFrame::menus`](crate::components::window_frame::WindowFrame::menus)).
+pub fn publish_for(payload: AppMenuPayload) {
+    let Some(bus) = crate::app::try_bus() else {
+        return;
+    };
+    if let Ok(mut bus) = bus.lock() {
+        if let Err(e) = bus.emit(Topic::SetAppMenu(payload)) {
+            tracing::warn!("publish hosted app menu failed: {e}");
+        }
+    }
+}
+
+/// Keep `payload` for the titlebars without sending it.
+pub(crate) fn remember(payload: AppMenuPayload) {
+    let mut slot = APP_MENU.write().unwrap_or_else(|p| p.into_inner());
+    *slot = Some(payload);
+}
+
+/// The menus this app's titlebars show, the Window menu last. `None`
+/// until the app publishes.
+pub fn current() -> Option<AppMenuPayload> {
+    let slot = APP_MENU.read().unwrap_or_else(|p| p.into_inner());
+    slot.clone().map(ensure_window_menu)
+}
+
+/// Act on a titlebar menu choice. Window items are the shell's (it acts on
+/// the focused window); the rest go to this app as its own `MenuAction`.
+pub fn choose(app_id: &str, action_id: &str) {
+    let topic = Topic::MenuAction(MenuActionPayload {
+        app_id: app_id.to_string(),
+        action_id: action_id.to_string(),
+    });
+    if parse_window_action(action_id).is_some() {
+        if let Some(Ok(mut bus)) = crate::app::try_bus().map(|b| b.lock()) {
+            if let Err(e) = bus.emit(topic) {
+                tracing::warn!(action_id, "window menu action failed: {e}");
+            }
+        }
+    } else {
+        crate::app::deliver_locally(topic);
+    }
+}
 
 /// Menubar label. The shell uses this to decide whether to inject a
 /// default Window menu or honor the app's own.
@@ -136,7 +210,7 @@ pub const WINDOW_MENU_ENTRIES: &[WindowMenuEntry] = &[
     WindowMenuEntry::Divider,
     item(
         ACTION_FULLSCREEN,
-        "Fullscreen",
+        "Full",
         kp(KeyCode::KP_0),
         WindowAction::Zone(Zone::Fullscreen),
     ),

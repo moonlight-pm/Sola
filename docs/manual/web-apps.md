@@ -77,7 +77,10 @@ they come back as the app, in their place in the bar.
 then takes the app out of the launcher, deletes its icon, and closes its
 windows. The sign-in stays in the Browser profile.
 
-Settings → Applications does not list web apps and cannot edit them.
+**Settings → Applications → Web apps** lists them too, with the site
+each starts on. Open one there to rename it (**Save**; its menus take the
+new name) or **Remove** it (no question asked; its windows close, the
+sign-in stays).
 
 ## Limits
 

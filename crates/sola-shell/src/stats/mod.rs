@@ -8,8 +8,8 @@ pub mod net;
 pub mod pixel;
 pub mod view;
 
-use iced::Color;
 use iced::Subscription;
+use iced::{Color, Theme};
 use iced::futures::Stream;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -27,21 +27,22 @@ pub enum Metric {
     Tx,
 }
 
-/// Threshold colors for level metrics (cpu/gpu/mem). Rates have no level.
-pub const AMBER: Color = Color::from_rgb(1.0, 0.839, 0.039); // #ffd60a warning
-pub const RED: Color = Color::from_rgb(1.0, 0.271, 0.227); // #ff453a danger
+/// Levels (cpu/gpu/mem) turn the theme's warning at WARN and its danger at
+/// CRIT. Rates have no level.
 pub const WARN_PCT: f32 = 75.0;
 pub const CRIT_PCT: f32 = 90.0;
 
-/// Pick the readout color for a percentage level: `neutral` until WARN, then
-/// amber, then red at/above CRIT.
-pub fn level_color(pct: f32, neutral: Color) -> Color {
+/// The color for a percentage level: the theme's ink until WARN, then its
+/// warning, then its danger at/above CRIT — for an island's column and a
+/// panel's value alike, so they always agree (and follow a scheme).
+pub fn level_color(pct: f32, theme: &Theme) -> Color {
+    let p = theme.extended_palette();
     if pct >= CRIT_PCT {
-        RED
+        p.danger.base.color
     } else if pct >= WARN_PCT {
-        AMBER
+        p.warning.base.color
     } else {
-        neutral
+        p.background.base.text
     }
 }
 
@@ -218,18 +219,18 @@ fn read(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::Color;
 
     #[test]
     fn threshold_color_bands() {
-        // neutral below warn, amber in [warn,crit), red at/above crit
-        let neutral = Color::from_rgb(0.961, 0.961, 0.969); // #f5f5f7
-        assert_eq!(level_color(10.0, neutral), neutral);
-        assert_eq!(level_color(80.0, neutral), AMBER);
-        assert_eq!(level_color(95.0, neutral), RED);
+        // ink below warn, the theme's warning in [warn, crit), danger at/above crit
+        let theme = Theme::Dark;
+        let p = theme.extended_palette();
+        assert_eq!(level_color(10.0, &theme), p.background.base.text);
+        assert_eq!(level_color(80.0, &theme), p.warning.base.color);
+        assert_eq!(level_color(95.0, &theme), p.danger.base.color);
         // boundaries
-        assert_eq!(level_color(WARN_PCT, neutral), AMBER);
-        assert_eq!(level_color(CRIT_PCT, neutral), RED);
+        assert_eq!(level_color(WARN_PCT, &theme), p.warning.base.color);
+        assert_eq!(level_color(CRIT_PCT, &theme), p.danger.base.color);
     }
 
     #[test]

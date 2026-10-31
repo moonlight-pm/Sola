@@ -26,14 +26,19 @@ use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
 mod applications;
+mod appearance;
 mod calendar;
 mod calendar_oauth;
 mod edit;
+mod login;
 mod mail;
 mod mail_discover;
 mod mail_from_api;
+mod page;
 mod procfs;
 
+use appearance::{AppearanceMsg, AppearanceState};
+use login::{LoginMsg, LoginState};
 use applications::{AppsMsg, AppsState};
 use calendar::{CalMsg, CalendarState};
 use mail::{MailMsg, MailState};
@@ -69,6 +74,8 @@ fn main() -> iced::Result {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Panel {
     Applications,
+    Appearance,
+    Login,
     Mail,
     Calendar,
 }
@@ -94,6 +101,10 @@ struct App {
     apps_ui: AppsState,
     mail_ui: MailState,
     calendar_ui: CalendarState,
+    /// The desk's password and auto-login (Oath's login service).
+    login_ui: LoginState,
+    /// The background picture and the appearance settings.
+    appearance: AppearanceState,
     /// Float tracker + iced window id for CSD while floating.
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
@@ -111,6 +122,8 @@ impl Default for App {
             apps_ui: AppsState::default(),
             mail_ui: MailState::default(),
             calendar_ui: CalendarState::default(),
+            login_ui: LoginState::default(),
+            appearance: AppearanceState::default(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
         }
@@ -124,6 +137,8 @@ enum Msg {
     Apps(AppsMsg),
     Mail(MailMsg),
     Calendar(CalMsg),
+    Appearance(AppearanceMsg),
+    Login(LoginMsg),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -147,11 +162,11 @@ impl App {
     }
 
     fn title(&self) -> String {
-        "Sola Settings".into()
+        "Settings".into()
     }
 
     fn theme(&self) -> Theme {
-        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
+        sola_kit::theme_for(self.float.chrome_any(), &self.theme)
     }
 
     fn update(&mut self, msg: Msg) -> Task<Msg> {
@@ -195,10 +210,37 @@ impl App {
                     Some(Topic::Windows(windows)) => {
                         self.running = windows;
                     }
+                    Some(Topic::Background(b)) => {
+                        // Persistent: sticky=false is the retract.
+                        self.appearance.picture = message.sticky.then_some(b);
+                        // A new picture joins the kept ones.
+                        if self.panel == Panel::Appearance {
+                            return appearance::refresh(&mut self.appearance).map(Msg::Appearance);
+                        }
+                    }
+                    Some(Topic::Appearance(a)) => {
+                        self.appearance.look = if message.sticky { a } else { Default::default() };
+                        appearance::settle(&mut self.appearance.look);
+                    }
+                    Some(Topic::Theme(t)) => {
+                        self.appearance.theme = Some(t);
+                    }
+                    Some(Topic::ThemeVariations(v)) => {
+                        self.appearance.variations = message.sticky.then_some(v);
+                    }
                     _ => {}
                 }
             }
-            Msg::SelectPanel(p) => self.panel = p,
+            Msg::SelectPanel(p) => {
+                self.panel = p;
+                if p == Panel::Login {
+                    return login::update(LoginMsg::Refresh, &mut self.login_ui).map(Msg::Login);
+                }
+                if p == Panel::Appearance {
+                    return appearance::refresh(&mut self.appearance).map(Msg::Appearance);
+                }
+            }
+            Msg::Login(m) => return login::update(m, &mut self.login_ui).map(Msg::Login),
             Msg::Apps(m) => {
                 return applications::update(m, &mut self.applications, &mut self.apps_ui)
                     .map(Msg::Apps);
@@ -209,6 +251,9 @@ impl App {
             Msg::Calendar(m) => {
                 return calendar::update(m, &mut self.calendar, &mut self.calendar_ui)
                     .map(Msg::Calendar);
+            }
+            Msg::Appearance(m) => {
+                return appearance::update(m, &mut self.appearance).map(Msg::Appearance);
             }
             Msg::WindowReady(id) => self.window_id = id,
             Msg::TitleDrag => return sola_kit::drag(self.window_id),
@@ -288,6 +333,10 @@ impl App {
             vec![
                 SidebarItem::new("Applications", Msg::SelectPanel(Panel::Applications))
                     .active(self.panel == Panel::Applications),
+                SidebarItem::new("Appearance", Msg::SelectPanel(Panel::Appearance))
+                    .active(self.panel == Panel::Appearance),
+                SidebarItem::new("Login", Msg::SelectPanel(Panel::Login))
+                    .active(self.panel == Panel::Login),
                 SidebarItem::new("Mail", Msg::SelectPanel(Panel::Mail))
                     .active(self.panel == Panel::Mail),
                 SidebarItem::new("Calendar", Msg::SelectPanel(Panel::Calendar))
@@ -297,18 +346,35 @@ impl App {
 
         let title_text = match self.panel {
             Panel::Applications => "Applications",
+            Panel::Appearance => "Appearance",
+            Panel::Login => "Login",
             Panel::Mail => "Mail",
             Panel::Calendar => "Calendar",
         };
 
         // Page pad 24 = SPACE_XL + SPACE_MD (content margin, not control density).
         let page_pad = SPACE_XL + SPACE_MD;
-        // Both panels are fill-height: Applications and Mail rules are
-        // list + detail with internal scroll (account sits above rules).
+        // Every page scrolls on its own (`page::page`) under its title.
         let main_inner: Element<'_, Msg> = match self.panel {
             Panel::Applications => column![
                 kit_text::heading(title_text),
                 applications::view(&self.applications, &self.running, &self.apps_ui).map(Msg::Apps),
+            ]
+            .spacing(page_pad)
+            .padding(Padding::new(page_pad))
+            .height(Length::Fill)
+            .into(),
+            Panel::Appearance => column![
+                kit_text::heading(title_text),
+                appearance::view(&self.appearance).map(Msg::Appearance),
+            ]
+            .spacing(page_pad)
+            .padding(Padding::new(page_pad))
+            .height(Length::Fill)
+            .into(),
+            Panel::Login => column![
+                kit_text::heading(title_text),
+                login::view(&self.login_ui).map(Msg::Login),
             ]
             .spacing(page_pad)
             .padding(Padding::new(page_pad))
@@ -344,8 +410,8 @@ impl App {
             .height(Length::Fill)
             .into();
 
-        sola_kit::wrap_if_floating(
-            self.float.is_floating_any(),
+        sola_kit::window_frame(
+            self.float.chrome_any(),
             "Settings",
             Msg::TitleDrag,
             Msg::TitleClose,

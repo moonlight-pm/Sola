@@ -12,51 +12,52 @@ impl Palette {
     /// grows.
     pub fn seed() -> Self {
         let mut palette = Palette::default();
-        // Colors — cool graphite tool UI (not GitHub Primer, not macOS sludge).
-        // Keep in sync with `sola_kit::theme::hex::*`.
+        // Colors — graphite tool UI on neutral greys (Next: no blue in
+        // the base; see `slate.rs` for the slate it replaced). Keep in sync
+        // with `sola_kit::theme::hex::*`.
         palette.tokens.insert(
             "bg-primary".into(),
-            Token::new(TokenKind::Color, "#0c0e12", &["surface"]),
+            Token::new(TokenKind::Color, "#0b0b0b", &["surface"]),
         );
         palette.tokens.insert(
             "bg-secondary".into(),
-            Token::new(TokenKind::Color, "#151922", &["surface"]),
+            Token::new(TokenKind::Color, "#151515", &["surface"]),
         );
         palette.tokens.insert(
             "bg-tertiary".into(),
-            Token::new(TokenKind::Color, "#1e2533", &["surface"]),
+            Token::new(TokenKind::Color, "#1f1f1f", &["surface"]),
         );
         palette.tokens.insert(
             "bg-hover".into(),
-            Token::new(TokenKind::Color, "#1e2533", &["surface"]),
+            Token::new(TokenKind::Color, "#1f1f1f", &["surface"]),
         );
         // Colors — borders
         palette.tokens.insert(
             "border".into(),
-            Token::new(TokenKind::Color, "#2a3344", &["border"]),
+            Token::new(TokenKind::Color, "#2a2a2a", &["border"]),
         );
         palette.tokens.insert(
             "border-subtle".into(),
-            Token::new(TokenKind::Color, "#1e2533", &["border"]),
+            Token::new(TokenKind::Color, "#1f1f1f", &["border"]),
         );
         // Colors — text
         palette.tokens.insert(
             "text-primary".into(),
-            Token::new(TokenKind::Color, "#e9ecf2", &["text"]),
+            Token::new(TokenKind::Color, "#ececec", &["text"]),
         );
         palette.tokens.insert(
             "text-secondary".into(),
-            Token::new(TokenKind::Color, "#8b94a8", &["text"]),
+            Token::new(TokenKind::Color, "#949494", &["text"]),
         );
         palette.tokens.insert(
             "text-tertiary".into(),
-            Token::new(TokenKind::Color, "#6b7385", &["text"]),
+            Token::new(TokenKind::Color, "#737373", &["text"]),
         );
         // text-muted doubles as a strong border (e.g. scrollbar thumb on
         // hover) which is why it's eligible for both `text` and `border`.
         palette.tokens.insert(
             "text-muted".into(),
-            Token::new(TokenKind::Color, "#2a3344", &["text", "border"]),
+            Token::new(TokenKind::Color, "#2a2a2a", &["text", "border"]),
         );
         palette.tokens.insert(
             "text-accent".into(),
@@ -75,11 +76,17 @@ impl Palette {
                 &["accent-tint"],
             ),
         );
-        // Quiet selection fill (kit `hex::SELECTION`) — graphite lift,
-        // not a darkened neon (that mix reads as muddy teal).
+        // Quiet selection fill (kit `hex::SELECTION`) — a grey lift, not a
+        // darkened neon (that mix reads as muddy teal).
         palette.tokens.insert(
             "selection".into(),
-            Token::new(TokenKind::Color, "#2c333e", &["surface"]),
+            Token::new(TokenKind::Color, "#292929", &["surface"]),
+        );
+        // A sidebar column's active row (the tab bar's focused window): a
+        // step above `selection` (kit `hex::HIGHLIGHT`).
+        palette.tokens.insert(
+            "highlight".into(),
+            Token::new(TokenKind::Color, "#353535", &["surface"]),
         );
         palette.tokens.insert(
             "danger".into(),
@@ -175,7 +182,13 @@ impl Palette {
         // docs/specs/2026-07-20-macos-look-and-feel-roadmap.md P6.
         palette.tokens.insert(
             "shell-menubar-bg".into(),
-            Token::new(TokenKind::Color, "#050608", &["shell"]),
+            Token::new(TokenKind::Color, "#050505", &["shell"]),
+        );
+        // The flower in the top row: Sola's amber until a look recolors
+        // it (a picture's scheme or your accent, as the accent).
+        palette.tokens.insert(
+            "shell-flower".into(),
+            Token::new(TokenKind::Color, "#ffb800", &["shell"]),
         );
         palette.tokens.insert(
             "shell-backdrop-dim".into(),
@@ -183,7 +196,7 @@ impl Palette {
         );
         palette.tokens.insert(
             "shell-switcher-bg".into(),
-            Token::new(TokenKind::Color, "#151922e6", &["shell"]),
+            Token::new(TokenKind::Color, "#151515e6", &["shell"]),
         );
         palette.tokens.insert(
             "shell-switcher-border".into(),

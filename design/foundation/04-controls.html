@@ -2,1210 +2,264 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>SOLA / Foundation v1 / Graphite / 04 Controls</title>
+<title>SOLA / Foundation / 04 Controls</title>
 <link rel="stylesheet" href="../tokens.css">
-<link rel="stylesheet" href="components.css">
+<link rel="stylesheet" href="foundation.css">
+<script src="foundation.js"></script>
+<style>
+  /* The kit's control styles (sola-kit components), as CSS over the tokens.
+   * raised = bg-secondary, strong = bg-hover, muted = text-tertiary. */
+  :root {
+    --k-sec: color-mix(in srgb, white 4%, var(--bg-secondary));
+    --k-sec-hover: color-mix(in srgb, white 6%, var(--bg-hover));
+    --k-well: color-mix(in srgb, var(--bg-primary) 45%, black);
+    --k-accent-weak: color-mix(in srgb, var(--accent) 60%, var(--bg-primary));
+    --k-danger-weak: color-mix(in srgb, var(--danger) 60%, var(--bg-primary));
+    --k-ghost: color-mix(in srgb, var(--text-tertiary) 65%, var(--text-primary));
+  }
+  .k-matrix { display: grid; grid-template-columns: 150px repeat(5, 1fr) 300px; align-items: center; gap: 16px 20px; }
+  .k-matrix .h { font: 500 10px/1 var(--f-chrome); letter-spacing: 1px; text-transform: uppercase; color: var(--ink-3); }
+  .k-matrix .n { font: 500 13px/18px var(--f-chrome); }
+  .k-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 7px 14px; border-radius: 7px; font: 400 13px/17px var(--f-chrome);
+    white-space: nowrap; color: var(--ink); border: 1px solid transparent; justify-self: start;
+  }
+  .k-btn.sm { padding: 5px 11px; font-size: 12px; line-height: 16px; }
+  .k-btn.off { opacity: 0.5; box-shadow: none !important; }
+  .primary { color: var(--on-accent); background: linear-gradient(180deg, color-mix(in srgb, white 8%, var(--accent)), var(--accent)); box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent); }
+  .primary.hov { background: linear-gradient(180deg, color-mix(in srgb, white 14%, var(--accent-hover)), color-mix(in srgb, white 6%, var(--accent-hover))); }
+  .primary.prs { background: var(--k-accent-weak); box-shadow: none; }
+  .secondary { background: var(--k-sec); border-color: color-mix(in srgb, white 12%, var(--k-sec)); }
+  .secondary.hov { background: var(--k-sec-hover); border-color: color-mix(in srgb, white 14%, var(--k-sec-hover)); }
+  .secondary.prs { background: var(--bg-secondary); border-color: color-mix(in srgb, white 7%, var(--bg-secondary)); }
+  .ghost { color: var(--k-ghost); border-radius: 5px; }
+  .ghost.hov { background: color-mix(in srgb, var(--bg-hover) 70%, transparent); color: var(--ink); }
+  .ghost.prs { background: var(--bg-hover); color: var(--ink); }
+  .danger { color: var(--on-danger); background: linear-gradient(180deg, color-mix(in srgb, white 8%, var(--danger)), var(--danger)); }
+  .danger.hov { background: linear-gradient(180deg, color-mix(in srgb, white 14%, var(--danger)), color-mix(in srgb, white 6%, var(--danger))); }
+  .danger.prs { background: var(--k-danger-weak); }
+  .dout { background: color-mix(in srgb, var(--danger) 10%, var(--bg-secondary)); border-color: color-mix(in srgb, var(--danger) 42%, var(--bg-secondary)); color: color-mix(in srgb, var(--danger) 88%, white); }
+  .dout.hov { background: color-mix(in srgb, var(--danger) 18%, var(--bg-secondary)); border-color: color-mix(in srgb, var(--danger) 55%, var(--bg-secondary)); color: var(--ink); }
+  .dout.prs { background: color-mix(in srgb, var(--danger) 28%, var(--bg-secondary)); color: var(--ink); }
+  .tool { border-radius: 5px; padding: 6px; }
+  .tool.hov { background: var(--bg-hover); }
+  .tool.prs { background: var(--border); }
+  .tool.off { opacity: 1; color: var(--text-tertiary); }
+
+  .k-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 28px 36px; }
+  .k-cell { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .k-cap { font: 400 11px/15px var(--f-spec); color: var(--ink-3); }
+  .k-field { display: flex; flex-direction: column; gap: 4px; width: 240px; }
+  .k-field .lbl { font: 400 13px/17px var(--f-chrome); color: var(--text-tertiary); }
+  .k-field .help { font: 400 11px/14px var(--f-chrome); color: var(--text-tertiary); }
+  .k-field .err { font: 400 11px/14px var(--f-chrome); color: var(--danger); }
+  .k-input {
+    height: 31px; padding: 7px 12px; border-radius: 7px; background: var(--k-well);
+    border: 1px solid color-mix(in srgb, white 12%, var(--k-well));
+    font: 400 13px/15px var(--f-chrome); color: var(--ink); white-space: nowrap; overflow: hidden;
+  }
+  .k-input.hov { border-color: color-mix(in srgb, white 14%, var(--k-well)); }
+  .k-input.foc { border-color: color-mix(in srgb, var(--accent) 55%, var(--k-well)); }
+  .k-input .ph { color: color-mix(in srgb, var(--text-tertiary) 75%, transparent); }
+  .k-input .sel { background: var(--selection); }
+  .k-input .caret { display: inline-block; width: 1px; height: 15px; background: var(--ink); vertical-align: -3px; }
+  .k-form { width: 420px; display: flex; align-items: center; gap: 8px; height: 32px; font: 400 13px/17px var(--f-chrome); }
+  .k-form > span:first-child { flex: 1; }
+
+  .k-check { display: inline-flex; align-items: center; gap: 8px; font: 400 13px/17px var(--f-chrome); }
+  .k-check i { width: 16px; height: 16px; border-radius: 5px; display: grid; place-items: center; background: var(--bg-secondary); border: 1px solid var(--border); }
+  .k-check.on i { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .k-check.on.hov i { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .k-check.hov:not(.on) i { background: var(--bg-hover); }
+  .k-check.off { opacity: 0.6; }
+  .k-toggle { width: 32px; height: 16px; border-radius: 8px; background: var(--bg-hover); position: relative; flex-shrink: 0; }
+  .k-toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg-primary); }
+  .k-toggle.on { background: var(--accent); }
+  .k-toggle.on::after { left: 18px; background: var(--on-accent); }
+  .k-toggle.off { background: var(--bg-secondary); }
+  .k-toggle.off::after { background: var(--bg-primary); opacity: 0.6; }
+  .k-slider { display: flex; align-items: center; gap: 4px; }
+  .k-slider .rail { position: relative; width: 200px; height: 4px; border-radius: 2px; background: var(--bg-hover); }
+  .k-slider .rail b { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--accent); }
+  .k-slider .rail i { position: absolute; top: -5px; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); transform: translateX(-7px); }
+  .k-slider .v { width: 56px; padding-left: 4px; font: 400 13px/17px var(--f-chrome); color: var(--text-tertiary); }
+
+  .k-select { width: 220px; display: flex; align-items: center; gap: 4px; padding: 5px 8px; border-radius: 5px; font: 500 12px/16px var(--f-chrome);
+    background: color-mix(in srgb, white 3%, var(--bg-secondary)); border: 1px solid color-mix(in srgb, white 7%, var(--bg-secondary)); }
+  .k-select.open { background: color-mix(in srgb, white 4%, var(--bg-hover)); border-color: color-mix(in srgb, white 10%, color-mix(in srgb, white 4%, var(--bg-hover))); }
+  .k-select > span:not(.k-mark) { flex: 1; }
+  .k-mark { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; background: var(--m); border: 1px solid color-mix(in srgb, var(--m) 55%, white); }
+  .k-menu { width: 220px; padding: 4px; border-radius: 10px; background: var(--bg-secondary); box-shadow: inset 0 0 0 1px var(--hairline), 0 2px 10px #00000047; display: flex; flex-direction: column; gap: 2px; }
+  .k-opt { display: flex; align-items: center; gap: 4px; padding: 6px 8px; border-radius: 5px; font: 400 12px/16px var(--f-chrome); }
+  .k-opt > span:not(.k-mark) { flex: 1; }
+  .k-opt.on { background: var(--bg-hover); font-weight: 500; }
+
+  .k-marks { display: grid; grid-template-columns: repeat(5, 1fr); gap: 20px; }
+  .k-markcell { display: flex; flex-direction: column; gap: 10px; }
+  .k-markcell .big { height: 48px; display: flex; align-items: center; gap: 14px; }
+  .spin { animation: spin 0.85s linear infinite; transform-origin: 50% 50%; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .k-badge { display: inline-flex; padding: 3px 8px; border-radius: 999px; font: 500 10px/12px var(--f-chrome); border: 1px solid; }
+  .b-neutral { background: color-mix(in srgb, white 6%, var(--bg-secondary)); color: var(--text-tertiary); border-color: color-mix(in srgb, white 8%, var(--bg-secondary)); }
+  .b-accent { background: color-mix(in srgb, white 6%, var(--bg-secondary)); color: var(--accent); border-color: var(--accent); }
+  .b-tone { background: color-mix(in srgb, var(--c) 14%, var(--bg-secondary)); color: var(--c); border-color: color-mix(in srgb, var(--c) 28%, var(--bg-secondary)); }
+  .k-count { height: 18px; min-width: 18px; padding: 0 6px; border-radius: 999px; display: inline-grid; place-items: center; font: 400 10px/1 var(--f-chrome); color: var(--on-accent);
+    background: linear-gradient(180deg, color-mix(in srgb, white 8%, var(--accent)), var(--accent)); border: 1px solid color-mix(in srgb, white 14%, var(--bg-primary)); }
+  .k-count.one { padding: 0; width: 18px; }
+
+  .k-swatch { width: 56px; height: 56px; border-radius: 7px; background: var(--s); border: 1px solid var(--hairline); }
+  .k-swatch.sm { width: 40px; height: 18px; border-radius: 4px; border-color: #ffffff33; }
+  .k-picker { width: 196px; display: flex; flex-direction: column; gap: 12px; }
+  .k-sv { position: relative; height: 140px; border-radius: 5px; background: linear-gradient(0deg, #000, #0000), linear-gradient(90deg, #fff, hsl(222 96% 72%)); }
+  .k-strip { position: relative; height: 12px; border-radius: 6px; }
+  .k-strip.hue { background: linear-gradient(90deg, red, #ff0, lime, cyan, blue, #f0f, red); }
+  .k-strip.alpha { background: linear-gradient(90deg, #72a3fc00, #72a3fc), repeating-conic-gradient(#555 0 25%, #333 0 50%) 0 0 / 8px 8px; }
+  .k-thumb { position: absolute; width: 14px; height: 14px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #0008; transform: translate(-7px, -7px); }
+  .k-strip .k-thumb { top: 6px; }
+  .k-nums { display: flex; flex-direction: column; gap: 4px; }
+  .k-nums .r { display: flex; align-items: center; gap: 4px; }
+  .k-nums .r > em { width: 28px; font: 400 11px/14px var(--f-chrome); font-style: normal; color: var(--text-tertiary); }
+  .k-nums .k-input { flex: 1; height: 28px; padding: 5px 8px; font-size: 12px; }
+
+  .k-on-pic { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; padding: 22px 24px; border-radius: 12px; background: var(--bg-primary); box-shadow: inset 0 0 0 1px var(--rim-rest); }
+</style>
 </head>
-<body style="padding: 72px">
-<div
-  data-name="04 Controls"
-  style="align-items: flex-start; background-color: var(--bg-primary); display: flex; flex-direction: column; flex-shrink: 0; gap: 36px; height: fit-content; width: 100%"
->
-  <div
-    data-name="Header"
-    style="align-items: flex-start; border-color: var(--hairline); border-style: solid; border-width: 1px 0px 0px 0px; display: flex; flex-direction: column; flex-shrink: 0; gap: 12px; height: 110.5px; margin: -0.5px 0px 0px 0px; padding: 24px 0px 0px 0px; width: 1296px"
-  >
-    <div
-      data-name="Title Row"
-      style="align-items: flex-end; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; width: fit-content"
-    >
-      <div
-        data-name="Number"
-        style="color: var(--accent); font-family: var(--font-mono); font-size: 13px; font-weight: 400; white-space: nowrap"
-      >
-        04
-      </div>
-      <div
-        data-name="Title"
-        style="color: var(--text-primary); font-family: var(--font-display); font-size: 30px; font-weight: 600; letter-spacing: -0.6px; line-height: 30px; white-space: nowrap"
-      >
-        Controls
-      </div>
-    </div>
-    <div
-      data-name="Lead"
-      style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 14px; font-weight: 400; line-height: 22px; width: 760px"
-    >
-      Five button kinds, one primary per group. Every control has rest, hover, pressed, and disabled; disabled halves the alpha of fill and label. Fields sit in an inset well, darker than the canvas, and light their edge cyan on focus.
-    </div>
+<body class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num">04</span><div class="head__title">Controls</div></div>
+    <div class="head__lead">The kit's controls as built: five button kinds and the toolbar icon, fields as inset wells, choices, marks and swatches. Every color on this board is a theme color, so a scheme from the picture re-tints all of it (last section).</div>
   </div>
-  <div
-    data-name="Buttons"
-    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; width: 100%"
-  >
-    <div
-      data-name="Label"
-      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-    >
-      BUTTONS
-    </div>
-    <div
-      data-name="Matrix"
-      style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex-shrink: 0; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 8px 24px; width: 100%"
-    >
-      <div
-        data-name="Head"
-        style="align-items: flex-start; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; height: 35.5px; margin: 0px 0px -0.5px 0px; padding: 10px 0px; width: 1248px"
-      >
-        <div
-          data-name="Kind"
-          style="color: var(--text-tertiary); flex: 1 1 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; min-width: 0; min-height: 0"
-        ></div>
-        <div
-          data-name="Rest"
-          style="color: var(--text-tertiary); flex: 1 1 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; min-width: 0; min-height: 0"
-        >
-          Rest
-        </div>
-        <div
-          data-name="Hover"
-          style="color: var(--text-tertiary); flex: 1 1 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; min-width: 0; min-height: 0"
-        >
-          Hover
-        </div>
-        <div
-          data-name="Pressed"
-          style="color: var(--text-tertiary); flex: 1 1 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; min-width: 0; min-height: 0"
-        >
-          Pressed
-        </div>
-        <div
-          data-name="Disabled"
-          style="color: var(--text-tertiary); flex: 1 1 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; min-width: 0; min-height: 0"
-        >
-          Disabled
-        </div>
-        <div
-          data-name="Small"
-          style="color: var(--text-tertiary); flex: 1 1 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; min-width: 0; min-height: 0"
-        >
-          Small
-        </div>
-      </div>
-      <div
-        data-name="Primary"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; height: 58.5px; margin: 0px 0px -0.5px 0px; padding: 14px 0px; width: 1248px"
-      >
-        <div
-          data-name="Kind"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 13px; font-weight: 400; min-width: 0; min-height: 0"
-        >
-          Primary
-        </div>
-        <div
-          data-name="Rest"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div class="button-primary" data-name="Primary">
-            <div class="button-primary__label">
-              Save
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Hover"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-primary"
-            data-name="Primary"
-            style="background-image: linear-gradient(180deg, #6be0f8 0%, #58dcf6 100%)"
-          >
-            <div class="button-primary__label">
-              Save
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Pressed"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-primary"
-            data-name="Primary"
-            style="background-color: #2995ab; background-image: revert; background-repeat: revert; background-size: revert; box-shadow: revert"
-          >
-            <div class="button-primary__label">
-              Save
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Disabled"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-primary"
-            data-name="Primary"
-            style="background-color: #3dd6f580; background-image: revert; background-repeat: revert; background-size: revert; box-shadow: revert"
-          >
-            <div class="button-primary__label" style="color: #04101880">
-              Save
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Small"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div class="button-primary" data-name="Primary small" style="padding: 5px 11px">
-            <div class="button-primary__label" style="font-size: 12px; line-height: 15px">
-              Save
-            </div>
-          </div>
-        </div>
-      </div>
-      <div
-        data-name="Secondary"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; height: 58.5px; margin: 0px 0px -0.5px 0px; padding: 14px 0px; width: 1248px"
-      >
-        <div
-          data-name="Kind"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 13px; font-weight: 400; min-width: 0; min-height: 0"
-        >
-          Secondary
-        </div>
-        <div
-          data-name="Rest"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div class="button-secondary" data-name="Secondary">
-            <div class="button-secondary__label">
-              Cancel
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Hover"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-secondary"
-            data-name="Secondary"
-            style="background-color: var(--secondary-hover); outline: 1px solid #4a4f5a"
-          >
-            <div class="button-secondary__label">
-              Cancel
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Pressed"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-secondary"
-            data-name="Secondary"
-            style="background-color: var(--bg-secondary); outline: 1px solid var(--hairline)"
-          >
-            <div class="button-secondary__label">
-              Cancel
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Disabled"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-secondary"
-            data-name="Secondary"
-            style="background-color: #1e222b80; outline: 1px solid #393d4480"
-          >
-            <div class="button-secondary__label" style="color: #e9ecf280">
-              Cancel
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Small"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div class="button-secondary" data-name="Secondary small" style="padding: 5px 11px">
-            <div class="button-secondary__label" style="font-size: 12px; line-height: 15px">
-              Cancel
-            </div>
-          </div>
-        </div>
-      </div>
-      <div
-        data-name="Ghost"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; height: 58.5px; margin: 0px 0px -0.5px 0px; padding: 14px 0px; width: 1248px"
-      >
-        <div
-          data-name="Kind"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 13px; font-weight: 400; min-width: 0; min-height: 0"
-        >
-          Ghost
-        </div>
-        <div
-          data-name="Rest"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div class="button-ghost" data-name="Ghost">
-            <div class="button-ghost__label">
-              Revert
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Hover"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div class="button-ghost" data-name="Ghost" style="background-color: var(--ghost-hover)">
-            <div class="button-ghost__label" style="color: var(--text-primary)">
-              Revert
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Pressed"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div class="button-ghost" data-name="Ghost" style="background-color: var(--bg-hover)">
-            <div class="button-ghost__label" style="color: var(--text-primary)">
-              Revert
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Disabled"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div class="button-ghost" data-name="Ghost">
-            <div class="button-ghost__label" style="color: #acb3c280">
-              Revert
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Small"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div class="button-ghost" data-name="Ghost small" style="padding: 5px 11px">
-            <div class="button-ghost__label" style="font-size: 12px; line-height: 15px">
-              Revert
-            </div>
-          </div>
-        </div>
-      </div>
-      <div
-        data-name="Danger"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; height: 58.5px; margin: 0px 0px -0.5px 0px; padding: 14px 0px; width: 1248px"
-      >
-        <div
-          data-name="Kind"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 13px; font-weight: 400; min-width: 0; min-height: 0"
-        >
-          Danger
-        </div>
-        <div
-          data-name="Rest"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div class="button-danger" data-name="Danger">
-            <div class="button-danger__label">
-              Delete
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Hover"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-danger"
-            data-name="Danger"
-            style="background-image: linear-gradient(180deg, #f5959a 0%, #f38a90 100%)"
-          >
-            <div class="button-danger__label">
-              Delete
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Pressed"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-danger"
-            data-name="Danger"
-            style="background-color: #a4545a; background-image: revert; background-repeat: revert; background-size: revert"
-          >
-            <div class="button-danger__label">
-              Delete
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Disabled"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-danger"
-            data-name="Danger"
-            style="background-color: #f0717880; background-image: revert; background-repeat: revert; background-size: revert"
-          >
-            <div class="button-danger__label" style="color: #1a060880">
-              Delete
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Small"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div class="button-danger" data-name="Danger small" style="padding: 5px 11px">
-            <div class="button-danger__label" style="font-size: 12px; line-height: 15px">
-              Delete
-            </div>
-          </div>
-        </div>
-      </div>
-      <div
-        data-name="Danger outline"
-        style="align-items: center; display: flex; flex-shrink: 0; height: fit-content; padding: 14px 0px; width: 100%"
-      >
-        <div
-          data-name="Kind"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 13px; font-weight: 400; min-width: 0; min-height: 0"
-        >
-          Danger outline
-        </div>
-        <div
-          data-name="Rest"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div class="button-danger-outline" data-name="Danger outline">
-            <div class="button-danger-outline__label">
-              Delete…
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Hover"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-danger-outline"
-            data-name="Danger outline"
-            style="background-color: #3c2932; outline: 1px solid #8d4951"
-          >
-            <div class="button-danger-outline__label" style="color: var(--text-primary)">
-              Delete…
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Pressed"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-danger-outline"
-            data-name="Danger outline"
-            style="background-color: #52323a; outline: 1px solid #8d4951"
-          >
-            <div class="button-danger-outline__label" style="color: var(--text-primary)">
-              Delete…
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Disabled"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-danger-outline"
-            data-name="Danger outline"
-            style="background-color: #2b222b80; outline: 1px solid #713e4680"
-          >
-            <div class="button-danger-outline__label" style="color: #f2828880">
-              Delete…
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Small"
-          style="align-items: flex-start; display: flex; flex: 1 1 0; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            class="button-danger-outline"
-            data-name="Danger outline small"
-            style="padding: 5px 11px"
-          >
-            <div class="button-danger-outline__label" style="font-size: 12px; line-height: 15px">
-              Delete…
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div
-      data-name="Note"
-      style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 13px; font-weight: 400; line-height: 20px; width: 860px"
-    >
-      Primary is a cyan fill with a dark label and a soft glow; there is one per group. Secondary is a quiet fill with a strong hairline, never a bare outline. Ghost rests at a muted label and lifts to grey, never to cyan. Destructive actions arm with Danger outline, then confirm with Danger.
-    </div>
+
+  <div class="section">
+    <div class="label">Buttons · labeled 13 px · PAD_CONTROL 7 × 14 · radius 7 · 1:1</div>
+    <div class="k-matrix" id="buttons"></div>
+    <div class="note" style="margin-top:22px;max-width:900px">One <b>Primary</b> per group: the default action. <b>Secondary</b> is a quiet fill with a strong hairline. <b>Ghost</b> rests in muted ink and lifts to grey, never to the accent. Destructive actions arm with <b>Danger outline</b>, then confirm with <b>Danger</b> (<code>confirm_button</code>). Disabled halves every alpha. <code>labeled_sm</code> is 12 px on 5 × 11, for footers, toolbars and section actions.</div>
   </div>
-  <div
-    data-name="Fields and choices"
-    style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 24px; height: fit-content; width: 100%"
-  >
-    <div
-      data-name="Fields"
-      style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
-    >
-      <div
-        data-name="Label"
-        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-      >
-        FIELDS
-      </div>
-      <div
-        data-name="Panel"
-        style="align-items: flex-start; background-color: var(--bg-primary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 24px; width: 100%"
-      >
-        <div
-          data-name="Rest"
-          style="align-items: center; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; width: 100%"
-        >
-          <div
-            data-name="State"
-            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 80px"
-          >
-            Rest
-          </div>
-          <div
-            class="field"
-            style="flex: 1 1 0; min-width: 0; min-height: 0; flex-shrink: revert; width: revert"
-          >
-            <svg
-              class="field__icon"
-              data-icon-name="search"
-              data-icon-set="lucide"
-              viewBox="0 0 13.99993896484375 14"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <path
-                d="M6.00537 1.17578q-0.04102 0.01367-0.23584 0.02734-0.57422 0.07178-1.16211 0.29053-0.58789 0.21533-1.09375 0.5503-0.39307 0.2666-0.74853 0.61181-0.35547 0.3418-0.62207 0.7041-0.646 0.92285-0.86817 2.03028-0.05811 0.28027-0.07861 0.46142-0.02051 0.18115-0.02051 0.57422 0 0.43408 0.02734 0.68018 0.02734 0.24268 0.12647 0.59472 0.19482 0.75537 0.60156 1.43555 0.40674 0.67676 0.96729 1.18262 0.40674 0.3623 0.81689 0.60156 0.41357 0.23926 0.91944 0.43408 1.06299 0.39307 2.21826 0.29395 1.15527-0.09912 2.1499-0.65967 0.12646-0.06836 0.33496-0.2085 0.2085-0.14014 0.29395-0.21191l0.05468-0.05469 1.10743 1.10742q1.12109 1.104 1.20312 1.15528 0.08545 0.04785 0.23926 0.04785 0.15381 0 0.23584-0.03418 0.08545-0.0376 0.18115-0.1333 0.09912-0.09912 0.1333-0.18115 0.0376-0.08545 0.0376-0.23926 0-0.15381-0.05127-0.23584-0.04785-0.08545-1.15186-1.20654l-1.10742-1.10743 0.05469-0.06836q0.05811-0.05469 0.19824-0.25293 0.82373-1.23047 0.89209-2.70703 0.07178-1.47656-0.63916-2.76513-0.5332-0.96729-1.42187-1.64405-0.88867-0.68018-1.95508-0.9331-0.29395-0.06836-0.54004-0.09571-0.24268-0.03076-0.60498-0.04443-0.43408 0-0.49219 0z m0.7417 1.17578q0.37939 0.01367 0.79297 0.14014 0.41357 0.12646 0.78955 0.32129 0.7417 0.39307 1.28857 1.08008 0.54687 0.68359 0.75538 1.49707 0.07178 0.28027 0.09228 0.49902 0.02051 0.21533 0.02051 0.50928 0 0.70068-0.19483 1.30224-0.39307 1.16211-1.33984 1.91065-0.94336 0.74853-2.16016 0.875-0.19824 0.01367-0.49218 0.00683-0.29395-0.00684-0.48877-0.03418-0.5332-0.08545-1.03907-0.30761-0.50244-0.22559-0.93652-0.56055-0.14014-0.12646-0.35205-0.3418-0.2085-0.21875-0.33154-0.37256-0.57422-0.76904-0.7417-1.69531-0.08545-0.43408-0.06494-0.90918 0.02051-0.4751 0.11963-0.89551 0.29395-1.14844 1.18945-1.95849 0.89551-0.81348 2.05762-1.02539 0.18115-0.02734 0.42041-0.04102 0.23926-0.01367 0.34863-0.01367l0.2666 0.01367z"
-                style="fill: var(--text-secondary)"
-              ></path>
-            </svg>
-            <div class="field__placeholder">
-              Search mail
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Hover"
-          style="align-items: center; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; width: 100%"
-        >
-          <div
-            data-name="State"
-            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 80px"
-          >
-            Hover
-          </div>
-          <div
-            class="field"
-            style="flex: 1 1 0; outline: 1px solid #3a3b3d; min-width: 0; min-height: 0; flex-shrink: revert; width: revert"
-          >
-            <svg
-              class="field__icon"
-              data-icon-name="search"
-              data-icon-set="lucide"
-              viewBox="0 0 13.99993896484375 14"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <path
-                d="M6.00537 1.17578q-0.04102 0.01367-0.23584 0.02734-0.57422 0.07178-1.16211 0.29053-0.58789 0.21533-1.09375 0.5503-0.39307 0.2666-0.74853 0.61181-0.35547 0.3418-0.62207 0.7041-0.646 0.92285-0.86817 2.03028-0.05811 0.28027-0.07861 0.46142-0.02051 0.18115-0.02051 0.57422 0 0.43408 0.02734 0.68018 0.02734 0.24268 0.12647 0.59472 0.19482 0.75537 0.60156 1.43555 0.40674 0.67676 0.96729 1.18262 0.40674 0.3623 0.81689 0.60156 0.41357 0.23926 0.91944 0.43408 1.06299 0.39307 2.21826 0.29395 1.15527-0.09912 2.1499-0.65967 0.12646-0.06836 0.33496-0.2085 0.2085-0.14014 0.29395-0.21191l0.05468-0.05469 1.10743 1.10742q1.12109 1.104 1.20312 1.15528 0.08545 0.04785 0.23926 0.04785 0.15381 0 0.23584-0.03418 0.08545-0.0376 0.18115-0.1333 0.09912-0.09912 0.1333-0.18115 0.0376-0.08545 0.0376-0.23926 0-0.15381-0.05127-0.23584-0.04785-0.08545-1.15186-1.20654l-1.10742-1.10743 0.05469-0.06836q0.05811-0.05469 0.19824-0.25293 0.82373-1.23047 0.89209-2.70703 0.07178-1.47656-0.63916-2.76513-0.5332-0.96729-1.42187-1.64405-0.88867-0.68018-1.95508-0.9331-0.29395-0.06836-0.54004-0.09571-0.24268-0.03076-0.60498-0.04443-0.43408 0-0.49219 0z m0.7417 1.17578q0.37939 0.01367 0.79297 0.14014 0.41357 0.12646 0.78955 0.32129 0.7417 0.39307 1.28857 1.08008 0.54687 0.68359 0.75538 1.49707 0.07178 0.28027 0.09228 0.49902 0.02051 0.21533 0.02051 0.50928 0 0.70068-0.19483 1.30224-0.39307 1.16211-1.33984 1.91065-0.94336 0.74853-2.16016 0.875-0.19824 0.01367-0.49218 0.00683-0.29395-0.00684-0.48877-0.03418-0.5332-0.08545-1.03907-0.30761-0.50244-0.22559-0.93652-0.56055-0.14014-0.12646-0.35205-0.3418-0.2085-0.21875-0.33154-0.37256-0.57422-0.76904-0.7417-1.69531-0.08545-0.43408-0.06494-0.90918 0.02051-0.4751 0.11963-0.89551 0.29395-1.14844 1.18945-1.95849 0.89551-0.81348 2.05762-1.02539 0.18115-0.02734 0.42041-0.04102 0.23926-0.01367 0.34863-0.01367l0.2666 0.01367z"
-                style="fill: var(--text-secondary)"
-              ></path>
-            </svg>
-            <div class="field__placeholder">
-              Search mail
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Focused"
-          style="align-items: center; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; width: 100%"
-        >
-          <div
-            data-name="State"
-            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 80px"
-          >
-            Focused
-          </div>
-          <div
-            class="field-focused"
-            data-name="Field"
-            style="flex: 1 1 0; min-width: 0; min-height: 0; flex-shrink: revert; width: revert"
-          >
-            <svg
-              class="field-focused__icon"
-              data-icon-name="search"
-              data-icon-set="lucide"
-              viewBox="0 0 13.99993896484375 14"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <path
-                d="M6.00537 1.17578q-0.04102 0.01367-0.23584 0.02734-0.57422 0.07178-1.16211 0.29053-0.58789 0.21533-1.09375 0.5503-0.39307 0.2666-0.74853 0.61181-0.35547 0.3418-0.62207 0.7041-0.646 0.92285-0.86817 2.03028-0.05811 0.28027-0.07861 0.46142-0.02051 0.18115-0.02051 0.57422 0 0.43408 0.02734 0.68018 0.02734 0.24268 0.12647 0.59472 0.19482 0.75537 0.60156 1.43555 0.40674 0.67676 0.96729 1.18262 0.40674 0.3623 0.81689 0.60156 0.41357 0.23926 0.91944 0.43408 1.06299 0.39307 2.21826 0.29395 1.15527-0.09912 2.1499-0.65967 0.12646-0.06836 0.33496-0.2085 0.2085-0.14014 0.29395-0.21191l0.05468-0.05469 1.10743 1.10742q1.12109 1.104 1.20312 1.15528 0.08545 0.04785 0.23926 0.04785 0.15381 0 0.23584-0.03418 0.08545-0.0376 0.18115-0.1333 0.09912-0.09912 0.1333-0.18115 0.0376-0.08545 0.0376-0.23926 0-0.15381-0.05127-0.23584-0.04785-0.08545-1.15186-1.20654l-1.10742-1.10743 0.05469-0.06836q0.05811-0.05469 0.19824-0.25293 0.82373-1.23047 0.89209-2.70703 0.07178-1.47656-0.63916-2.76513-0.5332-0.96729-1.42187-1.64405-0.88867-0.68018-1.95508-0.9331-0.29395-0.06836-0.54004-0.09571-0.24268-0.03076-0.60498-0.04443-0.43408 0-0.49219 0z m0.7417 1.17578q0.37939 0.01367 0.79297 0.14014 0.41357 0.12646 0.78955 0.32129 0.7417 0.39307 1.28857 1.08008 0.54687 0.68359 0.75538 1.49707 0.07178 0.28027 0.09228 0.49902 0.02051 0.21533 0.02051 0.50928 0 0.70068-0.19483 1.30224-0.39307 1.16211-1.33984 1.91065-0.94336 0.74853-2.16016 0.875-0.19824 0.01367-0.49218 0.00683-0.29395-0.00684-0.48877-0.03418-0.5332-0.08545-1.03907-0.30761-0.50244-0.22559-0.93652-0.56055-0.14014-0.12646-0.35205-0.3418-0.2085-0.21875-0.33154-0.37256-0.57422-0.76904-0.7417-1.69531-0.08545-0.43408-0.06494-0.90918 0.02051-0.4751 0.11963-0.89551 0.29395-1.14844 1.18945-1.95849 0.89551-0.81348 2.05762-1.02539 0.18115-0.02734 0.42041-0.04102 0.23926-0.01367 0.34863-0.01367l0.2666 0.01367z"
-                style="fill: var(--text-secondary)"
-              ></path>
-            </svg>
-            <div class="field-focused__value">
-              <div class="field-focused__text">
-                invoice
-              </div>
-              <div class="field-focused__caret"></div>
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Disabled"
-          style="align-items: center; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; width: 100%"
-        >
-          <div
-            data-name="State"
-            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 80px"
-          >
-            Disabled
-          </div>
-          <div
-            class="field"
-            style="flex: 1 1 0; opacity: 0.6; min-width: 0; min-height: 0; flex-shrink: revert; width: revert"
-          >
-            <svg
-              class="field__icon"
-              data-icon-name="search"
-              data-icon-set="lucide"
-              viewBox="0 0 13.99993896484375 14"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <path
-                d="M6.00537 1.17578q-0.04102 0.01367-0.23584 0.02734-0.57422 0.07178-1.16211 0.29053-0.58789 0.21533-1.09375 0.5503-0.39307 0.2666-0.74853 0.61181-0.35547 0.3418-0.62207 0.7041-0.646 0.92285-0.86817 2.03028-0.05811 0.28027-0.07861 0.46142-0.02051 0.18115-0.02051 0.57422 0 0.43408 0.02734 0.68018 0.02734 0.24268 0.12647 0.59472 0.19482 0.75537 0.60156 1.43555 0.40674 0.67676 0.96729 1.18262 0.40674 0.3623 0.81689 0.60156 0.41357 0.23926 0.91944 0.43408 1.06299 0.39307 2.21826 0.29395 1.15527-0.09912 2.1499-0.65967 0.12646-0.06836 0.33496-0.2085 0.2085-0.14014 0.29395-0.21191l0.05468-0.05469 1.10743 1.10742q1.12109 1.104 1.20312 1.15528 0.08545 0.04785 0.23926 0.04785 0.15381 0 0.23584-0.03418 0.08545-0.0376 0.18115-0.1333 0.09912-0.09912 0.1333-0.18115 0.0376-0.08545 0.0376-0.23926 0-0.15381-0.05127-0.23584-0.04785-0.08545-1.15186-1.20654l-1.10742-1.10743 0.05469-0.06836q0.05811-0.05469 0.19824-0.25293 0.82373-1.23047 0.89209-2.70703 0.07178-1.47656-0.63916-2.76513-0.5332-0.96729-1.42187-1.64405-0.88867-0.68018-1.95508-0.9331-0.29395-0.06836-0.54004-0.09571-0.24268-0.03076-0.60498-0.04443-0.43408 0-0.49219 0z m0.7417 1.17578q0.37939 0.01367 0.79297 0.14014 0.41357 0.12646 0.78955 0.32129 0.7417 0.39307 1.28857 1.08008 0.54687 0.68359 0.75538 1.49707 0.07178 0.28027 0.09228 0.49902 0.02051 0.21533 0.02051 0.50928 0 0.70068-0.19483 1.30224-0.39307 1.16211-1.33984 1.91065-0.94336 0.74853-2.16016 0.875-0.19824 0.01367-0.49218 0.00683-0.29395-0.00684-0.48877-0.03418-0.5332-0.08545-1.03907-0.30761-0.50244-0.22559-0.93652-0.56055-0.14014-0.12646-0.35205-0.3418-0.2085-0.21875-0.33154-0.37256-0.57422-0.76904-0.7417-1.69531-0.08545-0.43408-0.06494-0.90918 0.02051-0.4751 0.11963-0.89551 0.29395-1.14844 1.18945-1.95849 0.89551-0.81348 2.05762-1.02539 0.18115-0.02734 0.42041-0.04102 0.23926-0.01367 0.34863-0.01367l0.2666 0.01367z"
-                style="fill: var(--text-secondary)"
-              ></path>
-            </svg>
-            <div class="field__placeholder">
-              Search mail
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Error"
-          style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; width: 100%"
-        >
-          <div
-            data-name="State"
-            style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; font-weight: 400; width: 80px"
-          >
-            Error
-          </div>
-          <div
-            data-name="Field + caption"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 6px; height: fit-content; min-width: 0; min-height: 0"
-          >
-            <div class="field" style="outline: 1px solid var(--danger-outline-edge); width: 100%">
-              <svg
-                class="field__icon"
-                data-icon-name="at-sign"
-                data-icon-set="lucide"
-                viewBox="0 0 13.99993896484375 14"
-                preserveAspectRatio="xMidYMid meet"
-              >
-                <path
-                  d="M6.66504 0.60156q-1.50049 0.07178-2.80274 0.79981-1.27148 0.71436-2.1123 1.91748-0.85449 1.2168-1.09033 2.70019-0.07178 0.46143-0.07178 0.99463 0 0.67334 0.12647 1.28858 0.30762 1.44238 1.18945 2.59765 0.88184 1.15527 2.18408 1.81153 1.09375 0.56055 2.29688 0.68017 1.20313 0.11963 2.3789-0.21875 0.99463-0.29395 1.83545-0.86816 0.19482-0.12305 0.27686-0.20166 0.08545-0.07861 0.12646-0.15381 0.04443-0.07861 0.05811-0.11963 0.01367-0.04102 0.01367-0.15381 0-0.11279-0.01367-0.16064-0.01367-0.04785-0.04102-0.10596-0.08545-0.18115-0.25293-0.26318-0.16748-0.08545-0.36572-0.05811-0.08203 0.01367-0.14697 0.05127-0.06152 0.03418-0.20166 0.12988-1.07666 0.77246-2.47803 0.95362-0.18115 0.01367-0.61524 0.01367-0.35205 0-0.59814-0.02051-0.24268-0.02051-0.53662-0.09228-0.98096-0.23584-1.80127-0.80323-0.81689-0.56738-1.37744-1.39453-0.68701-1.0083-0.85449-2.2832-0.02734-0.22217-0.02735-0.64258 0-0.42041 0.02735-0.65967 0.18457-1.31592 0.92627-2.37207 0.7417-1.05615 1.91748-1.65771 0.78271-0.39307 1.72265-0.51953 0.19482-0.02734 0.59815-0.02735 0.40674 0 0.61865 0.01367 0.89551 0.11279 1.69189 0.49219 0.7998 0.37598 1.42871 1.0083 0.63232 0.62891 1.01514 1.40479 0.38623 0.77588 0.49902 1.6748 0.02734 0.23584 0.02735 0.8374 0 0.50586-0.01367 0.63233-0.01367 0.12646-0.1128 0.29394-0.05469 0.10938-0.16748 0.23584-0.11279 0.12646-0.21191 0.19825-0.22217 0.15381-0.48877 0.18798-0.2666 0.03418-0.51953-0.04785-0.24951-0.08545-0.46143-0.28711-0.2085-0.20508-0.29394-0.45459-0.02734-0.09912-0.02735-0.31103l-0.01367-1.45606q-0.01367-1.65088-0.04101-1.70556-0.07178-0.18457-0.21192-0.28711-0.14014-0.10596-0.32129-0.10596-0.12646 0-0.1914 0.02051-0.06152 0.02051-0.14698 0.07861-0.08203 0.05469-0.12988 0.11963-0.04785 0.06152-0.09228 0.16065-0.04102 0.0957-0.04102 0.1538l0 0.05469-0.06836-0.05469q-0.09912-0.07178-0.29736-0.17431-0.19482-0.10596-0.34864-0.16407-0.42041-0.16748-0.90234-0.18798-0.48193-0.02051-0.90234 0.09228-0.77246 0.22217-1.31934 0.78272-0.54346 0.56055-0.73828 1.31591-0.08545 0.33496-0.08545 0.71436 0 0.37939 0.08545 0.71436 0.18115 0.70068 0.67676 1.24755 0.49902 0.54346 1.18261 0.78272 0.25293 0.0957 0.46143 0.1333 0.21191 0.03418 0.50586 0.03418 0.34863 0 0.62207-0.06152 0.27344-0.06494 0.59473-0.20508 0.42041-0.19482 0.81347-0.56055l0.15381-0.14014 0.11279 0.12647q0.37598 0.4751 0.94336 0.68701 0.56738 0.2085 1.16211 0.1333 0.59473-0.07861 1.08692-0.45459 0.68359-0.51953 0.88183-1.41504 0.02734-0.12646 0.03418-0.24267 0.00684-0.11963 0.00684-0.58106 0-0.46484-0.01367-0.67334-0.01367-0.21191-0.05811-0.50586-0.26318-1.69189-1.33642-3.02832-1.06982-1.33984-2.67969-1.96875-0.93994-0.3623-1.87647-0.42041-0.4751-0.02734-0.78271 0z m0.60156 4.67578q0.40674 0.05811 0.74854 0.3042 0.3418 0.24268 0.52636 0.60498 0.14014 0.28027 0.18116 0.54688 0.04102 0.2666 0 0.5332-0.08545 0.54688-0.46485 0.93994-0.37598 0.38965-0.92285 0.50244-0.4751 0.0957-0.92285-0.06494-0.44775-0.16064-0.75537-0.52978-0.30762-0.37256-0.3794-0.84766-0.04102-0.2666 0-0.5332 0.08545-0.56055 0.48194-0.96387 0.3999-0.40674 0.96045-0.49219 0.2666-0.04102 0.54687 0z"
-                  style="fill: var(--text-secondary)"
-                ></path>
-              </svg>
-              <div class="field__placeholder" style="color: var(--text-primary)">
-                joshua@
-              </div>
-            </div>
-            <div
-              data-name="Caption"
-              style="color: var(--danger); font-family: var(--font-ui); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              Needs a domain, like name@example.com
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div
-      data-name="Choices"
-      style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
-    >
-      <div
-        data-name="Label"
-        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-      >
-        CHOICES
-      </div>
-      <div
-        data-name="Panel"
-        style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex-shrink: 0; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 8px 24px; width: 100%"
-      >
-        <div
-          data-name="Launch at session start"
-          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 55.5px; margin: 0px 0px -0.5px 0px; padding: 12px 0px; width: 588px"
-        >
-          <div
-            data-name="Text"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 2px; height: fit-content; min-width: 0; min-height: 0"
-          >
-            <div
-              data-name="Label"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 400; white-space: nowrap"
-            >
-              Launch at session start
-            </div>
-            <div
-              data-name="Kind"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              Starts after the bus and the shell
-            </div>
-          </div>
-          <div class="toggle-on" data-name="Toggle on">
-            <div class="toggle-on__knob"></div>
-          </div>
-        </div>
-        <div
-          data-name="Show seconds in the clock"
-          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 55.5px; margin: 0px 0px -0.5px 0px; padding: 12px 0px; width: 588px"
-        >
-          <div
-            data-name="Text"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 2px; height: fit-content; min-width: 0; min-height: 0"
-          >
-            <div
-              data-name="Label"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 400; white-space: nowrap"
-            >
-              Show seconds in the clock
-            </div>
-            <div
-              data-name="Kind"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              Menubar clock reads 14:32:07
-            </div>
-          </div>
-          <div class="toggle-off" data-name="Toggle off">
-            <div class="toggle-off__knob"></div>
-          </div>
-        </div>
-        <div
-          data-name="Unread count on the switcher"
-          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 55.5px; margin: 0px 0px -0.5px 0px; padding: 12px 0px; width: 588px"
-        >
-          <div
-            data-name="Text"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 2px; height: fit-content; min-width: 0; min-height: 0"
-          >
-            <div
-              data-name="Label"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 400; white-space: nowrap"
-            >
-              Unread count on the switcher
-            </div>
-            <div
-              data-name="Kind"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              A count mark on the Mail icon in Super+Tab
-            </div>
-          </div>
-          <div class="checkbox-on" data-name="Checked">
-            <svg
-              class="checkbox-on__check"
-              data-icon-name="check"
-              data-icon-set="lucide"
-              viewBox="0 0 13.99993896484375 14"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <path
-                d="M11.48096 2.95313q-0.07178 0.01367-0.12989 0.0581-0.05469 0.04102-3.07617 3.06592l-3.0249 3.00781-1.28857-1.28857q-1.28857-1.28516-1.38086-1.32618-0.08887-0.04443-0.22217-0.04443-0.1333 0-0.23242 0.0376-0.0957 0.03418-0.18799 0.11279-0.08887 0.0752-0.1333 0.1709-0.02734 0.07178-0.03418 0.11279-0.00684 0.04102-0.00684 0.14014l0 0.04102q-0.01367 0.11279 0.04102 0.19824 0.07178 0.10938 0.36572 0.40332 0.19482 0.21191 0.96729 0.98096l1.49707 1.48339q0.28027 0.2666 0.38964 0.33838 0.07178 0.05469 0.18457 0.04102l0.09571 0.01367q0.07178 0 0.14013-0.02734 0.08545-0.07178 0.32129-0.28711 0.23926-0.21875 0.79981-0.76221l2.2832-2.2832q2.08496-2.09863 2.7002-2.71387 0.61524-0.61865 0.64599-0.68701 0.04102-0.08545 0.04102-0.23926 0-0.09912-0.00684-0.14014-0.00684-0.04102-0.03418-0.11279-0.04443-0.08203-0.13672-0.16406-0.08887-0.08545-0.18115-0.11963-0.08887-0.0376-0.20849-0.0376-0.11963 0-0.18799 0.02734z"
-                style="fill: var(--on-accent)"
-              ></path>
-            </svg>
-          </div>
-        </div>
-        <div
-          data-name="Mark read when opened"
-          style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 16px; height: 55.5px; margin: 0px 0px -0.5px 0px; padding: 12px 0px; width: 588px"
-        >
-          <div
-            data-name="Text"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 2px; height: fit-content; min-width: 0; min-height: 0"
-          >
-            <div
-              data-name="Label"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 400; white-space: nowrap"
-            >
-              Mark read when opened
-            </div>
-            <div
-              data-name="Kind"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              After two seconds in the reader
-            </div>
-          </div>
-          <div class="checkbox-off" data-name="Unchecked"></div>
-        </div>
-        <div
-          data-name="Profile"
-          style="align-items: center; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; padding: 12px 0px; width: 100%"
-        >
-          <div
-            data-name="Text"
-            style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 2px; height: fit-content; min-width: 0; min-height: 0"
-          >
-            <div
-              data-name="Label"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 400; white-space: nowrap"
-            >
-              Profile
-            </div>
-            <div
-              data-name="Kind"
-              style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 11px; font-weight: 400; white-space: nowrap"
-            >
-              Browser profile this wrapper opens in
-            </div>
-          </div>
-          <div class="select">
-            <div class="identity-mark" data-name="Mark" style="height: 12px; width: 12px"></div>
-            <div class="select__label">
-              Personal
-            </div>
-            <svg
-              class="select__chevron"
-              data-icon-name="chevrons-up-down"
-              data-icon-set="lucide"
-              viewBox="0 0 13.99993896484375 14"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <path
-                d="M6.84619 1.77734q-0.08545 0.01367-0.14697 0.05811-0.06152 0.04102-1.58936 1.56543l-1.21679 1.23389q-0.28027 0.28027-0.33838 0.38964-0.05469 0.07178-0.04102 0.18457l0 0.05469q0 0.14014 0.04102 0.23926 0.09912 0.19482 0.31445 0.28027 0.21875 0.08203 0.42725 0.01367 0.07178-0.02734 0.27343-0.22216 0.20508-0.19824 1.12793-1.1211l1.30225-1.28857 1.30225 1.28857q0.92285 0.92285 1.12451 1.1211 0.20508 0.19482 0.27685 0.22216 0.2085 0.06836 0.42383-0.01367 0.21875-0.08545 0.31787-0.28027 0.04102-0.09912 0.04102-0.23926l0-0.05469q0.01367-0.11279-0.04102-0.18457-0.0581-0.10938-0.33838-0.38964l-1.21679-1.23389q-1.5415-1.53809-1.63379-1.58594-0.08887-0.05127-0.2085-0.0581-0.11621-0.00684-0.20166 0.0205z m-2.9668 6.42579q-0.09912 0.04443-0.1914 0.12988-0.08887 0.08203-0.12647 0.16064-0.03418 0.0752-0.04101 0.11621-0.00684 0.04102-0.00684 0.14014l0 0.04102q-0.01367 0.11279 0.04102 0.19824 0.07178 0.10938 0.36572 0.40332 0.19482 0.21191 0.96729 0.98096l1.49707 1.48339q0.28027 0.2666 0.38964 0.33838 0.07178 0.05469 0.18457 0.04102l0.08204 0q0.11279 0.01367 0.18457-0.04102 0.10938-0.07178 0.38964-0.33838l1.49707-1.48339q0.77246-0.76904 0.96729-0.98096 0.29395-0.29395 0.36572-0.40332 0.05469-0.08545 0.04102-0.19824l0-0.04102q0-0.09912-0.00684-0.14014-0.00684-0.04102-0.03418-0.11279-0.04443-0.0957-0.13672-0.1709-0.08887-0.07861-0.18799-0.11279-0.0957-0.0376-0.229-0.0376-0.1333 0-0.22558 0.04443-0.08887 0.04102-1.37745 1.32618l-1.28857 1.28857-1.28857-1.28857q-1.28857-1.28516-1.38086-1.32618-0.08887-0.04443-0.22901-0.04443-0.14014 0-0.22217 0.02735z"
-                style="fill: var(--text-secondary)"
-              ></path>
-            </svg>
-          </div>
-        </div>
-      </div>
-    </div>
+
+  <div class="section">
+    <div class="label">Fields · the inset well · 1:1</div>
+    <div class="k-row" id="fields"></div>
   </div>
-  <div
-    data-name="Marks"
-    style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 24px; height: fit-content; width: 100%"
-  >
-    <div
-      data-name="Status marks: shape first"
-      style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; width: 760px"
-    >
-      <div
-        data-name="Label"
-        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-      >
-        STATUS MARKS: SHAPE FIRST
-      </div>
-      <div
-        data-name="Panel"
-        style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-shrink: 0; gap: 20px; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 24px; width: 100%"
-      >
-        <div
-          data-name="Working"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            data-name="Big"
-            style="flex-shrink: 0; height: 48px; position: relative; width: 48px"
-          >
-            <div
-              data-name="Ring"
-              style="background-color: var(--accent); clip-path: path('M38.218 12.124 C35.098 4.774 27.886 0 19.9 0 C8.91 0 0 8.91 0 19.9 C0 30.89 8.91 39.8 19.9 39.8 C21.291 39.8 22.677 39.654 24.037 39.365 L22.672 32.942 C21.761 33.135 20.832 33.233 19.9 33.233 C12.536 33.233 6.567 27.264 6.567 19.9 C6.567 12.536 12.536 6.567 19.9 6.567 C25.25 6.567 30.083 9.765 32.173 14.69 L38.218 12.124 Z'); height: 39.8px; left: 4.12px; position: absolute; top: 4.12px; width: 39.8px; z-index: 0"
-            ></div>
-          </div>
-          <div
-            data-name="Actual"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 6px; height: fit-content; width: fit-content"
-          >
-            <div class="status-working" data-name="1:1">
-              <div class="status-working__ring"></div>
-            </div>
-            <div
-              data-name="Name"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; white-space: nowrap"
-            >
-              Working
-            </div>
-          </div>
-          <div
-            data-name="Shape"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-          >
-            Ring, accent, spins every 0.85s
-          </div>
-          <div
-            data-name="Meaning"
-            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-          >
-            An agent is producing
-          </div>
-        </div>
-        <div
-          data-name="Waiting"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            data-name="Big"
-            style="flex-shrink: 0; height: 48px; position: relative; width: 48px"
-          >
-            <div
-              data-name="Diamond"
-              style="background-color: var(--warning); clip-path: path('M16.8 0 L33.6 16.8 L16.8 33.6 L0 16.8 L16.8 0 Z'); height: 33.6px; left: 7.2px; position: absolute; top: 7.2px; width: 33.6px; z-index: 0"
-            ></div>
-          </div>
-          <div
-            data-name="Actual"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 6px; height: fit-content; width: fit-content"
-          >
-            <div class="status-waiting" data-name="1:1">
-              <div class="status-waiting__diamond"></div>
-            </div>
-            <div
-              data-name="Name"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; white-space: nowrap"
-            >
-              Waiting
-            </div>
-          </div>
-          <div
-            data-name="Shape"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-          >
-            Diamond, warning
-          </div>
-          <div
-            data-name="Meaning"
-            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-          >
-            Needs your answer
-          </div>
-        </div>
-        <div
-          data-name="Done"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            data-name="Big"
-            style="flex-shrink: 0; height: 48px; position: relative; width: 48px"
-          >
-            <svg
-              data-name="Check"
-              viewBox="0 0 8 6.4"
-              preserveAspectRatio="none"
-              style="height: 25.6px; left: 8px; overflow: visible; position: absolute; top: 10.4px; width: 32px; z-index: 0"
-            >
-              <path
-                d="M0.6 3.4 L3 5.6 L7.4 0.8"
-                fill="none"
-                stroke-width="6.6"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                vector-effect="non-scaling-stroke"
-                style="stroke: var(--success)"
-              ></path>
-            </svg>
-          </div>
-          <div
-            data-name="Actual"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 6px; height: fit-content; width: fit-content"
-          >
-            <div class="status-done" data-name="1:1">
-              <svg class="status-done__check" viewBox="0 0 8 6.4" preserveAspectRatio="none">
-                <path
-                  d="M0.6 3.4 L3 5.6 L7.4 0.8"
-                  fill="none"
-                  stroke-width="1.65"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  vector-effect="non-scaling-stroke"
-                  style="stroke: var(--success)"
-                ></path>
-              </svg>
-            </div>
-            <div
-              data-name="Name"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; white-space: nowrap"
-            >
-              Done
-            </div>
-          </div>
-          <div
-            data-name="Shape"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-          >
-            Check, success
-          </div>
-          <div
-            data-name="Meaning"
-            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-          >
-            Finished since you looked
-          </div>
-        </div>
-        <div
-          data-name="Active"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            data-name="Big"
-            style="flex-shrink: 0; height: 48px; position: relative; width: 48px"
-          >
-            <div
-              data-name="Dot"
-              style="background-color: var(--success); border-radius: 50%; height: 24px; left: 12px; position: absolute; top: 12px; width: 24px; z-index: 0"
-            ></div>
-          </div>
-          <div
-            data-name="Actual"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 6px; height: fit-content; width: fit-content"
-          >
-            <div class="status-active" data-name="1:1">
-              <div class="status-active__dot"></div>
-            </div>
-            <div
-              data-name="Name"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; white-space: nowrap"
-            >
-              Active
-            </div>
-          </div>
-          <div
-            data-name="Shape"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-          >
-            Dot 6px, success
-          </div>
-          <div
-            data-name="Meaning"
-            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-          >
-            Generic live row
-          </div>
-        </div>
-        <div
-          data-name="Idle"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 10px; height: fit-content; min-width: 0; min-height: 0"
-        >
-          <div
-            data-name="Big"
-            style="flex-shrink: 0; height: 48px; position: relative; width: 48px"
-          >
-            <div
-              data-name="Dot"
-              style="background-color: #e9ecf266; border-radius: 50%; height: 18px; left: 15px; position: absolute; top: 15px; width: 18px; z-index: 0"
-            ></div>
-          </div>
-          <div
-            data-name="Actual"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 6px; height: fit-content; width: fit-content"
-          >
-            <div class="status-idle" data-name="1:1">
-              <div class="status-idle__dot"></div>
-            </div>
-            <div
-              data-name="Name"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; white-space: nowrap"
-            >
-              Idle
-            </div>
-          </div>
-          <div
-            data-name="Shape"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; font-weight: 400; white-space: nowrap"
-          >
-            Dot 4.5px, text 40%
-          </div>
-          <div
-            data-name="Meaning"
-            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 100%"
-          >
-            Slot kept, nothing to say
-          </div>
-        </div>
-      </div>
-    </div>
-    <div
-      data-name="Badges and counts"
-      style="align-items: flex-start; display: flex; flex-direction: column; flex: 1 1 0; gap: 14px; height: fit-content; min-width: 0; min-height: 0"
-    >
-      <div
-        data-name="Label"
-        style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-      >
-        BADGES AND COUNTS
-      </div>
-      <div
-        data-name="Panel"
-        style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex-shrink: 0; gap: 20px; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 24px; width: 100%"
-      >
-        <div
-          data-name="Badges"
-          style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
-        >
-          <div class="badge-neutral" data-name="Badge">
-            <div class="badge-neutral__label">
-              Draft
-            </div>
-          </div>
-          <div class="badge-accent" data-name="Badge">
-            <div class="badge-accent__label">
-              Live
-            </div>
-          </div>
-          <div class="badge-success" data-name="Badge">
-            <div class="badge-success__label">
-              Synced
-            </div>
-          </div>
-          <div class="badge-warning" data-name="Badge">
-            <div class="badge-warning__label">
-              Waiting
-            </div>
-          </div>
-          <div class="badge-danger" data-name="Badge">
-            <div class="badge-danger__label">
-              Failed
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Counts"
-          style="align-items: center; display: flex; flex-shrink: 0; gap: 28px; height: fit-content; width: fit-content"
-        >
-          <div
-            data-name="Icon with count"
-            style="flex-shrink: 0; height: 64px; position: relative; width: 64px"
-          >
-            <div
-              class="app-icon"
-              style="height: 60px; left: 0px; position: absolute; top: 4px; width: 60px; z-index: 0; flex-shrink: revert"
-            >
-              <svg
-                class="app-icon__glyph"
-                data-icon-name="mail"
-                data-icon-set="lucide"
-                viewBox="0 0 13.99993896484375 14"
-                preserveAspectRatio="xMidYMid meet"
-                style="height: 30px; width: 30px"
-              >
-                <path
-                  d="M2.05762 1.77734q-0.28027 0.04102-0.53321 0.16748-0.34863 0.19824-0.58789 0.50586-0.23584 0.30762-0.32129 0.70069-0.01367 0.10938-0.02734 0.66992l0 3.17871 0 3.17871q0.01367 0.56055 0.02734 0.66992 0.11279 0.5332 0.50245 0.90577 0.39307 0.36914 0.92627 0.46826 0.16748 0.02734 4.95605 0.02734 4.78857 0 4.95605-0.02734 0.5332-0.09912 0.92286-0.46826 0.39307-0.37256 0.50586-0.90577 0.01367-0.10938 0.02734-0.66992l0-3.17871 0-3.17871q-0.01367-0.56055-0.02734-0.66992-0.12647-0.54688-0.53321-0.92285-0.40674-0.37939-0.95019-0.46485-0.1709-0.01367-4.93897-0.01367-4.76465 0-4.90478 0.02734z m9.81298 1.17579q0.09912 0.04443 0.18116 0.12304 0.08545 0.0752 0.12646 0.16065 0.04443 0.08203 0.05127 0.12988 0.00684 0.04785 0.00684 0.18799l0 0.21191-2.46436 1.58252q-2.46436 1.56543-2.53613 1.60303-0.06836 0.03418-0.16748 0.03418l-0.02734 0.01367q-0.0957 0.01367-0.2085-0.04102-0.15381-0.07178-0.65967-0.37939l-4.40918-2.81299 0-0.21191q0-0.14014 0.00684-0.18799 0.00684-0.04785 0.04101-0.12305 0.0376-0.07861 0.12647-0.16064 0.09229-0.08545 0.16748-0.1128 0.07861-0.03076 0.70752-0.04443l4.18701 0 4.18701 0q0.61523 0 0.68359 0.02735z m-5.63964 5.02783q0.22217 0.10938 0.46142 0.15381 0.09912 0.02734 0.30762 0.02734 0.2085 0 0.30762-0.02734 0.30762-0.05811 0.54687-0.19825 0.14014-0.08203 2.26612-1.42529l2.12939-1.36035-0.01367 5.50293-0.04102 0.09912q-0.11279 0.2085-0.3247 0.29395l-0.09571 0.02734-9.5498 0-0.09571-0.02734q-0.21191-0.08545-0.3247-0.29395l-0.04102-0.09912-0.01367-5.50293 2.17041 1.37402q2.17041 1.38428 2.31055 1.45606z"
-                  style="fill: var(--text-primary)"
-                ></path>
-              </svg>
-            </div>
-            <div
-              class="count-mark"
-              data-name="Count"
-              style="left: 44px; position: absolute; top: 0px; z-index: 1; flex-shrink: revert"
-            >
-              <div class="count-mark__count">
-                12
-              </div>
-            </div>
-          </div>
-          <div
-            data-name="Icon with count"
-            style="flex-shrink: 0; height: 64px; position: relative; width: 64px"
-          >
-            <div
-              class="app-icon"
-              style="height: 60px; left: 0px; position: absolute; top: 4px; width: 60px; z-index: 0; flex-shrink: revert"
-            >
-              <svg
-                class="app-icon__glyph"
-                data-icon-name="message-circle"
-                data-icon-set="lucide"
-                viewBox="0 0 13.99993896484375 14"
-                preserveAspectRatio="xMidYMid meet"
-                style="height: 30px; width: 30px"
-              >
-                <path
-                  d="M6.80518 0.58789q-0.5332 0.01367-1.10059 0.1333-0.56738 0.11963-1.06982 0.31445-1.3877 0.56055-2.396 1.67481-1.0083 1.11084-1.41162 2.55322-0.30762 1.09375-0.22559 2.21485 0.08545 1.11768 0.54688 2.15332l0.01367 0.04101q0.06836 0.14014 0.07519 0.22559 0.01025 0.08203-0.04785 0.29394-0.04102 0.15381-0.20849 0.66992l-0.05811 0.14014q-0.30762 0.98096-0.33496 1.1211-0.01367 0.16748 0.02734 0.37255 0.04443 0.20166 0.14014 0.35547 0.05811 0.09912 0.17432 0.21875 0.11963 0.11621 0.21875 0.17432 0.16748 0.0957 0.3623 0.14014 0.19824 0.04101 0.3794 0.02734 0.12646-0.02734 1.14843-0.32129l0.14014-0.04443q0.54688-0.15381 0.70068-0.19483 0.22217-0.05469 0.29737-0.04785 0.07861 0.00684 0.20508 0.06152l0.02734 0.01368q0.88184 0.37939 1.97559 0.50586 0.16748 0.02734 0.59472 0.02734 0.42725 0 0.62207-0.02734 0.85449-0.08545 1.64405-0.3794 0.79297-0.29395 1.47998-0.78271 0.93652-0.65967 1.5791-1.60987 0.646-0.95361 0.92627-2.05761 0.28027-1.10742 0.15381-2.23877-0.12647-1.13477-0.646-2.17383-0.66992-1.35693-1.90381-2.27979-1.23047-0.92627-2.72754-1.17578-0.63232-0.11279-1.30224-0.09912z m0.58789 1.17578q1.38428 0.11279 2.5122 0.86133 1.12793 0.74854 1.77051 1.98242 0.40674 0.79639 0.5332 1.75 0.02734 0.22217 0.02735 0.64258 0 0.42041-0.02735 0.65967-0.16748 1.24414-0.85449 2.26611-0.68701 1.02197-1.76367 1.63721-0.57422 0.32471-1.24756 0.50586-0.66992 0.18115-1.32959 0.18115-1.07666 0-2.12597-0.44775-0.19824-0.08545-0.31788-0.11963-0.11621-0.03418-0.28711-0.04785-0.23584-0.01367-0.45458 0.02734-0.21533 0.04102-1.04249 0.28027-1.0083 0.29395-1.01513 0.28711-0.00684-0.00684 0.30078-0.95703 0.30762-0.95361 0.32129-1.10742 0.07178-0.44775-0.14014-0.9126l-0.14014-0.34863q-0.38965-0.96729-0.3623-2.03711 0.02734-1.06982 0.46143-2.02344 0.44775-0.99463 1.25097-1.72265 0.80664-0.72803 1.82178-1.0835 1.01514-0.35547 2.10889-0.27344z"
-                  style="fill: var(--text-primary)"
-                ></path>
-              </svg>
-            </div>
-            <div
-              class="count-mark"
-              data-name="Count"
-              style="left: 44px; position: absolute; top: 0px; z-index: 1; flex-shrink: revert"
-            >
-              <div class="count-mark__count">
-                3
-              </div>
-            </div>
-          </div>
-          <div
-            data-name="Icon with count"
-            style="flex-shrink: 0; height: 64px; position: relative; width: 64px"
-          >
-            <div
-              class="app-icon"
-              style="height: 60px; left: 0px; position: absolute; top: 4px; width: 60px; z-index: 0; flex-shrink: revert"
-            >
-              <svg
-                class="app-icon__glyph"
-                data-icon-name="calendar"
-                data-icon-set="lucide"
-                viewBox="0 0 13.99993896484375 14"
-                preserveAspectRatio="xMidYMid meet"
-                style="height: 30px; width: 30px"
-              >
-                <path
-                  d="M4.57666 0.60156q-0.12305 0.01367-0.24268 0.09912-0.11963 0.08203-0.1914 0.19483-0.04102 0.08545-0.05469 0.20508-0.01367 0.11621-0.01367 0.35546l0 0.29395-1.32959 0.01367q-0.14014 0.01367-0.23926 0.02735-0.50244 0.14014-0.85449 0.50586-0.34863 0.3623-0.44776 0.88183-0.02734 0.0957-0.02734 0.81006l0 7.99463 0.05469 0.15381q0.15723 0.51953 0.56055 0.86133 0.40674 0.3418 0.93994 0.3999 0.15381 0.02734 4.26904 0.02734 4.11523 0 4.26904-0.02734 0.30762-0.02734 0.58789-0.16748 0.32471-0.15381 0.56055-0.44092 0.23926-0.28711 0.35205-0.65283l0.05469-0.15381 0-7.99463q0-0.71436-0.02735-0.81006-0.09912-0.51953-0.45117-0.88183-0.34863-0.36572-0.85107-0.50586-0.09912-0.01367-0.23926-0.02735l-1.32959-0.01367 0-0.29395q0-0.32129-0.03418-0.45459-0.03418-0.1333-0.14697-0.24609-0.14014-0.14014-0.35889-0.16064-0.21533-0.02051-0.37597 0.09228-0.16064 0.10938-0.21875 0.29395-0.02734 0.05469-0.03418 0.1333-0.00684 0.0752-0.00684 0.30078l0 0.33496-3.5 0 0-0.34863q0-0.23926-0.00684-0.30762-0.00684-0.07178-0.03418-0.12646-0.08545-0.21191-0.25293-0.30762-0.16748-0.09912-0.37939-0.05811z m-0.50244 2.67285q0.01367 0.25293 0.02051 0.31788 0.00684 0.06152 0.03418 0.14697 0.05811 0.0957 0.14013 0.18115 0.21191 0.19482 0.50586 0.14697 0.29395-0.04785 0.42041-0.31445 0.02734-0.08545 0.03418-0.14014 0.00684-0.05811 0.02051-0.32129l0-0.36572 3.5 0 0 0.36572q0.01367 0.26318 0.02051 0.32129 0.00684 0.05469 0.03418 0.14014 0.12646 0.2666 0.42041 0.31445 0.29395 0.04785 0.50586-0.14697 0.08203-0.08545 0.14013-0.18115 0.02734-0.08545 0.03418-0.14697 0.00684-0.06494 0.02051-0.31788l0-0.34863 1.31592 0 0.08545 0.04102q0.08203 0.04443 0.15722 0.12304 0.07861 0.0752 0.11963 0.16065 0.04443 0.08203 0.05811 0.28027 0.01367 0.19482 0.01367 0.85108l0 0.86816-9.35156 0 0.01367-1.72266q0.01367-0.16748 0.02734-0.20849 0.09912-0.2666 0.35206-0.36572 0.05469-0.01367 0.16748-0.02735l1.18945 0 0 0.34863z m7.58789 5.82422q0 1.89014-0.00684 2.30371-0.00683 0.41357-0.0205 0.45459-0.09912 0.25293-0.35206 0.35205l-0.0957 0.04102-8.37402 0-0.0957-0.04102q-0.15381-0.0581-0.26661-0.19824l-0.02734-0.02734q-0.04443-0.05469-0.05811-0.15381-0.02734-0.14014-0.02734-0.60156l-0.01367-4.80225 9.35156 0-0.01367 2.67285z"
-                  style="fill: var(--text-primary)"
-                ></path>
-              </svg>
-            </div>
-            <div
-              class="count-mark"
-              data-name="Count"
-              style="left: 44px; position: absolute; top: 0px; z-index: 1; flex-shrink: revert"
-            >
-              <div class="count-mark__count">
-                1
-              </div>
-            </div>
-          </div>
-        </div>
-        <div
-          data-name="Note"
-          style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 18px; width: 100%"
-        >
-          A badge is a soft tint with a matching edge, never a solid slab. A count mark is the one filled cyan chip: pending attention on an app icon or a notification pile.
-        </div>
-      </div>
-    </div>
+
+  <div class="section">
+    <div class="label">Choices · 1:1</div>
+    <div class="grid2" id="choices"></div>
   </div>
-</div>
+
+  <div class="section">
+    <div class="label">Status marks · the 12 px slot · shape carries the state</div>
+    <div class="k-marks" id="marks"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Badges, counts, identity</div>
+    <div class="k-row" id="badges"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Swatches and the color picker</div>
+    <div class="k-row" id="swatches"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">The same controls on canto's scheme (Rose, from the Cosmic Cliffs) · 1:1</div>
+    <div class="k-on-pic scheme-rose" id="onpic"></div>
+  </div>
+
+<script>
+  /* Live value of a CSS color expression, as hex (handles rgb() and color(srgb …)). */
+  function liveHex(expr, host = document.body) {
+    const p = document.createElement("span");
+    p.style.color = expr;
+    host.appendChild(p);
+    const c = getComputedStyle(p).color;
+    p.remove();
+    const m = c.match(/color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?\)/);
+    const n = m ? [m[1], m[2], m[3]].map((v) => Number(v) * 255).concat(m[4] === undefined ? [] : [Number(m[4])]) : c.match(/[\d.]+/g).map(Number);
+    const h = (v) => Math.round(v).toString(16).padStart(2, "0");
+    return `#${h(n[0])}${h(n[1])}${h(n[2])}${n[3] !== undefined && n[3] < 1 ? h(n[3] * 255) : ""}`;
+  }
+  const live = (expr) => `<span data-live="${expr}"></span>`;
+  const $ = (id, html) => (document.getElementById(id).innerHTML = html);
+
+  /* Buttons: rows are kinds, columns are states */
+  const KINDS = [
+    ["Primary", "primary", "Save", `Accent with an 8% top lift and a 35% glow; label ${live("var(--on-accent)")}. Pressed drops to the accent's weak tier.`],
+    ["Secondary", "secondary", "Cancel", `Fill ${live("var(--k-sec)")} (raised + 4%), edge white 12% over it. Hover ${live("var(--k-sec-hover)")}.`],
+    ["Ghost", "ghost", "Forward", `Transparent, muted ink ${live("var(--k-ghost)")}; hover the hover grey at 70%. Radius 5.`],
+    ["Danger", "danger", "Delete", `Danger with the same top lift, no glow; label ${live("var(--on-danger)")}.`],
+    ["Danger outline", "dout", "Remove", `Danger 10% into raised, edge 42%: ${live("color-mix(in srgb, var(--danger) 10%, var(--bg-secondary))")} / ${live("color-mix(in srgb, var(--danger) 42%, var(--bg-secondary))")}.`],
+    ["Toolbar icon", "tool", "", `Transparent; hover ${live("var(--bg-hover)")}, pressed ${live("var(--border)")}. Disabled keeps opacity, mutes the glyph.`],
+  ];
+  const STATES = [["Rest", ""], ["Hover", "hov"], ["Pressed", "prs"], ["Disabled", "off"], ["Small", "sm"]];
+  const btn = (cls, label, st) => {
+    const body = cls === "tool" ? icon("refresh", 16) : label;
+    return `<span class="k-btn ${cls} ${st}">${body}</span>`;
+  };
+  $("buttons", `<span class="h">Kind</span>${STATES.map(([s]) => `<span class="h">${s}</span>`).join("")}<span class="h">Values</span>` +
+    KINDS.map(([n, cls, label, spec]) => `<span class="n">${n}</span>${STATES.map(([, st]) => btn(cls, label, st)).join("")}<span class="k-cap">${spec}</span>`).join(""));
+
+  /* Fields */
+  const fld = (lbl, input, foot = "") => `<div class="k-field"><span class="lbl">${lbl}</span>${input}${foot}</div>`;
+  $("fields", [
+    `<div class="k-cell">${fld("Address", `<div class="k-input"><span class="ph">name@example.com</span></div>`, `<span class="help">Where replies go</span>`)}<span class="k-cap">Rest · well ${live("var(--k-well)")} (base × 0.45), edge white 12%</span></div>`,
+    `<div class="k-cell">${fld("Address", `<div class="k-input hov"><span class="ph">name@example.com</span></div>`, `<span class="help">Where replies go</span>`)}<span class="k-cap">Hover · edge white 14%</span></div>`,
+    `<div class="k-cell">${fld("Address", `<div class="k-input foc">joshua@<span class="sel">moonlight</span><span class="caret"></span></div>`, `<span class="help">Where replies go</span>`)}<span class="k-cap">Focus · accent 55% into the well ${live("color-mix(in srgb, var(--accent) 55%, var(--k-well))")}; selection ${live("var(--selection)")}</span></div>`,
+    `<div class="k-cell">${fld("Address", `<div class="k-input foc">joshua@<span class="caret"></span></div>`, `<span class="err">Needs a domain, like name@example.com</span>`)}<span class="k-cap">Error · a danger caption takes the help's place</span></div>`,
+    `<div class="k-cell"><div class="k-form"><span>Get new mail every</span><div class="k-input" style="width:120px">5 minutes</div></div><span class="k-cap">form_row · 32 tall · label 13 at full ink, control right, 8 apart</span></div>`,
+    `<div class="k-cell">${fld("Read-only", `<div class="k-input"><span class="ph">imap.fastmail.com</span></div>`)}<span class="k-cap">Disabled · the well stays; the value takes the placeholder ink</span></div>`,
+  ].join(""));
+
+  /* Choices */
+  const chk = (cls, label) => `<span class="k-check ${cls}"><i>${cls.includes("on") ? icon("check", 11, "currentColor", 3) : ""}</i>${label}</span>`;
+  const enamel = (t) => `var(--enamel-${t})`;
+  $("choices", [
+    `<div class="k-cell">${chk("on", "Mark read when opened")}${chk("on hov", "Mark read when opened")}${chk("", "Show the unread count")}${chk("hov", "Show the unread count")}${chk("off", "Sync while on battery")}<span class="k-cap">Checkbox 16 · radius 5 · on ${live("var(--accent)")}, off raised with a ${live("var(--border)")} edge</span></div>`,
+    `<div class="k-cell"><div class="k-form" style="width:300px"><span>Adapt colors to the background</span><span class="k-toggle on"></span></div><div class="k-form" style="width:300px"><span>Fade the windows when idle</span><span class="k-toggle"></span></div><div class="k-form" style="width:300px"><span style="opacity:.5">Unavailable</span><span class="k-toggle off"></span></div><span class="k-cap">Toggle 32 × 16 · on accent, knob ${live("var(--on-accent)")}; off ${live("var(--bg-hover)")}</span></div>`,
+    `<div class="k-cell"><div class="k-select"><span class="k-mark" style="--m:${enamel("teal")}"></span><span>Personal</span>${icon("chevD", 12)}</div><div class="k-select open"><span class="k-mark" style="--m:${enamel("teal")}"></span><span>Personal</span>${icon("chevD", 12)}</div>
+      <div class="k-menu">${[["Personal", "teal", 1], ["Work", "iris"], ["Hetzner", "clay"], ["Banking", "sage"]].map(([t, e, on]) => `<div class="k-opt${on ? " on" : ""}"><span class="k-mark" style="--m:${enamel(e)}"></span><span>${t}</span>${on ? icon("check", 12) : ""}</div>`).join("")}</div>
+      <span class="k-cap">Select · 12 px medium, 5 × 8, radius 5 · the menu hangs below, the picked row the hover grey with a check</span></div>`,
+    `<div class="k-cell"><div class="k-form" style="width:340px"><span>Strength</span><span class="k-slider"><span class="rail"><b style="width:60%"></b><i style="left:60%"></i></span><span class="v">60%</span></span></div><div class="k-form" style="width:340px"><span>Start after</span><span class="k-slider"><span class="rail"><b style="width:6.8%"></b><i style="left:6.8%"></i></span><span class="v">5 min</span></span></div><span class="k-cap">Slider · iced's own style (no kit style yet): 4 px rail, the filled part accent, a 14 px accent handle; 200 wide with a 56 px muted value</span></div>`,
+  ].join(""));
+
+  /* Status marks */
+  const MARKS = [
+    ["Working", `<span class="spin" style="display:block">${mark.ring(12)}</span>`, `<span class="spin" style="display:block">${mark.ring(36)}</span>`, `An open ring in the accent, turning every 0.85 s (redrawn at 50 ms, not every frame).`],
+    ["Waiting", mark.diamond(12), mark.diamond(36), `A diamond in warning ${live("var(--warning)")}: it needs you — a question, a permission.`],
+    ["Done", mark.check(12), mark.check(36), `A check in success ${live("var(--success)")}: the turn finished.`],
+    ["Active", `<svg class="mark" width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="3" fill="var(--success)"/></svg>`, `<svg class="mark" width="36" height="36" viewBox="0 0 12 12"><circle cx="6" cy="6" r="3" fill="var(--success)"/></svg>`, `A filled success dot, for apps that are simply busy.`],
+    ["Idle", `<svg class="mark" width="12" height="12" viewBox="0 0 12 12"><circle cx="6" cy="6" r="2.25" fill="color-mix(in srgb, var(--text-primary) 40%, transparent)"/></svg>`, `<svg class="mark" width="36" height="36" viewBox="0 0 12 12"><circle cx="6" cy="6" r="2.25" fill="color-mix(in srgb, var(--text-primary) 40%, transparent)"/></svg>`, `Text at 40%: the slot stays, so a title never moves when work starts.`],
+  ];
+  $("marks", MARKS.map(([n, sm, big, t]) => `<div class="k-markcell"><div class="big">${big}${sm}</div><div class="sample"><h4>${n}</h4><p>${t}</p></div></div>`).join(""));
+
+  /* Badges, counts, identity marks */
+  const tone = (c, t) => `<span class="k-badge b-tone" style="--c:var(--${c})">${t}</span>`;
+  $("badges", [
+    `<div class="k-cell"><div style="display:flex;gap:8px;align-items:center"><span class="k-badge b-neutral">Draft</span><span class="k-badge b-accent">New</span>${tone("success", "Synced")}${tone("warning", "Expiring")}${tone("danger", "Failed")}</div><span class="k-cap">Badge · 10 px medium, 3 × 8, a pill · status tones 14% into raised, edge 28%</span></div>`,
+    `<div class="k-cell"><div style="display:flex;gap:8px;align-items:center"><span class="k-count one">3</span><span class="k-count">12</span><span class="k-count">99+</span></div><span class="k-cap">Count mark · 18 tall · the one filled accent chip · past 99 reads 99+</span></div>`,
+    `<div class="k-cell"><div style="display:flex;gap:10px;align-items:center">${["teal", "iris", "clay", "sage", "dusk", "olive", "ink", "brass"].map((e) => `<span class="k-mark" style="--m:${enamel(e)};width:14px;height:14px;border-radius:4px"></span>`).join("")}</div><span class="k-cap">Identity marks · enamel, picked by a stable hash of an id (a profile, an account) · edge 45% white</span></div>`,
+  ].join(""));
+
+  /* Swatches and the picker */
+  $("swatches", [
+    `<div class="k-cell"><div style="display:flex;gap:8px">${["--bg-primary", "--bg-secondary", "--highlight", "--accent"].map((t) => `<span class="k-swatch" style="--s:var(${t})"></span>`).join("")}</div><span class="k-cap">Swatch · 56 × 56, radius 7, the kit hairline</span></div>`,
+    `<div class="k-cell"><div style="display:flex;gap:8px;align-items:center">${["--bg-primary", "--bg-secondary", "--highlight", "--accent"].map((t) => `<span class="k-swatch sm" style="--s:var(${t})"></span>`).join("")}</div><span class="k-cap">Settings → Your colors · 40 × 18, radius 4, white 20% edge</span></div>`,
+    `<div class="k-cell"><div class="k-picker"><div class="k-sv"><span class="k-thumb" style="left:52%;top:12%"></span></div><div class="k-strip hue"><span class="k-thumb" style="left:61%"></span></div><div class="k-strip alpha"><span class="k-thumb" style="left:100%"></span></div>
+      <div class="k-nums"><div class="r"><span class="k-swatch sm" style="--s:#72a3fc;width:18px;border-radius:5px"></span><div class="k-input" style="flex:1;height:28px;padding:5px 8px;font-size:12px">#72a3fc</div></div>
+      <div class="r"><em>RGB</em><div class="k-input">114</div><div class="k-input">163</div><div class="k-input">252</div></div>
+      <div class="r"><em>HSL</em><div class="k-input">219</div><div class="k-input">96</div><div class="k-input">72</div></div></div></div>
+      <span class="k-cap">Color picker · 196 wide: saturation × value 140 tall, hue and alpha strips 12, thumbs 14; then hex, RGB, HSL</span></div>`,
+  ].join(""));
+
+  /* On canto's scheme */
+  $("onpic", `<span class="k-btn primary">Use</span><span class="k-btn secondary">Cancel</span><span class="k-btn ghost">Reset</span><span class="k-btn dout">Remove Custom</span>
+    <div class="k-input foc" style="width:200px">Ember<span class="caret"></span></div>${chk("on", "")}<span class="k-toggle on"></span>
+    <span class="k-badge b-accent">New</span><span class="k-count">12</span><span class="spin" style="display:block">${mark.ring(12)}</span>${mark.diamond(12)}${mark.check(12)}
+    <span class="k-cap" style="flex-basis:100%">The accent, the greys and the edges all come from the scheme; the status hues stay as they are.</span>`);
+
+  document.querySelectorAll("[data-live]").forEach((el) => (el.textContent = liveHex(el.dataset.live, el.parentElement)));
+  finish();
+</script>
 </body>
 </html>

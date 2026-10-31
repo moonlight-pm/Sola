@@ -18,8 +18,6 @@ The shell is stable in daily use; the applications are early, and each is
 incomplete. Applications that offer methods on the
 [call plane](call.md) are driven with [solactl](solactl.md).
 
-## In Sola's Oath packages
-
 | Application | Program | Package | What it is | Notes |
 |-------------|---------|---------|------------|-------|
 | Terminal | `sola-terminal` | `pkg:sola` | A terminal on Alacritty's grid: a window per tab, split panes, each running in tmux | — |
@@ -29,29 +27,17 @@ incomplete. Applications that offer methods on the
 | Mail | `sola-mail` | `pkg:sola` | IMAP and SMTP for several accounts in one combined set of mailboxes, with rules, drafts, attachments, and safe HTML letters | [notes](sola-mail.md) |
 | Calendar | `sola-calendar` | `pkg:sola` | Month, week, and day views of local, Google, iCloud, CalDAV, and feed calendars, with reminders, `.ics` invites, and today's events in the top row's clock | [notes](sola-calendar.md) |
 | Paint | `sola-paint` | `pkg:sola` | The default image viewer and editor, a window per image; sets the desktop's background picture | [notes](sola-paint.md) |
+| Preview | `sola-preview` | `pkg:sola` | A quick viewer for screenshots and images | [notes](sola-preview.md) |
 | Design | `sola-design` | `pkg:sola-design` | HTML artboards on a canvas, written and edited by AI agents: a window per project, its canvases along the top. Call owner `design`. | [notes](sola-design.md) |
-| Settings | `sola-settings` | `pkg:sola` | Applications in the launcher; Appearance (light or dark for web pages, the theme's colors, from the background picture or your own, the background picture, the desk's opacity, the idle fade); Mail accounts and rules; Calendar accounts | — |
+| Settings | `sola-settings` | `pkg:sola` | Applications in the launcher, and web apps (a name, where each starts, removing one); Appearance (light or dark for web pages, the theme's colors, from the background picture or your own, the background picture and every picture set before it, each with the look it was worn with, the desk's opacity, the idle fade and lock); Login (the password and auto-login, [Security](security.md)); Mail accounts and rules; Calendar accounts. Also **Settings…** in the flower menu. | — |
 | Bots | `sola-bots`, `sola-botsd` | `pkg:sola` | Named assistant sessions, each a directory in `~/Bots` on the AI it was made with (Grok, Claude, or Gab AI); the daemon `sola-botsd` serves them on a Unix socket. On Oath nothing starts the daemon, so the Bots window has nothing to talk to there. Call owner `bots`. | [solactl](solactl.md#bots-solactl-bots) |
 | Oath | `sola-oath` | `pkg:sola` | Oath's packages: turn one on or off and **Apply** (`oath set`, `oath apply`), or **Undo** the last change. Listed only on Oath. | — |
+| Monitor | `sola-monitor` | `pkg:sola` | A live view of bus traffic and of the call plane's methods and calls | [notes](sola-monitor.md) |
+| Scope | `sola-scope` | `pkg:sola` | A pixel loupe: the screen under the pointer, magnified | [notes](sola-scope.md) |
 | KVM | `sola-kvm` | `pkg:sola` | One keyboard and mouse across two machines, with a shared clipboard; once paired, each machine drops input it did not seal ([Security](security.md#pairing-the-kvm)). A service, not in the launcher. | [notes](sola-kvm-operator.md) |
 
 There is no separate Wrapper application: a wrapped website is a
 [web app](web-apps.md) that Browser hosts.
-
-## Not in Sola's Oath packages
-
-These are in Sola's source and the launcher lists them, but none of the
-Oath packages carries their programs, so on Oath choosing one fails with
-a launch error.
-
-| Application | Program | What it is | Notes |
-|-------------|---------|------------|-------|
-| Kit | `sola-kit` | The toolkit's storybook, which shows every component, and the theme editor (see [Theme and toolkit](theme.md)) | — |
-| Monitor | `sola-monitor` | A live view of bus traffic and of the call plane's methods and calls | [notes](sola-monitor.md) |
-| Preview | `sola-preview` | A quick viewer for screenshots and images | [notes](sola-preview.md) |
-| Arcade | `sola-arcade` | The Steam library in a window; each game runs in a nested gamescope session sized to it | [notes](sola-arcade.md) |
-| Scope | `sola-scope` | A pixel loupe: the screen under the pointer, magnified | [notes](sola-scope.md) |
-| Spotify | `sola-spotify` | Playback through librespot, playlists, the library, and Spotify Connect | [notes](sola-spotify.md) |
 
 The notes are kept in the repository beside this manual and are not part
 of the page: they describe each application's keys, menus, and files in

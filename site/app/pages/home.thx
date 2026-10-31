@@ -130,10 +130,13 @@ fn appList() -> Array<Entry> {
         Entry(name: "Mail", detail: "IMAP and SMTP for several accounts, with drafts and attachments."),
         Entry(name: "Calendar", detail: "Month, week, and day views of local, Google, and iCloud calendars, with reminders."),
         Entry(name: "Web apps", detail: "A website the browser runs as an application of its own, wrapped from one of its pages: a launcher entry, its own windows and menus."),
-        Entry(name: "Settings", detail: "Appearance (light or dark for web pages, the background picture and the colors taken from it, the desk's opacity, the idle fade), applications in the launcher, and mail and calendar accounts."),
+        Entry(name: "Settings", detail: "Appearance (light or dark for web pages, the background picture and the colors taken from it, every picture set before with the look it was worn with, the desk's opacity, the idle fade), the login (a password, auto-login), applications and web apps in the launcher, and mail and calendar accounts."),
         Entry(name: "Paint", detail: "The default image viewer and editor, a window per image; it sets the background picture."),
+        Entry(name: "Preview", detail: "A quick viewer for screenshots and images."),
         Entry(name: "Design", detail: "HTML artboards on a canvas, written and edited by AI agents: a window per project."),
         Entry(name: "Oath", detail: "Oath's packages: turn one on or off and apply, or undo the last change."),
+        Entry(name: "Monitor", detail: "A live view of bus traffic and of the methods each application offers."),
+        Entry(name: "Scope", detail: "A pixel loupe: the screen under the pointer, magnified."),
         Entry(name: "KVM", detail: "One keyboard and mouse across two machines, with a shared clipboard. Paired machines seal every packet with a shared key and drop what they did not seal."),
     ]
 }
@@ -144,8 +147,6 @@ fn applications() -> Node {
         <p>
             Each is its own process, with its menus in its windows' titlebars. The shell is
             stable in daily use; the applications are early, and each is incomplete.
-            Monitor, Preview, Scope, Spotify, and Arcade are in the repository but not yet
-            in the Oath packages.
             <a href={"{repository}/blob/next/docs/capabilities.md"}>docs/capabilities.md</a>
             lists what each can do and what it lacks.
         </p>
@@ -208,10 +209,6 @@ fn status() -> Node {
             <li>Releases of its own. x86-64 is the only platform.</li>
             <li>Other systems. Sola is built and packaged for Oath.</li>
             <li>Complete applications. Each has gaps, and the capability list names them.</li>
-            <li>
-                A lock screen. The desk starts signed in;
-                <a href="/manual#security">Security</a> lists each way in and how to close it.
-            </li>
         </ul>
         <p>
             The work under way is in

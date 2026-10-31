@@ -15,17 +15,20 @@ use sola_core::{KeyChord, KeyCode};
 /// hasn't shipped its own menu.
 pub const SYNTHESIZED_CLOSE_ACTION: &str = "_close";
 
+/// The flower's item that opens Settings.
+pub const ACTION_SETTINGS: &str = "settings";
+
 /// Flower / system menu (and the shell's own application menu when focused).
 pub fn system_menu() -> MenuDefinition {
     MenuDefinition {
         label: "Shell".into(),
         items: vec![
             action("launch", "Launch Application…", None),
+            action(ACTION_SETTINGS, "Settings…", None),
             action("shortcuts", "Keyboard Shortcuts", Some(KeyCode::K.meta())),
             MenuItem::Divider,
-            action("restart", "Restart Shell", None),
-            MenuItem::Divider,
-            action("quit", "Quit Sola", None),
+            action(crate::lock::ACTION_LOCK, "Lock Screen", Some(KeyCode::L.meta())),
+            action("quit", "Exit Sola", None),
             MenuItem::Divider,
             action(
                 crate::power::ACTION_RESTART_COMPUTER,
@@ -180,11 +183,11 @@ mod tests {
             system_menu_labels(),
             [
                 "Launch Application…",
+                "Settings…",
                 "Keyboard Shortcuts",
                 "---",
-                "Restart Shell",
-                "---",
-                "Quit Sola",
+                "Lock Screen",
+                "Exit Sola",
                 "---",
                 "Restart Computer",
                 "Shut Down",
@@ -203,8 +206,9 @@ mod tests {
             ids,
             [
                 "launch",
+                ACTION_SETTINGS,
                 "shortcuts",
-                "restart",
+                crate::lock::ACTION_LOCK,
                 "quit",
                 crate::power::ACTION_RESTART_COMPUTER,
                 crate::power::ACTION_SHUT_DOWN,

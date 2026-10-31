@@ -38,6 +38,22 @@ pub fn profile_flag() -> Option<String> {
     None
 }
 
+/// Where a profile's helper starts minting page ids: one of 2^20 ranges
+/// of 2^32 ids, above chrome's own (which stay below 2^32), and below 2^53
+/// so JSON readers keep them exact.
+pub fn tab_id_base(profile_id: &str) -> u64 {
+    // FNV-1a: stable across runs and builds.
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in profile_id.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    (1 + h % ((1 << 20) - 1)) << 32
+}
+
+/// Ids below this are chrome's; above, a helper minted them.
+pub const CHROME_ID_LIMIT: u64 = 1 << 32;
+
 /// Run the helper and never return to iced. `None` if this process is chrome.
 pub fn try_run(app_id: &'static str) -> Option<ExitCode> {
     if !is_engine_process() {
@@ -143,7 +159,9 @@ fn run_helper(app_id: &'static str, profile_id: &str) -> ExitCode {
     let cursor = Arc::new(AtomicU32::new(0));
     let tabs_snapshot = Arc::new(Mutex::new(Vec::<TabInfo>::new()));
     let active_atomic = Arc::new(AtomicU64::new(0));
-    let next_id = Arc::new(AtomicU64::new(1));
+    // Pages this helper mints (popups, DevTools) take ids in its own
+    // range, so several profiles' helpers never mint the same id.
+    let next_id = Arc::new(AtomicU64::new(tab_id_base(profile_id)));
     let clipboard_out: ClipboardHandle = Arc::new(Mutex::new(None));
     let (event_tx, event_rx) = mpsc::channel::<FromEngine>();
 
@@ -353,6 +371,7 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
         }
         ToEngine::MediaPermission { req_id, granted } => Cmd::MediaPermission { req_id, granted },
         ToEngine::JsDialog { id, success, input } => Cmd::JsDialog { id, success, input },
+        ToEngine::FileDialog { id, paths } => Cmd::FileDialog { id, paths },
         ToEngine::HttpAuth {
             id,
             success,
@@ -408,6 +427,19 @@ fn to_cmd(msg: ToEngine) -> Option<Cmd<CefEngine>> {
             id: TabId(id),
             pace,
         },
+        ToEngine::Target { tab, cmd } => Cmd::Target {
+            tab: TabId(tab),
+            cmd: Box::new(to_cmd(*cmd)?),
+        },
+        ToEngine::ShowPage { id, shown } => Cmd::ShowPage {
+            id: TabId(id),
+            shown,
+        },
+        ToEngine::AppSite { id, start } => Cmd::AppSite {
+            id: TabId(id),
+            start,
+        },
+        ToEngine::ColorScheme { light } => Cmd::ColorScheme { light },
         ToEngine::Shutdown => return None,
     })
 }
@@ -742,5 +774,21 @@ mod reap_tests {
     fn parse_ppid_with_spaces_in_comm() {
         let stat = "123 (sola-browser) S 456 456 456 0 -1";
         assert_eq!(parse_stat_ppid(stat), Some(456));
+    }
+}
+
+#[cfg(test)]
+mod id_range_tests {
+    use super::{CHROME_ID_LIMIT, tab_id_base};
+
+    #[test]
+    fn helper_id_ranges_sit_above_chromes_and_stay_json_exact() {
+        for id in ["primary", "4f1c2a9e-0000-4000-8000-000000000000", ""] {
+            let base = tab_id_base(id);
+            assert!(base >= CHROME_ID_LIMIT, "{id}: {base}");
+            assert!(base + CHROME_ID_LIMIT <= 1 << 53, "{id}: {base}");
+            assert_eq!(base, tab_id_base(id), "stable");
+        }
+        assert_ne!(tab_id_base("primary"), tab_id_base("work"));
     }
 }

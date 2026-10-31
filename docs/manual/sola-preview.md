@@ -4,11 +4,6 @@ Preview (`sola-preview`) is a simple image viewer: a **Recent** list on
 the left, the selected image fitted on the right, and **Copy** for its
 bytes.
 
-Preview does not ship on Oath: `pkg:sola` does not carry `sola-preview`.
-The launcher still lists **Preview**, and picking it there fails (the top
-row says it could not launch). The rest of this note is how the app works
-where it is installed.
-
 ## Open
 
 - Launcher → **Preview**

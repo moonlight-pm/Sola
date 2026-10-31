@@ -1,7 +1,7 @@
 //! One Design window. A second launch raises the live one and exits —
 //! two chrome processes would start two CEF helpers on one profile.
 //!
-//! Same shape as sola-wrapper's singleton: a Unix socket the primary
+//! Same shape as the browser's singleton: a Unix socket the primary
 //! listens on; `@activate` asks it to raise. The accept thread wakes iced
 //! through `chrome_wake`, so the primary has no polling timer.
 

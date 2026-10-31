@@ -237,6 +237,19 @@ enum SessionEnd {
     Disconnected,
 }
 
+/// The system bus: `DBUS_SYSTEM_BUS_ADDRESS` when set, else
+/// `/run/dbus/system_bus_socket` when it is there, else zbus's default
+/// (`/var/run/…`, which Oath does not link to `/run`).
+fn system_bus() -> zbus::Result<zbus::connection::Builder<'static>> {
+    const RUN: &str = "unix:path=/run/dbus/system_bus_socket";
+    if std::env::var_os("DBUS_SYSTEM_BUS_ADDRESS").is_none()
+        && std::path::Path::new("/run/dbus/system_bus_socket").exists()
+    {
+        return zbus::connection::Builder::address(RUN);
+    }
+    zbus::connection::Builder::system()
+}
+
 async fn session(
     event_tx: &iced::futures::channel::mpsc::UnboundedSender<Event>,
     cmd_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Command>,
@@ -246,7 +259,7 @@ async fn session(
         inner: inner.clone(),
     };
 
-    let conn = match zbus::connection::Builder::system() {
+    let conn = match system_bus() {
         Ok(b) => match b.serve_at(AGENT_PATH, agent) {
             Ok(b) => match b.build().await {
                 Ok(c) => c,

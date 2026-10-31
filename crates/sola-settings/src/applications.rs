@@ -5,37 +5,28 @@
 //! `app_id`), and the resulting replay is what updates our canonical
 //! `ApplicationsConfig`.
 //!
-//! Compact A→Z list (left) + fixed-width detail panel (right). Single
-//! open editor (edit or draft); dirty state locks selection / blank
-//! draft / candidate configure until Save or Discard.
+//! One A→Z list; the open app's editor sits under its row
+//! ([`crate::page`]). Single open editor (edit or draft); dirty state
+//! locks selection / blank draft / candidate configure until Save or
+//! Discard.
 //!
 //! Builtin apps (defined in sola-shell) never appear here — they
 //! are seeded by the shell directly and are not part of the
-//! `Topic::Application` stream.
+//! `Topic::Application` stream. Web apps have a section of their own:
+//! the browser makes them (Wrap This Page…); here one can be renamed or
+//! removed.
 
-use iced::widget::{button, checkbox, column, container, row, scrollable};
-use iced::{Alignment, Element, Length, Padding, Task};
+use iced::widget::{column, row};
+use iced::{Element, Length, Task};
 use sola_kit::components::text_input::text_input;
 
 use sola_bus::topics::{AppKind, Application, ApplicationsConfig, Topic, Window as BusWindow};
-use sola_core::applications::{is_wrapper_url, wrapper_command};
-use sola_kit::app::bus;
-use sola_kit::components::form::{checkbox_style, form_row};
-use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS};
+use sola_kit::app::try_bus;
+use sola_kit::components::style::{SPACE_LG, SPACE_MD};
 use sola_kit::components::text as kit_text;
-use sola_kit::components::{Tone, badge, button as kit_btn, card, field, text_input as kit_input};
+use sola_kit::components::{Tone, badge, button as kit_btn, field, text_input as kit_input};
 
-use crate::procfs;
-
-/// Fixed width of the right-hand detail panel (px).
-const DETAIL_WIDTH: f32 = 380.0;
-/// Vertical pad inside a compact app row (graphite density).
-const ROW_PAD: Padding = Padding {
-    top: 8.0,
-    bottom: 8.0,
-    left: 12.0,
-    right: 8.0,
-};
+use crate::{page, procfs};
 
 #[derive(Debug, Clone, Copy)]
 pub enum AppField {
@@ -43,7 +34,6 @@ pub enum AppField {
     Label,
     Command,
     Icon,
-    Url,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -52,8 +42,6 @@ pub struct EditBuffer {
     pub label: String,
     pub command: String,
     pub icon: String,
-    pub kind: AppKind,
-    pub url: String,
 }
 
 impl EditBuffer {
@@ -63,8 +51,6 @@ impl EditBuffer {
             label: a.label.clone(),
             command: a.command.clone(),
             icon: a.icon.clone(),
-            kind: a.kind,
-            url: a.url.clone().unwrap_or_default(),
         }
     }
     pub fn matches(&self, a: &Application) -> bool {
@@ -72,8 +58,6 @@ impl EditBuffer {
             && self.label == a.label
             && self.command == a.command
             && self.icon == a.icon
-            && self.kind == a.kind
-            && self.url.trim() == a.url.as_deref().unwrap_or("").trim()
     }
     pub fn to_application(&self) -> Application {
         let mut a = Application {
@@ -81,15 +65,9 @@ impl EditBuffer {
             label: self.label.trim().to_string(),
             command: self.command.trim().to_string(),
             icon: self.icon.trim().to_string(),
-            kind: self.kind,
-            url: {
-                let u = self.url.trim();
-                if u.is_empty() {
-                    None
-                } else {
-                    Some(u.to_string())
-                }
-            },
+            kind: AppKind::Command,
+            url: None,
+            profile: None,
         };
         a.finalize();
         a
@@ -128,9 +106,10 @@ pub fn sort_key(app: &Application) -> String {
     display_title(app).to_ascii_lowercase()
 }
 
-/// Configured apps sorted by [`sort_key`], then `app_id`.
-pub fn sorted_apps(apps: &ApplicationsConfig) -> Vec<&Application> {
-    let mut v: Vec<&Application> = apps.apps.iter().collect();
+/// Configured apps of one kind, web apps or command apps, sorted by
+/// [`sort_key`], then `app_id`.
+pub fn sorted_apps(apps: &ApplicationsConfig, web: bool) -> Vec<&Application> {
+    let mut v: Vec<&Application> = apps.apps.iter().filter(|a| a.is_web() == web).collect();
     v.sort_by(|a, b| {
         sort_key(a)
             .cmp(&sort_key(b))
@@ -145,8 +124,6 @@ pub fn draft_is_dirty(buf: &EditBuffer) -> bool {
         || !buf.label.trim().is_empty()
         || !buf.command.trim().is_empty()
         || !buf.icon.trim().is_empty()
-        || !buf.url.trim().is_empty()
-        || buf.kind != AppKind::Command
 }
 
 /// Edit is dirty when the buffer differs from the canonical app.
@@ -211,7 +188,6 @@ pub enum AppsMsg {
         field: AppField,
         value: String,
     },
-    SetWrapper(bool),
     /// Edit: commit; draft: add.
     Save,
     /// Edit: reset buffer; draft: close.
@@ -260,25 +236,25 @@ pub fn update(msg: AppsMsg, apps: &mut ApplicationsConfig, ui: &mut AppsState) -
                 ui.error = None;
             }
         }
-        AppsMsg::SetWrapper(on) => {
-            if let Some(buf) = open_buffer_mut(&mut ui.detail) {
-                buf.kind = if on {
-                    AppKind::Wrapper
-                } else {
-                    AppKind::Command
-                };
-                ui.error = None;
-            }
-        }
         AppsMsg::Save => match &ui.detail {
             Detail::Edit { orig, buffer } => {
                 let orig = orig.clone();
                 let buf = buffer.clone();
-                if let Some(err) = required_error(&buf) {
+                // A web app keeps all but its name: the browser made the rest.
+                let web = apps.get(&orig).filter(|a| a.is_web()).cloned();
+                let error = match &web {
+                    Some(_) if buf.label.trim().is_empty() => Some("A name is required".into()),
+                    Some(_) => None,
+                    None => required_error(&buf),
+                };
+                if let Some(err) = error {
                     ui.error = Some(err);
                     return Task::none();
                 }
-                let new_app = buf.to_application();
+                let new_app = match web {
+                    Some(app) => renamed(app, &buf.label),
+                    None => buf.to_application(),
+                };
                 let id_changed = new_app.app_id != orig;
                 let prev = apps.get(&orig).cloned();
                 match apps.update(&orig, new_app.clone()) {
@@ -369,264 +345,211 @@ pub fn view<'a>(
     running: &'a [BusWindow],
     ui: &'a AppsState,
 ) -> Element<'a, AppsMsg> {
-    let list = list_column(apps, running, ui);
-    let detail = detail_panel(apps, ui);
-    row![list, detail]
-        .spacing(SPACE_XL)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    let mut sections = vec![catalog(apps, ui), web_apps(apps, ui)];
+    let candidates = collect_candidates(apps, running);
+    if !candidates.is_empty() {
+        sections.push(candidates_section(candidates));
+    }
+    page::page(sections)
 }
 
 // ── view helpers ───────────────────────────────────────────────────
 
-fn list_column<'a>(
-    apps: &'a ApplicationsConfig,
-    running: &'a [BusWindow],
-    ui: &'a AppsState,
-) -> Element<'a, AppsMsg> {
-    // Toolbar: one quiet add control, not a second chrome layer.
-    let toolbar = row![
-        kit_btn::labeled_sm("+ Add application", kit_btn::ghost).on_press(AppsMsg::StartBlank),
-        iced::widget::Space::new().width(Length::Fill),
-        kit_text::caption(format!("{} apps", apps.apps.len())).style(kit_text::muted),
-    ]
-    .spacing(SPACE_MD)
-    .align_y(Alignment::Center)
-    .width(Length::Fill);
-
-    let list_body: Element<'a, AppsMsg> =
-        if apps.apps.is_empty() && matches!(ui.detail, Detail::Closed) {
-            container(
-                column![
-                    kit_text::body("No applications yet").style(kit_text::muted),
-                    kit_text::caption("Add one above, or configure a running app below.")
-                        .style(kit_text::muted),
-                ]
-                .spacing(SPACE_SM),
-            )
-            .padding(SPACE_LG)
-            .width(Length::Fill)
-            .into()
-        } else if apps.apps.is_empty() {
-            // Draft open while catalog empty — no noisy empty copy.
-            container(iced::widget::Space::new())
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else {
-            let mut rows = column![].spacing(0).width(Length::Fill);
-            for app in sorted_apps(apps) {
-                rows = rows.push(app_row(app, ui));
-            }
-            scrollable(rows)
-                .height(Length::Fill)
-                .width(Length::Fill)
-                .into()
-        };
-
-    // One raised surface holds the catalog — rows share the card, not
-    // a void of free-floating pink buttons across the pane.
-    let list_card = card(
-        column![toolbar, list_body]
-            .spacing(SPACE_MD)
-            .width(Length::Fill)
-            .height(Length::Fill),
+/// The launcher's apps, A→Z, the open one with its editor under it.
+fn catalog<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, AppsMsg> {
+    let mut rows: Vec<Element<'a, AppsMsg>> = Vec::new();
+    if let Detail::Draft(buffer) = &ui.detail {
+        rows.push(
+            page::item("New application")
+                .subtitle("Not in the launcher until you add it")
+                .leading(page::glyph(page::icon("lucide/app-window"), 18, 0.7))
+                .open(true)
+                .on_press(AppsMsg::Discard)
+                .into(),
+        );
+        rows.push(page::editor(draft_editor(buffer, ui)));
+    }
+    for app in sorted_apps(apps, false) {
+        let open = matches!(&ui.detail, Detail::Edit { orig, .. } if orig == &app.app_id);
+        let mut row = page::item(display_title(app))
+            .subtitle(format!("{} · {}", app.app_id, app.command))
+            .leading(app_icon(app))
+            .open(open)
+            .on_press(if open {
+                AppsMsg::CloseDetail
+            } else {
+                AppsMsg::Select(app.app_id.clone())
+            });
+        if !sola_core::applications::command_exists(&app.command) {
+            row = row.trailing(badge("not found", Tone::Warning));
+        }
+        rows.push(row.into());
+        if let (true, Detail::Edit { orig, buffer }) = (open, &ui.detail) {
+            rows.push(page::editor(edit_editor(apps, ui, orig, buffer)));
+        }
+    }
+    if rows.is_empty() {
+        rows.push(page::empty("No applications yet."));
+    }
+    page::section(
+        "Launcher",
+        Some(page::add("Add application", AppsMsg::StartBlank)),
+        page::group(rows),
+        Some(
+            "Apps you added to the launcher, beside Sola's own. An icon is a pack \
+             name (lucide/…, simpleicons/…) or a path to a picture."
+                .into(),
+        ),
     )
-    .width(Length::Fill)
-    .height(Length::Fill);
-
-    let mut col = column![list_card]
-        .spacing(SPACE_LG)
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-    let candidates = collect_candidates(apps, running);
-    if !candidates.is_empty() {
-        col = col.push(candidates_card(candidates));
-    }
-
-    col.into()
 }
 
-fn app_row<'a>(app: &'a Application, ui: &'a AppsState) -> Element<'a, AppsMsg> {
-    let selected = matches!(
-        &ui.detail,
-        Detail::Edit { orig, .. } if orig == &app.app_id
-    );
-    let missing = !sola_core::applications::command_exists(&app.command);
-
-    // Title + optional status chip — primary Select hit target.
-    let mut title_row = row![kit_text::body(display_title(app))]
-        .spacing(SPACE_SM)
-        .align_y(Alignment::Center);
-    if app.is_wrapper() {
-        title_row = title_row.push(badge("web", Tone::Neutral));
+/// The web apps Browser made, A→Z, the open one with its editor under it.
+fn web_apps<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, AppsMsg> {
+    let mut rows: Vec<Element<'a, AppsMsg>> = Vec::new();
+    for app in sorted_apps(apps, true) {
+        let open = matches!(&ui.detail, Detail::Edit { orig, .. } if orig == &app.app_id);
+        rows.push(
+            page::item(display_title(app))
+                .subtitle(app.url.as_deref().map_or("", site).to_string())
+                .leading(app_icon(app))
+                .open(open)
+                .on_press(if open {
+                    AppsMsg::CloseDetail
+                } else {
+                    AppsMsg::Select(app.app_id.clone())
+                })
+                .into(),
+        );
+        if let (true, Detail::Edit { orig, buffer }) = (open, &ui.detail) {
+            rows.push(page::editor(web_editor(app, ui, orig, buffer)));
+        }
     }
-    if missing {
-        title_row = title_row.push(badge("not found", Tone::Warning));
+    if rows.is_empty() {
+        rows.push(page::empty("None yet."));
     }
+    page::section(
+        "Web apps",
+        None,
+        page::group(rows),
+        Some(
+            "Sites Browser runs as apps of their own: Browser → Wrap This Page… \
+             makes one. Removing one closes its windows; its sign-in stays in \
+             Browser."
+                .into(),
+        ),
+    )
+}
 
-    // Sibling controls (not nested buttons — iced hit-testing is reliable
-    // this way). Title strip is list_item; Remove is compact outline so it
-    // does not form a pink wall down the pane.
-    row![
-        button(title_row)
-            .on_press(AppsMsg::Select(app.app_id.clone()))
-            .padding(ROW_PAD)
-            .width(Length::Fill)
-            .style(kit_btn::list_item(selected)),
+/// A web app's editor: its name, where it starts, Remove.
+fn web_editor<'a>(
+    app: &'a Application,
+    ui: &'a AppsState,
+    orig: &'a str,
+    buffer: &'a EditBuffer,
+) -> Element<'a, AppsMsg> {
+    let mut left: Vec<Element<'a, AppsMsg>> = Vec::new();
+    if buffer.label != app.label {
+        left.push(page::action("Save", kit_btn::primary, AppsMsg::Save));
+        left.push(page::action("Discard", kit_btn::ghost, AppsMsg::Discard));
+    }
+    let right = vec![
         kit_btn::labeled_sm("Remove", kit_btn::danger_outline)
-            .on_press(AppsMsg::Remove(app.app_id.clone())),
+            .on_press(AppsMsg::Remove(orig.to_string()))
+            .into(),
+    ];
+    let start = kit_text::body(app.url.as_deref().unwrap_or("")).style(kit_text::muted);
+    let mut col = column![
+        field_input("Name", &buffer.label, "", AppField::Label),
+        field("Starts at", start, None, None),
     ]
-    .spacing(SPACE_SM)
-    .align_y(Alignment::Center)
-    .width(Length::Fill)
-    .padding(Padding {
-        top: 2.0,
-        bottom: 2.0,
-        left: 4.0,
-        right: 4.0,
-    })
-    .into()
-}
-
-fn detail_panel<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, AppsMsg> {
-    let body: Element<'a, AppsMsg> = match &ui.detail {
-        Detail::Closed => {
-            // Centered empty state — no lonely caption glued to the top of a slab.
-            container(
-                column![
-                    kit_text::subheading("No selection").style(kit_text::muted),
-                    kit_text::caption("Select an app from the list, or add a new one.")
-                        .style(kit_text::muted),
-                ]
-                .spacing(SPACE_SM)
-                .align_x(Alignment::Center),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
-            .into()
-        }
-        Detail::Edit { orig, buffer } => {
-            let dirty = apps
-                .get(orig)
-                .map(|canonical| edit_is_dirty(buffer, canonical))
-                .unwrap_or(true);
-            let title = if buffer.label.trim().is_empty() {
-                buffer.app_id.as_str()
-            } else {
-                buffer.label.as_str()
-            };
-            let title = if title.is_empty() {
-                orig.as_str()
-            } else {
-                title
-            };
-
-            let mut footer = row![].spacing(SPACE_SM).align_y(Alignment::Center);
-            if dirty {
-                footer = footer
-                    .push(kit_btn::labeled_sm("Save", kit_btn::primary).on_press(AppsMsg::Save))
-                    .push(
-                        kit_btn::labeled_sm("Discard", kit_btn::ghost).on_press(AppsMsg::Discard),
-                    );
-            }
-            footer = footer
-                .push(iced::widget::Space::new().width(Length::Fill))
-                .push(kit_btn::labeled_sm("Close", kit_btn::ghost).on_press(AppsMsg::CloseDetail));
-
-            let mut col = column![
-                kit_text::subheading(title),
-                kit_text::caption(orig.as_str()).style(kit_text::muted),
-                detail_fields(buffer, /* draft placeholders */ false),
-            ]
-            .spacing(SPACE_MD);
-            if let Some(err) = ui.error.as_deref() {
-                col = col.push(kit_text::caption(err).style(kit_text::danger));
-            }
-            // Footer pinned below form with breathing room.
-            col = col
-                .push(iced::widget::Space::new().height(Length::Fill))
-                .push(footer);
-            col.height(Length::Fill).into()
-        }
-        Detail::Draft(buffer) => {
-            let footer = row![
-                kit_btn::labeled_sm("Add", kit_btn::primary).on_press(AppsMsg::Save),
-                kit_btn::labeled_sm("Discard", kit_btn::ghost).on_press(AppsMsg::Discard),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(Alignment::Center);
-
-            let mut col = column![
-                kit_text::subheading("New application"),
-                kit_text::caption("Fill in identity and launch command.").style(kit_text::muted),
-                detail_fields(buffer, /* draft placeholders */ true),
-            ]
-            .spacing(SPACE_MD);
-            if let Some(err) = ui.error.as_deref() {
-                col = col.push(kit_text::caption(err).style(kit_text::danger));
-            }
-            col = col
-                .push(iced::widget::Space::new().height(Length::Fill))
-                .push(footer);
-            col.height(Length::Fill).into()
-        }
-    };
-
-    container(card(body).width(Length::Fill).height(Length::Fill))
-        .width(Length::Fixed(DETAIL_WIDTH))
-        .height(Length::Fill)
+    .spacing(SPACE_MD);
+    if let Some(err) = ui.error.as_deref() {
+        col = col.push(kit_text::caption(err).style(kit_text::danger));
+    }
+    column![col, page::footer(left, right)]
+        .spacing(SPACE_LG)
         .into()
 }
 
-fn detail_fields<'a>(buf: &'a EditBuffer, draft_placeholders: bool) -> Element<'a, AppsMsg> {
-    let (ph_id, ph_label, ph_icon, ph_cmd, ph_url) = if draft_placeholders {
-        (
-            "slack",
-            "Slack",
-            "simpleicons/slack",
-            "firefox",
-            "https://app.slack.com",
-        )
-    } else {
-        ("", "", "", "", "")
-    };
-    let wrapper = buf.kind == AppKind::Wrapper;
-    let mut col = column![
-        field_input("app_id", &buf.app_id, ph_id, AppField::Id),
-        field_input("label", &buf.label, ph_label, AppField::Label),
-        field_input("icon", &buf.icon, ph_icon, AppField::Icon),
-        form_row(
-            "Web wrapper",
-            checkbox(wrapper)
-                .on_toggle(AppsMsg::SetWrapper)
-                .style(checkbox_style),
-        ),
-    ]
-    .spacing(SPACE_LG);
-    if wrapper {
-        let id = buf.app_id.trim();
-        let synthesized = if id.is_empty() {
-            wrapper_command("<id>")
-        } else {
-            wrapper_command(id)
-        };
-        col = col.push(field_input("url", &buf.url, ph_url, AppField::Url));
-        col = col
-            .push(kit_text::caption(format!("Launches as {synthesized}")).style(kit_text::muted));
-    } else {
-        col = col.push(field_input(
-            "command",
-            &buf.command,
-            ph_cmd,
-            AppField::Command,
-        ));
+/// `app` under the name `label`.
+fn renamed(app: Application, label: &str) -> Application {
+    Application {
+        label: label.trim().to_string(),
+        ..app
     }
-    col.into()
+}
+
+/// The host of `url`, without `www.`.
+fn site(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let host = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    host.strip_prefix("www.").unwrap_or(host)
+}
+
+/// The app's own icon, or a plain window mark.
+fn app_icon<'a>(app: &Application) -> Element<'a, AppsMsg> {
+    if app.icon.trim().is_empty() {
+        return page::glyph(page::icon("lucide/app-window"), 18, 0.7);
+    }
+    sola_kit::components::icon::icon(&app.icon, 18)
+}
+
+fn edit_editor<'a>(
+    apps: &'a ApplicationsConfig,
+    ui: &'a AppsState,
+    orig: &'a str,
+    buffer: &'a EditBuffer,
+) -> Element<'a, AppsMsg> {
+    let dirty = apps
+        .get(orig)
+        .map(|canonical| edit_is_dirty(buffer, canonical))
+        .unwrap_or(true);
+    let mut left: Vec<Element<'a, AppsMsg>> = Vec::new();
+    if dirty {
+        left.push(page::action("Save", kit_btn::primary, AppsMsg::Save));
+        left.push(page::action("Discard", kit_btn::ghost, AppsMsg::Discard));
+    }
+    let right = vec![
+        kit_btn::labeled_sm("Remove", kit_btn::danger_outline)
+            .on_press(AppsMsg::Remove(orig.to_string()))
+            .into(),
+    ];
+    let mut col = column![detail_fields(buffer, /* draft placeholders */ false)].spacing(SPACE_LG);
+    if let Some(err) = ui.error.as_deref() {
+        col = col.push(kit_text::caption(err).style(kit_text::danger));
+    }
+    col.push(page::footer(left, right)).into()
+}
+
+fn draft_editor<'a>(buffer: &'a EditBuffer, ui: &'a AppsState) -> Element<'a, AppsMsg> {
+    let left = vec![
+        page::action("Add", kit_btn::primary, AppsMsg::Save),
+        page::action("Discard", kit_btn::ghost, AppsMsg::Discard),
+    ];
+    let mut col = column![detail_fields(buffer, /* draft placeholders */ true)].spacing(SPACE_LG);
+    if let Some(err) = ui.error.as_deref() {
+        col = col.push(kit_text::caption(err).style(kit_text::danger));
+    }
+    col.push(page::footer(left, Vec::new())).into()
+}
+
+fn detail_fields<'a>(buf: &'a EditBuffer, draft_placeholders: bool) -> Element<'a, AppsMsg> {
+    let (ph_id, ph_label, ph_icon, ph_cmd) = if draft_placeholders {
+        ("firefox", "Firefox", "simpleicons/firefox", "firefox")
+    } else {
+        ("", "", "", "")
+    };
+    column![
+        row![
+            field_input("Label", &buf.label, ph_label, AppField::Label),
+            field_input("App id", &buf.app_id, ph_id, AppField::Id),
+        ]
+        .spacing(SPACE_MD),
+        field_input("Command", &buf.command, ph_cmd, AppField::Command),
+        field_input("Icon", &buf.icon, ph_icon, AppField::Icon),
+    ]
+    .spacing(SPACE_MD)
+    .into()
 }
 
 fn field_input<'a>(
@@ -644,52 +567,38 @@ fn field_input<'a>(
     field(label, input, None, None).into()
 }
 
-fn candidates_card<'a>(candidates: Vec<Candidate>) -> Element<'a, AppsMsg> {
-    let mut col = column![
-        kit_text::subheading("Running, not configured"),
-        kit_text::caption("Apps open on the desktop but not in the catalog yet.")
-            .style(kit_text::muted),
-    ]
-    .spacing(SPACE_SM);
-
-    for c in candidates {
-        let title_owned: String = if c.title.is_empty() {
-            "(no title)".to_string()
-        } else {
-            c.title.clone()
-        };
-        let detail = if let Some(cmd) = &c.suggested_command {
-            format!("{title_owned} · {cmd}")
-        } else {
-            format!("{title_owned} · command unknown — fill in manually")
-        };
-        let app_id_for_text = c.app_id.clone();
-        let row_el = row![
-            column![
-                kit_text::body(app_id_for_text),
-                kit_text::caption(detail).style(kit_text::muted),
-            ]
-            .spacing(SPACE_XS)
-            .width(Length::Fill),
-            kit_btn::labeled_sm("Configure", kit_btn::ghost).on_press(
-                AppsMsg::StartFromCandidate {
+/// Apps open on the desktop that the launcher does not have: a press
+/// starts one from what is known of it.
+fn candidates_section<'a>(candidates: Vec<Candidate>) -> Element<'a, AppsMsg> {
+    let rows = candidates
+        .into_iter()
+        .map(|c| {
+            let title = if c.title.is_empty() {
+                "(no title)".to_string()
+            } else {
+                c.title
+            };
+            let subtitle = match &c.suggested_command {
+                Some(cmd) => format!("{title} · {cmd}"),
+                None => format!("{title} · command unknown"),
+            };
+            page::item(c.app_id.clone())
+                .subtitle(subtitle)
+                .leading(page::glyph(page::icon("lucide/app-window"), 18, 0.5))
+                .trailing(kit_text::caption("Add").style(kit_text::accent))
+                .on_press(AppsMsg::StartFromCandidate {
                     app_id: c.app_id,
                     command: c.suggested_command,
-                },
-            ),
-        ]
-        .spacing(SPACE_MD)
-        .align_y(Alignment::Center)
-        .padding(Padding {
-            top: 4.0,
-            bottom: 4.0,
-            left: 0.0,
-            right: 0.0,
-        });
-        col = col.push(row_el);
-    }
-
-    card(col.spacing(SPACE_MD)).width(Length::Fill).into()
+                })
+                .into()
+        })
+        .collect();
+    page::section(
+        "Running, not in the launcher",
+        None,
+        page::group(rows),
+        None,
+    )
 }
 
 // ── candidate derivation ───────────────────────────────────────────
@@ -740,18 +649,13 @@ fn required_fields_missing(buf: &EditBuffer) -> bool {
 }
 
 fn required_error(buf: &EditBuffer) -> Option<String> {
-    if buf.app_id.trim().is_empty() || buf.label.trim().is_empty() {
-        return Some("app_id and label are required".into());
+    if buf.app_id.trim().is_empty()
+        || buf.label.trim().is_empty()
+        || buf.command.trim().is_empty()
+    {
+        return Some("app_id, label, and command are required".into());
     }
-    match buf.kind {
-        AppKind::Command if buf.command.trim().is_empty() => {
-            Some("app_id, label, and command are required".into())
-        }
-        AppKind::Wrapper if !is_wrapper_url(&buf.url) => {
-            Some("wrapper needs an http(s) URL".into())
-        }
-        _ => None,
-    }
+    None
 }
 
 fn app_field_id(f: AppField) -> iced::widget::Id {
@@ -760,16 +664,14 @@ fn app_field_id(f: AppField) -> iced::widget::Id {
         AppField::Label => "settings-apps-label",
         AppField::Command => "settings-apps-command",
         AppField::Icon => "settings-apps-icon",
-        AppField::Url => "settings-apps-url",
     })
 }
 
-const APP_FIELDS: [AppField; 5] = [
+const APP_FIELDS: [AppField; 4] = [
     AppField::Id,
     AppField::Label,
     AppField::Command,
     AppField::Icon,
-    AppField::Url,
 ];
 
 pub fn focused_value(ui: &AppsState, id: &iced::widget::Id) -> Option<String> {
@@ -804,7 +706,6 @@ fn app_field_str(buf: &EditBuffer, f: AppField) -> &str {
         AppField::Label => &buf.label,
         AppField::Command => &buf.command,
         AppField::Icon => &buf.icon,
-        AppField::Url => &buf.url,
     }
 }
 
@@ -814,19 +715,22 @@ fn set_field(f: AppField, value: String, buf: &mut EditBuffer) {
         AppField::Label => buf.label = value,
         AppField::Command => buf.command = value,
         AppField::Icon => buf.icon = value,
-        AppField::Url => buf.url = value,
     }
 }
 
 fn emit(topic: Topic) {
-    if let Err(e) = bus().lock().unwrap().emit(topic) {
-        tracing::warn!("bus emit failed: {e}");
+    match try_bus().map(|b| b.lock().unwrap().emit(topic)) {
+        Some(Ok(())) => {}
+        Some(Err(e)) => tracing::warn!("bus emit failed: {e}"),
+        None => tracing::warn!("bus emit failed: no bus"),
     }
 }
 
 fn retract(topic: Topic) {
-    if let Err(e) = bus().lock().unwrap().retract(topic) {
-        tracing::warn!("bus retract failed: {e}");
+    match try_bus().map(|b| b.lock().unwrap().retract(topic)) {
+        Some(Ok(())) => {}
+        Some(Err(e)) => tracing::warn!("bus retract failed: {e}"),
+        None => tracing::warn!("bus retract failed: no bus"),
     }
 }
 
@@ -834,6 +738,22 @@ fn retract(topic: Topic) {
 mod tests {
     use super::*;
     use sola_bus::topics::Application;
+
+    #[test]
+    fn sola_apps_are_never_offered_for_the_launcher() {
+        let window = |app_id: &str| BusWindow {
+            window_id: 1,
+            app_id: app_id.into(),
+            title: String::new(),
+            pid: None,
+        };
+        let running = [window("sola-design"), window("sola-oath"), window("gimp")];
+        let ids: Vec<String> = collect_candidates(&ApplicationsConfig::default(), &running)
+            .into_iter()
+            .map(|c| c.app_id)
+            .collect();
+        assert_eq!(ids, ["gimp"]);
+    }
 
     fn app(id: &str, label: &str) -> Application {
         Application {
@@ -860,7 +780,7 @@ mod tests {
             app("a", "Bitwarden"),
             app("m", "Signal"),
         ];
-        let ids: Vec<&str> = sorted_apps(&cfg)
+        let ids: Vec<&str> = sorted_apps(&cfg, false)
             .iter()
             .map(|a| a.app_id.as_str())
             .collect();
@@ -1005,42 +925,61 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_to_application_synthesizes_command() {
-        let buf = EditBuffer {
-            app_id: " slack ".into(),
-            label: "Slack".into(),
-            command: "ignored".into(),
-            icon: "simpleicons/slack".into(),
-            kind: AppKind::Wrapper,
-            url: " https://app.slack.com ".into(),
-        };
-        let a = buf.to_application();
-        assert_eq!(a.kind, AppKind::Wrapper);
-        assert_eq!(a.app_id, "slack");
-        assert_eq!(a.url.as_deref(), Some("https://app.slack.com"));
-        assert_eq!(a.command, wrapper_command("slack"));
-    }
-
-    #[test]
-    fn wrapper_draft_is_dirty_when_kind_set() {
-        assert!(!draft_is_dirty(&EditBuffer::default()));
-        assert!(draft_is_dirty(&EditBuffer {
-            kind: AppKind::Wrapper,
-            ..Default::default()
-        }));
-    }
-
-    #[test]
-    fn wrapper_requires_http_url() {
+    fn an_app_needs_an_id_a_label_and_a_command() {
         let mut buf = EditBuffer {
-            app_id: "slack".into(),
-            label: "Slack".into(),
-            kind: AppKind::Wrapper,
-            url: "app.slack.com".into(),
+            app_id: "firefox".into(),
+            label: "Firefox".into(),
             ..Default::default()
         };
         assert!(required_fields_missing(&buf));
-        buf.url = "https://app.slack.com".into();
+        buf.command = "firefox".into();
         assert!(!required_fields_missing(&buf));
+        assert_eq!(buf.to_application().kind, AppKind::Command);
+    }
+
+    #[test]
+    fn web_apps_are_listed_apart() {
+        let mut cfg = ApplicationsConfig::default();
+        cfg.apps = vec![
+            app("firefox", "Firefox"),
+            Application {
+                kind: AppKind::Web,
+                ..app("web-1", "Slack")
+            },
+        ];
+        let ids: Vec<&str> = sorted_apps(&cfg, false).iter().map(|a| a.app_id.as_str()).collect();
+        assert_eq!(ids, ["firefox"]);
+        let web: Vec<&str> = sorted_apps(&cfg, true).iter().map(|a| a.app_id.as_str()).collect();
+        assert_eq!(web, ["web-1"]);
+    }
+
+    #[test]
+    fn saving_a_web_app_changes_only_its_name() {
+        let slack = Application {
+            kind: AppKind::Web,
+            url: Some("https://app.slack.com/client".into()),
+            profile: Some("p1".into()),
+            ..app("web-1", "Slack")
+        };
+        let mut cfg = ApplicationsConfig::default();
+        cfg.apps = vec![slack.clone()];
+        let mut ui = AppsState::default();
+        let _ = update(AppsMsg::Select("web-1".into()), &mut cfg, &mut ui);
+        let _ = update(
+            AppsMsg::Field {
+                field: AppField::Label,
+                value: " Work chat ".into(),
+            },
+            &mut cfg,
+            &mut ui,
+        );
+        let _ = update(AppsMsg::Save, &mut cfg, &mut ui);
+        let saved = cfg.get("web-1").unwrap();
+        assert_eq!(saved.label, "Work chat");
+        assert_eq!(saved.kind, AppKind::Web);
+        assert_eq!(saved.url, slack.url);
+        assert_eq!(saved.profile, slack.profile);
+        assert_eq!(saved.command, slack.command);
+        assert_eq!(site("https://www.example.com/a?b"), "example.com");
     }
 }

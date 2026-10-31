@@ -1,94 +1,115 @@
 title = "Foundation"
 
-# The Components board, then the Graphite sheet one section per artboard
-# (each stays under 4096 px, so 2×). Ported from Pencil 2026-10-12.
-
-[[artboard]]
-id = "components"
-src = "components.html"
-x = 0
-y = 0
-width = 1440
-height = "auto"
-title = "Components"
+# Sola's design as built (branch `next`, 2026-10-24): the official sheet.
+# Tokens from ../tokens.css; parts and the board chrome in foundation.css /
+# foundation.js, so every board draws the same desk. Printed token values
+# are read live from the CSS, so they follow tokens.css. Boards stack top
+# to bottom; the desk board is 2064 wide (canto's 1920 at 1:1).
 
 [[artboard]]
 id = "cover"
 src = "cover.html"
 x = 0
-y = 1608
+y = 0
 width = 1440
 height = "auto"
-title = "Graphite / Cover"
+title = "Foundation / Cover"
 
 [[artboard]]
 id = "01-color"
 src = "01-color.html"
 x = 0
-y = 2540
+y = 2535
 width = 1440
 height = "auto"
-title = "Graphite / 01 Color"
+title = "Foundation / 01 Color"
 
 [[artboard]]
 id = "02-type"
 src = "02-type.html"
 x = 0
-y = 4534
+y = 6315
 width = 1440
 height = "auto"
-title = "Graphite / 02 Type"
+title = "Foundation / 02 Type"
 
 [[artboard]]
 id = "03-space"
 src = "03-space.html"
 x = 0
-y = 6139
+y = 8375
 width = 1440
 height = "auto"
-title = "Graphite / 03 Space, shape, edge, depth"
+title = "Foundation / 03 Space, shape, edge, depth"
 
 [[artboard]]
 id = "04-controls"
 src = "04-controls.html"
 x = 0
-y = 7623
+y = 11083
 width = 1440
 height = "auto"
-title = "Graphite / 04 Controls"
+title = "Foundation / 04 Controls"
 
 [[artboard]]
-id = "05-rail"
-src = "05-rail.html"
+id = "05-window"
+src = "05-window.html"
 x = 0
-y = 9115
+y = 13845
 width = 1440
 height = "auto"
-title = "Graphite / 05 Rail, menus, panels"
+title = "Foundation / 05 The window"
 
 [[artboard]]
-id = "06-shell"
-src = "06-shell.html"
+id = "06-top"
+src = "06-top.html"
 x = 0
-y = 9926
+y = 18929
 width = 1440
 height = "auto"
-title = "Graphite / 06 Shell"
+title = "Foundation / 06 The top row"
 
 [[artboard]]
-id = "07-desk"
-src = "07-desk.html"
+id = "07-tabs"
+src = "07-tabs.html"
 x = 0
-y = 11503
+y = 21699
 width = 1440
 height = "auto"
-title = "Graphite / 07 The desk"
+title = "Foundation / 07 The tab bar and workspaces"
 
 [[artboard]]
-id = "08-proposed"
-src = "08-proposed.html"
+id = "08-desk"
+src = "08-desk.html"
 x = 0
-y = 13341
+y = 26473
+width = 2064
+height = "auto"
+title = "Foundation / 08 The desk"
+
+[[artboard]]
+id = "09-surfaces"
+src = "09-surfaces.html"
+x = 0
+y = 29878
 width = 1440
 height = "auto"
-title = "Graphite / 08 Proposed"
+title = "Foundation / 09 Surfaces"
+
+[[artboard]]
+id = "10-settings"
+src = "10-settings.html"
+x = 0
+y = 34948
+width = 1440
+height = "auto"
+title = "Foundation / 10 Settings and the picture"
+
+[[artboard]]
+id = "11-open"
+src = "11-open.html"
+x = 0
+y = 38465
+width = 1440
+height = "auto"
+title = "Foundation / 11 Open"

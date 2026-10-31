@@ -7,20 +7,39 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-/// One tab to restore. Title is best-effort (helps the strip before load).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+/// One tab to restore. Title is best-effort (names the window before load).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionTab {
+    /// Stable across restarts: the page's window is the shell tab
+    /// `sola-browser/<id>`, and keeps its place by it. Minted for tabs saved
+    /// before ids existed.
+    #[serde(default = "crate::profiles::new_uuid")]
+    pub id: String,
     pub url: String,
     #[serde(default)]
     pub title: String,
-    /// Chrome group id; absent = loose.
-    #[serde(default)]
-    pub group_id: Option<String>,
     /// Session history (back/forward hold menu). Survives chrome restart.
     #[serde(default)]
     pub history: Vec<SessionHistory>,
     #[serde(default)]
     pub history_index: i32,
+    /// The web app this page is (its app id), when it is one: it comes
+    /// back as the app's window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+}
+
+impl Default for SessionTab {
+    fn default() -> Self {
+        Self {
+            id: crate::profiles::new_uuid(),
+            url: String::new(),
+            title: String::new(),
+            history: Vec::new(),
+            history_index: 0,
+            app: None,
+        }
+    }
 }
 
 /// One back/forward entry persisted with the tab.
@@ -31,27 +50,16 @@ pub struct SessionHistory {
     pub title: String,
 }
 
-/// Named folder persisted beside the tab list.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct SessionGroup {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub collapsed: bool,
-    /// Pocket fill (`#rrggbb` / `#rrggbbaa`). Absent = kit default well.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub color: Option<String>,
-}
-
 /// A tab closed this session, restored LIFO by ⌘⇧T.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct ClosedTab {
+    /// The page's id, so a reopened page takes its place back.
+    #[serde(default)]
+    pub id: String,
     pub url: String,
     #[serde(default)]
     pub title: String,
-    #[serde(default)]
-    pub group_id: Option<String>,
-    /// Strip index at close; restore inserts here (clamped).
+    /// Index in the page list at close; restore inserts here (clamped).
     #[serde(default)]
     pub index: usize,
     #[serde(default)]
@@ -63,40 +71,20 @@ pub struct ClosedTab {
 /// Cap for [`BrowserSession::closed`] (Chrome-like). Oldest drop first.
 pub const CLOSED_TAB_CAP: usize = 25;
 
-/// Full session snapshot.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Full session snapshot. Files from before a window per page also carry
+/// tab groups and a sidebar width; those keys are ignored.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BrowserSession {
-    /// Tabs in sidebar order.
+    /// Pages in open order.
     pub tabs: Vec<SessionTab>,
     /// Index into `tabs` for the active tab.
     #[serde(default)]
     pub active_index: usize,
-    /// Sidebar width (logical px).
-    #[serde(default = "default_sidebar_w")]
-    pub sidebar_w: f32,
-    /// Group metadata (name / collapsed). Membership is on each tab.
-    #[serde(default)]
-    pub groups: Vec<SessionGroup>,
     /// Most recently closed last. Survives chrome restart / profile switch.
     #[serde(default)]
     pub closed: Vec<ClosedTab>,
 }
 
-fn default_sidebar_w() -> f32 {
-    crate::app::SIDEBAR_W_DEFAULT
-}
-
-impl Default for BrowserSession {
-    fn default() -> Self {
-        Self {
-            tabs: Vec::new(),
-            active_index: 0,
-            sidebar_w: default_sidebar_w(),
-            groups: Vec::new(),
-            closed: Vec::new(),
-        }
-    }
-}
 
 /// Keep the newest [`CLOSED_TAB_CAP`] entries (append = most recent).
 pub fn push_closed(stack: &mut Vec<ClosedTab>, tab: ClosedTab) {
@@ -157,11 +145,7 @@ impl BrowserSession {
         mut self,
         argv_url: Option<String>,
         default_url: &str,
-    ) -> (Vec<SessionTab>, usize, f32) {
-        let sidebar_w = self
-            .sidebar_w
-            .clamp(crate::app::SIDEBAR_W_MIN, crate::app::SIDEBAR_W_MAX);
-
+    ) -> (Vec<SessionTab>, usize) {
         scrub_control_chars(&mut self);
         self.tabs
             .retain(|t| !t.url.trim().is_empty() && !is_spurious_switch_url(&t.url));
@@ -189,7 +173,7 @@ impl BrowserSession {
             self.active_index = self.tabs.len() - 1;
         }
 
-        (self.tabs, self.active_index, sidebar_w)
+        (self.tabs, self.active_index)
     }
 }
 
@@ -246,20 +230,23 @@ pub fn history_from_session(tab: &SessionTab) -> (Vec<crate::engine::HistoryEntr
 pub fn session_from_tabs(
     tabs: &[crate::engine::TabInfo],
     active: crate::engine::TabId,
-    sidebar_w: f32,
-    groups: &crate::groups::Groups,
     closed: &[ClosedTab],
+    page_ids: &std::collections::HashMap<crate::engine::TabId, String>,
+    apps: &std::collections::HashMap<crate::engine::TabId, String>,
 ) -> BrowserSession {
     let session_tabs: Vec<SessionTab> = tabs
         .iter()
         .map(|t| SessionTab {
+            id: page_ids
+                .get(&t.id)
+                .cloned()
+                .unwrap_or_else(crate::profiles::new_uuid),
             url: if t.url.is_empty() {
                 crate::app::BLANK_URL.to_string()
             } else {
                 t.url.clone()
             },
             title: t.title.clone(),
-            group_id: groups.of_tab(t.id).map(str::to_string),
             history: t
                 .history
                 .iter()
@@ -269,6 +256,7 @@ pub fn session_from_tabs(
                 })
                 .collect(),
             history_index: t.history_index,
+            app: apps.get(&t.id).cloned(),
         })
         .collect();
     let active_index = tabs
@@ -279,8 +267,6 @@ pub fn session_from_tabs(
     let mut session = BrowserSession {
         tabs: session_tabs,
         active_index,
-        sidebar_w: sidebar_w.clamp(crate::app::SIDEBAR_W_MIN, crate::app::SIDEBAR_W_MAX),
-        groups: groups.to_session(),
         closed: closed.to_vec(),
     };
     scrub_control_chars(&mut session);
@@ -307,10 +293,7 @@ fn scrub_control_chars(session: &mut BrowserSession) {
 /// Fingerprint for dirty detection (avoid rewriting identical JSON every tick).
 pub fn fingerprint(session: &BrowserSession) -> String {
     let mut s = String::new();
-    s.push_str(&format!(
-        "a{}|w{:.0}|",
-        session.active_index, session.sidebar_w
-    ));
+    s.push_str(&format!("a{}|", session.active_index));
     for t in &session.tabs {
         s.push_str(&t.url);
         s.push('\x1e');
@@ -322,22 +305,8 @@ pub fn fingerprint(session: &BrowserSession) -> String {
             s.push_str(&h.url);
             s.push('\x1d');
         }
-        s.push('\x1e');
-        if let Some(g) = &t.group_id {
-            s.push_str(g);
-        }
-        s.push('\x1f');
-    }
-    for g in &session.groups {
-        s.push_str(&g.id);
-        s.push('\x1e');
-        s.push_str(&g.name);
-        s.push('\x1e');
-        s.push(if g.collapsed { '1' } else { '0' });
-        s.push('\x1e');
-        if let Some(c) = &g.color {
-            s.push_str(c);
-        }
+        // Wrapping a page changes only its app.
+        s.push_str(t.app.as_deref().unwrap_or_default());
         s.push('\x1f');
     }
     for c in &session.closed {
@@ -354,6 +323,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn tabs_saved_before_ids_get_one() {
+        let s: BrowserSession =
+            serde_json::from_str(r#"{"tabs":[{"url":"https://a/"},{"url":"https://b/"}]}"#)
+                .unwrap();
+        assert_eq!(s.tabs[0].id.len(), 36);
+        assert_ne!(s.tabs[0].id, s.tabs[1].id);
+    }
+
+    #[test]
     fn bootstrap_strips_nul_from_restored_titles() {
         let session = BrowserSession {
             tabs: vec![SessionTab {
@@ -367,15 +345,13 @@ mod tests {
                 ..SessionTab::default()
             }],
             active_index: 0,
-            sidebar_w: 200.0,
-            groups: Vec::new(),
             closed: vec![ClosedTab {
                 url: "https://example.com/".into(),
                 title: "closed\0".into(),
                 ..ClosedTab::default()
             }],
         };
-        let (tabs, _, _) = session.bootstrap(None, "about:blank");
+        let (tabs, _) = session.bootstrap(None, "about:blank");
         assert_eq!(tabs[0].title, "magick-tg-P98v8XUbFBC6uv9Jd58pTwIuN1fnM");
         assert_eq!(
             tabs[0].history[0].title,
@@ -386,7 +362,7 @@ mod tests {
 
     #[test]
     fn bootstrap_empty_uses_default() {
-        let (tabs, active, _) = BrowserSession::default().bootstrap(None, "about:blank");
+        let (tabs, active) = BrowserSession::default().bootstrap(None, "about:blank");
         assert_eq!(tabs.len(), 1);
         assert_eq!(tabs[0].url, "about:blank");
         assert_eq!(active, 0);
@@ -408,11 +384,9 @@ mod tests {
                 },
             ],
             active_index: 1,
-            sidebar_w: 200.0,
-            groups: Vec::new(),
             closed: Vec::new(),
         };
-        let (tabs, active, _) =
+        let (tabs, active) =
             session.bootstrap(Some("https://c.example/".into()), "https://fallback/");
         assert_eq!(tabs.len(), 3);
         assert_eq!(tabs[2].url, "https://c.example/");
@@ -435,11 +409,9 @@ mod tests {
                 },
             ],
             active_index: 1,
-            sidebar_w: 200.0,
-            groups: Vec::new(),
             closed: Vec::new(),
         };
-        let (tabs, active, _) =
+        let (tabs, active) =
             session.bootstrap(Some("--password-store=basic".into()), "about:blank");
         assert_eq!(tabs.len(), 1);
         assert_eq!(tabs[0].url, "https://ok.example/");
@@ -463,13 +435,27 @@ mod tests {
         let session = session_from_tabs(
             &[tab],
             crate::engine::TabId(1),
-            200.0,
-            &crate::groups::Groups::default(),
             &[closed],
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
         );
         assert_eq!(session.tabs[0].title, "badtitle");
         assert_eq!(session.closed[0].title, "closed");
         assert!(!session.tabs[0].title.contains('\0'));
+    }
+
+    #[test]
+    fn wrapping_a_page_changes_the_fingerprint() {
+        let tab = crate::engine::TabInfo::chrome(
+            crate::engine::TabId(1),
+            "https://example.com/",
+            "Example",
+        );
+        let none = std::collections::HashMap::new();
+        let page = session_from_tabs(&[tab.clone()], tab.id, &[], &none, &none);
+        let app = std::collections::HashMap::from([(tab.id, "web-1".to_string())]);
+        let wrapped = session_from_tabs(&[tab.clone()], tab.id, &[], &none, &app);
+        assert_ne!(fingerprint(&page), fingerprint(&wrapped));
     }
 
     #[test]
@@ -493,10 +479,13 @@ mod tests {
         let session = session_from_tabs(
             &[tab],
             crate::engine::TabId(1),
-            200.0,
-            &crate::groups::Groups::default(),
             &[],
+            &std::collections::HashMap::from([(crate::engine::TabId(1), "page-b".to_string())]),
+            &std::collections::HashMap::from([(crate::engine::TabId(1), "web-1".to_string())]),
         );
+        assert_eq!(session.tabs[0].id, "page-b");
+        // A web app's page keeps its app.
+        assert_eq!(session.tabs[0].app.as_deref(), Some("web-1"));
         assert_eq!(session.tabs[0].history.len(), 2);
         assert_eq!(session.tabs[0].history_index, 1);
         let (entries, idx) = history_from_session(&session.tabs[0]);
@@ -513,8 +502,6 @@ mod tests {
                 ..SessionTab::default()
             }],
             active_index: 0,
-            sidebar_w: 200.0,
-            groups: Vec::new(),
             closed: Vec::new(),
         };
         let mut b = a.clone();
@@ -553,8 +540,6 @@ mod tests {
                 ..SessionTab::default()
             }],
             active_index: 0,
-            sidebar_w: 200.0,
-            groups: Vec::new(),
             closed: Vec::new(),
         };
         let mut b = a.clone();
@@ -566,25 +551,14 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_changes_with_group_color() {
-        let a = BrowserSession {
-            tabs: vec![SessionTab {
-                url: "https://a/".into(),
-                group_id: Some("work".into()),
-                ..SessionTab::default()
-            }],
-            active_index: 0,
-            sidebar_w: 200.0,
-            groups: vec![SessionGroup {
-                id: "work".into(),
-                name: "Work".into(),
-                collapsed: false,
-                color: None,
-            }],
-            closed: Vec::new(),
-        };
-        let mut b = a.clone();
-        b.groups[0].color = Some("#3dd6f5".into());
-        assert_ne!(fingerprint(&a), fingerprint(&b));
+    fn files_with_groups_and_a_sidebar_width_still_load() {
+        let s: BrowserSession = serde_json::from_str(
+            r#"{"tabs":[{"url":"https://a/","group_id":"g1"}],"sidebar_w":220.0,
+                "groups":[{"id":"g1","name":"Work","collapsed":false}],
+                "closed":[{"url":"https://b/","group_id":"g1","index":0}]}"#,
+        )
+        .unwrap();
+        assert_eq!(s.tabs[0].url, "https://a/");
+        assert_eq!(s.closed[0].url, "https://b/");
     }
 }

@@ -3,8 +3,9 @@ use uuid::Uuid;
 
 /// Reserved topic names for bus control messages. Prefixed `$` so they
 /// can never collide with a Topic variant (Rust identifiers don't start
-/// with `$`).
+/// with `$`). The subscribe frames are in [`crate::subscribe`].
 pub const CONTROL_SUBSCRIBE: &str = "$subscribe";
+pub const CONTROL_SUBSCRIBE_NAMES: &str = "$subscribe-names";
 pub const CONTROL_IDENTIFY: &str = "$identify";
 
 /// A single message on the Sola Bus.

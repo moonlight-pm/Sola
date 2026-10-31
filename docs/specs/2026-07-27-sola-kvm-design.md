@@ -3,7 +3,8 @@
 **Date:** 2026-07-27  
 **Status:** Implementing — Phase A done; Phase C server path in; Linux `listen` injects via virtual pointer/keyboard; **pairing** built 2026-10-29 (23daf688): a shared key, and every input datagram and clipboard message sealed (`seal.rs`), which supersedes §4's "no handshake, trusted LAN" for paired machines; design in `next`'s `docs/specs/2026-10-29-secure-access-design.md` (part 1)  
 **Dogfood:** novus server; Linux client (`sola-kvm listen`) or ember macOS agent; novus ↔ canto paired 2026-10-29  
-**Gaps:** D2 permanent input ACL on the server; Mac clip is text-only; Super+Tab confirm over Linux listen unsmoked after key-before-modifiers + drop kernel auto-repeat
+**2026-10-30 (Oath R44):** the server captures through the compositor (layer-shell strip, exclusive keyboard, pointer lock, relative motion, shortcuts inhibitor) — no `/dev/input`, so §5.2's evdev grab and D2 are gone; pairing is by static public keys with Noise IK ([secure access](2026-10-29-secure-access-design.md) §1), and neither side starts unpaired  
+**Gaps:** Mac clip is text-only; Super+Tab confirm over Linux listen unsmoked after key-before-modifiers + drop kernel auto-repeat
 
 ## 1. Goal
 
@@ -96,7 +97,7 @@ release = []             # optional emergency release chord; edge-return is prim
 
 ## 4. Wire format (minimal UDP)
 
-Trusted LAN only. **No TLS, no fingerprints, no handshake.** *(Unpaired only. Since 2026-10-29 a paired server and peer seal every packet with their shared key and drop what does not open; see the Status line and [the manual](../manual/sola-kvm-operator.md#pairing).)*
+Trusted LAN only. **No TLS, no fingerprints, no handshake.** *(Superseded: since 2026-10-30 nothing runs unpaired, and every packet travels under Noise IK between the two machines' keys; see the Status line and [the manual](../manual/sola-kvm-operator.md#pairing).)*
 
 ### 4.1 Transport
 
@@ -150,7 +151,7 @@ Integration points:
 
 ### 5.2 Capture strategy (v1)
 
-**Chosen for speed of implementation:** edge hit on real output → exclusive grab (layer-shell barrier *or* seat-level grab once past edge), then software virtual cursor.
+**Chosen for speed of implementation:** edge hit on real output → exclusive grab (layer-shell barrier *or* seat-level grab once past edge), then software virtual cursor. *(Since 2026-10-30 the grab is the compositor's: the strip takes the keyboard, locks the pointer, reads relative motion and inhibits shortcuts; the evdev grab is gone.)*
 
 Alternatives (later):
 

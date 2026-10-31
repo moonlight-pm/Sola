@@ -9,8 +9,10 @@ use std::time::Duration;
 use iced::Task;
 use sola_bus::topics::{
     AppHidden, AppMenuPayload, AppNotification, AppToast, Application, ChordEvent, FloatGeometry,
-    FocusTarget, LaunchResultPayload, MailStatus, MouseClickedPayload, MouseEnteredPayload,
-    OutputGeometry, Topic, UserAppExitedPayload, Window, WindowFloating, WindowGeometry,
+    FocusTarget, LaunchResultPayload, MailStatus, MenuActionPayload, MouseClickedPayload,
+    MouseEnteredPayload,
+    OutputGeometry, TabLayout, Topic, UserAppExitedPayload, Window, WindowChrome, WindowFloating,
+    WindowGeometry, WindowParent, Zone,
 };
 use sola_core::theme::Theme as BusTheme;
 
@@ -28,9 +30,12 @@ impl Shell {
         };
         match topic {
             Topic::Theme(t) => {
-                self.on_theme(t);
-                Task::none()
+                self.on_theme(t.clone());
+                self.adapt.theme = Some(t);
+                self.adapt_step()
             }
+            Topic::Background(b) => self.adapt_picture(message.sticky.then_some(b)),
+            Topic::Appearance(a) => self.adapt_appearance(message.sticky.then_some(a)),
             Topic::OutputGeometry(g) => {
                 self.on_output_geometry(g);
                 Task::none()
@@ -38,6 +43,7 @@ impl Shell {
             Topic::Windows(w) => {
                 self.on_windows(w);
                 self.resolve_pending_launch_if_window();
+                self.flush_calendar_event();
                 Task::none()
             }
             Topic::SetAppMenu(m) => {
@@ -53,7 +59,6 @@ impl Shell {
                 Task::none()
             }
             Topic::Chord(c) => self.on_chord(c),
-            Topic::ChordReleased(c) => self.on_chord_released(c),
             Topic::MouseEntered(e) => self.on_mouse_entered(e),
             Topic::MouseClicked(e) => {
                 self.on_mouse_clicked(e);
@@ -62,8 +67,39 @@ impl Shell {
             Topic::MouseLeft => self.on_mouse_left(),
             Topic::LaunchResult(r) => self.on_launch_result(r),
             Topic::UserAppExited(e) => self.on_user_app_exited(e),
-            Topic::Zones(z) => {
-                self.on_zones(z);
+            Topic::WindowParent(p) => {
+                self.on_window_parent(p, message.sticky);
+                Task::none()
+            }
+            Topic::TabLayout(l) => {
+                self.on_tab_layout(l);
+                Task::none()
+            }
+            Topic::Tab(t) => {
+                self.on_tab(t, message.sticky);
+                Task::none()
+            }
+            Topic::AgentIsland(_) => {
+                self.on_agent_island(&message);
+                Task::none()
+            }
+            Topic::TabActivity(a) => {
+                if message.sticky {
+                    self.tab_activity.insert(a.key, a.activity);
+                } else {
+                    self.tab_activity.remove(&a.key);
+                }
+                Task::none()
+            }
+            Topic::ShowWindow(wid) => {
+                self.activate_window(wid);
+                Task::none()
+            }
+            Topic::ShowTab(s) => {
+                match self.pairing.window_of(&s.key) {
+                    Some(wid) => self.activate_window(wid),
+                    None => tracing::debug!(key = %s.key, "ShowTab: no window"),
+                }
                 Task::none()
             }
             Topic::WindowGeometry(g) => {
@@ -77,16 +113,12 @@ impl Shell {
             // External links. Live sola-browser already subscribed to
             // OpenUrl and will open a tab. Only spawn if chrome is down
             // (otherwise we used to start a second process that reaped
-            // the live CEF helpers). When chrome is up and the request
-            // wants activation, raise the existing window to the top.
+            // the live CEF helpers). Each page is a window (Next): the new
+            // page's window opens in front on its own, so there is nothing
+            // to raise (raising the app would pull an older page forward).
             Topic::OpenUrl(req) => {
                 if sola_core::sola_browser_is_running() {
-                    if req.activate {
-                        tracing::info!(url = %req.url, "OpenUrl: chrome live, raising");
-                        self.raise_app("sola-browser");
-                    } else {
-                        tracing::debug!(url = %req.url, "OpenUrl: chrome live, not spawning");
-                    }
+                    tracing::debug!(url = %req.url, "OpenUrl: chrome live, it opens a window");
                 } else {
                     sola_core::open_url_logged(&req.url);
                 }
@@ -98,6 +130,25 @@ impl Shell {
                 self.on_mail_status(s, message.sticky);
                 Task::none()
             }
+            Topic::CalendarAgenda(a) => {
+                self.calendar_agenda = message.sticky.then_some(a);
+                Task::none()
+            }
+            Topic::MenuAction(a) => self.on_titlebar_menu_action(a),
+            Topic::IdleFade(f) => {
+                // Retracted (sola-river gone): in sight.
+                let out = message.sticky && f.out;
+                if out != self.desk_out {
+                    self.desk_out = out;
+                    self.sync_tab_shown();
+                    if out && self.lock_idle {
+                        if let Err(why) = crate::lock::lock("idle") {
+                            tracing::info!(why, "idle: not locking");
+                        }
+                    }
+                }
+                Task::none()
+            }
             // All other topics are not consumed by sola-shell; ignore quietly.
             _ => Task::none(),
         }
@@ -106,6 +157,25 @@ impl Shell {
     // -------------------------------------------------------------------------
     // Real handlers
     // -------------------------------------------------------------------------
+
+    /// A Window-menu choice from an app's titlebar (kit `menu::choose`). The
+    /// click focused that app's window, so act on the focused window as the
+    /// shortcut would. Other actions are the app's own and never reach here.
+    fn on_titlebar_menu_action(&mut self, a: MenuActionPayload) -> Task<Msg> {
+        let Some(action) = sola_kit::parse_window_action(&a.action_id) else {
+            return Task::none();
+        };
+        if self.focused_app_id.as_deref() != Some(a.app_id.as_str()) {
+            tracing::warn!(
+                app_id = %a.app_id,
+                action_id = %a.action_id,
+                focused = ?self.focused_app_id,
+                "titlebar window action from an app without focus; ignored"
+            );
+            return Task::none();
+        }
+        self.handle_window_action(action)
+    }
 
     /// Menubar whisper (Opening… / screenshot). Not a notification.
     fn on_app_toast(&mut self, t: AppToast) -> Task<Msg> {
@@ -128,11 +198,22 @@ impl Shell {
     }
 
     /// Apply an updated bus theme to the iced renderer.
-    fn on_theme(&mut self, t: BusTheme) {
+    fn on_theme(&mut self, mut t: BusTheme) {
+        // A theme saved before Next still has the slate base: swap it for
+        // the greys and save that, so every app follows.
+        if t.retire_slate() {
+            tracing::info!("theme: slate base retired for neutral greys");
+            let saved = t.clone();
+            super::with_bus(|bus| {
+                let _ = bus.emit(Topic::Theme(saved));
+            });
+        }
         self.theme = sola_kit::theme::theme_from_bus(&t);
         self.style = sola_kit::theme::shell_style_from_bus_theme(&t);
         sola_kit::fonts::install(sola_kit::theme::fonts_from_bus_theme(&t));
-        sola_kit::theme::install_selection(sola_kit::theme::atoms_from_bus_theme(&t).selection);
+        sola_kit::theme::install_atoms(&sola_kit::theme::atoms_from_bus_theme(&t));
+        // The islands' widths follow the fonts.
+        self.emit_idle_keep(false);
     }
 
     /// Store output geometry, emit frames for all windows, and emit composition.
@@ -148,6 +229,7 @@ impl Shell {
         self.emit_all_frames();
         self.emit_composition();
         self.emit_registered_chords();
+        self.emit_idle_keep(true);
     }
 
     /// Receive the full window list from sola-river.
@@ -185,38 +267,44 @@ impl Shell {
             return;
         }
 
-        // Collect old and new app_id sets (excluding the shell itself) to
-        // detect additions and removals.
-        let old_app_ids: HashSet<String> = self
+        let now = std::time::Instant::now();
+        // A window is the same window only with the same id *and* app: a
+        // restarted sola-river numbers windows from 1 again.
+        let old: std::collections::HashMap<u32, &str> = self
             .known_windows
             .iter()
-            .filter(|w| w.app_id != Self::APP_ID)
-            .map(|w| w.app_id.clone())
+            .map(|w| (w.window_id, w.app_id.as_str()))
             .collect();
-        let new_app_ids: HashSet<String> = windows
+        let new: std::collections::HashMap<u32, &str> = windows
             .iter()
-            .filter(|w| w.app_id != Self::APP_ID)
-            .map(|w| w.app_id.clone())
+            .map(|w| (w.window_id, w.app_id.as_str()))
+            .collect();
+        let removed_wids: Vec<u32> = old
+            .iter()
+            .filter(|(id, app)| new.get(id) != Some(app))
+            .map(|(id, _)| *id)
+            .collect();
+        let added: Vec<(u32, String)> = windows
+            .iter()
+            .filter(|w| {
+                w.app_id != Self::APP_ID && old.get(&w.window_id) != Some(&w.app_id.as_str())
+            })
+            .map(|w| (w.window_id, w.app_id.clone()))
             .collect();
 
-        let added: Vec<String> = new_app_ids
+        // Apps whose last window closed (MRU / hidden cleanup).
+        let new_app_ids: HashSet<&str> = windows
             .iter()
-            .filter(|id| !old_app_ids.contains(id.as_str()))
-            .cloned()
+            .filter(|w| w.app_id != Self::APP_ID)
+            .map(|w| w.app_id.as_str())
             .collect();
-        let removed: Vec<String> = old_app_ids
-            .iter()
-            .filter(|id| !new_app_ids.contains(id.as_str()))
-            .cloned()
-            .collect();
-
-        // Collect removed window IDs from the OLD known_windows before we overwrite it.
-        // Used to purge per-window config_applied entries from ZoningState.
-        let removed_wids: Vec<u32> = self
+        let removed_apps: Vec<String> = self
             .known_windows
             .iter()
-            .filter(|w| removed.iter().any(|r| r == &w.app_id))
-            .map(|w| w.window_id)
+            .filter(|w| w.app_id != Self::APP_ID && !new_app_ids.contains(w.app_id.as_str()))
+            .map(|w| w.app_id.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
             .collect();
 
         // Rebuild lookup map (includes shell surfaces so emit_composition works).
@@ -227,84 +315,87 @@ impl Shell {
         }
         self.known_windows = windows;
 
-        // Track removed apps: clean up MRU, zoning, and focused state.
-        let focused_app_was_removed = self
-            .focused_app_id
-            .as_deref()
-            .map(|f| removed.iter().any(|r| r == f))
-            .unwrap_or(false);
+        // Closed tabs leave their zones; each zone whose shown tab closed
+        // shows its next one. A place waits a moment for a restarting app.
+        let focused_closed = self
+            .focused_window_id
+            .is_some_and(|w| removed_wids.contains(&w));
+        let focused_zone = self.focused_window_id.and_then(|w| self.tabs.zone_of(w));
+        for &wid in &removed_wids {
+            self.tabs.remove(wid, now);
+            self.pending_parents.remove(&wid);
+            if let Some(key) = self.pairing.window_closed(wid) {
+                retract_tab_window(key);
+            }
+            self.tab_shown_sent.remove(&wid);
+        }
         self.zoning.forget_windows(&removed_wids);
 
-        for id in &removed {
+        for id in &removed_apps {
             self.mru_apps.retain(|m| m != id);
             self.mru_window_by_app.remove(id);
             if self.focused_app_id.as_deref() == Some(id.as_str()) {
                 self.focused_app_id = None;
-                self.focused_window_id = None;
             }
             // Last surface gone — drop AppHidden so a later map of this
-            // app_id is not stuck hidden (Super+H / Arcade).
+            // app_id is not stuck hidden (Super+H).
             if self.is_app_hidden(id) {
                 self.retract_app_hidden(id);
             }
         }
+        if focused_closed {
+            self.focused_window_id = None;
+        }
 
-        // Clean up window-level zone tracking for windows that no longer exist.
-        let current_wids: HashSet<u32> = self.known_windows.iter().map(|w| w.window_id).collect();
-        let orphaned_wids: Vec<u32> = self
-            .zoning
-            .window_zones
-            .keys()
-            .copied()
-            .filter(|wid| !current_wids.contains(wid))
-            .collect();
-        self.zoning.forget_windows(&orphaned_wids);
-        self.zoning
-            .window_zones
-            .retain(|wid, _| current_wids.contains(wid));
-
-        // Per non-shell window: restore a saved zone if any; otherwise
-        // default-float (client-requested size + WindowFloating for CSD).
-        // gamescope is framed like any other app (zone/float host size).
-        let mut zone_frames = Vec::new();
-        for w in &self.known_windows {
-            if w.app_id == Self::APP_ID {
+        // Place new windows. A dialog rides its parent; a window that was
+        // up before this shell started, or whose app just restarted, takes
+        // its remembered place; anything else joins the focused zone and
+        // takes focus.
+        let first_list = !self.windows_seen;
+        self.windows_seen = true;
+        // Tabs announced for these windows: placed windows may move to their
+        // tab's place; new ones are placed by their tab's key below.
+        if self.pair_tabs(now) {
+            self.sync_floats();
+        }
+        let mut float_frames = Vec::new();
+        let mut take_focus: Option<(u32, String)> = None;
+        let mut first_shown: Option<(u32, String)> = None;
+        let mut placed_any = false;
+        for (wid, app_id) in &added {
+            if let Some(parent) = self.pending_parents.remove(wid) {
+                self.tabs.set_parent(*wid, parent);
+                self.zoning.float(app_id, *wid, false);
                 continue;
             }
-            if let Some(frame) = self.zoning.apply_config_zone(&w.app_id, w.window_id) {
-                zone_frames.push(frame);
-            } else if let Some(frame) = self.zoning.ensure_default_float(&w.app_id, w.window_id) {
-                zone_frames.push(frame);
+            let floats = crate::zoning::floats_by_default(app_id) || self.zoning.remembers(app_id);
+            let key = self.pairing.key_of(*wid).unwrap_or(app_id).to_string();
+            // A background tab joins behind the shown one, like a returning one.
+            let behind = first_list || self.pairing.background(*wid);
+            let placed = self.tabs.place(*wid, app_id, &key, floats, behind, now);
+            placed_any = true;
+            tracing::info!(window_id = wid, %app_id, ?placed, "placed window");
+            if placed.zone == Zone::Float {
+                let remembers = placed.returning || self.zoning.remembers(app_id);
+                float_frames.extend(self.zoning.float(app_id, *wid, remembers));
+            }
+            if !placed.returning {
+                take_focus = Some((*wid, app_id.clone()));
+            } else if placed.shown && placed.zone != Zone::Float && first_shown.is_none() {
+                first_shown = Some((*wid, app_id.clone()));
             }
         }
-        if !zone_frames.is_empty() {
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                for f in zone_frames {
-                    let _ = bus.emit(Topic::Frame(f));
-                }
-            }
+        // Restored windows do not take focus — unless nothing has it.
+        if take_focus.is_none() && self.focused_window_id.is_none() {
+            take_focus = first_shown;
+        }
+        Self::emit_frames(float_frames);
+        if placed_any {
+            self.persist_tabs();
         }
 
-        // Tell sola-river / kit apps which windows are floating (move/resize + CSD).
-        self.sync_window_floating();
-
-        // Emit frames for menubar overlays and explicitly zoned (non-float) windows.
-        self.emit_all_frames();
-
-        // Re-derive the switcher app list whenever windows change while active.
-        if self.switcher.active {
-            crate::switcher::state::rebuild_apps(
-                &mut self.switcher,
-                &self.mru_apps.clone(),
-                &self.known_windows.clone(),
-            );
-        }
-
-        // Ensure every known non-shell app is tracked in mru_apps at least at
-        // the least-recent end. Without this, apps only pointer-focused (never
-        // click-raised) used to live outside MRU and were composition-stacked
-        // *above* every raised window — Helium/external apps looked "stuck"
-        // on top. New maps still raise via bus_set_focus below.
+        // Every known app is in MRU at least at the least-recent end, so
+        // Super+Tab is complete.
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID {
                 continue;
@@ -314,76 +405,56 @@ impl Shell {
             }
         }
 
-        // Raise + provisionally focus the newest app so it appears on top and
-        // is usable when the pointer is already over it (or nowhere). Then
-        // re-sync keyboard focus to the window under the pointer — if the
-        // cursor is still over another app, FFM wins and the new map keeps
-        // its raise without stealing input.
-        //
-        // If no new app appeared but the focused app was just closed, fall
-        // back to the next MRU app — or clear the menubar if none remain —
-        // then the same pointer resync applies.
-        //
-        // Screenshot cold-launch of sola-preview sets `suppress_map_focus_for`
-        // so we raise the window in MRU/composition without taking the seat
-        // (keyboard stays on the app that was focused when the chord fired).
+        // Focus: a new window takes it. Screenshot cold-launch of
+        // sola-preview sets `suppress_map_focus_for` so the window shows
+        // without taking the seat (keyboard stays on the app that was
+        // focused when the chord fired). When the focused window closed,
+        // its zone's next tab takes focus, else the tab in front (its zone
+        // emptied), else the most recent app.
         let prev_focused = self.focused_window_id;
-        if let Some(id) = added.first() {
+        if let Some((wid, app_id)) = take_focus.clone() {
             let suppress = self
                 .suppress_map_focus_for
                 .as_deref()
-                .is_some_and(|s| s == id.as_str());
+                .is_some_and(|s| s == app_id);
             if suppress {
                 self.suppress_map_focus_for = None;
-                // Still put the new app at the front of MRU so it is raised,
-                // but leave keyboard focus alone (and re-assert return focus).
-                self.mru_apps.retain(|m| m != id);
-                self.mru_apps.insert(0, id.clone());
-                if let Some(wid) = self.lookup_any_window_id(id) {
-                    self.mru_window_by_app.insert(id.clone(), wid);
-                }
+                self.mru_apps.retain(|m| m != &app_id);
+                self.mru_apps.insert(0, app_id.clone());
+                self.mru_window_by_app.insert(app_id, wid);
                 let keep = self.screenshot_return_focus;
                 self.restore_app_focus(keep);
             } else {
-                self.bus_set_focus(id);
-                if let Some(wid) = self.lookup_any_window_id(id) {
-                    self.focused_window_id = Some(wid);
-                    self.mru_window_by_app.insert(id.clone(), wid);
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                    }
-                }
+                self.focus_window(wid, &app_id);
             }
-        } else if focused_app_was_removed {
-            if let Some(next) = self.mru_apps.first().cloned() {
-                self.bus_set_focus(&next);
-                let wid = self
-                    .mru_window_by_app
-                    .get(&next)
-                    .copied()
-                    .or_else(|| self.lookup_any_window_id(&next));
-                if let Some(wid) = wid {
-                    self.focused_window_id = Some(wid);
-                    self.mru_window_by_app.insert(next.clone(), wid);
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-                    }
+        } else if focused_closed {
+            let hidden = |app: &str| self.is_app_hidden(app);
+            let tiled = focused_zone.filter(|z| *z != Zone::Float);
+            let next = tiled
+                .filter(|z| self.tabs.on_screen(&hidden).contains(z))
+                .and_then(|z| self.tabs.visible_shown(z, &hidden))
+                .or_else(|| tiled.and_then(|_| self.tabs.front(&hidden)))
+                .or_else(|| self.mru_window_on_showing(None));
+            let next_app = next.and_then(|w| self.app_id_for_window(w));
+            match (next, next_app) {
+                (Some(wid), Some(app_id)) => self.focus_window(wid, &app_id),
+                _ => {
+                    self.focused_app_id = None;
+                    self.emit_registered_chords();
                 }
-            } else {
-                // No apps left — no focused app, re-emit chords without per-app bindings.
-                self.emit_registered_chords();
             }
         }
 
-        // Drop hover if that window closed; then re-apply FFM over any
-        // programmatic focus steal above.
+        // A restored window can take its zone's shown place from under
+        // the focused tab.
+        self.keep_focus_on_screen();
+
+        // Drop hover if that window closed. A new window, or the tab shown
+        // in a closed one's place, keeps focus until the pointer moves.
         if let Some(wid) = self.pointer_window_id {
             if !self.known_windows.iter().any(|w| w.window_id == wid) {
                 self.pointer_window_id = None;
             }
-        }
-        if added.first().is_some() || focused_app_was_removed {
-            self.sync_keyboard_focus_to_pointer();
         }
 
         // Dismiss open menu if the focused window changed.
@@ -391,15 +462,234 @@ impl Shell {
             self.emit_overlay_frames();
         }
 
+        // Tell sola-river / kit apps which windows are floating (move/resize + CSD).
+        self.sync_window_floating();
+        self.emit_all_frames();
+
         self.emit_composition();
 
         // Always re-emit registered chords. At fresh boot, the shell sees
-        // only the menubar (added/removed are empty after the
-        // app_id filter), so the early-return paths that normally call
-        // `emit_registered_chords` never fire — and sola-river never
-        // learns about Meta+Space / Meta+Tab / Meta+Q / Meta+H / Meta+Grave /
-        // Meta+Numpad{…}, so no keyboard chord ever reaches the shell.
+        // only the menubar, so no other path has emitted them yet — and
+        // sola-river never learns about Meta+Space / Meta+Tab / Meta+Q /
+        // Meta+H / Meta+Grave / Meta+Numpad{…}, so no keyboard chord ever
+        // reaches the shell.
         self.emit_registered_chords();
+    }
+
+    /// Give `wid` keyboard focus and bump its app in MRU (no stack change).
+    fn focus_window(&mut self, wid: u32, app_id: &str) {
+        self.bus_set_focus(app_id);
+        self.focused_window_id = Some(wid);
+        self.tabs.focus(wid);
+        self.mru_window_by_app.insert(app_id.to_string(), wid);
+        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+            let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
+        }
+    }
+
+    /// River named a dialog's parent (or took it back). A dialog leaves the
+    /// bar and rides above its parent.
+    fn on_window_parent(&mut self, p: WindowParent, sticky: bool) {
+        let app_id = self.app_id_for_window(p.window_id);
+        if !sticky {
+            // Closing, usually (sola-river retracts on close, before the new
+            // Windows list). One left without a parent stays a float with
+            // no row.
+            self.pending_parents.remove(&p.window_id);
+            if self.tabs.clear_parent(p.window_id) {
+                self.emit_composition();
+            }
+            return;
+        }
+        let Some(app_id) = app_id else {
+            // Before its Windows entry: placed as a dialog when it comes.
+            self.pending_parents.insert(p.window_id, p.parent);
+            return;
+        };
+        tracing::info!(window_id = p.window_id, parent = p.parent, "dialog");
+        let was_tab = self.tabs.set_parent(p.window_id, p.parent);
+        self.zoning.float(&app_id, p.window_id, false);
+        self.sync_window_floating();
+        if was_tab {
+            self.emit_all_frames();
+            self.persist_tabs();
+        }
+        self.emit_composition();
+    }
+
+    /// The saved tab layout (persistent replay). Taken once; later
+    /// deliveries are our own echo. Windows already up are placed again so
+    /// they take their saved places.
+    fn on_tab_layout(&mut self, layout: TabLayout) {
+        if self.tab_layout_loaded {
+            return;
+        }
+        self.tab_layout_loaded = true;
+        self.tab_layout_ready = true;
+        let now = std::time::Instant::now();
+        tracing::info!(zones = layout.zones.len(), "tab layout loaded");
+        self.tabs.load(&layout, now);
+        self.last_tab_layout = Some(layout);
+        self.tabs.clear();
+        let windows: Vec<(u32, String)> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Self::APP_ID && self.tabs.parent_of(w.window_id).is_none())
+            .map(|w| (w.window_id, w.app_id.clone()))
+            .collect();
+        for (wid, app_id) in windows {
+            let floats = crate::zoning::floats_by_default(&app_id);
+            let key = self.pairing.key_of(wid).unwrap_or(&app_id).to_string();
+            let placed = self.tabs.place(wid, &app_id, &key, floats, true, now);
+            if placed.zone == Zone::Float {
+                Self::emit_frames(self.zoning.float(&app_id, wid, true).into_iter().collect());
+            } else {
+                self.zoning.unfloat(wid);
+            }
+        }
+        self.keep_focus_on_screen();
+        self.sync_window_floating();
+        self.emit_all_frames();
+        self.emit_composition();
+    }
+
+    /// An app announced a tab it is opening as a window (or retracted one
+    /// it closed). Pair it with its window; a window that already has a
+    /// place may move to the tab's saved place.
+    fn on_tab(&mut self, tab: sola_bus::topics::Tab, sticky: bool) {
+        if !sticky {
+            if let Some(wid) = self.pairing.retract(&tab.key) {
+                tracing::info!(window_id = wid, key = %tab.key, "tab closed");
+                retract_tab_window(tab.key);
+            }
+            return;
+        }
+        self.pairing.announce(crate::pairing::Announced {
+            key: tab.key,
+            app_id: tab.app_id,
+            pid: tab.pid,
+            seq: tab.seq,
+            window_id: tab.window_id,
+            background: tab.background,
+        });
+        if self.pair_tabs(std::time::Instant::now()) {
+            self.sync_floats();
+            self.keep_focus_on_screen();
+            self.emit_all_frames();
+            self.emit_composition();
+        }
+        self.persist_tabs();
+    }
+
+    /// Pair announced tabs with their windows (see `pairing.rs`), tell the
+    /// apps which window each tab is (`TabWindow`), and remember placed
+    /// windows by their tab's key. True when one moved to a saved place.
+    fn pair_tabs(&mut self, now: std::time::Instant) -> bool {
+        let candidates: Vec<(u32, String, u32)> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Self::APP_ID && self.tabs.parent_of(w.window_id).is_none())
+            .filter_map(|w| Some((w.window_id, w.app_id.clone(), w.pid?)))
+            .collect();
+        let refs: Vec<crate::pairing::Candidate<'_>> = candidates
+            .iter()
+            .map(|(w, a, p)| (*w, a.as_str(), *p))
+            .collect();
+        let mut moved = false;
+        for (window_id, key) in self.pairing.pair(&refs) {
+            tracing::info!(window_id, %key, "tab paired");
+            if self.tabs.set_key(window_id, &key, now).is_some() {
+                moved = true;
+            }
+            let shown = self.tab_on_screen(window_id);
+            self.tab_shown_sent.insert(window_id, shown);
+            super::with_bus(|bus| {
+                let _ = bus.emit(Topic::TabWindow(sola_bus::topics::TabWindow {
+                    key,
+                    window_id,
+                    shown,
+                }));
+            });
+        }
+        moved
+    }
+
+    /// A tab window is on screen: in the last Composition, and not under a
+    /// full idle fade.
+    fn tab_on_screen(&self, window_id: u32) -> bool {
+        !self.desk_out && self.last_composition.contains(&window_id)
+    }
+
+    /// Tell apps which of their tab windows went on or off screen (after a
+    /// Composition, or the idle fade going full or ending): a browser rests
+    /// the pages behind.
+    pub(crate) fn sync_tab_shown(&mut self) {
+        let changes: Vec<(u32, String, bool)> = self
+            .pairing
+            .pairs()
+            .filter_map(|(wid, key)| {
+                let shown = self.tab_on_screen(wid);
+                (self.tab_shown_sent.get(&wid) != Some(&shown)).then(|| (wid, key.to_string(), shown))
+            })
+            .collect();
+        for (window_id, key, shown) in changes {
+            self.tab_shown_sent.insert(window_id, shown);
+            super::with_bus(|bus| {
+                let _ = bus.emit(Topic::TabWindow(sola_bus::topics::TabWindow {
+                    key,
+                    window_id,
+                    shown,
+                }));
+            });
+        }
+    }
+
+    /// Bring floating in line with the bar after windows moved zones
+    /// outside `move_tab` (a tab taking its saved place).
+    fn sync_floats(&mut self) {
+        let mut frames = Vec::new();
+        for w in &self.known_windows {
+            if w.app_id == Self::APP_ID || self.tabs.parent_of(w.window_id).is_some() {
+                continue;
+            }
+            let float = self.tabs.zone_of(w.window_id) == Some(Zone::Float);
+            if float && !self.zoning.is_floating(w.window_id) {
+                frames.extend(self.zoning.float(&w.app_id, w.window_id, true));
+            } else if !float && self.zoning.is_floating(w.window_id) {
+                self.zoning.unfloat(w.window_id);
+            }
+        }
+        Self::emit_frames(frames);
+        self.sync_window_floating();
+    }
+
+    /// Keyboard focus stays on something on screen: a focused tab that is
+    /// now behind another hands focus to its zone's shown tab, and one
+    /// whose zone left the screen (Full gave way to the halves, or they to
+    /// Full) to the tab in front.
+    fn keep_focus_on_screen(&mut self) {
+        let Some(wid) = self.focused_window_id else {
+            return;
+        };
+        let tab = self.tabs.parent_of(wid).unwrap_or(wid);
+        let Some(zone) = self.tabs.zone_of(tab).filter(|z| *z != Zone::Float) else {
+            return;
+        };
+        let hidden = |app: &str| self.is_app_hidden(app);
+        let shown = if self.tabs.on_screen(&hidden).contains(&zone) {
+            self.tabs.visible_shown(zone, &hidden)
+        } else {
+            self.tabs.front(&hidden)
+        };
+        let Some(shown) = shown else {
+            return;
+        };
+        if shown == tab {
+            return;
+        }
+        if let Some(app_id) = self.app_id_for_window(shown) {
+            self.focus_window(shown, &app_id);
+        }
     }
 
     /// True when both lists describe the same set of surfaces (window_id +
@@ -423,6 +713,8 @@ impl Shell {
         self.menus.set_menu(m);
         // Always re-emit in case this is the focused app (per-app shortcuts changed).
         self.emit_registered_chords();
+        // An app that publishes menus draws its own frame: no compositor rim.
+        self.sync_window_chrome();
         let _ = focused_is_this; // used implicitly via emit_registered_chords
     }
 
@@ -457,11 +749,9 @@ impl Shell {
         }
         let app_changed = self.focused_app_id.as_deref() != Some(app_id);
         self.focused_app_id = Some(app_id.to_string());
-        self.zoning.set_focused(app_id.to_string());
         if bump_mru {
             self.mru_apps.retain(|m| m != app_id);
             self.mru_apps.insert(0, app_id.to_string());
-            self.ack_notify_badge(app_id);
         } else if !self.mru_apps.iter().any(|m| m == app_id) {
             // Track without raising — least-recent = bottom of stack.
             self.mru_apps.push(app_id.to_string());
@@ -480,7 +770,7 @@ impl Shell {
     }
 
     /// Resolve a non-shell window_id → app_id, if known.
-    fn app_id_for_window(&self, window_id: u32) -> Option<String> {
+    pub(crate) fn app_id_for_window(&self, window_id: u32) -> Option<String> {
         self.known_windows
             .iter()
             .find(|w| w.window_id == window_id && w.app_id != Self::APP_ID)
@@ -488,7 +778,7 @@ impl Shell {
     }
 
     /// Emit `Topic::Focus` so sola-river routes keyboard/pointer to `window_id`.
-    fn emit_focus(&self, window_id: u32, prev_focused: Option<u32>) {
+    pub(crate) fn emit_focus(&self, window_id: u32, prev_focused: Option<u32>) {
         tracing::debug!(window_id, ?prev_focused, "emit Focus");
         super::with_bus(|bus| {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
@@ -496,7 +786,7 @@ impl Shell {
     }
 
     /// Pointer focus (no raise, no stack change). Used after the FFM dwell
-    /// timer and by map/close resync.
+    /// timer.
     pub(crate) fn focus_window_from_pointer(&mut self, window_id: u32) {
         if self.focused_window_id == Some(window_id) {
             tracing::debug!(window_id, "pointer focus no-op (already focused)");
@@ -516,34 +806,8 @@ impl Shell {
         );
         self.set_pointer_focus(&app_id);
         self.focused_window_id = Some(window_id);
+        self.tabs.focus(window_id);
         self.emit_focus(window_id, prev_window);
-    }
-
-    /// Re-apply keyboard focus to whatever is under the pointer.
-    ///
-    /// General fix for focus-follows-mouse after any non-pointer focus change:
-    /// a newly mapped window (or MRU fallback after close) steals focus, but
-    /// if the cursor never left another app, River will not re-fire
-    /// `MouseEntered`. Restore input focus to the hovered window without
-    /// undoing the raise (stack order stays).
-    fn sync_keyboard_focus_to_pointer(&mut self) {
-        let Some(wid) = self.pointer_window_id else {
-            return;
-        };
-        // Drop stale hover if the window vanished.
-        if !self.known_windows.iter().any(|w| w.window_id == wid) {
-            self.pointer_window_id = None;
-            return;
-        }
-        // Menubar / shell overlays never take keyboard focus via FFM.
-        if self
-            .known_windows
-            .iter()
-            .any(|w| w.window_id == wid && w.app_id == Self::APP_ID)
-        {
-            return;
-        }
-        self.focus_window_from_pointer(wid);
     }
 
     /// Raise `app_id` as if the user clicked it (MRU + composition + seat).
@@ -554,7 +818,12 @@ impl Shell {
             self.unhide_app(app_id);
             return;
         }
-        let Some(window_id) = self.lookup_any_window_id(app_id).or_else(|| {
+        let recent = self
+            .mru_window_by_app
+            .get(app_id)
+            .copied()
+            .filter(|w| self.known_windows.iter().any(|k| k.window_id == *w));
+        let Some(window_id) = recent.or_else(|| self.lookup_any_window_id(app_id)).or_else(|| {
             self.known_windows
                 .iter()
                 .find(|w| w.app_id.eq_ignore_ascii_case(app_id))
@@ -566,11 +835,30 @@ impl Shell {
         self.raise_window_from_click(window_id);
     }
 
-    /// Click activation: focus + raise to front of the composition stack.
-    fn raise_window_from_click(&mut self, window_id: u32) {
+    /// Show `window_id` in its zone and focus it: a tab bar row, Super+`.
+    /// Unhides a Super+H'd app first.
+    pub(crate) fn activate_window(&mut self, window_id: u32) {
         let Some(app_id) = self.app_id_for_window(window_id) else {
             return;
         };
+        if self.is_app_hidden(&app_id) {
+            self.retract_app_hidden(&app_id);
+            self.emit_all_frames();
+        }
+        self.raise_window_from_click(window_id);
+    }
+
+    /// Click activation: show the window in its zone (raise, for a float),
+    /// focus it, and re-stack.
+    pub(crate) fn raise_window_from_click(&mut self, window_id: u32) {
+        let Some(app_id) = self.app_id_for_window(window_id) else {
+            return;
+        };
+        // Showing a window shows its workspace; remember where focus was
+        // on the one being left.
+        self.remember_workspace_focus();
+        self.tabs.show(window_id);
+        self.tabs.focus(window_id);
         // Cancel any dwell timer — click is authoritative for focus.
         self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
         let prev_focused = self.focused_window_id;
@@ -583,6 +871,7 @@ impl Shell {
         // can still have another surface (same zone) visually on top.
         self.last_composition.clear();
         self.emit_composition();
+        self.persist_tabs();
     }
 
     /// Look up any window_id for an app_id (first match in known_windows).
@@ -639,7 +928,9 @@ impl Shell {
         if e.app_id.eq_ignore_ascii_case("sola-mail") {
             self.inbox_unread = None;
         }
-        let pending = self.take_pending_for_app(&e.app_id);
+        // Mid-open, the ghost row goes either way (a clean exit is often a
+        // second copy handing off to the running one).
+        let _ = self.take_pending_for_app(&e.app_id);
         let msg = if let Some(sig) = e.signal {
             format!("{} killed (signal {})", e.app_id, sig)
         } else {
@@ -647,11 +938,6 @@ impl Shell {
             if code != 0 {
                 format!("{} exited (code {})", e.app_id, code)
             } else {
-                // Clean exit: if we were mid-open, drop the opening toast so
-                // it does not sit until the 20s timeout with no window.
-                if let Some(p) = pending {
-                    self.menubar.expire_toast(p.toast_generation);
-                }
                 return Task::none();
             }
         };
@@ -688,8 +974,8 @@ impl Shell {
     /// Extends the application catalog; if the launcher is active, re-runs
     /// the filter so new entries appear immediately.
     ///
-    /// `sticky=false` is a retract (settings remove, Arcade nest label
-    /// clear) — drop the catalog entry rather than re-adding an empty one.
+    /// `sticky=false` is a retract (a Settings remove) — drop the catalog
+    /// entry rather than re-adding an empty one.
     fn on_application(&mut self, a: Application, sticky: bool) {
         if !sticky {
             tracing::info!(app_id = %a.app_id, "Application retract");
@@ -718,6 +1004,8 @@ impl Shell {
             tracing::info!(app_id = %h.app_id, "AppHidden: show (retract)");
             self.hidden_apps.remove(&key);
         }
+        // A zone whose tabs are all hidden gives its width away.
+        self.emit_all_frames();
         self.emit_composition();
     }
 
@@ -764,16 +1052,13 @@ impl Shell {
                 return Task::done(Msg::CloseSelection);
             }
             if self.launcher.active {
-                return Task::done(Msg::CloseLauncher);
+                return Task::done(Msg::LauncherEscape);
             }
             if self.shortcuts.active {
                 return Task::done(Msg::CloseShortcuts);
             }
             if self.menu_open {
                 return Task::done(Msg::CloseMenu);
-            }
-            if self.switcher.active {
-                return Task::done(Msg::SwitcherCancel);
             }
         }
 
@@ -809,15 +1094,14 @@ impl Shell {
         }
 
         // Launcher / shortcuts are modal — they own the keyboard while
-        // active, so eat every other chord. (Switcher has its own
-        // navigation branch below.)
+        // active, so eat every other chord.
         if self.launcher.active || self.shortcuts.active {
             return Task::none();
         }
 
         // A dropdown menu is transient — any non-Escape chord should
         // dismiss it and then proceed normally (so Meta+Space still
-        // opens the launcher, Meta+Tab still opens the switcher, etc.
+        // opens the launcher, Meta+Tab still moves between groups, etc.
         // even if the user left a menu hanging open).
         // Screenshot chords are the exception: they must copy the live
         // scene (open notifications panel, text selections) before chrome
@@ -835,50 +1119,6 @@ impl Shell {
             self.emit_overlay_frames();
             self.emit_composition();
             self.emit_registered_chords();
-        }
-
-        // Switcher active: Tab/Right cycles forward; Left cycles backward;
-        // Meta+Q closes the *selected* app (not the front one); Meta
-        // release (handled in on_chord_released) confirms.
-        if self.switcher.active {
-            use sola_core::KeyCode;
-            if chord.keycode == KeyCode::TAB || chord.keycode == KeyCode::RIGHT {
-                return Task::done(Msg::SwitcherNav { next: true });
-            }
-            if chord.keycode == KeyCode::LEFT {
-                return Task::done(Msg::SwitcherNav { next: false });
-            }
-            // Super+H while the switcher is up would hide the focused app
-            // then Super-release would confirm and unhide it. Eat the chord.
-            if chord.meta && chord.keycode == KeyCode::H {
-                return Task::none();
-            }
-            if chord.meta && chord.keycode == KeyCode::Q {
-                if let Some(target) = self.switcher.apps.get(self.switcher.selected).cloned() {
-                    tracing::info!(
-                        app_id = %target.app_id,
-                        "Meta+Q in switcher — close selected app"
-                    );
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(Topic::CloseApp(target.app_id.clone()));
-                    }
-                    // Optimistic remove — Topic::Windows from sola-river
-                    // will reconcile, but pulling the entry now keeps the
-                    // switcher visually in step with the keypress. Clamp
-                    // the selection so it still points at a real app;
-                    // dismiss the switcher entirely if we just killed the
-                    // last one.
-                    self.switcher.apps.retain(|a| a.app_id != target.app_id);
-                    if self.switcher.apps.is_empty() {
-                        return Task::done(Msg::SwitcherCancel);
-                    }
-                    if self.switcher.selected >= self.switcher.apps.len() {
-                        self.switcher.selected = self.switcher.apps.len() - 1;
-                    }
-                    self.emit_composition();
-                }
-                return Task::none();
-            }
         }
 
         // Meta+Space: toggle launcher.
@@ -966,45 +1206,28 @@ impl Shell {
             return crate::screenshot::window(app_id, title);
         }
 
-        // Meta+`: cycle windows of the focused app.
+        // Meta+` / Meta+Shift+`: next / previous tab in the bar.
         if chord.meta && chord.keycode == sola_core::KeyCode::GRAVE {
-            tracing::info!("Meta+` — cycle app windows");
-            return Task::done(Msg::CycleAppWindows);
+            return Task::done(Msg::CycleTabs { back: chord.shift });
         }
 
-        // Meta+Tab: activate or cycle switcher.
-        if chord.meta && chord.keycode == sola_core::KeyCode::TAB {
-            if self.launcher.active {
-                // Close launcher first, then open switcher.
-                self.launcher.active = false;
-                self.emit_composition();
-                self.emit_registered_chords();
+        // Workspaces: Meta+1…9 shows one, Meta+Ctrl+1…9 sends the focused
+        // window there, Meta+(Shift+)Tab steps.
+        if chord.meta && !chord.alt {
+            if let Some(index) = crate::keys::workspace_index(chord.keycode) {
+                if chord.ctrl && !chord.shift {
+                    self.send_focused_to_workspace(index);
+                    return Task::none();
+                }
+                if !chord.ctrl && !chord.shift {
+                    self.show_workspace(index);
+                    return Task::none();
+                }
             }
-            if self.switcher.active {
-                // Already active: cycle forward.
-                return Task::done(Msg::SwitcherNav { next: true });
+            if !chord.ctrl && chord.keycode == sola_core::KeyCode::TAB {
+                self.step_workspace(chord.shift);
+                return Task::none();
             }
-            tracing::info!("Meta+Tab — activating switcher");
-            if let Some(id) = self.focused_app_id.clone() {
-                self.ack_notify_badge(&id);
-            }
-            crate::switcher::state::rebuild_apps(
-                &mut self.switcher,
-                &self.mru_apps.clone(),
-                &self.known_windows.clone(),
-            );
-            self.switcher.active = true;
-            // Start at index 1 so the second (next) app is pre-selected on
-            // first press — mirrors the legacy macOS-style Alt+Tab feel.
-            // A pointer already on an icon must not replace this until it
-            // moves (`prepare_open` drops the previous hover gate).
-            self.switcher.selected = if self.switcher.apps.len() > 1 { 1 } else { 0 };
-            self.switcher.prepare_open();
-            // Focus is applied in `CommitOverlayShow` once the iced swapchain
-            // is live — focusing the parked 2×2 can unhide it.
-            self.emit_registered_chords();
-            self.emit_composition();
-            return Task::none();
         }
 
         // Zone snapping (Meta+Numpad).
@@ -1012,7 +1235,7 @@ impl Shell {
             return self.snap_focused_zone(zone);
         }
 
-        // Shell system menu shortcuts (Quit Sola has none — Super+Q is CloseApp).
+        // Shell system menu shortcuts (Exit Sola has none — Super+Q is CloseApp).
         if let Some(action) = self.menus.lookup_shortcut(&chord, Self::APP_ID) {
             tracing::info!(action_id = %action.action_id, "shell shortcut");
             let flash = self.flash_menu_action(&action.app_id, &action.action_id);
@@ -1047,15 +1270,6 @@ impl Shell {
         Task::none()
     }
 
-    /// Handle a chord-released event.
-    /// Super_L release while the switcher is active confirms the selection.
-    fn on_chord_released(&mut self, evt: ChordEvent) -> Task<Msg> {
-        if evt.keysym == keys::KEYSYM_SUPER_L && evt.modifiers == 0 && self.switcher.active {
-            return Task::done(Msg::SwitcherConfirm);
-        }
-        Task::none()
-    }
-
     // -------------------------------------------------------------------------
     // Mouse handlers
     // -------------------------------------------------------------------------
@@ -1071,13 +1285,23 @@ impl Shell {
     /// moves to the window under the pointer — **without** raising. Raising is
     /// click-only (see [`Self::on_mouse_clicked`]). The delay is a grace period
     /// for the path from a floating app up to the menubar across another window.
+    ///
+    /// Only a pointer that moves leads focus. A still enter (the window under
+    /// a resting pointer changed: Super+Tab, a close, a new window) is just
+    /// remembered; sola-river sends the enter again once the pointer moves,
+    /// as it does when focus went elsewhere by keyboard.
     fn on_mouse_entered(&mut self, e: MouseEnteredPayload) -> Task<Msg> {
-        // Always remember hover (including shell) so map/close resync knows
-        // whether the pointer is on an app vs chrome vs nowhere.
+        // Always remember hover (including shell): the dwell checks the
+        // pointer is still there when it fires.
         self.pointer_window_id = Some(e.window_id);
 
         // Cancel any in-flight dwell (new target or shell chrome).
         self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
+
+        if e.still {
+            tracing::debug!(window_id = e.window_id, "FFM still enter — focus stays");
+            return Task::none();
+        }
 
         // Shell surfaces never take FFM focus — and entering the menubar
         // cancels a pending steal from an intermediate window, so the floater
@@ -1177,37 +1401,6 @@ impl Shell {
     // Zone snapshot
     // -------------------------------------------------------------------------
 
-    /// Receive the current zone-assignment map from sola-session sticky replay.
-    /// Seeds `zoning.app_zone_config` so that apps launched after this have
-    /// their saved zones applied on first appearance.
-    fn on_zones(&mut self, zones: std::collections::HashMap<String, sola_bus::topics::Zone>) {
-        tracing::info!(count = zones.len(), "zones updated");
-        self.zoning.set_zones(zones.clone());
-        // Re-apply config zones to any windows already known.
-        let windows: Vec<(String, u32)> = self
-            .known_windows
-            .iter()
-            .filter(|w| w.app_id != Self::APP_ID)
-            .map(|w| (w.app_id.clone(), w.window_id))
-            .collect();
-        let mut zone_frames = Vec::new();
-        for (app_id, wid) in windows {
-            if let Some(frame) = self.zoning.apply_config_zone(&app_id, wid) {
-                zone_frames.push(frame);
-            } else if let Some(frame) = self.zoning.ensure_default_float(&app_id, wid) {
-                zone_frames.push(frame);
-            }
-        }
-        if !zone_frames.is_empty() {
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                for f in zone_frames {
-                    let _ = bus.emit(Topic::Frame(f));
-                }
-            }
-        }
-        self.sync_window_floating();
-    }
-
     /// A window moved or resized (Topic::WindowGeometry from sola-river). If the
     /// window is currently floating, persist its rectangle per app_id so the
     /// float restores there on relaunch. Non-floating windows are ignored.
@@ -1262,6 +1455,45 @@ impl Shell {
     }
 }
 
+impl Shell {
+    /// Publish `Topic::WindowChrome` for every app window whose chrome
+    /// changed (tiled, Cinema, compositor rim), and retract departed ones.
+    /// Runs with every frame emission and when an app publishes menus.
+    pub(super) fn sync_window_chrome(&mut self) {
+        let next: Vec<WindowChrome> = self
+            .known_windows
+            .iter()
+            .filter(|w| w.app_id != Self::APP_ID)
+            .map(|w| WindowChrome {
+                window_id: w.window_id,
+                tiled: self
+                    .tabs
+                    .zone_of(w.window_id)
+                    .is_some_and(|z| crate::stacks::TILED.contains(&z))
+                    && !self.zoning.is_floating(w.window_id),
+                cinema: self
+                    .tabs
+                    .desk_of(w.window_id)
+                    .and_then(|d| self.tabs.cinema_on(d))
+                    == Some(w.window_id),
+                rim: self.menus.get_menu(&w.app_id).is_none(),
+            })
+            .collect();
+        let changes = self.window_chrome.update(next);
+        if changes.emit.is_empty() && changes.retract.is_empty() {
+            return;
+        }
+        if let Some(Ok(mut bus)) = sola_kit::app::try_bus().map(|b| b.lock()) {
+            for chrome in changes.emit {
+                let _ = bus.emit(Topic::WindowChrome(chrome));
+            }
+            for chrome in changes.retract {
+                let _ = bus.retract(Topic::WindowChrome(chrome));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod windows_identity_tests {
     use super::Shell;
@@ -1293,4 +1525,15 @@ mod windows_identity_tests {
         assert!(!Shell::windows_identity_eq(&a, &[win(1, "gamescope", "A")]));
         assert!(!Shell::windows_identity_eq(&a, &[]));
     }
+}
+
+/// Drop the sticky `TabWindow` for a tab whose window is gone.
+fn retract_tab_window(key: String) {
+    super::with_bus(|bus| {
+        let _ = bus.retract(Topic::TabWindow(sola_bus::topics::TabWindow {
+            key,
+            window_id: 0,
+            shown: false,
+        }));
+    });
 }

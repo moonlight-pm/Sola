@@ -22,8 +22,11 @@ If a widget needs motion, subscribe or `request_redraw` **only while that
 motion is live**. Helper threads must `chrome_wake::wake()` (or equivalent).
 
 River GLES **cannot scan out ARGB** unless the client sets a full
-`wl_surface.set_opaque_region`. Tiled kit windows must look opaque to the
-compositor; float CSD still needs an alpha swapchain.
+`wl_surface.set_opaque_region`. A Cinema kit window must look opaque to
+the compositor. Since the background picture (2026-10-24) tiles clear
+their rounded corners like floats, so they no longer set an opaque region:
+River blends them and draws the ground under them where they are damaged
+(nothing at idle; a gapped tile never scanned out anyway).
 
 ---
 
@@ -70,14 +73,14 @@ windows are actually restarted.
 | Chrome `Tick` is not a 250 ms pump | `sola-browser` `Msg::Tick` | **Dogfooded.** 250 ms `time::every` only for copy-URL flash, vault TOTP on the open item, vault fill-wait. Helpers wake Tick. |
 | Working ring `At` ~20 Hz | `sola-kit` `status_mark` | **In code.** `RedrawRequest::At(50ms)`, not `NextFrame`. |
 | Volume spectrum `At` ~20 Hz | `sola-shell` audio meter | **Installed** `shell` release 2026-09-02. `pw-cat` tap → FFT → 12 warped-log bands + pink weight; canvas `RedrawRequest::At(50ms)` only while bands are live. No iced `time::every`. |
-| Workspaces pointer gated | `sola-workspaces` | **In code.** No `window::frames()`; `CursorMoved` only while split-dragging. |
+| Projects pointer gated | `sola-projects` | **In code.** No `window::frames()`; `CursorMoved` only while split-dragging. |
 | Morph2 drag-only vsync | `sola-kit` `sidebar/strip.rs` | **Dogfooded** for tab reorder (stutter fixed by re-enabling vsync *during* drag). Idle must not leave `request_redraw` on. |
 | Overlay first-show at live output | `sola-shell` `overlay_open_rect` | **Dogfooded.** No 1920-wide placeholder / default-center jump. |
 | River hide until Composition | `sola-river` `last_composition` | **Dogfooded** with overlay park (no center flash of hidden surfaces). |
 | Shell overlays parked 2×2 off-output | `sola-shell` `zoning::overlay_frame` | **Dogfooded** (position, then flash, then iced `Resized` gate). Show is Frame while hidden, Composition after live `Resized` + one tick. **Never park at 1×1** (winit min 2×1 + `resizable=false` → `xdg_toplevel` invalid_size panic-loop). |
 | Menu overlay is card-sized | `sola-shell` `zoning::menu_overlay_frame` | **In code (2026-08-31).** Dropdown / calendar / stat / BT / volume / pile Frame to the card, not the full usable area. Full-output wgpu on software GL (llvmpipe) pegged a core on first click. Launcher / switcher / selection still full-output. |
 | Super+K overlay is card-sized | `sola-shell` `zoning::card_overlay_frame` | **Installed** `shell` release 2026-09-02. Cheatsheet Frames to the card + shadow pad (~584×575 at 1920×1080, ~0.3M px vs ~2.0M usable). Same leftover-pad dismiss as menus; desk clicks pass through. Park stays 2×2 off-output. Launcher / switcher still full-output (their dim / click-outside *is* the usable area). |
-| Tiled kit opaque-region | patched `iced_winit` `State::synchronize` | **In code, not fully smoked.** ARGB kept for float CSD. Tiled `theme_for(false)` → full opaque-region. Float / overlay theme → region cleared. |
+| Kit opaque-region | patched `iced_winit` `State::synchronize` | **In code, not fully smoked.** ARGB swapchain. Cinema `theme_for(Chrome::Bare)` → full opaque-region. Tiled and floating (overlay theme, corners cleared for the ground — the background picture, 2026-10-24) → region cleared. Possible later: an opaque region minus the four corners (needs winit to take a region, not a bool). |
 | Prose reuses shaped paragraphs | `sola-kit` `prose/view.rs` `layout` | **On master (2026-10-19); installed `mail` release.** Every app message rebuilt the view and re-shaped every line of the open letter (cosmic-text, advanced shaping). Lines whose spans + width are unchanged keep their paragraph; a selection drag re-shapes only the lines it touches. Unmeasured. |
 | Mail listens to six bus topics | `sola-mail` `main.rs` | **On master (2026-10-19); installed `mail` release.** Was `TopicKind::ALL` — every system fact (windows, stats, …) woke the UI and rebuilt the three panes. Now Theme, MenuAction, CloseApp, Windows, WindowFloating, MailConfig. |
 | Design boards paced | `sola-design` `pace.rs` + sola-browser `Cmd::BoardPace` | **Installed** `design` 2026-10-13, smoked. Boards nobody looks at paint at 1 fps (off-screen canvases, out of view on the shown canvas); in view 60 fps with focus, 1 fps without. 2026-10-15: boards are **never `was_hidden`** any more — Chromium keeps saved frames for only 5 hidden views (`FrameEvictionManager`: min(5, 2 + MiB/256)) and evicts the rest; an evicted CEF OSR view shown again gets no BeginFrames, so its board stayed CEF's white background for good (21 of 26 on Wicket `foundation`). Asleep is 1 fps, shown. Before: 7 spinner boards (Wicket `foundation`) held ~3.5 cores idle — perf: CEF GPU process 62% memmove in `FrameSinkVideoCapturerImpl::DidCopyFrame` (whole-surface readback), helper 89% memmove, Design UI 44% memset (`ipc::read_frame` zeroed `vec!`). CPU OSR cost is per frame × surface, so pace is the lever; transport ideas stay parked. |
@@ -96,10 +99,10 @@ Install that landed this track (2026-08-25): `shell` `agent` `arcade`
 
 | Item | Why it is still open |
 |------|----------------------|
-| Opaque-region / GLES scanout | Session-spawned kit apps did not re-exec on the 2026-08-25 install. Restart workspaces, terminal, mail, browser chrome, kit, arcade, preview, then watch **river SM %** at idle. |
+| Opaque-region / GLES scanout | Session-spawned kit apps did not re-exec on the 2026-08-25 install. Restart projects, terminal, mail, browser chrome, kit, arcade, preview, then watch **river SM %** at idle. |
 | Self-watch on `cargo make install` | Those same PIDs stayed up for hours after the binary was replaced. Shell and CEF engines did restart. Need to know why session children missed the inode swap. |
 | First overlay after a **fresh shell** | Parked 2×2 surfaces still have to map once before Super+Space can skip create/map. Later opens are Frame + stack. |
-| Workspaces blink | `BlinkTick` every **530 ms** is still a full-window present (~2 Hz) while a cursor is blinking. Visible in the 2026-08-25 sample (workspaces ~11% SM, ~16% CPU). |
+| Projects blink | `BlinkTick` every **530 ms** is still a full-window present (~2 Hz) while a cursor is blinking. Visible in the 2026-08-25 sample (then `workspaces`, ~11% SM, ~16% CPU). |
 | Browser click | `LeftPressed` / `CursorReleased` still present chrome once per click. Marked acceptable. |
 | Working ring at desk | Storybook Sidebar / a Working Grok row can still pin GPU if `RedrawRequested` is left chained. |
 | Overlay `Resized` hang | If iced never reports ≥64×64 after Frame, Super+Space would not join Composition. Not seen after the iced-`Resized` slice. |
@@ -118,15 +121,17 @@ shows, compare only rows CEF's rect actually crosses per tile column.
 
 **Later / park**
 
-- Workspaces (and terminal) **cursor blink** without a process-wide
+- Projects (and terminal) **cursor blink** without a process-wide
   present — `request_redraw` only on the cell that blinks, or a cheaper
   tick that does not redraw the whole 5K window.
 - Find and fix **session self-watch** so `cargo make install <app>`
   always re-execs user apps, not only managed `sola-*` daemons.
-- Confirm **direct scanout** (or at least no ARGB blend) for tiled
+- Confirm **direct scanout** (or at least no ARGB blend) for Cinema
   opaque-region windows — `WAYLAND_DEBUG` / river logs, not NVML alone.
-- Opaque **XRGB** swapchains while tiled (today: ARGB + opaque-region
+- Opaque **XRGB** swapchains in Cinema (today: ARGB + opaque-region
   hint). Only if region is not enough for scanout.
+- Tiles: an opaque region **minus the rounded corners**, so River can skip
+  the picture under them again (needs winit to take a region).
 - Browser chrome present on every click (only if it shows up in idle
   traces).
 - Extra iced windows left open (storybook, preview, arcade, kit-spike)
@@ -147,8 +152,8 @@ done
 nvidia-smi pmon -c 5 -s um
 
 # Did this process pick up the last install?
-stat -c '%y' /opt/sola/bin/sola-workspaces
-ps -o lstart,etime,args -C sola-workspaces
+stat -c '%y' /opt/sola/bin/sola-projects
+ps -o lstart,etime,args -C sola-projects
 ```
 
 Compare against the baseline (~30–40%) and the 2026-08-25 row above.

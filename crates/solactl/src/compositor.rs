@@ -68,6 +68,38 @@ pub enum InputCmd {
         #[arg(short, long, default_value_t = 5)]
         timeout: u64,
     },
+    /// Press a button and hold it (moving to X Y first when given).
+    Press {
+        x: Option<i32>,
+        y: Option<i32>,
+        #[arg(short, long, default_value = "left")]
+        button: String,
+        #[arg(short, long, default_value_t = 5)]
+        timeout: u64,
+    },
+    /// Release a held button (moving to X Y first when given).
+    Release {
+        x: Option<i32>,
+        y: Option<i32>,
+        #[arg(short, long, default_value = "left")]
+        button: String,
+        #[arg(short, long, default_value_t = 5)]
+        timeout: u64,
+    },
+    /// Press at X1 Y1, move to X2 Y2 in steps, release there.
+    Drag {
+        x1: i32,
+        y1: i32,
+        x2: i32,
+        y2: i32,
+        #[arg(short, long, default_value = "left")]
+        button: String,
+        /// Pointer moves between press and release.
+        #[arg(short, long, default_value_t = 12)]
+        steps: u32,
+        #[arg(short, long, default_value_t = 5)]
+        timeout: u64,
+    },
 }
 
 fn is_sola_bot() -> bool {
@@ -162,6 +194,43 @@ fn run_input(cmd: InputCmd) -> i32 {
             serde_json::json!({ "dx": dx, "dy": dy }),
             timeout,
         ),
+        InputCmd::Press {
+            x,
+            y,
+            button,
+            timeout,
+        } => call::run(
+            OWNER_COMPOSITOR,
+            "input.press",
+            serde_json::json!({ "x": x, "y": y, "button": button }),
+            timeout,
+        ),
+        InputCmd::Release {
+            x,
+            y,
+            button,
+            timeout,
+        } => call::run(
+            OWNER_COMPOSITOR,
+            "input.release",
+            serde_json::json!({ "x": x, "y": y, "button": button }),
+            timeout,
+        ),
+        InputCmd::Drag {
+            x1,
+            y1,
+            x2,
+            y2,
+            button,
+            steps,
+            timeout,
+        } => match drag((x1, y1), (x2, y2), &button, steps, timeout) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("solactl: {e}");
+                1
+            }
+        },
         InputCmd::Key { chord, timeout } => match parse_chord(&chord) {
             Ok(c) => call::run(
                 OWNER_COMPOSITOR,
@@ -177,6 +246,33 @@ fn run_input(cmd: InputCmd) -> i32 {
     }
 }
 
+/// A drag: press at `from`, `steps` moves ~16 ms apart, release at `to`.
+fn drag(
+    from: (i32, i32),
+    to: (i32, i32),
+    button: &str,
+    steps: u32,
+    timeout: u64,
+) -> Result<(), String> {
+    let wait = std::time::Duration::from_secs(timeout);
+    let call = |method: &str, params: serde_json::Value| {
+        sola_call::invoke(OWNER_COMPOSITOR, method, params, wait)
+            .map(drop)
+            .map_err(|e| format!("{method}: {e}"))
+    };
+    let at = |x: i32, y: i32| serde_json::json!({ "x": x, "y": y, "button": button });
+    call("input.press", at(from.0, from.1))?;
+    let steps = steps.max(1) as i32;
+    for i in 1..=steps {
+        let x = from.0 + (to.0 - from.0) * i / steps;
+        let y = from.1 + (to.1 - from.1) * i / steps;
+        std::thread::sleep(std::time::Duration::from_millis(16));
+        call("input.move", serde_json::json!({ "x": x, "y": y }))?;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(16));
+    call("input.release", at(to.0, to.1))
+}
+
 fn parse_chord(s: &str) -> Result<KeyChord, String> {
     let parts: Vec<&str> = s.split('+').map(str::trim).collect();
     if parts.is_empty() {
@@ -184,7 +280,9 @@ fn parse_chord(s: &str) -> Result<KeyChord, String> {
     }
     let key_str = parts[parts.len() - 1];
     let keycode = parse_keycode(key_str)
-        .ok_or_else(|| format!("unknown key '{key_str}'. Try Tab, Esc, Enter, A-Z, 0-9."))?;
+        .ok_or_else(|| {
+            format!("unknown key '{key_str}'. Try Tab, Esc, Enter, A-Z, 0-9, `, KP0-KP8, KPEnter, KP*.")
+        })?;
     let mut chord = KeyChord::new(keycode);
     for m in &parts[..parts.len() - 1] {
         match m.to_ascii_lowercase().as_str() {
@@ -202,6 +300,18 @@ fn parse_keycode(s: &str) -> Option<KeyCode> {
     let upper = s.to_ascii_uppercase();
     match upper.as_str() {
         "TAB" => Some(KeyCode::TAB),
+        "`" | "GRAVE" | "BACKTICK" => Some(KeyCode::GRAVE),
+        "KP0" => Some(KeyCode::KP_0),
+        "KP2" => Some(KeyCode::KP_2),
+        "KP4" => Some(KeyCode::KP_4),
+        "KP5" => Some(KeyCode::KP_5),
+        "KP6" => Some(KeyCode::KP_6),
+        "KP8" => Some(KeyCode::KP_8),
+        "KPENTER" => Some(KeyCode::KP_ENTER),
+        "KPMULTIPLY" | "KP*" => Some(KeyCode::KP_MULTIPLY),
+        "KPADD" => Some(KeyCode::KP_ADD),
+        "KPEQUAL" | "KP=" => Some(KeyCode::KP_EQUAL),
+        "KPDECIMAL" | "KP." => Some(KeyCode::KP_DECIMAL),
         "ESC" | "ESCAPE" => Some(KeyCode::ESCAPE),
         "ENTER" | "RETURN" => Some(KeyCode::ENTER),
         "BACKSPACE" | "BS" => Some(KeyCode::BACKSPACE),

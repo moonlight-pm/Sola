@@ -15,6 +15,9 @@ Not freezes (those are [`../specs/`](../specs/)). Not the capability matrix.
 
 ## Active
 
+- [2026-10-21-next-tab-bar-plan.md](2026-10-21-next-tab-bar-plan.md) —
+  Next tab bar on `next` (canto): Phase 0 spec draft awaiting review; slice 1
+  is the shell-only bar over today's apps
 - [2026-08-13-unified-sidebar-plan.md](2026-08-13-unified-sidebar-plan.md) —
   unify kit sidebars on browser etch look (`SidebarPanel` / items); worktree
   landed on master 2026-08-13

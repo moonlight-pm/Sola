@@ -167,7 +167,7 @@ impl BusSetup {
         self.app_menu_definition(crate::menu::window_menu())
     }
 
-    /// Advertise call-plane methods as CLI owner `owner` (e.g. `"workspaces"`).
+    /// Advertise call-plane methods as CLI owner `owner` (e.g. `"projects"`).
     /// Starts the reconnecting provider when [`install`](Self::install) runs.
     /// Fold [`crate::call_subscription`] into iced to receive invokes.
     pub fn calls(
@@ -201,10 +201,12 @@ impl BusSetup {
             }
         }
         if !self.app_menus.is_empty() {
-            if let Err(e) = client.emit(Topic::SetAppMenu(AppMenuPayload {
+            let payload = AppMenuPayload {
                 app_id: self.app_id.into(),
                 menus: self.app_menus,
-            })) {
+            };
+            crate::menu::remember(payload.clone());
+            if let Err(e) = client.emit(Topic::SetAppMenu(payload)) {
                 tracing::warn!(app_id = self.app_id, "publish app menu failed: {e}");
             }
         }
@@ -217,9 +219,8 @@ impl BusSetup {
     }
 }
 
-/// Window settings every sola iced app uses: `decorations: false` (zoned
-/// windows are chrome-less; while floating the app draws CSD via kit
-/// titlebar when it honors `Topic::WindowFloating`) + the correct
+/// Window settings every sola iced app uses: `decorations: false` (the app
+/// draws its own frame, [`crate::window_frame`]) + the correct
 /// `xdg_toplevel.app_id` so the shell can match `SetAppMenu` against the
 /// surface.
 ///
@@ -229,7 +230,7 @@ impl BusSetup {
 /// `winit::with_name` on dragonfly/freebsd/netbsd/openbsd).
 /// Without setting it here, the window has empty app_id and the
 /// shell can't match the menu.
-pub fn window_settings(app_id: &'static str) -> iced::window::Settings {
+pub fn window_settings(app_id: &str) -> iced::window::Settings {
     iced::window::Settings {
         decorations: false,
         platform_specific: iced::window::settings::PlatformSpecific {
@@ -240,16 +241,16 @@ pub fn window_settings(app_id: &'static str) -> iced::window::Settings {
     }
 }
 
-/// Like [`window_settings`], but with an alpha surface so a floating kit
-/// app can draw rounded corners ([`crate::components::titlebar::floating_frame`])
-/// without square opaque corners from the window fill.
+/// Like [`window_settings`], but with an alpha surface so a kit app can
+/// clear its frame's corners ([`crate::window_frame`]) instead of showing
+/// square opaque ones from the window fill.
 ///
-/// While floating, pair with [`crate::theme::overlay`] so `background.base`
-/// is clear and only the rounded frame paints. While zoned/tiled, keep the
-/// normal theme — iced fills the rectangle opaquely and the patched
-/// `iced_winit` sets a full Wayland opaque-region so River can scan out
-/// instead of blending ARGB.
-pub fn window_settings_transparent(app_id: &'static str) -> iced::window::Settings {
+/// Pair with [`crate::float::theme_for`]: tiled or floating, `background.base`
+/// is clear and only the rounded frame paints. In Cinema it keeps the normal
+/// theme — iced fills the rectangle opaquely and the patched `iced_winit`
+/// sets a full Wayland opaque-region so River can scan out instead of
+/// blending ARGB.
+pub fn window_settings_transparent(app_id: &str) -> iced::window::Settings {
     let mut settings = window_settings(app_id);
     settings.transparent = true;
     settings
@@ -355,7 +356,7 @@ fn apply_theme_topic(topic: &Option<Topic>, theme: &mut iced::Theme) -> bool {
     if let Some(Topic::Theme(bus)) = topic {
         *theme = crate::theme::theme_from_bus(bus);
         crate::fonts::install(crate::theme::fonts_from_bus_theme(bus));
-        crate::theme::install_selection(crate::theme::atoms_from_bus_theme(bus).selection);
+        crate::theme::install_atoms(&crate::theme::atoms_from_bus_theme(bus));
         true
     } else {
         false
@@ -420,6 +421,13 @@ fn forward_or_buffer(msg: Arc<Message>) {
         drop(slot);
         push_pending(msg);
     }
+}
+
+/// Hand `topic` to this process's own bus stream as if the bus had
+/// delivered it. The bus never echoes an ephemeral event to its sender;
+/// a titlebar menu choice reaches its app this way ([`crate::menu::choose`]).
+pub(crate) fn deliver_locally(topic: Topic) {
+    forward_or_buffer(Arc::new(topic.to_message()));
 }
 
 fn install_bus_stream_tx(tx: iced::futures::channel::mpsc::UnboundedSender<Arc<Message>>) {

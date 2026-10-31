@@ -148,11 +148,15 @@ impl Moves {
     }
 
     /// A fresh first page of `folder` no longer lists these tombstones:
-    /// the server caught up.
-    pub fn prune(&mut self, folder: &str, incoming: &[MessageSummary]) {
+    /// the server caught up. An account whose part `failed` sent no rows,
+    /// so its tombstones stay.
+    pub fn prune(&mut self, folder: &str, incoming: &[MessageSummary], failed: &[String]) {
         let present: HashSet<&MailId> = incoming.iter().map(|m| &m.id).collect();
-        self.gone
-            .retain(|id| !id.folder.eq_ignore_ascii_case(folder) || present.contains(id));
+        self.gone.retain(|id| {
+            !id.folder.eq_ignore_ascii_case(folder)
+                || present.contains(id)
+                || failed.contains(&id.account)
+        });
     }
 }
 
@@ -223,8 +227,16 @@ mod tests {
             forwarded_for: None,
             has_attachment: false,
         };
-        m.prune("INBOX", &[still_there]);
+        m.prune("INBOX", &[still_there], &[]);
         assert!(!m.gone().contains(&id(1)));
         assert!(m.gone().contains(&id(2)));
+    }
+
+    #[test]
+    fn a_failed_account_keeps_its_tombstones() {
+        let mut m = Moves::default();
+        m.begin(id(1), "Trash".into(), None);
+        m.prune("INBOX", &[], &["a@x".into()]);
+        assert!(m.gone().contains(&id(1)));
     }
 }

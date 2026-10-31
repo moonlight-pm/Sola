@@ -4,7 +4,6 @@ use sola_core::watcher;
 
 use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
 use std::process::{Child, Command};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,6 +33,13 @@ const MIN_UPTIME: Duration = Duration::from_secs(5);
 const BACKOFF_DELAY: Duration = Duration::from_secs(2);
 
 fn main() {
+    // On Oath, PID 1 supervises Sola's processes (`svc:sola-*`) and runs
+    // the compositor; this process manager would nest a second init.
+    if sola_core::env::on_oath() {
+        eprintln!("sola: not on Oath; PID 1 runs Sola's services (oath ls --kind svc)");
+        std::process::exit(1);
+    }
+
     sola_core::log::rotate();
     sola_core::log::init("sola");
 
@@ -42,7 +48,7 @@ fn main() {
     info!("sola process manager starting");
 
     // SIGINT (Ctrl-C on the TTY), SIGTERM, and SIGHUP all map to the same
-    // graceful shutdown path the menu's "Quit Sola" already uses. Without
+    // graceful shutdown path the menu's "Exit Sola" already uses. Without
     // this, Ctrl-C kills sola abruptly and orphans every user app —
     // sola-session never gets a chance to stop their scope units.
     let shutdown_requested = Arc::new(AtomicBool::new(false));
@@ -70,7 +76,7 @@ fn main() {
     // managed process is a wayland client that depends on it; without
     // this synchronous wait they'd flap through the backoff path until
     // the socket came up.
-    let mut river_sup = match river::RiverSupervisor::spawn(Path::new("/opt/sola/log/river.log")) {
+    let mut river_sup = match river::RiverSupervisor::spawn(&sola_core::paths::log_path("river.log")) {
         Ok(s) => s,
         Err(e) => {
             error!(%e, "failed to spawn river");
@@ -243,13 +249,13 @@ fn launch<'a>(
     // self-restart watcher — sola is already restarting these on
     // binary change, so without this they'd double-restart (kit
     // exec_self followed instantly by sola kill + launch).
-    // sola-kvm is a multi-command CLI; managed mode is always the KVM server
-    // with the physical-edge (layer-shell) + evdev path.
+    // sola-kvm is a multi-command CLI; managed mode is always the KVM server,
+    // capturing through the compositor.
     let result = unsafe {
         let mut cmd = Command::new(&bin);
         cmd.env("SOLA_NO_SELF_WATCH", "1");
         if name == "sola-kvm" {
-            cmd.args(["server", "--input", "evdev"]);
+            cmd.args(["server"]);
         }
         cmd.pre_exec(sola_core::process::set_pdeathsig_and_leader)
             .spawn()
@@ -308,19 +314,20 @@ fn leak_str(s: &str) -> &'static str {
 
 /// Point GTK / Wayland clients at our bundled cursor theme.
 ///
-/// `XCURSOR_PATH` prepends `/opt/sola/share/cursors` so a vendored
-/// theme there wins over anything the user might have installed
-/// system-wide. The default fallback (`~/.icons:/usr/share/icons`)
+/// `XCURSOR_PATH` prepends `<share>/cursors` ([`sola_core::paths::share_dir`],
+/// `/opt/sola/share` by default) so a vendored theme there wins over
+/// anything the user might have installed system-wide. The default fallback (`~/.icons:/usr/share/icons`)
 /// is preserved when `XCURSOR_PATH` was unset.
 ///
 /// `XCURSOR_THEME` defaults to `McMojave` (vendored under
-/// `/opt/sola/share/cursors/McMojave/`). Don't override an existing
+/// `<share>/cursors/McMojave/`). Don't override an existing
 /// value — the user may have already picked something explicit.
 fn set_cursor_env() {
-    const BUNDLED: &str = "/opt/sola/share/cursors";
+    let bundled = sola_core::paths::share_dir().join("cursors");
+    let bundled = bundled.display();
     let path = match std::env::var_os("XCURSOR_PATH") {
-        Some(existing) => format!("{BUNDLED}:{}", existing.to_string_lossy()),
-        None => format!("{BUNDLED}:~/.icons:/usr/share/icons"),
+        Some(existing) => format!("{bundled}:{}", existing.to_string_lossy()),
+        None => format!("{bundled}:~/.icons:/usr/share/icons"),
     };
     unsafe { std::env::set_var("XCURSOR_PATH", path) };
     if std::env::var_os("XCURSOR_THEME").is_none() {

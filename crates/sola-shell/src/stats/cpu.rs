@@ -170,6 +170,10 @@ pub struct CpuIdentity {
     pub model: String,
     pub cores: usize,   // distinct physical cores
     pub threads: usize, // logical processors
+    /// Logical processor numbers grouped by physical core (siblings
+    /// together), cores in order of first appearance. Empty without
+    /// topology fields.
+    pub groups: Vec<Vec<usize>>,
 }
 
 /// Cached identity, read once from /proc/cpuinfo (hardware doesn't change).
@@ -187,18 +191,23 @@ pub fn parse_cpuinfo(s: &str) -> CpuIdentity {
     let mut model = String::new();
     let mut threads = 0usize;
     let mut pairs: HashSet<(String, String)> = HashSet::new();
+    let mut groups: Vec<((String, String), Vec<usize>)> = Vec::new();
     for block in s.split("\n\n") {
         if block.trim().is_empty() {
             continue;
         }
         let mut is_proc = false;
+        let mut number: Option<usize> = None;
         let (mut phys, mut core) = (String::new(), String::new());
         for line in block.lines() {
             let Some((k, v)) = line.split_once(':') else {
                 continue;
             };
             match (k.trim(), v.trim()) {
-                ("processor", _) => is_proc = true,
+                ("processor", v) => {
+                    is_proc = true;
+                    number = v.parse().ok();
+                }
                 ("model name", v) if model.is_empty() => model = clean_model(v),
                 ("physical id", v) => phys = v.to_string(),
                 ("core id", v) => core = v.to_string(),
@@ -208,7 +217,14 @@ pub fn parse_cpuinfo(s: &str) -> CpuIdentity {
         if is_proc {
             threads += 1;
             if !phys.is_empty() || !core.is_empty() {
-                pairs.insert((phys, core));
+                let key = (phys, core);
+                if let Some(n) = number {
+                    match groups.iter_mut().find(|(k, _)| *k == key) {
+                        Some((_, g)) => g.push(n),
+                        None => groups.push((key.clone(), vec![n])),
+                    }
+                }
+                pairs.insert(key);
             }
         }
     }
@@ -224,7 +240,34 @@ pub fn parse_cpuinfo(s: &str) -> CpuIdentity {
         model,
         cores,
         threads,
+        groups: groups.into_iter().map(|(_, g)| g).collect(),
     }
+}
+
+/// Per-thread load laid out by core: a gap (`None`) between threads, two
+/// between cores. Without usable groups, the threads in order, a gap
+/// apart. (Siblings side by side with no gap read as one wide bar —
+/// Joshua: "it says 8 threads, but its only showing four bars".)
+pub fn by_core(per_core: &[f32], groups: &[Vec<usize>]) -> Vec<Option<f32>> {
+    let covered: usize = groups.iter().map(Vec::len).sum();
+    let usable = !groups.is_empty()
+        && covered == per_core.len()
+        && groups.iter().flatten().all(|&i| i < per_core.len());
+    let in_order = [(0..per_core.len()).collect::<Vec<_>>()];
+    let groups = if usable { groups } else { &in_order[..] };
+    let mut out = Vec::with_capacity(per_core.len() * 2 + groups.len());
+    for (k, g) in groups.iter().enumerate() {
+        if k > 0 {
+            out.extend([None, None]);
+        }
+        for (j, &i) in g.iter().enumerate() {
+            if j > 0 {
+                out.push(None);
+            }
+            out.push(Some(per_core[i]));
+        }
+    }
+    out
 }
 
 /// Trim a raw `model name` to a compact label, e.g.
@@ -266,6 +309,22 @@ mod tests {
         assert_eq!(id.model, "Ryzen 9 5950X");
         assert_eq!(id.threads, 3);
         assert_eq!(id.cores, 2);
+        assert_eq!(id.groups, vec![vec![0, 1], vec![2]]);
+    }
+
+    #[test]
+    fn threads_lay_out_by_core_with_gaps() {
+        // Intel numbering: siblings are n and n + cores.
+        let groups = vec![vec![0, 2], vec![1, 3]];
+        let load = [10.0, 20.0, 30.0, 40.0];
+        assert_eq!(
+            by_core(&load, &groups),
+            vec![Some(10.0), None, Some(30.0), None, None, Some(20.0), None, Some(40.0)]
+        );
+        // Groups that do not cover every thread fall back to the order.
+        let in_order = vec![Some(10.0), None, Some(20.0), None, Some(30.0), None, Some(40.0)];
+        assert_eq!(by_core(&load, &[vec![0, 1]]), in_order);
+        assert_eq!(by_core(&load, &[]), in_order);
     }
 
     #[test]

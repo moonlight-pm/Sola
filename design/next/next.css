@@ -1,40 +1,6 @@
-/* Next: the foundation that follows design/foundation/. Accent and status colors come from
- * ../tokens.css; the dark grey base, the geometry, and the parts are here. */
-/* Base: dark grey. Next takes today's slate base to neutral greys
- * (each slate token's CIE L*, then surfaces and lines 20% darker; text
- * keeps its lightness). These override the bus palette keys in
- * ../tokens.css, which still mirrors the kit as built. Accent and status
- * colors are unchanged. */
-:root {
-  --bg-primary: #0b0b0b;
-  --bg-chrome: #141414;
-  --bg-secondary: #151515;
-  --bg-hover: #1f1f1f;
-  --selection: #292929;
-  --border: #2a2a2a;
-  --hairline: #222222;
-  --hairline-strong: #2b2b2b;
-  --field-well: #050505;
-  --field-edge: #1e1e1e;
-  --secondary-fill: #1d1d1d;
-  --secondary-edge: #313131;
-  --secondary-hover: #292929;
-  --shell-menubar-bg: #050505;
-  --rail-hover: #212121;
-  --rail-selected: #2d2d2d;
-  --rail-lip: #3f3f3f;
-  --text-primary: #ececec;
-  --text-secondary: #949494;
-  --text-tertiary: #737373;
-  --text-ghost: #b3b3b3;
-  --text-tertiary-proposed: #858585;
-  --ghost-hover: #1f1f1fb3;
-  --menu-hover: #1f1f1fbf;
-  --menubar-active: #ececec2e;
-  --shell-switcher-bg: #151515e6;
-  --led-off: #ececec1f;
-  --stat-label: #ececec9e;
-}
+/* Next: the foundation that follows design/foundation/. Colors come from
+ * ../tokens.css, which carries Next's dark grey base since the kit took it
+ * (2026-10-23); the geometry and the parts are here. */
 
 :root {
   /* The grid: one gap everywhere. The top row is gap + island + gap. */

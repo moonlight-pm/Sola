@@ -1402,6 +1402,7 @@ mod tests {
             warning: parse("#d29922"),
             danger: parse("#f85149"),
             selection: parse("#1f6feb"),
+            highlight: parse("#222324"),
         }
     }
 

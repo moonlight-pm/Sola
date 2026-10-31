@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Design</title>
 <style>
-  :root { --bg: #141518; --fg: #c9ccd2; --muted: #7d828c; --line: #2b2e34; --chip: #1d1f23; --accent: #3dd6f5; --note: #e3b341; }
+  :root { --bg: #121212; --fg: #cccccc; --muted: #828282; --line: #262626; --chip: #1a1a1a; --accent: #3dd6f5; --note: #e3b341; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; touch-action: none;
     font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   #plane { position: absolute; inset: 0; touch-action: none; }
@@ -25,7 +25,7 @@
   #bar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; gap: 4px; align-items: center;
     padding: 4px; background: var(--chip); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
   #bar button { all: unset; cursor: pointer; padding: 5px 10px; border-radius: 7px; color: var(--fg); }
-  #bar button:hover { background: #26292e; }
+  #bar button:hover { background: #222222; }
   #pct { min-width: 48px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
   #msg { position: fixed; inset: 0; display: none; place-items: center; color: var(--muted); }
   #help { position: fixed; left: 16px; bottom: 22px; color: var(--muted); font-size: 12px; pointer-events: none; }
@@ -33,13 +33,13 @@
   #under, #over { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
   #ink { position: absolute; inset: 0; pointer-events: none; }
   .sec { position: absolute; transform: translateY(-100%); }
-  .sec > div { display: inline-block; margin: 0 0 0 -6px; padding: 3px 6px; border-radius: 6px; background: rgba(20,21,24,.88); }
+  .sec > div { display: inline-block; margin: 0 0 0 -6px; padding: 3px 6px; border-radius: 6px; background: rgba(18,18,18,.88); }
   .sec b { display: block; font-size: 15px; font-weight: 500; line-height: 20px; color: var(--fg); }
   .sec span { display: block; font-size: 12px; line-height: 16px; color: var(--muted); margin-top: 3px; }
-  .lbl { position: absolute; transform: translate(-50%, -50%); padding: 2px 7px; border: 1px solid rgba(201,204,210,.18);
-    border-radius: 7px; background: var(--chip); color: rgba(201,204,210,.72); font-size: 11px; line-height: 15px; white-space: nowrap; }
+  .lbl { position: absolute; transform: translate(-50%, -50%); padding: 2px 7px; border: 1px solid rgba(204,204,204,.18);
+    border-radius: 7px; background: var(--chip); color: rgba(204,204,204,.72); font-size: 11px; line-height: 15px; white-space: nowrap; }
   .lbl.lit { border-color: var(--accent); color: var(--fg); }
-  .lbl.dim { border-color: rgba(201,204,210,.08); color: rgba(201,204,210,.3); background: rgba(29,31,35,.7); }
+  .lbl.dim { border-color: rgba(204,204,204,.08); color: rgba(204,204,204,.3); background: rgba(26,26,26,.7); }
   .note { position: absolute; width: 0; height: 0; pointer-events: auto; }
   .note .dot { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border-radius: 50%; cursor: pointer;
     background: var(--note); color: #1a1407; box-shadow: 0 0 0 1.5px var(--bg); font: 500 11px/18px system-ui, sans-serif;
@@ -86,7 +86,7 @@
   .pop { position: fixed; left: 50%; bottom: 62px; transform: translateX(-50%); display: none; padding: 6px 8px;
     background: var(--chip); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
   .pop button { all: unset; cursor: pointer; padding: 5px 10px; border-radius: 7px; color: var(--fg); }
-  .pop button:hover { background: #26292e; }
+  .pop button:hover { background: #222222; }
   .pop button:disabled { opacity: .35; cursor: default; background: none; }
   #flows button { display: block; width: 300px; }
   #flows small, #tour small { display: block; color: var(--muted); font-size: 12px; }
@@ -701,7 +701,7 @@
     let u = '';
     s.sections.forEach((x, i) => {
       const r = sectionBox(x.rects.map(scr));
-      u += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="10" fill="rgba(255,255,255,.035)" stroke="#2b2e34"/>`;
+      u += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="10" fill="rgba(255,255,255,.035)" stroke="#262626"/>`;
       const el = inkSecs[i];
       el.style.left = r.x + 2 + 'px'; el.style.top = r.y - 5 + 'px';
       el.style.width = Math.min(640, Math.max(160, r.w)) + 'px';
@@ -718,7 +718,7 @@
       if (step) return a.fromBoard === step ? 2 : 0;
       return 1;
     };
-    const LOOK = [['rgba(201,204,210,.14)', 1.25], ['rgba(201,204,210,.42)', 1.5], ['var(--accent)', 2]];
+    const LOOK = [['rgba(204,204,204,.14)', 1.25], ['rgba(204,204,204,.42)', 1.5], ['var(--accent)', 2]];
     let o = '';
     // Labels never cover a page unless their arrow is lit; lit ones first.
     const screens = [...boards.values()].map((b) => scr(boardRect(b)));

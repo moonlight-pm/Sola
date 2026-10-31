@@ -199,6 +199,7 @@ fn parse_inlines(src: &str) -> Vec<ProseRun> {
                     bold: false,
                     italic: false,
                     code: true,
+                    strike: false,
                 });
                 i = next;
                 continue;

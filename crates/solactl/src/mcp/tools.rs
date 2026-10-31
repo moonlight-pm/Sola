@@ -1,9 +1,9 @@
 //! Call-plane owners → MCP tools, and one tool call → an MCP result.
 //!
 //! A tool is `<owner>_<method>` (dots become `_`): `design_screenshot`,
-//! `browser_tab_open`, `workspaces_pane_send`. Its input schema comes from
+//! `browser_tab_open`, `projects_pane_send`. Its input schema comes from
 //! the method's `ArgSpec`s. Calls go through the same preparation as
-//! `solactl <owner> <method>` (Path args, Workspaces pane context, bot
+//! `solactl <owner> <method>` (Path args, Projects pane context, bot
 //! policy, timeout). A reply whose `path` is a small PNG / JPEG also comes
 //! back as an image, so the agent sees a screenshot without a second read.
 
@@ -120,7 +120,7 @@ pub fn call(t: &Tool, arguments: Option<&Value>) -> Value {
         Some(other) => return error_result(&format!("arguments must be an object, got {other}")),
     };
     resolve_paths(&t.spec, &mut params);
-    if t.owner == "workspaces" {
+    if t.owner == "projects" {
         dynamic::inject_ws_context(&t.spec.name, &mut params);
     }
     if t.owner == "design" {

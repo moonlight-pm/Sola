@@ -6,12 +6,10 @@ so the carousel spinner never gets a source.
 
 Spotify only **hosts** those builds. They are not in the media stack.
 
-This directory builds a CEF commit with the flags below. It is still
-pinned to 147.0.10 (`inner.sh`: branch `7727`, commit `d58e84d`) while
-`cef-version` is 156.0.14 (2026-10-27). A 156 build moves the pin to
-branch `8078`, commit `4fa4ab5`, and needs a fresh checkout: the resume
-and `--no-update` paths rebuild whatever `~/.cache/sola/cef-build/` holds.
-Flags:
+On Oath, `pkg:cef` is already built this way (Oath's R40); this
+directory is for a NixOS machine's `~/.cache/sola/cef-<ver>/`.
+
+This directory builds the same CEF commit as `cef-version` with:
 
 ```
 proprietary_codecs=true ffmpeg_branding=Chrome is_official_build=true

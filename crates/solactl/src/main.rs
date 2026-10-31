@@ -1,11 +1,12 @@
 //! solactl — operator CLI for Sola.
 //!
-//! Compiled owners (`compositor`, `session`, `workspaces`, `browser`, `bots`,
+//! Compiled owners (`compositor`, `session`, `projects`, `browser`, `bots`,
 //! `design`) are a real clap tree. Other live owners appear as
 //! `solactl <app-id>` from the call registry.
 
 use clap::{Parser, Subcommand};
 
+mod background;
 mod bus;
 mod call;
 mod compositor;
@@ -36,14 +37,14 @@ enum Command {
         #[command(subcommand)]
         cmd: session::Command,
     },
-    /// Workspaces: projects, tabs (worktree or root checkout), panes (app must be running).
+    /// Projects: projects, tabs (worktree or root checkout), panes (app must be running).
     #[command(disable_help_flag = true)]
-    Workspaces {
+    Projects {
         /// Method and flags. Omit to list advertised methods.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Browser: tabs, groups, snapshot, click/type/fill (chrome must be running).
+    /// Browser: tabs, snapshot, click/type/fill (chrome must be running).
     #[command(disable_help_flag = true)]
     Browser {
         /// Method and flags. Omit to list advertised methods.
@@ -89,6 +90,12 @@ enum Command {
     /// Open a URL in sola-browser, or an image path in sola-paint.
     Open { target: String },
 
+    /// The picture behind the windows: set one (Sola keeps a copy) or clear it.
+    Background {
+        #[command(subcommand)]
+        cmd: background::Command,
+    },
+
     /// Global media-key action (MPRIS / wpctl). Invoked by the shell.
     Media {
         #[arg(value_enum)]
@@ -105,8 +112,8 @@ fn main() {
     let exit = match cli.command {
         Command::Compositor { cmd } => compositor::run(cmd),
         Command::Session { cmd } => session::run(cmd),
-        Command::Workspaces { args } => {
-            let mut all = vec!["workspaces".into()];
+        Command::Projects { args } => {
+            let mut all = vec!["projects".into()];
             all.extend(args);
             dynamic::run(all)
         }
@@ -129,6 +136,7 @@ fn main() {
         Command::Logs { app, follow } => logs::run(app.as_deref(), follow),
         Command::Emit { kind, payload } => emit::run(&kind, &payload),
         Command::Open { target } => open::run(&target),
+        Command::Background { cmd } => background::run(cmd),
         Command::Media { action } => media::run(action),
         Command::External(args) => dynamic::run(args),
     };
@@ -142,14 +150,14 @@ mod tests {
     use super::Cli;
 
     #[test]
-    fn help_lists_workspaces() {
+    fn help_lists_projects() {
         let mut cmd = Cli::command();
         let mut buf = Vec::new();
         cmd.write_long_help(&mut buf).unwrap();
         let help = String::from_utf8(buf).unwrap();
         assert!(
-            help.contains("workspaces"),
-            "solactl help must list workspaces:\n{help}"
+            help.contains("projects"),
+            "solactl help must list projects:\n{help}"
         );
         assert!(
             help.contains("browser"),

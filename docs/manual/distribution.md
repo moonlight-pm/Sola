@@ -63,8 +63,7 @@ SF Pro Text is licensed by Apple for its own platforms, and Oath does not
 ship it. Install it only from a copy you are entitled to use; once it is
 installed, interface text uses it, since the default theme names it.
 
-## The font picker
+## No font picker
 
-The font picker is in Kit (the `sola-kit` storybook), which offers every
-family fontconfig lists. Kit is not in Sola's Oath packages, so on Oath
-there is no font picker.
+Sola has no font picker: the roles name the families above, and the
+theme changes only in Settings → Appearance, which does not choose fonts.

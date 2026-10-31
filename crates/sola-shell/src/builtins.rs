@@ -8,18 +8,21 @@
 //! list only rebuilds the shell, not every crate in the workspace.
 
 use sola_bus::topics::Application;
-use sola_core::env;
+use sola_core::{env, paths};
+
+/// Settings' app id (the flower menu opens it).
+pub const SETTINGS: &str = "sola-settings";
 
 fn kit_command(name: &str) -> String {
-    env::bin_path(name).display().to_string()
+    paths::bin_path(name).display().to_string()
 }
 
 pub fn builtin_apps() -> Vec<Application> {
-    vec![
+    let mut apps = vec![
         Application {
-            app_id: "sola-settings".into(),
+            app_id: SETTINGS.into(),
             label: "Settings".into(),
-            command: kit_command("sola-settings"),
+            command: kit_command(SETTINGS),
             icon: "lucide/settings".into(),
             ..Default::default()
         },
@@ -38,9 +41,9 @@ pub fn builtin_apps() -> Vec<Application> {
             ..Default::default()
         },
         Application {
-            app_id: "sola-workspaces".into(),
-            label: "Workspaces".into(),
-            command: kit_command("sola-workspaces"),
+            app_id: "sola-projects".into(),
+            label: "Projects".into(),
+            command: kit_command("sola-projects"),
             // `folders` — stacked project groups. Distinct from Terminal
             // (`terminal`).
             icon: "lucide/folders".into(),
@@ -56,13 +59,6 @@ pub fn builtin_apps() -> Vec<Application> {
             ..Default::default()
         },
         Application {
-            app_id: "sola-kit".into(),
-            label: "Kit".into(),
-            command: kit_command("sola-kit"),
-            icon: "lucide/palette".into(),
-            ..Default::default()
-        },
-        Application {
             app_id: "sola-preview".into(),
             label: "Preview".into(),
             command: kit_command("sola-preview"),
@@ -74,8 +70,8 @@ pub fn builtin_apps() -> Vec<Application> {
             label: "Paint".into(),
             command: kit_command("sola-paint"),
             // `brush` — simple 20px silhouette. Distinct from Preview
-            // (`image`) and Kit (`palette`). The detailed `paintbrush`
-            // glyph turns to noise at launcher density.
+            // (`image`). The detailed `paintbrush` glyph turns to noise at
+            // launcher density.
             icon: "lucide/brush".into(),
             ..Default::default()
         },
@@ -89,7 +85,7 @@ pub fn builtin_apps() -> Vec<Application> {
         Application {
             app_id: "sola-calendar".into(),
             label: "Calendar".into(),
-            command: "/opt/sola/bin/sola-calendar".into(),
+            command: kit_command("sola-calendar"),
             icon: "lucide/calendar".into(),
             ..Default::default()
         },
@@ -98,13 +94,6 @@ pub fn builtin_apps() -> Vec<Application> {
             label: "Bots".into(),
             command: kit_command("sola-bots"),
             icon: "lucide/bot".into(),
-            ..Default::default()
-        },
-        Application {
-            app_id: "sola-arcade".into(),
-            label: "Arcade".into(),
-            command: kit_command("sola-arcade"),
-            icon: "lucide/gamepad-2".into(),
             ..Default::default()
         },
         Application {
@@ -118,17 +107,24 @@ pub fn builtin_apps() -> Vec<Application> {
             app_id: "sola-design".into(),
             label: "Design".into(),
             command: kit_command("sola-design"),
-            // `frame` — artboards. Distinct from Paint (`brush`) and Kit
-            // (`palette`).
+            // `frame` — artboards. Distinct from Paint (`brush`).
             icon: "lucide/frame".into(),
             ..Default::default()
         },
-        Application {
-            app_id: "sola-spotify".into(),
-            label: "Spotify".into(),
-            command: kit_command("sola-spotify"),
-            icon: "lucide/disc".into(),
-            ..Default::default()
-        },
-    ]
+    ];
+    // The catalog app manages the machine itself, so only where there
+    // is an Oath catalog to manage.
+    if env::on_oath() {
+        apps.insert(
+            0,
+            Application {
+                app_id: "sola-oath".into(),
+                label: "Oath".into(),
+                command: kit_command("sola-oath"),
+                icon: "lucide/box".into(),
+                ..Default::default()
+            },
+        );
+    }
+    apps
 }

@@ -13,6 +13,7 @@
 
 pub mod state;
 pub mod view;
+pub mod workspace;
 
 use iced::widget::{container, mouse_area, stack, text};
 use iced::window;

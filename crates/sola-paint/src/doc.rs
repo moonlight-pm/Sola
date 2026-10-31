@@ -162,6 +162,27 @@ impl Doc {
         self.save_to(&path)
     }
 
+    /// Sola's background copy of this image (`sola_core::background`): the
+    /// file itself when it is saved, else what is on screen as a PNG.
+    pub fn background_copy(&self) -> Result<PathBuf, String> {
+        match &self.path {
+            Some(path) if !self.dirty => sola_core::background::adopt(path)
+                .map_err(|e| format!("{}: {e}", path.display())),
+            path => {
+                let stem = path
+                    .as_deref()
+                    .and_then(Path::file_stem)
+                    .map_or_else(|| "background".into(), |s| s.to_string_lossy().into_owned());
+                let mut png = Vec::new();
+                self.pixels
+                    .write_to(&mut std::io::Cursor::new(&mut png), ImageFormat::Png)
+                    .map_err(|e| format!("encode: {e}"))?;
+                sola_core::background::adopt_bytes(&format!("{stem}.png"), &png)
+                    .map_err(|e| format!("background: {e}"))
+            }
+        }
+    }
+
     pub fn save_to(&mut self, path: &Path) -> Result<(), String> {
         write_image(&self.pixels, path)?;
         self.path = Some(path.to_path_buf());

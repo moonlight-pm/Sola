@@ -27,27 +27,9 @@ fan-out for a multi-client ACP *coding* GUI is moot; Bots yolo all tools.
 
 ---
 
-### D2 — sola-kvm permanent input ACL (P1)
-
-**Context:** Input device access currently needs per-boot `setfacl` (or similar).
-Permanent udev/ACL is a host-policy choice with security trade-offs.
-
-**Ask:**
-
-1. Prefer udev rule installed with Sola, documented manual udev, or group
-   membership?  
-2. Acceptable blast radius (all input nodes vs tagged devices)?
-
-**Until decided:** keep documented operator workaround; no silent broad ACL
-install from agent sessions.
-
-**Related:** `kvm` capability; [`manual/sola-kvm-operator.md`](manual/sola-kvm-operator.md).
-
----
-
 ### D3 — Which call-plane methods need a human confirm (P1)
 
-**Context:** `sola-call` is desk-equivalent privilege (local-user `0600` socket, same as the bus). Desk-equivalent methods may want a confirm gate (close app, input, Workspaces spawn).
+**Context:** `sola-call` is desk-equivalent privilege (local-user `0600` socket, same as the bus). Desk-equivalent methods may want a confirm gate (close app, input, Projects tab spawn).
 
 **Ask:**
 
@@ -90,32 +72,161 @@ Alternative for the scale half only: tile the plane's textures past 8192 px.
 
 ---
 
-### D7 — Bots HTTP API exposure (P0)
+### D7 — Bots HTTP API exposure (P0) — **decided (2026-10-28)**
 
-**Context (found 2026-10-19, writing the manual):** `sola-botsd` is a managed
-component, so it runs in every session, and it binds `0.0.0.0:27419`
-(`crates/sola-bots/src/auth.rs`). The bearer token is a constant in that
-file, and the repo is public, so the token is public (in history since
-2026-09-15). The NixOS firewall is off on the desk, so anyone on the LAN
-who reads the source can drive bot sessions, which run `grok agent stdio`
-in yolo mode in `~/Bots/<slug>/`. `bot.sola.computer` does not answer from
-outside today. The iOS SolaBot app compiles in the same token.
+**Context (found 2026-10-19, writing the manual):** `sola-botsd` bound
+`0.0.0.0:27419` with a bearer token that was a constant in public source,
+so anyone on the LAN who read the source could drive bot sessions, which
+run their AI with every tool approved in `~/Bots/<slug>/`.
 
-**Ask:**
-
-1. Rotate the token and move it out of source (a file under
-   `~/.config/sola/`, or a secret the module provides), rebuilding SolaBot to
-   match?
-2. Bind to loopback or the LAN address only, or keep `0.0.0.0` behind a
-   firewall rule (turn the firewall on and open 27419 only to the proxy)?
-3. Should `sola-botsd` stay a managed component in every session, or start
-   only when enabled?
-
-**Until decided:** do not publish `bot.sola.computer` again; the manual
-states the port is open in every session and does not print the token.
+**Decided (Joshua, 2026-10-28):** "If its local why not a socket file —
+we'll use a cloudflare tunnel later for remote access." The API is HTTP on
+the Unix socket `$XDG_RUNTIME_DIR/sola-bots` (mode 0600), with no TCP port
+and no token; the token constant is gone from source. Remote access (the
+iPhone app) comes later through a Cloudflare tunnel to the socket, which
+must bring its own sign-in (Cloudflare Access) — decide that when the
+tunnel is built. Question 3 (always running or opt-in) is open again only
+if the tunnel needs it; on Oath the daemon needs a `svc:sola-botsd`.
 
 **Related:** `bots` capability; [process manager](manual/process-manager.md);
 [solactl § Bots](manual/solactl.md#bots-solactl-bots).
+
+---
+
+### D8 — Agents on another computer driving Projects (P2)
+
+**Context:** A project on another computer works as one here, but an agent
+running in its tab cannot drive this Projects: `solactl projects` there
+talks to that computer's own call plane (if any). The link could forward
+this computer's call socket there too (`SOLA_CALL_PATH` on the remote
+panes, as the hook socket is forwarded), so `solactl projects tab.spawn`,
+`pane.send`, `whoami` etc. from there reach this Projects. But the call
+plane is desk-equivalent privilege (D3): every owner (browser, shell,
+design…) would be reachable by anything running as that user on that
+computer.
+
+**Ask:** forward the call plane to remote tabs? Options: no (as built);
+forward it whole; forward a Projects-only proxy (only owner `projects`).
+
+---
+
+### D9 — Unpackaged apps in the launcher on Oath (P1) — **answered (2026-10-30)**
+
+**Answer (Joshua, 2026-10-30):** "lets get rid of arcade (it remains in git
+history), lets bring in scope, preview, monitor"; Kit: "i'm not sure we need
+the app anymore -- we use the appearance settings and tweaking a bunch of
+padding and whatnot is just not something a user wants to bother with. Thus
+we can also get rid of the state that kit app would have saved". Arcade and
+the Kit storybook (with its `CustomTheme` presets) are removed; Monitor,
+Preview and Scope ship in `pkg:sola`. Bots and Install wait.
+
+**Context:** Kit, Monitor, Preview, Arcade and Scope are launcher
+built-ins (Spotify was one; `sola-spotify` is retired on `next` since
+2026-10-30) (`crates/sola-shell/src/builtins.rs`), but no Oath package carries
+them (`crates/sola-make/src/oath/packages.rs`). On Oath, choosing one fails
+with a launch error. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+
+**Ask:** hide them from the launcher on Oath, or package them (which)?
+
+**Related:** `shell-launcher`, `oath-platform` capabilities.
+
+---
+
+### D10 — A Bots service on Oath (P2)
+
+**Context:** Oath's desk profile has no `svc:sola-botsd` (Oath repo,
+`crates/oath-core/seed/desk.json`), so the `bots` owner, `solactl bots` and
+the Bots window have nothing to talk to on Oath. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+
+**Ask:** add `svc:sola-botsd` to the desk profile (an Oath change), or leave
+Bots off Oath?
+
+**Related:** `bots` capability; [D7](#d7--bots-http-api-exposure-p0).
+
+---
+
+### D11 — What Quit Sola means on Oath (P1) — **answered (2026-10-29)**
+
+**Answer (Joshua, 2026-10-29):** "the idea here is that it would just drop
+you to a tty if that is possible". Not built: Oath runs no login on a VT
+(only `serial-login`, idle without a UART), and Oath has no PAM and no
+passwords (`/etc/shadow` fields empty), so a TTY there needs an Oath console
+login with a credential — the same question as a lock screen (D12).
+
+**Context:** After **Quit Sola** on Oath, `sola-shell`, `sola-river` and
+`sola-session` exit cleanly and stay down: a clean exit is not restarted
+(on-failure / always policies). `sola-bus`, `sola-call` and `sola-kvm` keep
+running. Nothing brings a desktop back short of a reboot. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+
+**Ask:** intended? If not: Quit Sola restarts the desk, logs out to a
+console, is hidden on Oath, or something else?
+
+**Related:** `oath-platform`, `shell-menubar` capabilities;
+[manual/sola-shell.md](manual/sola-shell.md#flower-menu).
+
+---
+
+### D12 — The public manual says the desk has no login and no lock screen (P1) — **answered (2026-10-29)**
+
+**Answer (Joshua, 2026-10-29):** make it true that a secure setup exists, and
+say so — "I'd like to resolve these so that our docs can honestly describe a
+secure setup, that exists" (network and physical access are trusted for him,
+so it stays optional). Built: the [secure access
+spec](specs/2026-10-29-secure-access-design.md); `next`'s manual has a
+Security chapter. Master's Introduction ("Starting a session") still says no
+login and no lock screen: reword it at the merge to "by default", with a link
+to Security.
+
+**Context:** The manual's Introduction ("Starting a session"), published at
+sola.moonlight.pm/manual, says the desk starts at boot with no login and no
+lock screen. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+
+**Ask:** fine to say publicly, or reword / drop it (and is a lock screen
+wanted)?
+
+---
+
+### D13 — Bot refusals in the compositor can be bypassed (P1)
+
+**Context:** The `SOLA_BOT` refusals on compositor input can be bypassed
+through `solactl sola-river input.*` and over MCP. The browser's rules follow
+the calling owner; these don't. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+
+**Ask:** close the bypass (refuse by caller everywhere), or accept that
+anything with the call socket is desk-equivalent (D3)?
+
+**Related:** [D3](#d3--which-call-plane-methods-need-a-human-confirm-p1), `call`, `bots` capabilities.
+
+---
+
+### D14 — What `pkg:sola` ships on Oath (P2)
+
+**Context:** *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).* `pkg:sola` carries none of:
+
+- `.desktop` files, so `xdg-open` does not route to Sola apps
+  (`sola-browser.desktop` also hardcodes `Exec=/opt/sola/bin/sola-browser`);
+- `cloudflared` for Design's share links;
+- log rotation: nothing rotates `sola.log` on Oath (only the `sola` process
+  manager did).
+
+**Ask:** which of these should Oath get, and from which package (Sola's or
+Oath's)?
+
+**Related:** `oath-platform`, `install-make`, `kvm`, `design` capabilities.
+
+---
+
+### D15 — Google Calendar's client on Oath (P2)
+
+**Context:** `GOOGLE_CALENDAR_CLIENT_ID` / `_SECRET` are empty constants on
+`next`, so Google sign-in needs `SOLA_GOOGLE_CALENDAR_CLIENT_ID` / `_SECRET`
+in the environment. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+
+**Ask:** how should Oath provide them (a secret in the desk profile, a file
+under `~/.config/sola`, built in at publish)? Does Google sign-in work on
+canto today?
+
+**Related:** `calendar` capability.
 
 ---
 
@@ -146,7 +257,7 @@ speak D-Bus (BlueZ, logind / systemd, other players' MPRIS, Chromium's
 
 **Ask:**
 
-1. ~~Display name / window title~~ **decided 2026-08-14 / amended 2026-08-18:** crate / app id `sola-workspaces`; window **Workspaces**; owner `workspaces` (`solactl workspaces`); tmux `sola-ws` / `sws-`; config `~/.config/sola/workspaces/`.  
+1. ~~Display name / window title~~ **decided 2026-08-14 / amended 2026-08-18:** crate / app id `sola-workspaces`; window **Workspaces**; owner `workspaces` (`solactl workspaces`); tmux `sola-ws` / `sws-`; config `~/.config/sola/workspaces/`. **Renamed 2026-10-21** (branch `next`) to free "workspace" for desktop workspaces ([Next N5](specs/2026-10-21-next-tab-bar-design.md)): crate / app id `sola-projects`, window **Projects**, owner `projects` (`solactl projects`, no alias), a workspace is now a tab (`tab.*`), config `~/.config/sola/projects/`; tmux names unchanged.  
 2. ~~Default worktree base~~ **decided 2026-08-13:** `<project-root>/.worktrees/<name>`.  
 3. ~~If CLI runs and the app is down~~ **decided via call plane:** fail, do not launch.  
 4. ~~Claude in v1~~ **decided 2026-10-08:** first-class, same path as Codex.
@@ -158,7 +269,7 @@ speak D-Bus (BlueZ, logind / systemd, other players' MPRIS, Chromium's
 
 **Closed.** OpenCode is presence-only by design, not an open fork.
 
-**Related:** `workspaces` capability;
+**Related:** `projects` capability (was `workspaces`);
 [`specs/2026-08-13-sola-agent-terminal-design.md`](specs/2026-08-13-sola-agent-terminal-design.md).
 
 ---
@@ -186,6 +297,28 @@ runs `cloudflared` while open. Links work only while Design runs.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-10-30 | D2 sola-kvm input ACL | Moot: the server captures through the compositor (layer-shell strip, exclusive keyboard, pointer lock, relative motion, shortcuts inhibitor) and reads no `/dev/input`, so there is no ACL or udev rule to install (Oath R44; Joshua chose "All of it"). Pairing is by public key and neither side starts unpaired | capabilities `kvm`, KVM manual, KVM and secure-access specs |
+| 2026-10-30 | D9 launcher apps on Oath | Arcade and the Kit storybook removed (Kit's `CustomTheme` presets with it: Settings → Appearance supersedes them; the 2026-08-15 storybook-page rule goes too); Monitor, Preview and Scope ship in `pkg:sola`; Bots and Install later | open-questions D9, capabilities, AGENTS |
+| 2026-10-30 | Spotify | `sola-spotify` removed on `next`; Spotify runs as a web app | capabilities `spotify` |
+| 2026-10-28 | Projects are ~/Projects folders | Projects keeps no list of projects (Joshua: "We don't need a 'Drop Project' anymore. Closing the window does that basically. Also we don't need to keep a list of projects. Projects are jut whatever is in the ~/Projects directory"): the catalog holds only open projects; closing a window ends its sessions and forgets it. Asked: a reopened project starts on its root tab only; startup scripts live in a settings file by folder; with nothing open Projects quits. A remote project's tab shows its folder alone, its frame "<folder> on <host>". | capabilities `projects`, manual `solactl.md` |
+| 2026-10-28 | Projects on another computer | A project may be a folder in an ssh host's `~/Projects` (Joshua: "When i open projects through launcher, there should be a 'remote' option … type in a hostname, and it should remember recently used … ssh there to get a list of projects … open sessions over ssh to tmux … So the session runs on that machine"; then "remote projects should be identical in operation as local ones"). Each tab is a tmux session on that host on its own socket (`sola-ws-remote`, so a Sola there keeps its own apart); the chooser lists `~/Projects` there, not that host's Projects catalog. A link per host (`ssh -N -R`) brings its agents' hooks back, after Projects installs the same hooks there; worktrees, startup scripts, the pane CLI and resume run there through a `Machine` seam. | capabilities `projects`, manual `solactl.md`, `sola-shell.md` |
+| 2026-10-28 | Themed flower | The top row's flower takes the theme as its own token, `shell-flower`, amber by default (Joshua picked it over painting the flower the accent, which would have turned it cyan on the grey theme): a picture's scheme recolors it as the accent, and the storybook's Shell page edits it. Built with it: Settings' Accent sets it too, and a grey picture keeps the amber. | capabilities `theme-bus`, manual theme / sola-shell, background spec |
+| 2026-10-27 | Browser autoplay; pages off screen rest | Chromium's own autoplay policy replaces `no-user-gesture-required` (Joshua: "no reason that all 5 should be trying to play at once"): muted video plays only while in view, sound waits for a click on the page. A page whose window is off screen rests, the active one too ("make the active page rest off screen"), and under the idle fade once it is full ("let them keep running until the fade reaches full transparency"). | browser manual, compositor manual, capabilities, architecture |
+| 2026-10-26 | Launcher Browser field | Picking Browser in the launcher asks where to go instead of opening a blank page (Joshua: "instead present a omni search bar, then open the browser with that"): the location bar's rules (`sola_core::omnibox`) — Enter opens the address or Kagi's top result; a search offers Kagi's results page; the browser's visits below; the page opens in a new page window. | shell manual, browser manual, capabilities |
+| 2026-10-26 | App bar height | One height for an app's bar under its titlebar (Joshua: "pick a standard height here, and use where ever apps have a similar bar"): kit `style::BAR_H` = 42 (Next's mail head) — Projects and Design tab strips, Mail, Calendar, Bots, Browser, Paint, Preview, Scope, Monitor. | AGENTS, capabilities |
+| 2026-10-26 | One file panel | The kit `FilePicker` is the Open / Save / Choose Folder panel for every app, as macOS has one (Joshua: "This component should be standard, like mac os does, and re-usable for apps. Same for an Open"): keys, several files, folders, replace-confirm, New Folder; web pages' file choosers use it too. | AGENTS, capabilities, manuals |
+| 2026-10-26 | Launcher raise; ghost row | Picking a running app brings its window forward (Browser and Terminal open a new window); the top bar's "Opening …" toast gives way to a ghost row in the tab bar where the window will land, with a turning ring (Joshua: "replaced with a 'ghost' tab on the left where the app will go once its open… maybe some animation"). | shell manual, session manual, capabilities |
+| 2026-10-26 | Mail HTML | Mail renders HTML letters itself, a **safe subset** (Joshua chose it over a locked-down CEF): html5ever into a small DOM, walked into kit prose — CSS whitespace collapsing, bold / italic / code, http / https / mailto links, headings, quotes, lists, `pre`, rules, tables as rows, pictures. Nothing runs and no stylesheet is read; hidden elements (preheaders) are dropped. Pictures in the message show; pictures on the web only after **Load Pictures**. Newsletters read as one column, not the sender's layout. | [mail kit](specs/2026-07-27-sola-mail-kit-design.md), CURRENT, capabilities, manual |
+| 2026-10-26 | Mail bar | Mail's head runs across the window over the list and the letter (Joshua picked it over moving Search / New / Erase to the menus): the mailbox (a menu of them in a half tile) and its unread at the left; a search field, Erase and New Message at the right. | CURRENT, capabilities, manual |
+| 2026-10-26 | Projects in ~/Projects | Every project lives in `~/Projects` (Joshua: "I actually want to stand on a convention here … All projects always go in ~/Projects"). Picking Projects in the launcher shows an interstitial: the folders, open ones marked (picking one brings up its workspace and window), others opened in the current workspace, or a new one by name (the folder made, then opened). Projects first; other apps may follow | shell manual (Launcher), `docs/specs/2026-10-21-next-tab-bar-design.md` (launcher row) |
+| 2026-10-26 | Desk opacity | The windows, the bar and the top row are 90 % opaque over the background picture by default (Joshua: "make the default opacity for desktop items 90% … put the max transparency in our appearance settings ..default to 90"): Settings → Appearance → Desk → Opacity, 50–100 %; the idle fade starts from it | `docs/specs/2026-10-24-background-design.md` (the idle fade), `shell-background` |
+| 2026-10-26 | Next workspace profiles | Workspace and browser profile join (Joshua): every workspace has a profile of its own, paired by the workspace's id; a profile is only a uuid, no name, so a workspace renames freely — none shared, nothing to pick, no Profiles menu; a page sent to another workspace reopens under that workspace's profile; browser titles drop the profile's name. Amends Next workspaces (2026-10-23). | Next spec § Desktop workspaces, capabilities `shell-desks` / `browser`, manual/sola-browser |
+| 2026-10-23 | Next Full zone | A Full zone at the top of the bar covers the content area. Picking a Full tab leaves the halves off screen; picking a half's tab draws both halves and leaves Full off screen. A lone half keeps its half. Bar rows: lifted (on screen), full ink without the lift (its zone's shown tab, zone off screen), muted (behind). The first window on an empty workspace goes to Full. Super+KP_0 moves to Full (Fullscreen toggle retired); KP_Enter stays Cinema. Amends N2. | Next spec § Full, CURRENT, capabilities `shell-desks` |
+| 2026-10-23 | Next app ports | The Sola apps that still keep their own list of documents move to a window per document (the shell's bar is the tab list), **one app at a time**. Paused before the first; candidates Paint, Design, Bots, the wrapper's popups. | CURRENT, Next plan |
+| 2026-10-23 | Next grey base | The kit takes Next's dark grey base now (before the kit overhaul): surfaces and lines at 0.8× L*, text at the same L*, accent and status unchanged; a saved slate theme moves to the greys. The choosable accent still waits for the overhaul. Amends N8. | Next spec (N8), CURRENT, capabilities `theme-bus`, manual/theme |
+| 2026-10-23 | Next workspaces | Board 04 as proposed (pills by the flower with names and marks, named workspaces, Super+Tab across all, a window on one workspace); each workspace picks a browser profile (several may share); a page sent to a workspace with another profile reopens there under it; N6 dropped (projects not tied to workspaces). | Next spec § Desktop workspaces, plan Phase 5 |
+| 2026-10-22 | Next titlebars | Boards 01–02 picks as drawn (38 px row, unfocused menus dimmed, gap 10, 12 px corners, lit rim, black ground); dropdowns drawn by the kit in the window; foreign windows get gaps and a compositor hairline; the 28 px top band stays until the islands. | Next spec § Titlebars, plan Phase 6 |
+| 2026-10-21 | Next tab bar | N1–N8: spec first; Left / Right 50 / 50 + Floating; new windows join the focused zone; the bar docked at 240 px; Projects rename (N5); browser groups dropped (N7); titlebars, gaps, islands after the bar (N8). | Next spec § Decided, CURRENT Locked models |
 | 2026-10-18 | D-Bus | **D-Bus is deprecated as a requirement.** No new D-Bus dependencies; existing uses are legacy. In future Sola targets its own replacement on Sola Bus. Shape open (T3). | architecture, CURRENT locks, AGENTS, T3 |
 | 2026-10-14 | sola-design annotations | Only agents edit designs. Annotations (sections, notes, exits / links, flows) are part of the design — what is not obvious, general information, flow. No human notes, comments, or feedback on the canvas. Flows are tours on the canvas, not a full-screen prototype mode. | [freeze](specs/2026-10-12-sola-design-design.md), capabilities, manual |
 | 2026-10-13 | sola-design memory budget | Design holds its boards to a memory budget that **adapts** to what the machine has free (not a fixed size), if that can be done reliably. Over budget, Design first **discards idle boards** — boards nobody is looking at and no agent called lately: their page closes, their last picture stays on the canvas, and they reload from disk on the next look or call. A discard is not dropping a board (canvases are files; only in-page state such as scroll or typed text goes). Only when the boards in use still do not fit is Design **nice to the agent**: it refuses the new board / canvas with an error that says what is wrong (memory), what is live, and how to free room. (Ten agents' canvases filled 125G and froze the box; see CURRENT.) | CURRENT |
@@ -237,7 +370,7 @@ runs `cloudflared` while open. Links work only while Design runs.
 | 2026-08-15 | Browser tab groups | In-strip folders (spaces later); groups at top, loose run at bottom; menu + drag join/leave; New group is menu-only; collapse keeps the page; empty dissolves; kit context menu | [freeze](specs/2026-08-15-sola-browser-tab-groups-design.md), CURRENT, capabilities |
 | 2026-08-15 | Browser instance | One iced chrome via `chrome.sock`; second process hands off (does not reap live helpers). Helper death respawns + restores tabs. | CURRENT, capabilities, architecture, manual/sola-browser |
 | 2026-08-15 | Browser passkey | `get()` intercept in every frame; same-site duplicate/retry coalesced (Gemini Exchange 2FA was failing the page before pick); `create()` vault confirm + persist (new login or attach) | CURRENT, capabilities, manual/sola-browser |
-| 2026-08-15 | Kit storybook | Always update the matching storybook page in the same change; do not ask | `.grok/rules/kit-storybook-pages.md`, AGENTS |
+| 2026-08-15 | Kit storybook | Always update the matching storybook page in the same change; do not ask (*superseded 2026-10-30: the storybook is retired*) | AGENTS |
 | 2026-08-14 | D4.1 | Product is `sola-workspaces`. Owner `ws` (`solactl ws …`). Tmux `sola-ws` / `sws-`. Config `~/.config/sola/workspaces/`. | CURRENT + freeze + PRODUCT |
 | 2026-08-14 | workspaces | No `sat` binary. Face is `solactl ws …` only. | CURRENT + freeze |
 | 2026-08-14 | Browser downloads | Auto-save `~/Downloads`; toolbar icon with progress; click-to-open panel; persist completed in `shared/downloads.json`; cancel + open + remove-row (no Finder) | [freeze](specs/2026-08-14-sola-browser-downloads-design.md), CURRENT, capabilities, manual |

@@ -6,7 +6,7 @@
 //! - mail attachment **Open**
 //! - `solactl open` (xdg-open / MIME path via `sola-calendar.desktop`)
 //!
-//! Spawns `env::bin_path("sola-calendar") <path>` detached. A running
+//! Spawns `paths::bin_path("sola-calendar") <path>` detached. A running
 //! calendar keeps its window: the new process hands the path over and
 //! exits. Calendar drafts the event; you pick the calendar and save.
 
@@ -41,7 +41,7 @@ pub fn open(path: &str) -> Result<(), String> {
     if path.trim().is_empty() {
         return Err("empty calendar file path".into());
     }
-    let bin = crate::env::bin_path("sola-calendar");
+    let bin = crate::paths::bin_path("sola-calendar");
     if !bin.is_file() {
         return Err(format!("sola-calendar not found at {}", bin.display()));
     }

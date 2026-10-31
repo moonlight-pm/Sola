@@ -68,8 +68,8 @@ use iced::{
 use crate::components::icon::{icon_handle, icon_svg, icon_svg_colored};
 use crate::components::popover::{popover, popover_anchored};
 use crate::components::style::{
-    CHROME_SURFACE, HAIRLINE_A, RADIUS_LG, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, hairline_on,
-    inset_surface, linear_bg, mix, mix_white, on_color, src_over,
+    chrome_surface, HAIRLINE_A, RADIUS_LG, RADIUS_SM, SPACE_MD, SPACE_SM, SPACE_XS, hairline_on,
+    inset_surface, lift_in_hue, linear_bg, mix, mix_white, on_color, src_over,
 };
 use crate::fonts;
 
@@ -103,7 +103,7 @@ pub use crate::components::status_mark::{STATUS_MARK_SLOT, SidebarIndicator, sta
 
 /// List density for [`SidebarPanel`] (and the [`sidebar`] helper).
 ///
-/// [`Self::Normal`] is settings / mail / preview / storybook nav.
+/// [`Self::Normal`] is settings / mail / preview nav.
 /// [`Self::Large`] is the browser / terminal tab-strip density.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SidebarDensity {
@@ -138,6 +138,13 @@ pub struct SidebarHoverAction<Message> {
 pub struct SidebarItem<'a, Message> {
     pub label: String,
     pub active: bool,
+    /// Full ink without the selection lift: the row is current but not on
+    /// screen (the tab bar's selected tab in a zone that is not showing).
+    pub bright: bool,
+    /// Lifted a step, lighter than [`Self::active`]: the row is on screen
+    /// but does not have the keyboard (the tab bar's shown tab in a zone
+    /// without focus; Next board 05). `active` is the focused row.
+    pub shown: bool,
     pub message: Message,
     /// Right-aligned dim shortcut hint (e.g. the `1`..=`9` access key).
     pub shortcut: Option<u8>,
@@ -147,6 +154,9 @@ pub struct SidebarItem<'a, Message> {
     /// next row under a stationary cursor still shows the chip). `id` is
     /// auto-assigned from the row index when missing.
     pub on_close: Option<Message>,
+    /// The hover close as the titlebar's red stoplight, not ×: the row
+    /// stands for a window (the shell's tab bar).
+    pub stoplight: bool,
     /// Hover-only stacked pencil (same overlay as [`Self::on_close`]).
     /// Used for inline rename on a collapsible header. Hidden while
     /// [`SidebarSection::header_content`] is set.
@@ -195,9 +205,12 @@ impl<'a, Message> SidebarItem<'a, Message> {
         Self {
             label: label.into(),
             active: false,
+            bright: false,
+            shown: false,
             message,
             shortcut: None,
             on_close: None,
+            stoplight: false,
             on_edit: None,
             secondary: None,
             subtitle: None,
@@ -218,6 +231,25 @@ impl<'a, Message> SidebarItem<'a, Message> {
 
     pub fn active(mut self, active: bool) -> Self {
         self.active = active;
+        self
+    }
+
+    /// Full ink without the selection lift (see [`Self::bright`] field).
+    pub fn bright(mut self, bright: bool) -> Self {
+        self.bright = bright;
+        self
+    }
+
+    /// Lifted a step, lighter than active (see [`Self::shown`] field).
+    pub fn shown(mut self, shown: bool) -> Self {
+        self.shown = shown;
+        self
+    }
+
+    /// The hover close (see [`Self::on_close`]) as the titlebar's red
+    /// stoplight (see [`Self::stoplight`] field).
+    pub fn stoplight(mut self, stoplight: bool) -> Self {
+        self.stoplight = stoplight;
         self
     }
 
@@ -733,8 +765,7 @@ pub fn section_overflow_counts(scroll: SectionScroll, n_items: usize) -> (usize,
     (above, below)
 }
 
-/// Default sidebar width — matches the storybook's nav column. Public
-/// so consumers can lay out alongside it (`width = Fill - SIDEBAR_WIDTH`).
+/// Default sidebar width. Public so consumers can lay out alongside it (`width = Fill - SIDEBAR_WIDTH`).
 pub const SIDEBAR_WIDTH: f32 = 220.0;
 
 /// Build the sidebar panel from its sections. Returns a `Container` so
@@ -751,7 +782,7 @@ where
 }
 
 /// Like [`sidebar`], with an optional leading header (brand, search, …)
-/// stacked above the section list. Used by the storybook brand block.
+/// stacked above the section list.
 pub fn sidebar_with_header<'a, Message>(
     header: Option<Element<'a, Message, Theme>>,
     sections: Vec<SidebarSection<'a, Message>>,
@@ -855,13 +886,16 @@ pub(crate) const COLLAPSE_BODY_PAD_V: f32 = 2.0;
 /// Default collapsible-pocket fill (inset chrome surface). New groups
 /// start here until the header color swatch picks something else.
 pub fn group_well_fill() -> Color {
-    inset_surface(CHROME_SURFACE, 0.12)
+    inset_surface(chrome_surface(), 0.12)
 }
 
 /// Selected / hover mix toward white (dark pockets) or black (light).
 /// Enough to read, still the group colour — not a grey slab.
 const WELL_SELECT_MIX: f32 = 0.14;
 const WELL_HOVER_MIX: f32 = 0.07;
+/// A shown row ([`SidebarItem::shown`]): a step, under hover so a hover
+/// still reads on it (board 05: 4% white; the focused pill 14%).
+const WELL_SHOWN_MIX: f32 = 0.05;
 /// 1px selected rim (same job as the ungrouped etch lip). Stronger
 /// than the fill so it reads as a border.
 const WELL_SELECT_LIP: f32 = 0.24;
@@ -875,7 +909,7 @@ pub(crate) fn pocket_fill(color: Option<Color>) -> Color {
 
 /// Surface under a list-etch row: the group pocket, or the column.
 fn row_surface(well: Option<Color>) -> Color {
-    well.unwrap_or(CHROME_SURFACE)
+    well.unwrap_or(chrome_surface())
 }
 
 /// Flatten a possibly translucent pocket onto the column.
@@ -883,7 +917,7 @@ pub(crate) fn well_face(c: Color) -> Color {
     if c.a >= 0.999 {
         c
     } else {
-        src_over(c, CHROME_SURFACE)
+        src_over(c, chrome_surface())
     }
 }
 
@@ -919,7 +953,7 @@ fn well_muted(ink: Color) -> Color {
 /// Slight lighten or darken of `face`, staying in its hue.
 fn well_lift(face: Color, amount: f32) -> Color {
     if on_color(face) == Color::WHITE {
-        mix_white(face, amount)
+        lift_in_hue(face, amount)
     } else {
         inset_surface(face, amount)
     }
@@ -931,13 +965,26 @@ pub(crate) fn well_select_plate(c: Color) -> Color {
     well_lift(well_face(c), WELL_SELECT_MIX)
 }
 
-fn well_row_colors(well: Color, active: bool, hovered: bool) -> (Color, Color) {
+/// A row's fill and ink on `well`. `column`: the plain column (no pocket
+/// of its own), whose active row is the theme's highlight.
+fn well_row_colors(
+    well: Color,
+    column: bool,
+    active: bool,
+    shown: bool,
+    hovered: bool,
+) -> (Color, Color) {
     let face = well_face(well);
     let ink = on_color(face);
-    if active {
+    if active && column {
+        let fill = crate::theme::highlight();
+        (fill, on_color(fill))
+    } else if active {
         (well_lift(face, WELL_SELECT_MIX), ink)
     } else if hovered {
         (well_lift(face, WELL_HOVER_MIX), ink)
+    } else if shown {
+        (well_lift(face, WELL_SHOWN_MIX), well_muted(ink))
     } else {
         (Color::TRANSPARENT, well_muted(ink))
     }
@@ -1004,10 +1051,11 @@ fn tab_item_style(
     _theme: &Theme,
     status: button::Status,
     active: bool,
+    shown: bool,
     well: Option<Color>,
 ) -> button::Style {
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    let (bg, text_color) = well_row_colors(row_surface(well), active, hovered);
+    let (bg, text_color) = well_row_colors(row_surface(well), well.is_none(), active, shown, hovered);
     button::Style {
         background: Some(Background::Color(bg)),
         text_color,
@@ -1035,7 +1083,7 @@ fn tab_close_style(
     if chrome == SidebarItemChrome::Row {
         let face = well_face(row_surface(well));
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-        let (wash, ink) = well_row_colors(face, active, hovered);
+        let (wash, ink) = well_row_colors(face, well.is_none(), active, false, hovered);
         let rest = if wash.a <= 0.001 {
             face
         } else if wash.a >= 0.999 {
@@ -1241,9 +1289,9 @@ fn section_header<'a, Message: Clone + 'a>(
             handle,
             12,
             Color {
-                r: 0.55,
+                r: 0.58,
                 g: 0.58,
-                b: 0.64,
+                b: 0.58,
                 a: 0.95,
             },
         ))
@@ -1533,9 +1581,12 @@ where
     let SidebarItem {
         label,
         active,
+        bright,
+        shown,
         message,
         shortcut,
         on_close,
+        stoplight,
         on_edit,
         secondary,
         subtitle,
@@ -1589,6 +1640,7 @@ where
             leading,
             inline_hover,
             active,
+            bright,
             chrome,
             density,
             section_header,
@@ -1603,7 +1655,7 @@ where
         let row_el: Element<'a, Message> = container(body)
             .width(Length::Fill)
             .padding(pad)
-            .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered, well))
+            .style(move |theme: &Theme| row_container_style(theme, active, shown, chrome, hovered, well))
             .into();
         return finish_list_row(
             row_el,
@@ -1611,6 +1663,7 @@ where
             active,
             on_close,
             on_edit,
+            stoplight,
             hover_tracked,
             density,
             well,
@@ -1627,7 +1680,7 @@ where
         // enter/exit when moving across rows).
         let row_el: Element<'a, Message> = if hover_action.is_some() {
             let mut select = mouse_area(container(body).width(Length::Fill).padding(pad).style(
-                move |theme: &Theme| row_container_style(theme, active, chrome, hovered, well),
+                move |theme: &Theme| row_container_style(theme, active, shown, chrome, hovered, well),
             ))
             .interaction(mouse::Interaction::Pointer)
             .on_press(message);
@@ -1661,7 +1714,7 @@ where
             }
         } else if on_double_click.is_some() || on_context.is_some() {
             let mut area = mouse_area(container(body).width(Length::Fill).padding(pad).style(
-                move |theme: &Theme| row_container_style(theme, active, chrome, false, well),
+                move |theme: &Theme| row_container_style(theme, active, shown, chrome, false, well),
             ))
             .interaction(mouse::Interaction::Pointer)
             .on_press(message);
@@ -1675,7 +1728,7 @@ where
         } else {
             button(body)
                 .style(move |t, status| match chrome {
-                    SidebarItemChrome::Row => tab_item_style(t, status, active, well),
+                    SidebarItemChrome::Row => tab_item_style(t, status, active, shown, well),
                     SidebarItemChrome::Card => item_style_chrome(t, status, active, chrome),
                 })
                 .padding(pad)
@@ -1689,6 +1742,7 @@ where
             active,
             on_close,
             on_edit,
+            stoplight,
             hover_tracked,
             density,
             well,
@@ -1708,7 +1762,7 @@ where
         container(body)
             .width(Length::Fill)
             .padding(pad)
-            .style(move |theme: &Theme| row_container_style(theme, active, chrome, hovered, well)),
+            .style(move |theme: &Theme| row_container_style(theme, active, shown, chrome, hovered, well)),
     )
     // Pointer at rest; grabbing while this row is the one in flight.
     .interaction(if is_dragged {
@@ -1732,6 +1786,7 @@ where
         active,
         on_close,
         on_edit,
+        stoplight,
         hover_tracked,
         density,
         well,
@@ -1750,6 +1805,7 @@ fn finish_list_row<'a, Message: Clone + 'a>(
     active: bool,
     on_close: Option<Message>,
     on_edit: Option<Message>,
+    stoplight: bool,
     hover_tracked: bool,
     density: SidebarDensity,
     well: Option<Color>,
@@ -1780,7 +1836,11 @@ fn finish_list_row<'a, Message: Clone + 'a>(
             HoverChip::Close => on_close.clone().expect("close chip"),
             HoverChip::Edit => on_edit.clone().expect("edit chip"),
         };
-        chips = chips.push(hover_chip_button(kind, msg, active, chrome, density, well));
+        chips = if stoplight && kind == HoverChip::Close {
+            chips.push(stoplight_button(msg, active, chrome, well))
+        } else {
+            chips.push(hover_chip_button(kind, msg, active, chrome, density, well))
+        };
     }
     let chip = container(chips)
         .align_x(iced::alignment::Horizontal::Right)
@@ -1816,6 +1876,47 @@ fn hover_chip_kinds(on_close: bool, on_edit: bool) -> Vec<HoverChip> {
         (false, true) => vec![HoverChip::Edit],
         (false, false) => Vec::new(),
     }
+}
+
+/// The titlebar's close dot as a row's hover close, on a pad of the
+/// hovered row's face so a long title does not show around it.
+const STOPLIGHT: f32 = 12.0;
+
+fn stoplight_button<'a, Message: Clone + 'a>(
+    msg: Message,
+    active: bool,
+    chrome: SidebarItemChrome,
+    well: Option<Color>,
+) -> Element<'a, Message> {
+    use crate::components::window_frame::{CLOSE_HOVER, CLOSE_RED};
+    let dot = button(Space::new())
+        .width(Length::Fixed(STOPLIGHT))
+        .height(Length::Fixed(STOPLIGHT))
+        .padding(0)
+        .style(|_theme: &Theme, status| button::Style {
+            background: Some(Background::Color(match status {
+                button::Status::Hovered | button::Status::Pressed => CLOSE_HOVER,
+                _ => CLOSE_RED,
+            })),
+            border: Border {
+                radius: (STOPLIGHT / 2.0).into(),
+                ..Border::default()
+            },
+            ..button::Style::default()
+        })
+        .on_press(msg);
+    container(dot)
+        .padding(Padding::from([4, 6]))
+        .style(move |theme: &Theme| container::Style {
+            background: tab_close_style(theme, button::Status::Hovered, active, chrome, well)
+                .background,
+            border: Border {
+                radius: RADIUS_SM.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
 }
 
 fn hover_chip_button<'a, Message: Clone + 'a>(
@@ -1975,15 +2076,17 @@ fn assign_close_id<'a, Message>(
 
 /// Title + optional subtitle (+ leading indicator). Takes `Fill` width.
 ///
-/// List etch: idle muted + regular; active full fg + [`fonts::ui_medium`].
-/// Section headers stay medium with a lucide chevron (folder caption).
-/// Card structured rows keep the historical 14px regular face.
+/// List etch: idle muted + regular; active (and bright) full fg +
+/// [`fonts::ui_medium`]. Section headers stay medium with a lucide chevron
+/// (folder caption). Card structured rows keep the historical 14px regular
+/// face.
 fn item_text_block<'a, Message: 'a>(
     label: &str,
     subtitle: Option<&str>,
     indicator: Option<SidebarIndicator>,
     leading: Option<Element<'a, Message, Theme>>,
     active: bool,
+    bright: bool,
     chrome: SidebarItemChrome,
     density: SidebarDensity,
     section_header: Option<bool>,
@@ -1996,18 +2099,18 @@ fn item_text_block<'a, Message: 'a>(
     let dark_ink = ink.is_some_and(|c| c != Color::WHITE);
     let (title_font, title_size) = match chrome {
         SidebarItemChrome::Row => (
-            title_font_for(active, is_header, dark_ink),
+            title_font_for(active || bright, is_header, dark_ink),
             density.metrics().font,
         ),
         SidebarItemChrome::Card => (fonts::ui(), 14),
     };
-    let title_color = ink.map(|c| {
-        if active || is_header {
-            c
-        } else {
-            well_muted(c)
-        }
-    });
+    let title_color = match ink {
+        Some(c) if active || bright || is_header => Some(c),
+        Some(c) => Some(well_muted(c)),
+        // The row's own ink is muted while idle; bright keeps it full.
+        None if bright && !active => Some(well_ink(row_surface(None))),
+        None => None,
+    };
     let mut title = text(label.to_string())
         .font(title_font)
         .size(title_size)
@@ -2020,9 +2123,9 @@ fn item_text_block<'a, Message: 'a>(
     let mut title_row = row![].spacing(SPACE_SM).align_y(iced::Alignment::Center);
     if let Some(collapsed) = section_header {
         let chev = ink.unwrap_or(Color {
-            r: 0.55,
+            r: 0.58,
             g: 0.58,
-            b: 0.64,
+            b: 0.58,
             a: 0.95,
         });
         title_row = title_row.push(section_chevron(collapsed, chev));
@@ -2122,6 +2225,7 @@ fn item_content<'a, Message: Clone + 'a>(
     leading: Option<Element<'a, Message, Theme>>,
     hover_action: Option<SidebarHoverAction<Message>>,
     active: bool,
+    bright: bool,
     chrome: SidebarItemChrome,
     density: SidebarDensity,
     section_header: Option<bool>,
@@ -2133,6 +2237,7 @@ fn item_content<'a, Message: Clone + 'a>(
         indicator,
         leading,
         active,
+        bright,
         chrome,
         density,
         section_header,
@@ -2154,7 +2259,7 @@ fn hover_action_button<'a, Message: Clone + 'a>(
     action: SidebarHoverAction<Message>,
 ) -> Element<'a, Message> {
     let armed = action.armed;
-    let handle = icon_handle("lucide/trash-2");
+    let handle = icon_handle("lucide/trash");
     let color = if armed {
         Color {
             r: 0.92,
@@ -2164,9 +2269,9 @@ fn hover_action_button<'a, Message: Clone + 'a>(
         }
     } else {
         Color {
-            r: 0.55,
+            r: 0.58,
             g: 0.58,
-            b: 0.64,
+            b: 0.58,
             a: 0.90,
         }
     };
@@ -2366,7 +2471,7 @@ where
     }
 
     /// Drag-to-reorder, but items cannot leave their section. Group
-    /// headers still move as blocks. Workspaces uses this so a tab stays
+    /// headers still move as blocks. Projects uses this so a tab stays
     /// in its project.
     pub fn reorder_within_sections(mut self) -> Self {
         self.reorder = ReorderMode::Sections;
@@ -3060,6 +3165,7 @@ where
 {
     let number = item.shortcut.unwrap_or((index + 1) as u8);
     let active = item.active;
+    let shown = item.shown;
     let chrome = item.chrome;
     let well = item.well;
     match reorder {
@@ -3068,7 +3174,7 @@ where
                 .width(Length::Fill)
                 .padding(Padding::from([6, 4]))
                 .style(move |theme: &Theme| {
-                    row_container_style(theme, active, chrome, false, well)
+                    row_container_style(theme, active, shown, chrome, false, well)
                 }),
         )
         .on_press((cfg.on_press)(index))
@@ -3084,10 +3190,10 @@ where
 
 pub fn style(theme: &Theme) -> container::Style {
     let _p = theme.extended_palette();
-    // Full outline is intentionally off — the storybook / shell draws a
+    // Full outline is intentionally off — the shell draws a
     // single right hairline separator against the content column.
     container::Style {
-        background: Some(Background::Color(CHROME_SURFACE)),
+        background: Some(Background::Color(chrome_surface())),
         border: Border::default(),
         ..container::Style::default()
     }
@@ -3096,7 +3202,7 @@ pub fn style(theme: &Theme) -> container::Style {
 /// Background style for a row rendered as a non-pressable `container`
 /// (the reorder / hover-action path).
 ///
-/// - **Row:** idle flat / muted; selected and hover lift [`CHROME_SURFACE`]
+/// - **Row:** idle flat / muted; selected and hover lift [`chrome_surface()`]
 ///   (or the group pocket) with a 1px lip. No selection-teal.
 /// - **Card:** OD session-tab graphite (not selection teal). Idle raised
 ///   wash + hairline; active gradient + stronger border. Same box either way.
@@ -3104,13 +3210,14 @@ pub fn style(theme: &Theme) -> container::Style {
 fn row_container_style(
     theme: &Theme,
     active: bool,
+    shown: bool,
     chrome: SidebarItemChrome,
     hovered: bool,
     well: Option<Color>,
 ) -> container::Style {
     match chrome {
         SidebarItemChrome::Row => {
-            let (bg, text_color) = well_row_colors(row_surface(well), active, hovered);
+            let (bg, text_color) = well_row_colors(row_surface(well), well.is_none(), active, shown, hovered);
             container::Style {
                 background: Some(Background::Color(bg)),
                 text_color: Some(text_color),
@@ -3136,9 +3243,9 @@ fn card_surface_style(theme: &Theme, active: bool, hovered: bool) -> container::
     let border_atom = p.background.stronger.color;
 
     if active {
-        // --tab-active-bg: gradient hover@92%+raised → raised@88%+#0a0c10
+        // --tab-active-bg: gradient hover@92%+raised → raised@88%+#0a0a0a
         let top = mix(hover, raised, 0.92);
-        let bottom = mix(raised, Color::from_rgb(0.039, 0.047, 0.063), 0.88);
+        let bottom = mix(raised, Color::from_rgb(0.039, 0.039, 0.039), 0.88);
         container::Style {
             background: Some(linear_bg(180.0, &[(0.0, top), (1.0, bottom)])),
             text_color: Some(p.background.base.text),
@@ -3196,7 +3303,7 @@ pub fn item_style_chrome(
 ) -> button::Style {
     let p = theme.extended_palette();
     match chrome {
-        SidebarItemChrome::Row => tab_item_style(theme, status, active, None),
+        SidebarItemChrome::Row => tab_item_style(theme, status, active, false, None),
         SidebarItemChrome::Card => {
             let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
             let s = card_surface_style(theme, active, hovered);
@@ -3229,17 +3336,20 @@ mod tests {
     }
 
     #[test]
-    fn row_chrome_is_column_lift_not_selection() {
+    fn row_chrome_is_the_highlight_not_selection() {
         let theme = crate::default_theme();
         let row = item_style_chrome(&theme, button::Status::Active, true, SidebarItemChrome::Row);
-        let want = well_lift(CHROME_SURFACE, WELL_SELECT_MIX);
+        let want = crate::theme::highlight();
         match row.background {
             Some(Background::Color(c)) => assert_eq!(c, want),
-            other => panic!("row active should be column lift, got {other:?}"),
+            other => panic!("row active should be the highlight, got {other:?}"),
         }
+        // On the grey theme the highlight is the column's 14% lift.
+        let lift = well_lift(chrome_surface(), WELL_SELECT_MIX);
+        assert!((want.r - lift.r).abs() < 1.0 / 255.0);
         assert_eq!(row.border.width, 0.0);
         assert_ne!(want, crate::theme::selection());
-        assert_ne!(want, inset_surface(CHROME_SURFACE, 0.22));
+        assert_ne!(want, inset_surface(chrome_surface(), 0.22));
     }
 
     #[test]
@@ -3258,7 +3368,7 @@ mod tests {
         match card.background {
             Some(Background::Gradient(_)) => {}
             Some(Background::Color(c)) => {
-                assert_ne!(c, inset_surface(CHROME_SURFACE, 0.22));
+                assert_ne!(c, inset_surface(chrome_surface(), 0.22));
             }
             other => panic!("card active should stay graphite surface, got {other:?}"),
         }
@@ -3449,7 +3559,7 @@ mod tests {
     fn grouped_select_stays_in_pocket_hue() {
         let theme = crate::default_theme();
         let blue = Color::from_rgb(0.15, 0.35, 0.70);
-        let s = row_container_style(&theme, true, SidebarItemChrome::Row, false, Some(blue));
+        let s = row_container_style(&theme, true, false, SidebarItemChrome::Row, false, Some(blue));
         match s.background {
             Some(Background::Color(c)) => {
                 assert!((c.a - 1.0).abs() < 1e-6);
@@ -3462,11 +3572,11 @@ mod tests {
             other => panic!("expected solid lift, got {other:?}"),
         }
         let white = Color::WHITE;
-        let s = row_container_style(&theme, true, SidebarItemChrome::Row, false, Some(white));
+        let s = row_container_style(&theme, true, false, SidebarItemChrome::Row, false, Some(white));
         match s.background {
             Some(Background::Color(c)) => {
                 assert!(c.r > 0.80 && c.r < 1.0, "quiet darken on white, got {c:?}");
-                assert_ne!(c, inset_surface(CHROME_SURFACE, 0.22));
+                assert_ne!(c, inset_surface(chrome_surface(), 0.22));
             }
             other => panic!("expected solid lift, got {other:?}"),
         }

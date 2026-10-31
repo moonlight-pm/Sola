@@ -65,7 +65,7 @@ impl Field {
         })
     }
 
-    fn from_id(id: &Id) -> Option<Self> {
+    pub fn from_id(id: &Id) -> Option<Self> {
         Self::ORDER.into_iter().find(|f| f.id() == *id)
     }
 
@@ -297,14 +297,14 @@ impl Compose {
                     .style(style::compose_field),
             )
             .push(self.actions())
-            .padding(Padding::from([SPACE_LG, SPACE_LG]))
+            .padding(Padding::from([20.0, 26.0]))
             .width(Length::Fill)
             .height(Length::Fill);
 
         let pane: Element<'a, Msg> = container(form)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(style::read_pane)
+            .style(style::canvas)
             .into();
         if self.confirm_discard {
             stack![pane, self.discard_card()].into()
@@ -693,6 +693,8 @@ mod tests {
             references: vec!["<root@a.com>".into()],
             attachments: Vec::new(),
             blocks: Vec::new(),
+            images: Vec::new(),
+            remote_images: Vec::new(),
         }
     }
 

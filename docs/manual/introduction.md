@@ -32,7 +32,7 @@ Sola is three Oath packages:
 
 | Package | Contents |
 |---------|----------|
-| `pkg:sola` | The bus, the call host, the window manager, the shell, the session manager, Terminal, Projects, Paint, Mail, Calendar, Settings, Bots and its daemon, Oath (the catalog app), the KVM bridge, `solactl`, and the icons and cursors |
+| `pkg:sola` | The bus, the call host, the window manager, the shell, the session manager, the lock screen, Terminal, Projects, Paint, Preview, Scope, Monitor, Mail, Calendar, Settings, Bots and its daemon, Oath (the catalog app), the KVM bridge, `solactl`, and the icons and cursors |
 | `pkg:sola-browser` | Browser, which also runs [web apps](web-apps.md) |
 | `pkg:sola-design` | Design |
 
@@ -43,11 +43,17 @@ image (`cargo make build --profile desk` in Oath's repository) and
 installing it. Each package's programs are linked into `/bin`;
 `oath get pkg:sola` shows the pin and what is live.
 
-`oath update` does not move these three packages: a package the profile
-pins from elsewhere keeps the machine's own pin, and only its needs move.
-To take a published release, set each pin to the entry the release's
-publish printed, which is the JSON `oath set --from-json` takes, and apply
-the three together:
+`oath update` moves these three packages to the pins of the output it
+takes while the machine still has the pins its current output set (an
+output lists them; older ones did not, and an update from one of those
+leaves them). Once you move a pin yourself, with `cargo make oath apply`
+or `oath set`, the machine keeps it, and an update moves only its needs.
+Take an update that moves Sola with `--reboot`: an update without it
+leaves the desk's services running their old programs (see
+[Updates](process-manager.md#updates)). To take a published Sola release
+on a machine that keeps its own pins, set each pin to the entry the
+release's publish printed, which is the JSON `oath set --from-json`
+takes, and apply the three together:
 
 ```bash
 sudo oath set pkg:sola --from-json '{"present": true, "hash": "sha256-…", "needs": […]}'
@@ -94,9 +100,10 @@ and the engine comes from `pkg:cef`.
 
 There is nothing to start by hand. At boot, PID 1 starts seatd, rivulet,
 and Sola's services as `home`, and the screen shows Sola once rivulet and
-the shell are up. The desktop comes up signed in, with no password, and
-Sola has no lock screen. Reach the machine otherwise over SSH as `home`,
-with a key. [Security](security.md) lists every way into a running desk
+the shell are up. The desktop comes up signed in, with no password, until
+you set one in Settings → Login and turn **Sign in automatically** off;
+Super+L locks it. Reach the machine otherwise over SSH as `home`, with a
+key. [Security](security.md) lists every way into a running desk
 and how to close each one, and [Process manager](process-manager.md)
 lists the services and how PID 1 runs them.
 
@@ -105,9 +112,10 @@ Applications open from the launcher (Super+Space) or with
 that were open when the session last ended.
 
 To end the session, choose **Restart Computer** or **Shut Down** from the
-flower menu. **Exit Sola** stops the shell and the session manager but
-leaves the machine running without a desktop until PID 1 starts them
-again ([Ending the session](process-manager.md#ending-the-session)).
+flower menu. **Exit Sola** closes the applications and hands the screen to
+Oath's console, signed in or asking for the password as Settings → Login
+says; `oath desk` brings the desk back
+([Ending the session](process-manager.md#ending-the-session)).
 
 ## Updating and rolling back
 
@@ -164,7 +172,6 @@ covers the log filter.
 | `commit first: a published source is the committed tree` | `cargo make oath publish` was run with uncommitted changes. |
 | `oath apply` refuses a published release, naming a need | The release was built against a package the machine has at another hash. Build Sola on the machine. |
 | A new build does not run | `cargo make install` copied it into `/opt/sola/bin`, which nothing on Oath runs. Use `cargo make oath apply`. |
-| Monitor, Kit, Preview, Arcade, Scope, or Spotify starts nothing | The launcher lists them, but their programs are not in Sola's Oath packages. |
 | Bots and `solactl bots` cannot reach the bots daemon | The desk profile runs no service for `sola-botsd`. |
-| No desktop after **Exit Sola** | The shell and the session manager stay stopped after a clean exit. Restart the machine. |
+| No desktop and no console after **Exit Sola** | Oath has no login service (`svc:login`, R42), so nothing takes the screen, and the shell and the session manager stay stopped after a clean exit. Restart the machine. |
 | `~/.local/state/sola/sola.log` keeps growing | Only `sola` rotates it, and `sola` does not run on Oath. |

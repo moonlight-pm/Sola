@@ -26,7 +26,7 @@ pointer to `CURRENT.md` (auto-load reminder).
 
 - `sola-session-start` — boot order above  
 - `sola-progress-docs` — **mandatory** end-of-slice doc updates  
-- `sola-workspaces-cli` — `solactl workspaces` control plane (review/work
+- `sola-projects-cli` — `solactl projects` control plane (review/work
   ticket, create worktree, tell a pane, merge/cleanup — fan-out stays off
   the rail)  
 - `sync-project` — checkpoint each sibling worktree (if needed), merge
@@ -89,7 +89,7 @@ crates/
   sola-bus/            # IPC bus host + client library
   sola-call/           # Call host + client (request/reply; not the bus)
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
-  sola-kit/            # Iced app kit + storybook binary
+  sola-kit/            # Iced app kit (a library)
   sola-assets/         # Vendored icon/asset bundles
   sola-browser/        # Iced browser chrome + CEF engine (single crate)
   sola-make/           # Build/install orchestration (xtask)
@@ -97,18 +97,18 @@ crates/
   sola-river/          # River compositor bridge (bus ↔ wayland)
   sola-session/        # User-app session manager
   sola-settings/       # Settings panel (incl. mail config)
-  sola-shell/          # Desktop shell — launcher, switcher, menubar, zoning
+  sola-oath/           # Oath catalog app (`oath --json`); launcher entry only on Oath
+  sola-shell/          # Desktop shell — launcher, tab bar, menubar, zoning
   sola-terminal/       # Untitled-shell terminal (alacritty grid + iced); also a lib
-  sola-workspaces/     # Project / workspace rail + agent-aware PTYs
+  sola-projects/       # Projects: project / tab rail + agent-aware PTYs
   sola-mail/           # Kit-native mail client
   sola-calendar/       # Kit-native calendar (local, Google, iCloud)
   sola-kvm/            # KVM / input bridge
+  sola-lock/           # Lock screen (ext-session-lock-v1; Oath's login service)
   sola-preview/        # Simple image viewer (argv)
   sola-paint/          # Default image viewer/editor (MIME; screenshots stay on preview)
-  sola-wrapper/        # Website wrappers as first-class apps (CEF via sola-browser lib)
   sola-design/         # HTML artboards on a canvas, edited by agents (CEF board tabs)
   sola-scope/          # Pixel loupe (magnified grid under the pointer)
-  sola-spotify/        # Kit-native Spotify client (librespot + Web API)
   sola-install/        # Kit installer wizard (image media)
   solactl/             # CLI helpers
 nix/                   # NixOS module (Shape 1) + image/ISO profiles
@@ -135,16 +135,16 @@ docs/
 
 ### Worktrees
 - **Work where your tab is. Root tabs do not open worktrees unless asked.**
-  A root tab is the project's own tab (`solactl workspaces whoami` →
+  A root tab is the project's own tab (`solactl projects whoami` →
   `kind: main`) or an extra tab opened with **No worktree** (`kind:
   root`). In one, do the work right there on the root's branch (usually
-  master). Do **not** open a worktree (`workspace.spawn`, `git worktree
+  master). Do **not** open a worktree (`tab.spawn`, `git worktree
   add`) or fan out to a sibling unless the user asks for one (create a
-  worktree / fan out / spawn a sibling / new workspace). Same in the root
-  checkout outside Workspaces.
+  worktree / fan out / spawn a sibling / new worktree tab). Same in the root
+  checkout outside Projects.
 - Root tabs share one checkout — commit only your own changes; never
   stash, reset, or discard edits you did not make. Close an extra root
-  tab with plain `workspace.rm` (never `--worktree`).
+  tab with plain `tab.rm` (never `--worktree`).
 - Worktrees, when asked for, live in `.worktrees/`. A worktree tab
   (`kind: worktree`) works on its own branch.
 - Only merge worktree branches to master with explicit user permission.
@@ -153,18 +153,29 @@ docs/
   "ship it", "LGTM", "perfect" — in a root tab, commit on that branch; in a
   worktree, commit any uncommitted work if needed and merge the branch to
   master. Do **not** wait for a second explicit "please merge" (unless they
-  say hold off). Leave the git worktree **and** the Workspaces tab unless
+  say hold off). Leave the git worktree **and** the Projects tab unless
   they asked to remove them.
-- **Do not remove a worktree or workspace tab unless they asked.** There is
+- **Do not remove a worktree or Projects tab unless they asked.** There is
   no default cleanup after merge. If a git worktree is removed, close the
   tab unless they said keep it. Phrases and sequence:
-  [`.grok/skills/sola-workspaces-cli/SKILL.md`](.grok/skills/sola-workspaces-cli/SKILL.md)
+  [`.grok/skills/sola-projects-cli/SKILL.md`](.grok/skills/sola-projects-cli/SKILL.md)
   (Merge / cleanup).
 
 ### Installing
 - **NEVER run `cargo make install` (or any variant) without express user permission for that specific install.** This applies to subagents too — if you delegate work, your prompt MUST tell the subagent not to install. Permission for one install is not permission for the next; ask each time.
 - Use `cargo make build` (or `cargo build`) to verify a change compiles. Stop there. Do not install just because a plan or task description says "install and smoke" — that step is for the user to run.
 - Install is local: binaries go to `/opt/sola/bin/`.
+- **On Oath** (`/oath/INDEX.md` exists), `cargo make oath apply` is the
+  install: it stores Sola's package trees with `oath store`, pins them and
+  `oath apply`s them, and PID 1 restarts the `svc:sola-*` that run from
+  them. Same rule: only with express permission for that apply.
+  `cargo make oath stage` (build + assemble under `target/oath/`, no
+  catalog change) is fine without asking. `cargo make oath publish`
+  (plan builds in `oath build`'s sandbox, then upload to
+  `store.oath.moonlight.pm` with `~/.config/oath/origin.env`) is
+  outward-facing: only with express permission, from a committed tree.
+  `--local` builds the plans here and uploads nothing (no permission
+  needed).
 - `cargo make install` — builds and copies all binaries to `/opt/sola/bin/`.
 - `cargo make install <app>…` — builds and installs one or more apps (e.g. `shell kit`).
 - Multi-target installs **replace binaries in restart order** (`sola-bus` →
@@ -203,6 +214,10 @@ cargo make install                                # Release build + install all 
 cargo make install <app>…                         # Release-build + install one or more apps
 cargo make install <app> --debug                  # Debug install
 cargo make install <app> --watch                  # Watch + reinstall (release)
+cargo make oath stage [--debug]                   # Oath: build + assemble package trees
+cargo make oath apply [--debug]                   # Oath: stage + oath store/set/apply (permission)
+cargo make oath publish                           # Oath: plan builds + upload to the origin (permission)
+cargo make oath publish --local                   # Oath: the plan builds only, nothing uploaded
 ```
 
 Alias configured in `.cargo/config.toml`:
@@ -261,16 +276,15 @@ the bus. There is no HTML/JS/CSS, no bundler, no WebView in the active stack.
 
 The old GTK4 + WebKit6 host (`sola-app`) and its apps live under
 `apocrypha/` for reference only — not workspace members, not installed.
-Do **not** write new apps against that stack. The only remaining product
-gap from that era is a kit-native mail client (`crates/sola-mail`); use
-`apocrypha/apps/mail` as the logic/UI reference. CEF binding notes at the
-end of this file apply to `sola-browser` (CEF engine module), not to the Iced kit.
+Do **not** write new apps against that stack. Every app from that era is
+ported or retired (mail is `crates/sola-mail`); nothing there is left to
+port. CEF binding notes at the end of this file apply to `sola-browser`
+(CEF engine module), not to the Iced kit.
 
 ## sola-kit (the Iced app kit)
 
-`sola-kit` is the shared Iced app kit + a `sola-kit` **storybook** binary that
-dogfoods every component (each widget has a showcase page, so regressions show
-up there first). Library surface in `src/lib.rs`: `BusSetup`, `CallSetup`, `call_subscription`,
+`sola-kit` is the shared Iced app kit, a library (its storybook app was
+retired 2026-10-30). Library surface in `src/lib.rs`: `BusSetup`, `CallSetup`, `call_subscription`,
 `apply_theme_update`, `default_theme`, the `components` / `fonts` / `theme` /
 `menu` / `float` / `clipboard` modules, plus re-exported `iced`, `sola_bus`, and
 `sola_call` (so consumers don't take their own direct deps just to spell trait
@@ -289,7 +303,7 @@ bounds or reference bus types). Operator-level detail:
   changes, so `cargo make install` picks up new code live; skipped when
   `SOLA_NO_SELF_WATCH=1`).
 - **`BusSetup`** — builder for the connect + subscribe + publish-app-menu dance.
-  `BusSetup::new(id).subscribe(TopicKind::ALL).app_menu("Foo", [(...)]).calls("workspaces", methods).install()`
+  `BusSetup::new(id).subscribe(TopicKind::ALL).app_menu("Foo", [(...)]).calls("projects", methods).install()`
   Advertises call-plane methods; fold `call_subscription()` into iced. Or use
   `CallSetup::new(owner, app_id).methods(…).install()` alone.
   hands the connected client to the kit's global slot.
@@ -310,8 +324,7 @@ The kit bridges three representations of the palette:
 1. **Compile-time defaults** — the `hex::*` constants.
 2. **`Atoms`** — 11 editable `iced::Color`s: `bg`, `bg_raised`, `bg_hover`,
    `border`, `fg`, `fg_muted`, `accent`, `success`, `warning`, `danger`,
-   `selection` (no iced palette slot; installed process-wide). The editable
-   bridge the storybook mutates.
+   `selection` (no iced palette slot; installed process-wide).
 3. **Bus theme** — `sola_core::theme::Theme`, broadcast as the persistent
    `Topic::Theme` and shared with every other sola process.
 
@@ -323,18 +336,19 @@ compile-time defaults for any missing/malformed token. The consumer path is
 theme, installs the font role table, and installs the selection colour. Call
 it in `update` for bus messages, then return `self.theme.clone()` from the
 app's theme function. `to_bus_theme()` is canned-default-only — the iced→bus
-direction is lossy by design (iced derives many colours from a few atoms), so a
-real theme editor should emit the bus value directly, not reverse it out of an
-iced `Theme`.
+direction is lossy by design (iced derives many colours from a few atoms), so
+whatever writes a theme (the shell's adapt) emits the bus value directly, not
+reversed out of an iced `Theme`. The colors change only through Settings →
+Appearance; there is no theme editor and no named themes.
 
 Spec: `docs/specs/2026-05-07-sidebar-and-theme-protocol-design.md`.
 
-**Shell chrome** rides the same palette as `shell-*` tokens (7 alpha-capable
+**Shell chrome** rides the same palette as `shell-*` tokens (8 alpha-capable
 colors + 4 spacing values, group `"shell"`). `ShellStyle` is the typed view:
 `shell_style_from_bus_theme` extracts (per-token fallback to compile-time
-defaults), `bus_theme_with_shell` writes back. The shell refreshes it on every
-`Topic::Theme`; the storybook's Shell page is the editor. Colors round-trip as
-`#rrggbbaa` when translucent. Spec:
+defaults). The shell refreshes it on every `Topic::Theme`; nothing edits the
+tokens (they stay at their defaults). Colors round-trip as `#rrggbbaa` when
+translucent. Spec:
 `docs/specs/2026-06-06-shell-customization-design.md`.
 
 ### Fonts (`src/fonts.rs`)
@@ -352,35 +366,42 @@ defaults), `bus_theme_with_shell` writes back. The shell refreshes it on every
   `chrome()`, `mono()`. The `Fonts` table (those 5 roles) lives in a process-wide
   `RwLock`; `fonts::install(Fonts)` hot-swaps it, and the bus theme path calls
   `install` on every `Topic::Theme` so a font edit propagates on the next render.
-- **`INSTALLED_FAMILIES` / `pickable_families()`** is the font-picker vocabulary
-  (settings UI + bus `FontFamily` tokens). `fonts_from_families` builds a
-  `Fonts` table from per-role family-name selections; `FontSelection` (in
-  `theme.rs`) is the per-role wire form.
+- **`INSTALLED_FAMILIES`** holds the canonical family spellings the theme's
+  `FontFamily` tokens are matched against. `fonts_from_families` builds a
+  `Fonts` table from per-role family names; `FontSelection` (in `theme.rs`)
+  is the default per-role selection. There is no font picker.
 
 ### Components (`src/components/`)
 
 `badge`, `button`, `card`, `divider`, `field` (incl. `form_row`, error
-caption, checkbox/toggle styles), `icon`, `popover`, `prose` (letter
-reading: paragraphs, quotes, inline links), `readable`, `sidebar`,
-`split`, `swatch`, `text`, `text_input` (fork — style/padding only; see
-module docs), `toolbar`. Prefer `button::labeled` / `labeled_sm` and named
-`PAD_CONTROL*` pads. Each has a storybook page under `src/storybook/pages/`.
-**Always update that page in the same change** as the component (see
-`.grok/rules/kit-storybook-pages.md`). Grow this surface only as real
-apps need shared pieces — no speculative widgets.
+caption, checkbox/toggle styles), `file_picker` (the one Open / Save /
+Choose Folder panel for every app, as macOS has one — fold
+`FilePicker::keys()` into the subscription while it is up), `icon`,
+`popover`, `prose` (letter
+reading: paragraphs, quotes, inline links; `prose_letter` adds rules and
+pictures), `readable`, `scroll` (the kit scrollbar — use
+`scroll::scrollable`, not iced's bare `scrollable`), `sidebar`, `split`,
+`swatch`, `text`, `text_input` (fork — style/padding only; see module
+docs), `toolbar`. Prefer `button::labeled` / `labeled_sm` and named
+`PAD_CONTROL*` pads. An app's bar under its titlebar (tabs, a toolbar, a
+heading with its controls) is `style::BAR_H` tall. Look at a component
+change in the apps that use it. Grow this surface only as real apps need
+shared pieces — no speculative widgets.
 
 ## sola-shell (the Iced desktop shell)
 
 A single **`iced::daemon`** multi-window application. The daemon opens no
-default window; a boot task opens the menubar, then parks menu / launcher /
-switcher / selection at 2×2 (`WindowKind`). Show is Frame to live output, not
-a new map. The
+default window; a boot task opens the menubar and the tab bar, then parks
+menu / launcher / selection / notify / shortcuts at 2×2 (`WindowKind`). Show
+is Frame to live output, not a new map. The
 `Shell` struct holds the per-window `iced::window::Id`s, focused app/window,
-MRU apps + per-app MRU windows, known windows, the application list, parsed app
-menus, output size, menu open-state, switcher/launcher sub-state, and zoning
-state. `Msg` covers bus events, window lifecycle, menu open/hover/close/action,
-launcher (query/nav/launch), switcher (nav/hover/confirm/cancel + a focus-hover
-timer), zoning, clock tick, and toasts. It path-depends on `sola-kit`.
+MRU apps + per-app MRU windows, known windows, the tab bar's model
+(`stacks::Stacks`: workspaces, zones, each zone's tabs), the application
+list, parsed app menus, output size, menu open-state, launcher sub-state,
+and zoning state. `Msg` covers bus events, window lifecycle, menu
+open/hover/close/action, launcher (query/nav/launch), tab and group
+stepping (Super+\` / Super+Tab), a focus-hover timer, zoning, clock tick,
+and toasts. It path-depends on `sola-kit`.
 
 Spec: `docs/specs/2026-05-22-sola-shell-iced-port-design.md`.
 
@@ -391,7 +412,7 @@ Spec: `docs/specs/2026-05-22-sola-shell-iced-port-design.md`.
 - docs.rs: <https://docs.rs/cef/156.2.0+156.0.14/cef/>
 - GitHub: <https://github.com/tauri-apps/cef-rs>
 
-This is the **only** active Rust CEF binding that tracks current CEF releases. `cef-rs` as a separate crate does not exist on crates.io. The crate is maintained by the Tauri team, ships pre-generated bindgen bindings (no headers needed — the tarball is enough), and has a working Linux `osr` example that exercises `on_accelerated_paint` with dma-buf import via Vulkan. Version `156.2.0+156.0.14` exactly matches our pinned CEF `156.0.14`.
+This is the **only** active Rust CEF binding that tracks current CEF releases. `cef-rs` as a separate crate does not exist on crates.io. The crate is maintained by the Tauri team, ships pre-generated bindgen bindings (no headers needed — the tarball is enough), and has a working Linux `osr` example that exercises `on_accelerated_paint` with dma-buf import via Vulkan. Version `156.2.0+156.0.14` exactly matches our pinned CEF `156.0.14` (`cef-version`; on Oath, `pkg:cef`). It asks libcef for the versioned API (`CEF_API_VERSION_LAST`, 15600), not the experimental one 147 asked for, which only the exact build it came from accepts. Its build script needs `download-cef` 3.x, which our stub (`crates/download-cef-stub`) stands in for.
 
 **Do NOT enable the `accelerated_osr` feature.** That feature only gates the crate's wgpu/Vulkan-based dma-buf importer helper module — it pulls in `ash`, `wgpu`, `metal`, `objc`, etc. We don't need any of that. We import dma-bufs through `zwp_linux_dmabuf_v1::create_params` (sctk-managed `wl_buffer`) and let sola-river composite. The `AcceleratedPaintInfo` and `AcceleratedPaintNativePixmapPlaneInfo` structs live in the base bindgen output (`cef::sys::*`) and are available without features.
 

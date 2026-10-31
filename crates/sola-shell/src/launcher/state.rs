@@ -19,6 +19,16 @@ pub struct LauncherState {
     /// `app_id`s that pass the current filter, in config order.
     pub filtered_ids: Vec<String>,
     pub selected: usize,
+    /// Projects was picked: the launcher shows `~/Projects` instead of
+    /// the apps ([`super::projects`]); `selected` indexes its rows.
+    pub chooser: Option<super::projects::Chooser>,
+    /// The chooser's Remote was picked: the field is a host
+    /// ([`super::remote`]); `selected` indexes its rows. Once the host
+    /// lists its projects, `chooser` shows them.
+    pub hosts: Option<super::remote::Hosts>,
+    /// Browser was picked: the field is an address or a search
+    /// ([`super::web`]); `selected` indexes its rows.
+    pub web: Option<super::web::WebChooser>,
 }
 
 impl LauncherState {
@@ -33,9 +43,9 @@ impl LauncherState {
 
 /// Case-insensitive substring match on `label`, preserving config order.
 ///
-/// Entries with an empty `command` are label-only overlays (e.g. Arcade's
-/// gamescope host name while a nest is running) and never appear in the
-/// launcher — they exist so the switcher/menubar can resolve a display name.
+/// Entries with an empty `command` are label-only overlays (a display name
+/// for a window's app id) and never appear in the launcher — they exist so
+/// the menubar and tab bar can resolve a display name.
 pub fn filter(apps: &ApplicationsConfig, query: &str) -> Vec<String> {
     let q = query.trim().to_lowercase();
     apps.apps

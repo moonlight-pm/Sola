@@ -29,7 +29,7 @@ struct BusState {
     sticky: HashMap<(String, Vec<String>), sola_bus::Message>,
     /// client_id → app_id for clients that have sent `$identify`.
     roster: HashMap<ClientId, String>,
-    /// client_id → topic kinds the client has subscribed to via `$subscribe`.
+    /// client_id → topic kinds the client has subscribed to.
     subscriptions: HashMap<ClientId, HashSet<sola_bus::topics::TopicKind>>,
     /// Path to the persistent-sticky file on disk. Set once at startup.
     state_path: PathBuf,
@@ -138,6 +138,9 @@ fn writer_loop(id: ClientId, mut stream: UnixStream, rx: mpsc::Receiver<sola_bus
 }
 
 fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
+    // Once a connection names its kinds, its numbered frames (sent for a
+    // bus from before names) are ignored.
+    let mut named = false;
     loop {
         match transport::read_event(&mut reader) {
             Ok(Some(event)) => {
@@ -149,16 +152,26 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
                             handle_identify(id, app_id, state);
                         }
                     }
-                    sola_bus::CONTROL_SUBSCRIBE => {
-                        match sola_bus::topics::decode_subscribe_kinds(&event) {
-                            Ok(kinds) => handle_subscribe(id, kinds, state),
-                            Err(e) => tracing::warn!(
-                                client = id,
-                                %e,
-                                "subscribe decode failed — client stays on previous set"
-                            ),
+                    sola_bus::CONTROL_SUBSCRIBE_NAMES => match sola_bus::subscribe::decode_names(&event) {
+                        Ok(kinds) => {
+                            named = true;
+                            handle_subscribe(id, kinds, state);
                         }
-                    }
+                        Err(e) => tracing::warn!(
+                            client = id,
+                            %e,
+                            "subscribe decode failed — client stays on previous set"
+                        ),
+                    },
+                    sola_bus::CONTROL_SUBSCRIBE if named => {}
+                    sola_bus::CONTROL_SUBSCRIBE => match sola_bus::subscribe::decode_numbered(&event) {
+                        Ok(kinds) => handle_subscribe(id, kinds, state),
+                        Err(e) => tracing::warn!(
+                            client = id,
+                            %e,
+                            "subscribe decode failed — client stays on previous set"
+                        ),
+                    },
                     _ => {
                         let mut bus = state.lock().unwrap();
                         let kind = sola_bus::topics::Topic::parse(&event).map(|t| t.kind());
@@ -286,19 +299,6 @@ fn persist_if_needed(event: &sola_bus::Message, bus: &mut BusState) {
     };
     let kind = topic.kind();
     if !kind.behavior().is_persistent() {
-        return;
-    }
-    // Defensive: a CustomTheme's `name` doubles as a filename under
-    // `theme/presets/`. Drop persists with non-kebab names instead of
-    // letting a misbehaving emitter create `Alpha.yaml` etc.
-    if let Topic::CustomTheme(named) = &topic
-        && !sola_core::theme::is_valid_theme_name(&named.name)
-    {
-        warn!(
-            topic = kind.as_str(),
-            name = %named.name,
-            "rejecting CustomTheme persist: name must match [a-z]+(-[a-z]+)*",
-        );
         return;
     }
     if kind.namespace().is_some() {

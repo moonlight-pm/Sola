@@ -10,23 +10,24 @@ const WHEEL_MIN_INTERVAL: Duration = Duration::from_millis(12);
 /// Max SGR wheel reports written per flush tick (after accumulation).
 const WHEEL_MAX_REPORTS_PER_FLUSH: i32 = 2;
 
-use iced::widget::{canvas, container, mouse_area, row};
-use iced::{Element, Event, Length, Subscription, Task, Theme};
+use iced::widget::{canvas, container, mouse_area};
+use iced::{Element, Event, Length, Subscription, Task, Theme, window};
 use iced::{event, keyboard, mouse};
 
 use sola_bus::Message;
-use sola_bus::topics::{PaneLayout, SplitDir, TerminalConfig, Topic, TopicKind};
+use sola_bus::topics::{MenuActionPayload, PaneLayout, SplitDir, Topic, TopicKind};
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
     window_settings_transparent,
 };
 use sola_kit::fonts;
+use sola_kit::tabs::TabWindows;
 use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
 
 use sola_terminal::{emulator, extkeys, input, links, perf, pty, state, term_view, tmux};
 
+mod instance;
 mod menu;
-mod sidebar;
 
 const APP_ID: &str = "sola-terminal";
 
@@ -34,34 +35,35 @@ const APP_ID: &str = "sola-terminal";
 const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
 
+/// A tab window's size until iced reports the real one.
+const DEFAULT_WINDOW: iced::Size = iced::Size::new(800.0, 480.0);
+
 /// Milliseconds to wait after Enter before querying tmux for the pane's cwd.
 const CWD_REFRESH_MS: u64 = 150;
 
 /// Slightly longer initial delay used when attaching a pane for the first time.
 const CWD_INITIAL_DELAY_MS: u64 = 300;
 
+/// After subscribing, how long to wait for saved tabs before opening a
+/// first one.
+const FIRST_TAB_WAIT: Duration = Duration::from_millis(700);
+
 /// Minimum pane extent (logical px) along a split's main axis. Clamps the
 /// divider drag so neither side collapses below it.
 const MIN_PANE_PX: f32 = 80.0;
 
-/// Compute the pane *area size* (the canvas region the terminal grids occupy)
-/// from the window size and the sidebar width.
-///
-/// The sidebar panel takes `sidebar_w` logical pixels on the left, plus the
-/// kit resize divider ([`sola_kit::components::DIVIDER_HIT_PX`]); the rest is
-/// the content area, full height. Clamps to zero so the value is always safe
-/// to pass to [`term_view::cols_rows_for`]. Pure for headless testing.
-pub(crate) fn pane_size(window: iced::Size, sidebar_w: f32) -> iced::Size {
-    let chrome = sidebar_w + sola_kit::components::DIVIDER_HIT_PX;
-    let w = (window.width - chrome).max(0.0);
-    iced::Size::new(w, window.height)
-}
-
-/// Parse a `"select_tab_{N}"` menu action id into a 0-based tab index.
-fn parse_select_tab_action(action: &str) -> Option<usize> {
-    action
-        .strip_prefix("select_tab_")
-        .and_then(|n| n.parse::<usize>().ok())
+/// cwd basename → tab label, falling back to "shell".
+pub(crate) fn tab_label(cwd: &Option<String>) -> String {
+    match cwd.as_deref() {
+        Some("/") => "/".into(),
+        Some(p) if !p.is_empty() => p
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or("shell")
+            .to_string(),
+        _ => "shell".into(),
+    }
 }
 
 #[cfg(test)]
@@ -70,64 +72,38 @@ mod tests {
     use term_view::CellMetrics;
 
     #[test]
-    fn pane_size_subtracts_sidebar_and_divider() {
-        let window = iced::Size::new(800.0, 480.0);
-        let pane = pane_size(window, 200.0);
-        let expect_w = 800.0 - 200.0 - sola_kit::components::DIVIDER_HIT_PX;
-        assert_eq!(pane.width, expect_w);
-        assert_eq!(pane.height, 480.0);
+    fn basename_label() {
+        assert_eq!(
+            tab_label(&Some("/home/joshua/Workspace".into())),
+            "Workspace"
+        );
+        assert_eq!(tab_label(&Some("/".into())), "/");
+        assert_eq!(tab_label(&None), "shell");
     }
 
     #[test]
-    fn pane_size_clamps_to_zero() {
-        let window = iced::Size::new(100.0, 480.0);
-        let pane = pane_size(window, 200.0);
-        assert_eq!(pane.width, 0.0);
-    }
-
-    #[test]
-    fn pane_to_grid_end_to_end() {
-        let window = iced::Size::new(800.0, 480.0);
-        let pane = pane_size(window, 200.0);
-        let (cols, rows) = term_view::cols_rows_for(pane, CellMetrics::default());
-        // 592px content − pad, ÷ default cell metrics (see term_view).
-        assert_eq!(cols, 64);
-        assert_eq!(rows, 23);
-    }
-
-    #[test]
-    fn parse_select_tab_action_tab_zero() {
-        assert_eq!(parse_select_tab_action("select_tab_0"), Some(0));
-    }
-
-    #[test]
-    fn parse_select_tab_action_tab_three() {
-        assert_eq!(parse_select_tab_action("select_tab_3"), Some(3));
-    }
-
-    #[test]
-    fn parse_select_tab_action_unrelated_action() {
-        assert_eq!(parse_select_tab_action("new_tab"), None);
-    }
-
-    #[test]
-    fn parse_select_tab_action_empty_suffix() {
-        assert_eq!(parse_select_tab_action("select_tab_"), None);
-    }
-
-    #[test]
-    fn parse_select_tab_action_non_numeric_suffix() {
-        assert_eq!(parse_select_tab_action("select_tab_x"), None);
-    }
-
-    #[test]
-    fn parse_select_tab_action_partial_prefix() {
-        assert_eq!(parse_select_tab_action("select_tab"), None);
+    fn window_to_grid_end_to_end() {
+        let (cols, rows) = term_view::cols_rows_for(DEFAULT_WINDOW, CellMetrics::default());
+        assert!(cols > 0 && rows > 0);
     }
 }
 
 fn main() -> iced::Result {
     startup(APP_ID);
+
+    // One Terminal: a second launch asks the running one for a new tab.
+    if !instance::claim() {
+        BusSetup::new(APP_ID).install();
+        if let Ok(mut client) = bus().lock() {
+            if let Err(e) = client.emit(Topic::MenuAction(MenuActionPayload {
+                app_id: APP_ID.into(),
+                action_id: "new_tab".into(),
+            })) {
+                tracing::warn!("asking the running terminal for a new tab failed: {e:?}");
+            }
+        }
+        return Ok(());
+    }
 
     // Bring tmux server up before replaying tabs.
     tmux::cleanup_stale_socket();
@@ -135,49 +111,46 @@ fn main() -> iced::Result {
     tmux::ensure_server_running();
     tmux::reload_config();
 
-    // Subscribe to chrome topics only here. `TerminalSession` /
-    // `TerminalConfig` stickies are expanded in `Msg::SubscribeSessions`
-    // *after* the iced bus pump is live — sticky replay at BusSetup time
-    // races the poller handoff and was dropping every tab on restart
-    // (tmux sessions still alive, UI empty).
+    // Subscribe to chrome topics only here. `TerminalSession` stickies are
+    // expanded in `Msg::SubscribeSessions` *after* the iced bus pump is
+    // live — sticky replay at BusSetup time races the poller handoff and
+    // was dropping every tab on restart (tmux sessions still alive, UI
+    // empty).
     BusSetup::new(APP_ID)
         .subscribe(&[TopicKind::Theme, TopicKind::MenuAction, TopicKind::CloseApp])
         .install();
 
     // Publish the full multi-menu payload directly (BusSetup::app_menu only
     // handles a single-menu definition; terminal needs several menus).
-    if let Ok(mut client) = bus().lock() {
-        if let Err(e) = client.emit(Topic::SetAppMenu(menu::terminal_menu(&[]))) {
-            tracing::warn!("initial app-menu publish failed: {e:?}");
-        }
-    }
+    sola_kit::menu::publish(menu::terminal_menu());
 
-    let app = iced::application(App::boot, App::update, App::view)
+    // A window per tab: each is a tab in the shell's tab bar.
+    iced::daemon(App::boot, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
         .default_font(fonts::mono())
-        .window(window_settings_transparent(APP_ID));
-    app.run()
+        .run()
 }
 
 struct App {
     tabs: state::Tabs,
-    /// Active TAB id.
-    active: Option<String>,
-    config: TerminalConfig,
+    /// Each open tab's window, both ways.
+    window_of: HashMap<String, window::Id>,
+    tab_of: HashMap<window::Id, String>,
+    /// Keys and menu actions go to the tab of the last window focused.
+    focused: Option<window::Id>,
+    sizes: HashMap<window::Id, iced::Size>,
+    /// The windows, announced to the shell's tab bar as tabs.
+    tab_windows: TabWindows,
     /// Snapshot of live tmux sessions at startup, used to prune persisted
     /// panes whose tmux peer is gone. None means the query failed — admit all.
     live_tmux_at_startup: Option<HashSet<String>>,
     /// Sticky `TerminalSession` replay is only for our own last run.
-    /// After this instant, an unknown id is another live instance's tab —
-    /// restore_tab would prune it against the boot snapshot and retract
-    /// it from the bus, closing the tab in every window.
+    /// After this instant, an unknown id is not ours to restore.
     startup_replay_until: Instant,
     theme: Theme,
-    sidebar: sidebar::SidebarState,
     palette: term_view::Palette,
-    window_size: iced::Size,
     metrics: term_view::CellMetrics,
     /// Runtime-only title cache: PaneId → most-recent OSC 0/2 title.
     titles: HashMap<String, String>,
@@ -196,9 +169,8 @@ struct App {
     /// while Shift is held (keydebug: Shift+Enter → plain CR; Alt+Enter works).
     /// Tracking the Shift key down/up is the reliable signal.
     keys_held_mods: keyboard::Modifiers,
-    /// Float tracker + iced window id for CSD while floating.
+    /// Which windows float (CSD titlebar while floating).
     float: sola_kit::FloatState,
-    window_id: Option<iced::window::Id>,
     /// Per-pane mouse-mode wheel accumulator. High-rate touchpad events are
     /// folded here and flushed at [`WHEEL_MIN_INTERVAL`] so TUIs don't full-
     /// repaint on every iced wheel sample.
@@ -227,18 +199,17 @@ enum Msg {
     /// A pane's shell exited (EOF) — carries the PaneId.
     PtyExit(String),
     Noop,
-    /// Kit sidebar gesture.
-    Sidebar(sola_kit::components::SidebarMsg),
     /// Press on a pane split divider (carries the SplitId).
     SplitDividerPress(String),
     /// Pointer entered a pane's area (focus-follows-mouse) — carries PaneId.
     PaneFocused(String),
-    /// Global cursor sample (x, y). Drives whichever gesture is active.
-    CursorMoved(f32, f32),
-    /// Global left-button release. Ends whichever gesture is active.
+    /// Global cursor sample in a window (x, y). Drives the split-divider drag.
+    CursorMoved(window::Id, f32, f32),
+    /// Global left-button release. Ends the split-divider drag.
     CursorReleased,
-    Input(iced::Event),
-    Resized(iced::Size),
+    Input(window::Id, iced::Event),
+    /// A tab window opened, resized, gained focus, or was asked to close.
+    Window(window::Id, window::Event),
     SelectionChanged,
     /// Local scrollback moved on this pane (PaneId).
     Scrolled(String),
@@ -256,13 +227,14 @@ enum Msg {
     /// Result of an async tmux cwd query (PaneId, path).
     CwdResult(String, Option<String>),
     BlinkTick,
-    WindowReady(Option<iced::window::Id>),
-    /// Expand bus subscription to TerminalSession/TerminalConfig so sticky
-    /// tab replay lands after the iced bus pump is attached.
+    /// Expand bus subscription to TerminalSession so sticky tab replay lands
+    /// after the iced bus pump is attached.
     SubscribeSessions,
-    TitleDrag,
-    TitleResize(iced::window::Direction),
-    TitleClose,
+    /// No saved tab came back: open a first one.
+    EnsureTab,
+    TitleDrag(window::Id),
+    TitleResize(window::Id, window::Direction),
+    TitleClose(window::Id),
 }
 
 /// Full topic set once the iced bus pump can receive sticky replay.
@@ -270,28 +242,36 @@ const SESSION_TOPICS: &[TopicKind] = &[
     TopicKind::Theme,
     TopicKind::MenuAction,
     TopicKind::CloseApp,
-    TopicKind::TerminalConfig,
+    TopicKind::Windows,
+    TopicKind::WindowFloating,
+    TopicKind::WindowChrome,
+    TopicKind::TabWindow,
+    TopicKind::CloseTab,
     TopicKind::TerminalSession,
 ];
 
 impl App {
     fn boot() -> (Self, Task<Msg>) {
-        let live_tmux_at_startup: Option<HashSet<String>> =
-            tmux::list_sessions().map(|v| v.into_iter().collect());
-        match &live_tmux_at_startup {
+        let listed = tmux::list_sessions();
+        match &listed {
+            Some(s) if s.is_empty() => tracing::info!(
+                "no live sola-* tmux sessions at boot (tmux was lost); rebuilding saved tabs"
+            ),
             Some(s) => tracing::info!(count = s.len(), "live sola-* tmux sessions at boot"),
             None => tracing::warn!("tmux list-sessions failed at boot; admitting all stickies"),
         }
+        let live_tmux_at_startup = state::boot_snapshot(listed);
         let app = Self {
             tabs: state::Tabs::default(),
-            active: None,
-            config: TerminalConfig::default(),
+            window_of: HashMap::new(),
+            tab_of: HashMap::new(),
+            focused: None,
+            sizes: HashMap::new(),
+            tab_windows: TabWindows::new(APP_ID),
             live_tmux_at_startup,
             startup_replay_until: Instant::now(),
             theme: default_theme(),
-            sidebar: sidebar::SidebarState::default(),
             palette: term_view::Palette::from_kit_theme(&Atoms::default()),
-            window_size: iced::Size::new(800.0, 480.0),
             metrics: term_view::CellMetrics::for_font(15.0, fonts::mono_metrics()),
             titles: HashMap::new(),
             cursor_on: true,
@@ -300,39 +280,41 @@ impl App {
             keyboard_mods: keyboard::Modifiers::empty(),
             keys_held_mods: keyboard::Modifiers::empty(),
             float: sola_kit::FloatState::new(APP_ID),
-            window_id: None,
             wheel_burst: HashMap::new(),
         };
-        (
-            app,
-            Task::batch([
-                sola_kit::window_ready_task(Msg::WindowReady),
-                // After the first iced frame the bus subscription is live;
-                // expand to session topics so sticky replay is not dropped.
-                Task::done(Msg::SubscribeSessions),
-            ]),
-        )
+        // After the first update the bus subscription is live; expand to
+        // session topics so sticky replay is not dropped.
+        (app, Task::done(Msg::SubscribeSessions))
     }
 
-    fn title(&self) -> String {
-        self.active
-            .as_deref()
-            .and_then(|id| self.tabs.get_tab(id))
-            .map(|t| t.active_pane.clone())
-            .and_then(|p| self.titles.get(&p).cloned())
+    /// A tab window's title: its active pane's OSC title, else the pane's
+    /// folder.
+    fn title(&self, window: window::Id) -> String {
+        let Some(tab) = self.tab_of.get(&window).and_then(|t| self.tabs.get_tab(t)) else {
+            return "Terminal".into();
+        };
+        self.titles
+            .get(&tab.active_pane)
             .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| "Terminal".into())
+            .cloned()
+            .unwrap_or_else(|| tab_label(&self.tabs.pane_cwd(&tab.active_pane)))
     }
 
-    fn theme(&self) -> Theme {
-        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
+    fn theme(&self, window: window::Id) -> Theme {
+        sola_kit::theme_for(self.chrome(window), &self.theme)
+    }
+
+    /// How to frame `window`: tiled, floating, or bare in Cinema.
+    fn chrome(&self, window: window::Id) -> sola_kit::Chrome {
+        self.tab_windows
+            .river_id(window)
+            .map_or(sola_kit::Chrome::Tiled, |id| self.float.chrome(id))
     }
 
     fn subscription(&self) -> Subscription<Msg> {
         // IMPORTANT: keep this recipe **stable**. Toggling optional arms
         // rebuilds the whole batch and restarts `bus_subscription`, which
-        // can drop sticky TerminalSession replay mid-handoff. Always
-        // register the same set; gate ReorderTick work in update.
+        // can drop sticky TerminalSession replay mid-handoff.
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
             emulator::output_subscription().map(Msg::PtyOutput),
@@ -342,62 +324,60 @@ impl App {
             // captured the event — `event::listen()` only yields Ignored
             // events, which can drop keys. Mouse still uses the ignored-only
             // path below for the drag gestures.
-            event::listen_with(|ev, status, _| match &ev {
-                Event::Keyboard(_) => Some(Msg::Input(ev)),
-                _ if matches!(status, iced::event::Status::Ignored) => Some(Msg::Input(ev)),
+            event::listen_with(|ev, status, id| match &ev {
+                Event::Keyboard(_) => Some(Msg::Input(id, ev)),
+                _ if matches!(status, iced::event::Status::Ignored) => Some(Msg::Input(id, ev)),
                 _ => None,
             }),
-            iced::window::resize_events().map(|(_id, size)| Msg::Resized(size)),
+            window::events().map(|(id, e)| Msg::Window(id, e)),
             iced::time::every(Duration::from_millis(530)).map(|_| Msg::BlinkTick),
-            // Single always-on global cursor + release listener, shared by the
-            // sidebar-divider, tab-reorder, and pane-divider gestures. Each
-            // update arm gates on its own active-flag so only the live gesture
-            // does work. CursorMoved carries (x, y) so all three can read it.
-            event::listen_with(|ev, _, _| match ev {
+            // One global cursor + release listener for the split-divider
+            // drag; update gates on whether a drag is live.
+            event::listen_with(|ev, _, id| match ev {
                 Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                    Some(Msg::CursorMoved(position.x, position.y))
+                    Some(Msg::CursorMoved(id, position.x, position.y))
                 }
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                     Some(Msg::CursorReleased)
                 }
                 _ => None,
             }),
-            // Sidebar anim frames while a drag is live.
-            self.sidebar.subscription().map(Msg::Sidebar),
         ])
     }
 
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
             Msg::Bus(m) => self.on_bus(&m),
-            Msg::WindowReady(id) => {
-                self.window_id = id;
-                Task::none()
-            }
             Msg::SubscribeSessions => {
                 // Expand kinds for reconnect too (kit only remembers the
                 // last set for bus restart recovery).
                 sola_kit::app::set_bus_kinds(SESSION_TOPICS);
                 // Stickies replay synchronously on subscribe. Anything
-                // arriving after this window is another instance's tab.
+                // arriving after this window is not our last run's.
                 self.startup_replay_until = Instant::now() + Duration::from_secs(2);
                 if let Ok(mut client) = bus().lock() {
                     if let Err(e) = client.subscribe(SESSION_TOPICS) {
                         tracing::warn!("SubscribeSessions failed: {e}");
                     } else {
-                        tracing::info!(
-                            "subscribed TerminalSession/TerminalConfig (sticky tab replay)"
-                        );
+                        tracing::info!("subscribed TerminalSession (sticky tab replay)");
                     }
+                }
+                Task::perform(tokio::time::sleep(FIRST_TAB_WAIT), |_| Msg::EnsureTab)
+            }
+            Msg::EnsureTab => {
+                if self.tab_of.is_empty() {
+                    tracing::info!("no saved tab came back; opening one");
+                    return self.new_tab();
                 }
                 Task::none()
             }
-            Msg::TitleDrag => sola_kit::drag(self.window_id),
-            Msg::TitleResize(dir) => sola_kit::drag_resize(self.window_id, dir),
-            Msg::TitleClose => {
-                sola_kit::close_app(APP_ID);
-                Task::none()
-            }
+            Msg::Window(id, event) => self.on_window(id, event),
+            Msg::TitleDrag(id) => sola_kit::drag(Some(id)),
+            Msg::TitleResize(id, dir) => sola_kit::drag_resize(Some(id), dir),
+            Msg::TitleClose(id) => match self.tab_of.get(&id).cloned() {
+                Some(tab) => self.close_tab(&tab),
+                None => Task::none(),
+            },
             Msg::Noop => Task::none(),
             Msg::PtyExit(pane_id) => {
                 let session = self
@@ -443,8 +423,7 @@ impl App {
                 self.cursor_on = !self.cursor_on;
                 Task::none()
             }
-            Msg::Input(event) => self.on_input(event),
-            Msg::Resized(size) => self.on_resized(size),
+            Msg::Input(id, event) => self.on_input(id, event),
             Msg::SelectionChanged => {
                 self.tabs.clear_all_caches();
                 Task::none()
@@ -460,30 +439,17 @@ impl App {
             Msg::WheelToPty(pane, bytes) => self.on_wheel_to_pty(pane, bytes),
             Msg::FlushWheel(pane) => self.flush_wheel(&pane),
             Msg::Pasted(text) => self.on_pasted(text),
-            Msg::Sidebar(m) => {
-                if let Some(ev) = self.sidebar.update(m) {
-                    return self.on_sidebar(ev);
-                }
-                Task::none()
-            }
             Msg::SplitDividerPress(split_id) => {
                 self.dragging_split = Some(split_id);
                 Task::none()
             }
             Msg::PaneFocused(pane) => {
                 let mut changed = false;
-                if let Some(tab_id) = self.active.clone() {
-                    let belongs = self
-                        .tabs
-                        .get_tab(&tab_id)
-                        .map(|t| state::leaves_of(&t.layout).iter().any(|p| p == &pane))
-                        .unwrap_or(false);
-                    if belongs {
-                        if let Some(tab) = self.tabs.get_tab_mut(&tab_id) {
-                            if tab.active_pane != pane {
-                                tab.active_pane = pane;
-                                changed = true;
-                            }
+                if let Some(tab_id) = self.tabs.tab_of_pane(&pane) {
+                    if let Some(tab) = self.tabs.get_tab_mut(&tab_id) {
+                        if tab.active_pane != pane {
+                            tab.active_pane = pane;
+                            changed = true;
                         }
                     }
                 }
@@ -492,11 +458,11 @@ impl App {
                 }
                 Task::none()
             }
-            Msg::CursorMoved(x, y) => {
+            Msg::CursorMoved(id, x, y) => {
                 // Pane split divider.
                 if let Some(split_id) = self.dragging_split.clone() {
-                    if let Some(tab_id) = self.active.clone() {
-                        let content = self.content_rect();
+                    if let Some(tab_id) = self.tab_of.get(&id).cloned() {
+                        let content = self.content_rect(id);
                         let rects = self
                             .tabs
                             .get_tab(&tab_id)
@@ -516,13 +482,12 @@ impl App {
                 Task::none()
             }
             Msg::CursorReleased => {
-                let task = Task::none();
                 if self.dragging_split.take().is_some() {
-                    if let Some(tab_id) = self.active.clone() {
+                    if let Some(tab_id) = self.focused_tab() {
                         self.persist_tab(&tab_id);
                     }
                 }
-                task
+                Task::none()
             }
             Msg::Title(pane_id, title) => {
                 self.titles.insert(pane_id, title);
@@ -532,35 +497,69 @@ impl App {
         }
     }
 
-    fn view(&self) -> Element<'_, Msg> {
+    /// Window lifecycle: sizes, focus, and the close button / close request.
+    fn on_window(&mut self, id: window::Id, event: window::Event) -> Task<Msg> {
+        match event {
+            window::Event::Opened { size, .. } | window::Event::Resized(size) => {
+                self.sizes.insert(id, size);
+                self.resize_all_panes();
+                self.tabs.clear_all_caches();
+                if self.focused.is_none() {
+                    self.focused = Some(id);
+                }
+                Task::none()
+            }
+            window::Event::Focused => {
+                self.focused = Some(id);
+                Task::none()
+            }
+            window::Event::Unfocused => {
+                // A key released while another surface has the keyboard (a
+                // switcher, the KVM taking it) never reaches us: forget the
+                // held modifiers, or Super stays down.
+                self.keys_held_mods = keyboard::Modifiers::empty();
+                self.keyboard_mods = keyboard::Modifiers::empty();
+                Task::none()
+            }
+            window::Event::CloseRequested => match self.tab_of.get(&id).cloned() {
+                Some(tab) => self.close_tab(&tab),
+                None => window::close(id),
+            },
+            window::Event::Closed => {
+                // Closed under us (not through close_tab): forget the window;
+                // the tab's tmux sessions live on and come back next start.
+                if let Some(tab) = self.tab_of.remove(&id) {
+                    tracing::warn!(%tab, "tab window closed outside the app");
+                    self.window_of.remove(&tab);
+                    self.tab_windows.close(id);
+                }
+                self.sizes.remove(&id);
+                if self.focused == Some(id) {
+                    self.focused = self.tab_of.keys().next().copied();
+                }
+                Task::none()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    /// The focused window's tab.
+    fn focused_tab(&self) -> Option<String> {
+        self.focused.and_then(|w| self.tab_of.get(&w).cloned())
+    }
+
+    fn view(&self, window: window::Id) -> Element<'_, Msg> {
         let pane: Element<'_, Msg> =
-            match self.active.as_deref().and_then(|id| self.tabs.get_tab(id)) {
+            match self.tab_of.get(&window).and_then(|id| self.tabs.get_tab(id)) {
                 Some(tab) => self.render_node(&tab.layout, &tab.active_pane),
-                None => container(
-                    sola_kit::components::text::body("terminal pane (placeholder)")
-                        .style(sola_kit::components::text::muted),
-                )
-                .padding(sola_kit::components::style::SPACE_MD)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into(),
+                None => container(sola_kit::components::text::caption(""))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into(),
             };
 
-        let body: Element<'_, Msg> = row![
-            sidebar::view(
-                &self.sidebar,
-                &self.tabs,
-                self.active.as_deref(),
-                &self.config,
-                &self.theme,
-                self.palette.bg,
-            ),
-            pane,
-        ]
-        .into();
-
         let bg = self.palette.bg;
-        let framed: Element<'_, Msg> = container(body)
+        let framed: Element<'_, Msg> = container(pane)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(move |_theme| container::Style {
@@ -569,12 +568,12 @@ impl App {
             })
             .into();
 
-        sola_kit::wrap_if_floating(
-            self.float.is_floating_any(),
-            "Terminal",
-            Msg::TitleDrag,
-            Msg::TitleClose,
-            Msg::TitleResize,
+        sola_kit::window_frame(
+            self.chrome(window),
+            self.title(window),
+            Msg::TitleDrag(window),
+            Msg::TitleClose(window),
+            move |dir| Msg::TitleResize(window, dir),
             framed,
         )
     }
@@ -745,8 +744,8 @@ impl App {
         Task::none()
     }
 
-    /// Route a raw iced keyboard event to the active pane's PTY.
-    fn on_input(&mut self, event: iced::Event) -> Task<Msg> {
+    /// Route a raw iced keyboard event to the active pane of `window`'s tab.
+    fn on_input(&mut self, window: window::Id, event: iced::Event) -> Task<Msg> {
         // Keep a live modifier snapshot — see `keyboard_mods` on `App`.
         if let iced::Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) = event {
             self.keyboard_mods = mods;
@@ -801,7 +800,12 @@ impl App {
             return Task::none();
         }
 
-        let Some(pane) = self.active_pane() else {
+        let Some(pane) = self
+            .tab_of
+            .get(&window)
+            .and_then(|t| self.tabs.get_tab(t))
+            .map(|t| t.active_pane.clone())
+        else {
             return Task::none();
         };
         let Some(rt) = self.tabs.pane_runtime(&pane) else {
@@ -873,7 +877,7 @@ impl App {
                 if let Ok(mut f) = std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open("/opt/sola/log/sola-terminal-keys.log")
+                    .open(sola_core::paths::log_path("sola-terminal-keys.log"))
                 {
                     use std::io::Write;
                     let _ = writeln!(
@@ -934,7 +938,7 @@ impl App {
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("/opt/sola/log/sola-terminal-keys.log")
+            .open(sola_core::paths::log_path("sola-terminal-keys.log"))
         {
             use std::io::Write;
             let _ = writeln!(
@@ -945,10 +949,10 @@ impl App {
         }
     }
 
-    /// The PaneId of the active tab's focused pane.
+    /// The PaneId of the focused tab's active pane.
     fn active_pane(&self) -> Option<String> {
-        let id = self.active.as_deref()?;
-        self.tabs.get_tab(id).map(|t| t.active_pane.clone())
+        let id = self.focused_tab()?;
+        self.tabs.get_tab(&id).map(|t| t.active_pane.clone())
     }
 
     fn copy_selection(&self) -> Task<Msg> {
@@ -985,31 +989,30 @@ impl App {
         Task::none()
     }
 
-    fn on_resized(&mut self, size: iced::Size) -> Task<Msg> {
-        self.window_size = size;
-        self.resize_all_panes();
-        self.tabs.clear_all_caches();
-        Task::none()
-    }
-
-    /// The content area (window minus sidebar) in window-logical coordinates.
-    fn content_rect(&self) -> state::Rect {
-        let sidebar_w = self.config.sidebar_width as f32;
-        let pane = pane_size(self.window_size, sidebar_w);
+    /// A tab window's content area, in its coordinates.
+    fn content_rect(&self, window: window::Id) -> state::Rect {
+        let size = self.sizes.get(&window).copied().unwrap_or(DEFAULT_WINDOW);
+        // Under the kit frame's titlebar (none in Cinema). Without it the
+        // grid had two rows more than fit, the last ones below the window.
+        let top = match self.chrome(window) {
+            sola_kit::Chrome::Bare => 0.0,
+            _ => sola_kit::components::window_frame::HEIGHT,
+        };
         state::Rect {
-            x: sidebar_w,
-            y: 0.0,
-            w: pane.width,
-            h: pane.height,
+            x: 0.0,
+            y: top,
+            w: size.width,
+            h: (size.height - top).max(0.0),
         }
     }
 
-    /// Grid (cols, rows) a pane should have, given its tab's current layout.
+    /// Grid (cols, rows) a pane should have, given its tab's window and layout.
     fn pane_grid(&self, pane_id: &str) -> (u16, u16) {
-        let content = self.content_rect();
         if let Some(tab_id) = self.tabs.tab_of_pane(pane_id) {
-            if let Some(tab) = self.tabs.get_tab(&tab_id) {
-                for (pid, rect) in state::pane_rects(&tab.layout, content) {
+            if let (Some(tab), Some(&window)) =
+                (self.tabs.get_tab(&tab_id), self.window_of.get(&tab_id))
+            {
+                for (pid, rect) in state::pane_rects(&tab.layout, self.content_rect(window)) {
                     if pid == pane_id {
                         return term_view::cols_rows_for(
                             iced::Size::new(rect.w, rect.h),
@@ -1025,9 +1028,12 @@ impl App {
     /// Recompute every pane's rect → cols/rows and drive the new size into any
     /// pane whose dimensions changed (the split/close/resize/drag fan-out).
     fn resize_all_panes(&mut self) {
-        let content = self.content_rect();
         let mut targets: Vec<(String, u16, u16)> = Vec::new();
         for tab_id in self.tabs.tab_ids_in_order() {
+            let Some(&window) = self.window_of.get(&tab_id) else {
+                continue;
+            };
+            let content = self.content_rect(window);
             if let Some(tab) = self.tabs.get_tab(&tab_id) {
                 for (pane_id, rect) in state::pane_rects(&tab.layout, content) {
                     let (c, r) =
@@ -1071,6 +1077,15 @@ impl App {
 
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
         self.float.update(m);
+        self.tab_windows.update(m);
+        // Cinema drops the titlebar: the panes get its rows.
+        if matches!(Topic::parse(m), Some(Topic::WindowChrome(_))) {
+            self.resize_all_panes();
+        }
+        // The tab bar's stoplight: as the window's own close.
+        if let Some(window) = self.tab_windows.close_request(m) {
+            return self.on_window(window, window::Event::CloseRequested);
+        }
         // 1. Live theme reload — rebuild widget theme + palette + cell metrics,
         //    then reflow every pane.
         if apply_theme_update(m, &mut self.theme) {
@@ -1091,23 +1106,10 @@ impl App {
 
         // 3. Dispatch by topic.
         match Topic::parse(m) {
-            Some(Topic::TerminalConfig(cfg)) => {
-                let preferred = cfg.active_tab_id.clone();
-                self.config = cfg;
-                // Sticky replay / re-emit may land after sessions. Apply the
-                // remembered active tab once the target exists.
-                if let Some(id) = preferred {
-                    if self.active.as_deref() != Some(id.as_str())
-                        && self.tabs.get_tab(&id).is_some()
-                    {
-                        return self.select_tab(&id);
-                    }
-                }
-            }
             Some(Topic::TerminalSession(s)) => {
                 if !m.sticky {
-                    // Retraction from elsewhere — drop the tab + panes (plain
-                    // drop preserves tmux).
+                    // Retraction from elsewhere — drop the tab and its window
+                    // (plain drop preserves tmux).
                     let leaves = self
                         .tabs
                         .get_tab(&s.id)
@@ -1120,8 +1122,7 @@ impl App {
                         self.wheel_burst.remove(p);
                     }
                     self.tabs.remove_tab(&s.id);
-                    self.republish_menu();
-                    return Task::none();
+                    return self.close_window_of(&s.id);
                 }
 
                 if self.tabs.get_tab(&s.id).is_some() {
@@ -1129,10 +1130,8 @@ impl App {
                     return Task::none();
                 }
                 if Instant::now() > self.startup_replay_until {
-                    // Another live instance minted this tab. Do not
-                    // restore_tab — that prunes against our boot snapshot
-                    // and retracts the sticky, which closes the tab
-                    // everywhere (including the window that just created it).
+                    // Not our last run's tab: restore_tab would prune it
+                    // against our boot snapshot and retract the sticky.
                     return Task::none();
                 }
                 // First sighting during sticky replay: our last run's tabs.
@@ -1146,18 +1145,9 @@ impl App {
         Task::none()
     }
 
-    fn republish_menu(&self) {
-        if let Ok(mut client) = bus().lock() {
-            if let Err(e) = client.emit(Topic::SetAppMenu(menu::terminal_menu(
-                &self.tabs.tab_strip(),
-            ))) {
-                tracing::warn!("republish_menu failed: {e:?}");
-            }
-        }
-    }
-
     /// Rebuild a tab from a persisted `TerminalSession`, reconciling each
-    /// leaf's tmux session against the boot snapshot, then attach if active.
+    /// leaf's tmux session against the boot snapshot, then open its window
+    /// and attach its panes.
     fn restore_tab(&mut self, s: sola_bus::topics::TerminalSession) -> Task<Msg> {
         let layout: PaneLayout = match s.layout.clone() {
             Some(l) => l,
@@ -1197,23 +1187,37 @@ impl App {
             panes = metas.len(),
             "restored TerminalSession tab"
         );
-        // Prefer the tab remembered in TerminalConfig. Until that config
-        // (or a matching session) arrives, provisionally take the first
-        // sticky tab so the window isn't blank during boot.
-        let preferred = self.config.active_tab_id.as_deref();
-        if preferred == Some(s.id.as_str()) {
-            self.active = Some(s.id.clone());
-        } else if self.active.is_none() {
-            self.active = Some(s.id.clone());
-        }
-        self.republish_menu();
+        let open = self.open_tab_window(&s.id);
+        Task::batch([open, self.attach_all_panes(&s.id, true)])
+    }
 
-        // Attach the active tab's panes eagerly (seed scrollback). Other tabs
-        // lazy-attach on `select_tab`.
-        if self.active.as_deref() == Some(s.id.as_str()) {
-            return self.attach_all_panes(&s.id, true);
+    /// Open `tab_id`'s window, announced to the shell's tab bar.
+    fn open_tab_window(&mut self, tab_id: &str) -> Task<Msg> {
+        let (window, task) = self
+            .tab_windows
+            .open(tab_id, window_settings_transparent(APP_ID), false);
+        self.window_of.insert(tab_id.to_string(), window);
+        self.tab_of.insert(window, tab_id.to_string());
+        task.map(|_| Msg::Noop)
+    }
+
+    /// Close `tab_id`'s window (the tab is already gone). The last window
+    /// closing quits.
+    fn close_window_of(&mut self, tab_id: &str) -> Task<Msg> {
+        let Some(window) = self.window_of.remove(tab_id) else {
+            return Task::none();
+        };
+        self.tab_of.remove(&window);
+        self.sizes.remove(&window);
+        self.tab_windows.close(window);
+        if self.focused == Some(window) {
+            self.focused = self.tab_of.keys().next().copied();
         }
-        Task::none()
+        if self.tab_of.is_empty() {
+            tracing::info!("last terminal tab closed; quitting");
+            return Task::batch([window::close(window), iced::exit()]);
+        }
+        window::close(window)
     }
 
     /// Open (or reattach) the PTY for one pane and start its reader thread.
@@ -1311,7 +1315,8 @@ impl App {
         Task::batch(tasks)
     }
 
-    /// Mint a new tab (single pane), persist it, and attach.
+    /// Mint a new tab (single pane) in a new window, persist it, and attach.
+    /// The shell puts the window in its focused zone.
     fn new_tab(&mut self) -> Task<Msg> {
         let tab_id = uuid::Uuid::new_v4().to_string();
         let pane_id = uuid::Uuid::new_v4().to_string();
@@ -1334,19 +1339,16 @@ impl App {
             active_pane: pane_id.clone(),
             ordinal,
         });
-        self.active = Some(tab_id.clone());
-        self.config.active_tab_id = Some(tab_id.clone());
-        self.persist_config();
-
         self.persist_tab(&tab_id);
-        self.republish_menu();
-        self.attach_pane(&pane_id, false)
+        let open = self.open_tab_window(&tab_id);
+        Task::batch([open, self.attach_pane(&pane_id, false)])
     }
 
-    /// Split the active pane in `dir`: mint a sibling pane (new tmux session
-    /// inheriting cwd), insert it, focus it, reflow, persist, attach.
+    /// Split the focused tab's active pane in `dir`: mint a sibling pane (new
+    /// tmux session inheriting cwd), insert it, focus it, reflow, persist,
+    /// attach.
     fn split_active_pane(&mut self, dir: SplitDir) -> Task<Msg> {
-        let Some(tab_id) = self.active.clone() else {
+        let Some(tab_id) = self.focused_tab() else {
             return Task::none();
         };
         let source_pane = match self.tabs.get_tab(&tab_id) {
@@ -1423,7 +1425,7 @@ impl App {
     }
 
     /// Close a whole tab: kill every pane's tmux, retract the slot, drop the
-    /// tab, and pick the next active tab.
+    /// tab, and close its window.
     fn close_tab(&mut self, tab_id: &str) -> Task<Msg> {
         let leaves = self
             .tabs
@@ -1440,13 +1442,6 @@ impl App {
             self.wheel_burst.remove(p);
         }
 
-        if self.active.as_deref() == Some(tab_id) {
-            let order = self.tabs.tab_ids_in_order();
-            self.active = state::next_active_after_close(&order, tab_id);
-            self.config.active_tab_id = self.active.clone();
-            self.persist_config();
-        }
-
         let ordinal = self.tabs.get_tab(tab_id).map(|t| t.ordinal).unwrap_or(0);
         if let Ok(mut client) = bus().lock() {
             let _ = client.retract(Topic::TerminalSession(sola_bus::topics::TerminalSession {
@@ -1459,8 +1454,7 @@ impl App {
         }
 
         self.tabs.remove_tab(tab_id);
-        self.republish_menu();
-        Task::none()
+        self.close_window_of(tab_id)
     }
 
     /// Persist a tab as a `TerminalSession`: the pane tree when split, else a
@@ -1515,7 +1509,7 @@ impl App {
     }
 
     /// Handle a menu action (also the path for shortcuts — click and chord
-    /// share `on_menu_action`).
+    /// share `on_menu_action`). Acts on the focused tab.
     fn on_menu_action(&mut self, action: &str) -> Task<Msg> {
         match action {
             "new_tab" => self.new_tab(),
@@ -1525,69 +1519,9 @@ impl App {
             "copy" => self.copy_selection(),
             "paste" => self.paste(),
             other => {
-                if let Some(index) = parse_select_tab_action(other) {
-                    let ids = self.tabs.tab_ids_in_order();
-                    if let Some(id) = ids.get(index) {
-                        self.select_tab(&id.clone())
-                    } else {
-                        Task::none()
-                    }
-                } else {
-                    tracing::debug!(action = %other, "on_menu_action: unknown action");
-                    Task::none()
-                }
-            }
-        }
-    }
-
-    /// Switch the active tab to `id`, lazy-attaching its panes the first time.
-    fn select_tab(&mut self, id: &str) -> Task<Msg> {
-        let leaves = match self.tabs.get_tab(id) {
-            Some(tab) => state::leaves_of(&tab.layout),
-            None => return Task::none(),
-        };
-        self.active = Some(id.to_string());
-        if self.config.active_tab_id.as_deref() != Some(id) {
-            self.config.active_tab_id = Some(id.to_string());
-            self.persist_config();
-        }
-        self.tabs.clear_all_caches();
-
-        if leaves.iter().any(|p| !self.tabs.has_pane_runtime(p)) {
-            return self.attach_all_panes(id, true);
-        }
-        self.resize_all_panes();
-        Task::none()
-    }
-
-    /// Emit the current `TerminalConfig` (sidebar + active tab) as sticky state.
-    fn persist_config(&self) {
-        if let Ok(mut client) = bus().lock() {
-            if let Err(e) = client.emit(Topic::TerminalConfig(self.config.clone())) {
-                tracing::warn!("emit TerminalConfig failed: {e:?}");
-            }
-        }
-    }
-
-    fn on_sidebar(&mut self, ev: sola_kit::components::SidebarEvent) -> Task<Msg> {
-        use sola_kit::components::SidebarEvent;
-        match ev {
-            SidebarEvent::Activate { id } => self.select_tab(&id),
-            SidebarEvent::Resize { width } => {
-                self.config.sidebar_width = width as u32;
-                self.resize_all_panes();
-                self.persist_config();
+                tracing::debug!(action = %other, "on_menu_action: unknown action");
                 Task::none()
             }
-            SidebarEvent::Drop(drop) => {
-                crate::sidebar::apply_drop(&mut self.tabs, drop);
-                for id in self.tabs.tab_ids_in_order() {
-                    self.persist_tab(&id);
-                }
-                self.republish_menu();
-                Task::none()
-            }
-            SidebarEvent::ToggleSection { .. } | SidebarEvent::Edit { .. } => Task::none(),
         }
     }
 }

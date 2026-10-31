@@ -103,7 +103,7 @@ static FONTS: std::sync::LazyLock<std::sync::RwLock<Fonts>> =
 
 /// Swap the kit's role→family mapping for this process. Re-callable —
 /// bus-driven theme deliveries call this on every `Topic::Theme` so a
-/// font edit in the storybook propagates everywhere on the next render.
+/// font change propagates everywhere on the next render.
 pub fn install(fonts: Fonts) {
     if let Ok(mut guard) = FONTS.write() {
         *guard = fonts;
@@ -129,6 +129,96 @@ pub fn display() -> Font {
 pub fn chrome() -> Font {
     current().chrome
 }
+/// Width of one unwrapped line of `content` at `size` in `font`, laid out
+/// as iced will draw it (remembered, so a relayout does not shape the same
+/// words again). For widgets that place things beside text they draw.
+pub fn line_width(content: &str, size: f32, font: Font) -> f32 {
+    thread_local! {
+        static WIDTHS: std::cell::RefCell<std::collections::HashMap<(String, u32, Font), f32>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    let key = (content.to_string(), size.to_bits(), font);
+    if let Some(w) = WIDTHS.with(|m| m.borrow().get(&key).copied()) {
+        return w;
+    }
+    let w = shaped_width(content, size, font);
+    WIDTHS.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() > 1024 {
+            m.clear();
+        }
+        m.insert(key, w);
+    });
+    w
+}
+
+/// One line of `content` at `size` in `font`, shortened with an ellipsis
+/// until it fits in `room`. Remembered per content and room; the prefixes
+/// tried on the way are not, so a long list does not crowd out
+/// [`line_width`]'s memory.
+pub fn fit_line(content: &str, size: f32, font: Font, room: f32) -> String {
+    type Key = (String, u32, Font, u32);
+    thread_local! {
+        static FITS: std::cell::RefCell<std::collections::HashMap<Key, String>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    let key = (content.to_string(), size.to_bits(), font, room.to_bits());
+    if let Some(fit) = FITS.with(|m| m.borrow().get(&key).cloned()) {
+        return fit;
+    }
+    let fit = shorten(content, room, |s| shaped_width(s, size, font));
+    FITS.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() > 4096 {
+            m.clear();
+        }
+        m.insert(key, fit.clone());
+    });
+    fit
+}
+
+/// `content`, or its longest prefix that fits in `room` with `…` after it.
+fn shorten(content: &str, room: f32, width: impl Fn(&str) -> f32) -> String {
+    if width(content) <= room {
+        return content.to_string();
+    }
+    let ends: Vec<usize> = content.char_indices().map(|(i, _)| i).skip(1).collect();
+    // Longest prefix whose "prefix…" fits: binary search over char ends.
+    let (mut lo, mut hi) = (0, ends.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let candidate = format!("{}…", content[..ends[mid - 1]].trim_end());
+        if width(&candidate) <= room {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if lo == 0 {
+        "…".to_string()
+    } else {
+        format!("{}…", content[..ends[lo - 1]].trim_end())
+    }
+}
+
+/// Shape one line of `content` and take its width (no memory).
+fn shaped_width(content: &str, size: f32, font: Font) -> f32 {
+    use iced::advanced::text::{self, Paragraph as _};
+    type Para = <iced::Renderer as text::Renderer>::Paragraph;
+    Para::with_text(text::Text {
+        content,
+        bounds: iced::Size::INFINITE,
+        size: iced::Pixels(size),
+        line_height: text::LineHeight::default(),
+        font,
+        align_x: text::Alignment::Default,
+        align_y: iced::alignment::Vertical::Top,
+        shaping: text::Shaping::Advanced,
+        wrapping: text::Wrapping::None,
+    })
+    .min_width()
+}
+
 pub fn mono() -> Font {
     current().mono
 }
@@ -249,16 +339,17 @@ fn metrics_from_face(face: &ttf_parser::Face) -> Option<FontMetrics> {
     })
 }
 
-/// Recommended families Sola defaults to (and common fallbacks). These seed
-/// the font picker vocabulary; [`pickable_families`] folds in every
-/// system-installed family on top. SF faces are **not** shipped in-repo —
-/// see `.local/fonts/README.md`.
+/// Recommended families Sola defaults to (and common fallbacks): the
+/// canonical spellings a theme's font tokens are matched against. SF faces
+/// are **not** shipped in-repo — see `.local/fonts/README.md`.
 pub const INSTALLED_FAMILIES: &[&str] = &[
     "SF Pro Text",
     "SF Pro Display",
     "Inter",
     "Iosevka Term Slab",
     "JetBrains Mono",
+    "Noto Sans",
+    "Noto Sans Mono",
 ];
 
 /// Preferred UI family when installed (macOS chrome feel).
@@ -269,22 +360,31 @@ pub const FALLBACK_UI_FAMILY: &str = "Inter";
 pub const DEFAULT_MONO_FAMILY: &str = "Iosevka Term Slab";
 /// Fallback mono family.
 pub const FALLBACK_MONO_FAMILY: &str = "JetBrains Mono";
+/// Last UI and mono families: Noto, for systems that ship neither SF Pro
+/// nor Inter (or JetBrains Mono).
+pub const NOTO_UI_FAMILY: &str = "Noto Sans";
+pub const NOTO_MONO_FAMILY: &str = "Noto Sans Mono";
 
-/// Resolve UI family: SF Pro Text if available, else Inter.
+/// Resolve UI family: SF Pro Text if available, else Inter, else Noto Sans.
 pub fn preferred_ui_family() -> &'static str {
     if family_available(DEFAULT_UI_FAMILY) {
         DEFAULT_UI_FAMILY
-    } else {
+    } else if family_available(FALLBACK_UI_FAMILY) || !family_available(NOTO_UI_FAMILY) {
         FALLBACK_UI_FAMILY
+    } else {
+        NOTO_UI_FAMILY
     }
 }
 
-/// Resolve mono family: Iosevka Term Slab if available, else JetBrains Mono.
+/// Resolve mono family: Iosevka Term Slab if available, else JetBrains Mono,
+/// else Noto Sans Mono.
 pub fn preferred_mono_family() -> &'static str {
     if family_available(DEFAULT_MONO_FAMILY) {
         DEFAULT_MONO_FAMILY
     } else if family_available(FALLBACK_MONO_FAMILY) {
         FALLBACK_MONO_FAMILY
+    } else if family_available(NOTO_MONO_FAMILY) {
+        NOTO_MONO_FAMILY
     } else {
         DEFAULT_MONO_FAMILY
     }
@@ -342,22 +442,6 @@ fn static_family(name: &str) -> &'static str {
     Box::leak(name.to_string().into_boxed_str())
 }
 
-/// Every family name an in-app font picker can offer: the shipped
-/// Families the picker offers = exactly what's installed system-wide
-/// (fontconfig); falls back to [`INSTALLED_FAMILIES`] only when no system
-/// fonts are found (e.g. a headless test environment with no font dirs).
-pub fn pickable_families() -> Vec<String> {
-    let sys = system_families();
-    if sys.is_empty() {
-        // Headless / no fontconfig: fall back to the recommended list so the
-        // picker is never empty (and the invariant test holds).
-        INSTALLED_FAMILIES.iter().map(|s| s.to_string()).collect()
-    } else {
-        sys
-    }
-}
-/// Family names fontdb finds installed on the system, sorted and
-
 /// True when `family` is present in iced's font database (i.e. the renderer
 /// can actually draw it). Mirrors the DB the renderer uses, so "available"
 /// == "renders as itself" (not a fontconfig substitute).
@@ -382,10 +466,9 @@ pub fn family_available(family: &str) -> bool {
         Err(_) => true,
     }
 }
+/// Family names fontdb finds installed on the system, sorted and
 /// deduped. Empty if the scan finds nothing (e.g. a headless box with
-/// no font directories) — callers should fall back to
-/// [`INSTALLED_FAMILIES`] or use [`pickable_families`], which folds
-/// both.
+/// no font directories).
 pub fn system_families() -> Vec<String> {
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
@@ -406,6 +489,18 @@ fn dedup_sorted<I: IntoIterator<Item = String>>(iter: I) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shorten_keeps_what_fits_and_ellipsizes_the_rest() {
+        // Ten per char, the ellipsis one char.
+        let w = |s: &str| s.chars().count() as f32 * 10.0;
+        assert_eq!(shorten("Inbox", 50.0, w), "Inbox");
+        assert_eq!(shorten("Design review moved", 60.0, w), "Desig…");
+        // A space before the cut is not kept.
+        assert_eq!(shorten("Hi there", 40.0, w), "Hi…");
+        assert_eq!(shorten("Hello", 5.0, w), "…");
+        assert_eq!(shorten("Ça va bien", 40.0, w), "Ça…");
+    }
 
     #[test]
     fn dedup_sorted_sorts_and_dedupes() {
@@ -445,78 +540,6 @@ mod tests {
             m.line_per_em > 1.0 && m.line_per_em < 1.6,
             "mono line_per_em out of range: {}",
             m.line_per_em
-        );
-    }
-
-    // pickable_families() returns system-installed families (or
-    // INSTALLED_FAMILIES on headless). Only require that installed
-    // fallbacks appear — SF Pro may be absent until the user installs
-    // faces from `.local/fonts/`.
-    #[test]
-    fn pickable_families_always_contains_shipped() {
-        let all = pickable_families();
-        let sys = system_families();
-        if sys.is_empty() {
-            for fam in INSTALLED_FAMILIES {
-                assert!(
-                    all.contains(&fam.to_string()),
-                    "{fam} missing from headless pickable_families"
-                );
-            }
-            return;
-        }
-        for fam in [
-            FALLBACK_UI_FAMILY,
-            FALLBACK_MONO_FAMILY,
-            DEFAULT_MONO_FAMILY,
-        ] {
-            if family_available(fam) {
-                assert!(
-                    all.contains(&fam.to_string()),
-                    "{fam} installed but missing from pickable_families"
-                );
-            }
-        }
-    }
-
-    // When system fonts are present the picker returns only families that
-    // actually pass family_available(), plus dedup guarantees no duplicates.
-    // This test checks structural invariants rather than exact membership so
-    // it stays valid regardless of which families are installed on the host.
-    #[test]
-    fn pickable_families_only_installed() {
-        let sys = system_families();
-        // Only run structural assertions when there are real system fonts;
-        // headless CI uses the INSTALLED_FAMILIES fallback path which is
-        // covered by pickable_families_always_contains_shipped above.
-        if sys.is_empty() {
-            return;
-        }
-        let all = pickable_families();
-        // No duplicates.
-        let mut sorted = all.clone();
-        sorted.sort();
-        sorted.dedup();
-        assert_eq!(
-            all.len(),
-            sorted.len(),
-            "pickable_families contains duplicates"
-        );
-        // Every returned family either passes family_available() or is one of
-        // the INSTALLED_FAMILIES fallback entries (which are valid system names
-        // on this machine since sys was non-empty above).
-        let fallbacks: Vec<String> = INSTALLED_FAMILIES.iter().map(|s| s.to_string()).collect();
-        for fam in &all {
-            assert!(
-                family_available(fam) || fallbacks.contains(fam),
-                "pickable_families contains '{}' which is not available and not a known fallback",
-                fam
-            );
-        }
-        // The guaranteed-absent sentinel must never appear.
-        assert!(
-            !all.contains(&"Definitely Not A Real Font Family 9c4e".to_string()),
-            "bogus family must not appear in pickable_families"
         );
     }
 

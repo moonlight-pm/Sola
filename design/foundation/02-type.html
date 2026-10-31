@@ -2,609 +2,102 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>SOLA / Foundation v1 / Graphite / 02 Type</title>
+<title>SOLA / Foundation / 02 Type</title>
 <link rel="stylesheet" href="../tokens.css">
-<link rel="stylesheet" href="components.css">
+<link rel="stylesheet" href="foundation.css">
+<script src="foundation.js"></script>
+<style>
+  .faces { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .face { border-top: 1px solid var(--hairline); padding-top: 22px; display: flex; flex-direction: column; gap: 10px; }
+  .face__big { font-size: 64px; line-height: 1; letter-spacing: -1px; }
+  .face__set { font-size: 15px; line-height: 24px; color: var(--ink-2); }
+  .scale { border-top: 1px solid var(--hairline); }
+  .srow { display: grid; grid-template-columns: 150px 160px 1fr 330px; gap: 20px; align-items: baseline; padding: 14px 0; border-bottom: 1px solid var(--hairline); }
+  .srow .tok { font: 400 12px/16px var(--f-mono); color: var(--ink); }
+  .srow .spec { white-space: nowrap; }
+  .srow .where { font: 400 12px/18px var(--f-chrome); color: var(--ink-2); }
+  .sample-line { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .roles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; border-top: 1px solid var(--hairline); }
+  .roles > div { padding: 16px 16px 16px 0; display: flex; flex-direction: column; gap: 6px; }
+  .roles > div + div { padding-left: 16px; border-left: 1px solid var(--hairline); }
+  .roles .tok { font: 400 12px/16px var(--f-mono); color: var(--ink); }
+  .roles .face-name { font-size: 15px; }
+</style>
 </head>
-<body style="padding: 72px">
-<div
-  data-name="02 Type"
-  style="align-items: flex-start; background-color: var(--bg-primary); display: flex; flex-direction: column; flex-shrink: 0; gap: 36px; height: fit-content; width: 100%"
->
-  <div
-    data-name="Header"
-    style="align-items: flex-start; border-color: var(--hairline); border-style: solid; border-width: 1px 0px 0px 0px; display: flex; flex-direction: column; flex-shrink: 0; gap: 12px; height: 132.5px; margin: -0.5px 0px 0px 0px; padding: 24px 0px 0px 0px; width: 1296px"
-  >
-    <div
-      data-name="Title Row"
-      style="align-items: flex-end; display: flex; flex-shrink: 0; gap: 16px; height: fit-content; width: fit-content"
-    >
-      <div
-        data-name="Number"
-        style="color: var(--accent); font-family: var(--font-mono); font-size: 13px; font-weight: 400; white-space: nowrap"
-      >
-        02
+<body class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num">02</span><div class="head__title">Type</div></div>
+    <div class="head__lead">Two faces. SF Pro Text for everything you read in a control or a sentence, Iosevka Term Slab for code, terminals and figures. Components never name a family: they ask for a role, and the theme's font tokens fill the roles. Density is macOS-like: body is 13.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">Faces</div>
+    <div class="faces">
+      <div class="face">
+        <div class="face__big" style="font-family:var(--font-ui)">Aa Sola 14:32</div>
+        <div class="spec"><b>SF Pro Text</b> · then Inter, then Noto Sans · Regular, Medium, Semibold</div>
+        <div class="face__set" style="font-family:var(--font-ui)">Projects  Project  Edit  Window — kit-foundation wants to run cargo make build. Design review moved to Monday.</div>
       </div>
-      <div
-        data-name="Title"
-        style="color: var(--text-primary); font-family: var(--font-display); font-size: 30px; font-weight: 600; letter-spacing: -0.6px; line-height: 30px; white-space: nowrap"
-      >
-        Type
+      <div class="face">
+        <div class="face__big" style="font-family:var(--font-mono)">Aa {} 0O1l</div>
+        <div class="spec"><b>Iosevka Term Slab</b> · then JetBrains Mono, then Noto Sans Mono</div>
+        <div class="face__set" style="font-family:var(--font-mono)">❯ cargo make build sola-kit<br>   Compiling iced_wgpu v0.14.0</div>
       </div>
     </div>
-    <div
-      data-name="Lead"
-      style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 14px; font-weight: 400; line-height: 22px; width: 760px"
-    >
-      Two faces, chosen by job. SF Pro Text carries every word of chrome and UI; Iosevka Term Slab carries code, terminals, and data. Components never name a family: they call a role (ui, ui_medium, display, chrome, mono), and the bus theme swaps the family behind it. This canvas sets the kit fallbacks, Inter and JetBrains Mono.
+    <p class="note" style="margin-top:18px">SF Pro and Iosevka are licensed and not in the repo: they install system-wide from a stash (<code>docs/manual/distribution.md</code>). Without them the kit takes the fallbacks: canto has Iosevka but neither SF Pro nor Inter today, so canto, and this board, set the UI in Noto Sans. SF Pro Display is not used.</p>
+  </div>
+
+  <div class="section">
+    <div class="label">Roles · kit fonts.rs</div>
+    <div class="roles" id="roles"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">The scale · kit text.rs and the chrome · 1:1</div>
+    <div class="scale" id="scale"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Rules</div>
+    <div class="facts">
+      <span>One bold word in a titlebar</span><span>The app's name, Semibold, as its first menu. Everything else in the row is regular.</span>
+      <span>Caps are labels</span><span>Section and zone labels: 10 px Medium, uppercase, tracked 1 px, tertiary ink. Never a sentence.</span>
+      <span>Figures in the top row</span><span>The clock and counts are chrome type at 13, not mono, as a menu bar clock is. The meters say their numbers as fixed LED grids, so they never reflow.</span>
+      <span>Code is mono</span><span>Commands, paths, hex values and the terminal. Prose and names stay in the UI face.</span>
+      <span>The bus sizes</span><span>The theme seeds <code>text-caption 11</code>, <code>text-body 12</code>, <code>text-body-lg 13</code>, <code>text-heading 16</code> and <code>text-display 20</code>, but nothing reads them; the kit's sizes are constants. See 11.</span>
     </div>
   </div>
-  <div
-    data-name="Faces"
-    style="align-items: flex-start; display: flex; flex-shrink: 0; gap: 24px; height: fit-content; width: 100%"
-  >
-    <div
-      data-name="SF Pro Text"
-      style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex: 1 1 0; gap: 16px; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 28px; min-width: 0; min-height: 0"
-    >
-      <div
-        data-name="Head"
-        style="align-items: flex-start; display: flex; flex-shrink: 0; height: fit-content; justify-content: space-between; width: 100%"
-      >
-        <div
-          data-name="Names"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; width: fit-content"
-        >
-          <div
-            data-name="Face"
-            style="color: var(--text-primary); font-family: var(--font-ui); font-size: 20px; font-weight: 600; white-space: nowrap"
-          >
-            SF Pro Text
-          </div>
-          <div
-            data-name="Stand-in"
-            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-          >
-            Inter on this canvas
-          </div>
-        </div>
-        <div
-          data-name="Aa"
-          style="color: var(--text-primary); font-family: var(--font-ui); font-size: 96px; font-weight: 500; letter-spacing: -3px; line-height: 86px; white-space: nowrap"
-        >
-          Aa
-        </div>
-      </div>
-      <div
-        data-name="Sample"
-        style="color: var(--text-ghost); font-family: var(--font-ui); font-size: 15px; font-weight: 400; white-space: nowrap"
-      >
-        Quit Terminal&nbsp;&nbsp;Move to Zone&nbsp;&nbsp;Reopen Closed Tab
-      </div>
-      <div
-        data-name="Roles"
-        style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-      >
-        font-ui · font-ui-medium · font-chrome · font-display
-      </div>
-    </div>
-    <div
-      data-name="Iosevka Term Slab"
-      style="align-items: flex-start; background-color: var(--bg-secondary); border-radius: var(--radius-lg); display: flex; flex-direction: column; flex: 1 1 0; gap: 16px; height: fit-content; outline-offset: -0.5px; outline: 1px solid var(--hairline); padding: 28px; min-width: 0; min-height: 0"
-    >
-      <div
-        data-name="Head"
-        style="align-items: flex-start; display: flex; flex-shrink: 0; height: fit-content; justify-content: space-between; width: 100%"
-      >
-        <div
-          data-name="Names"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; width: fit-content"
-        >
-          <div
-            data-name="Face"
-            style="color: var(--text-primary); font-family: var(--font-mono); font-size: 20px; font-weight: 600; white-space: nowrap"
-          >
-            Iosevka Term Slab
-          </div>
-          <div
-            data-name="Stand-in"
-            style="color: var(--text-secondary); font-family: var(--font-ui); font-size: 12px; font-weight: 400; white-space: nowrap"
-          >
-            JetBrains Mono on this canvas
-          </div>
-        </div>
-        <div
-          data-name="Aa"
-          style="color: var(--text-primary); font-family: var(--font-mono); font-size: 96px; font-weight: 500; letter-spacing: -2px; line-height: 86px; white-space: nowrap"
-        >
-          Aa
-        </div>
-      </div>
-      <div
-        data-name="Sample"
-        style="color: var(--text-ghost); font-family: var(--font-mono); font-size: 15px; font-weight: 400; white-space: nowrap"
-      >
-        cargo make build shell&nbsp;&nbsp;×2&nbsp;&nbsp;14:32
-      </div>
-      <div
-        data-name="Roles"
-        style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-      >
-        font-mono
-      </div>
-    </div>
-  </div>
-  <div
-    data-name="Role scale"
-    style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 14px; height: fit-content; width: 100%"
-  >
-    <div
-      data-name="Label"
-      style="color: var(--text-tertiary); font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 1px; white-space: nowrap"
-    >
-      ROLE SCALE
-    </div>
-    <div
-      data-name="Scale"
-      style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; height: fit-content; width: 100%"
-    >
-      <div
-        data-name="Display"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 24px; height: 88.5px; margin: 0px 0px -0.5px 0px; padding: 16px 0px; width: 1296px"
-      >
-        <div
-          data-name="Meta"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; width: 260px"
-        >
-          <div
-            data-name="Role Row"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="Role"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 600; white-space: nowrap"
-            >
-              Display
-            </div>
-            <div class="badge-accent" data-name="Proposed">
-              <div class="badge-accent__label">
-                Proposed
-              </div>
-            </div>
-          </div>
-          <div
-            data-name="Spec"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            32 / 600 / −0.5
-          </div>
-          <div
-            data-name="Fn"
-            style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            display
-          </div>
-        </div>
-        <div
-          data-name="Sample"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-display); font-size: 32px; font-weight: 600; letter-spacing: -0.5px; line-height: 38px; min-width: 0; min-height: 0"
-        >
-          Applications
-        </div>
-        <div
-          data-name="Use"
-          style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 240px"
-        >
-          Settings page titles, empty states, installer
-        </div>
-      </div>
-      <div
-        data-name="Heading"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 24px; height: 86.5px; margin: 0px 0px -0.5px 0px; padding: 16px 0px; width: 1296px"
-      >
-        <div
-          data-name="Meta"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; width: 260px"
-        >
-          <div
-            data-name="Role Row"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="Role"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 600; white-space: nowrap"
-            >
-              Heading
-            </div>
-          </div>
-          <div
-            data-name="Spec"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            22 / 500
-          </div>
-          <div
-            data-name="Fn"
-            style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            display · text::heading
-          </div>
-        </div>
-        <div
-          data-name="Sample"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-display); font-size: 22px; font-weight: 500; letter-spacing: -0.3px; line-height: 26px; min-width: 0; min-height: 0"
-        >
-          Accounts
-        </div>
-        <div
-          data-name="Use"
-          style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 240px"
-        >
-          Panel and dialog titles
-        </div>
-      </div>
-      <div
-        data-name="Title"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 24px; height: 86.5px; margin: 0px 0px -0.5px 0px; padding: 16px 0px; width: 1296px"
-      >
-        <div
-          data-name="Meta"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; width: 260px"
-        >
-          <div
-            data-name="Role Row"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="Role"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 600; white-space: nowrap"
-            >
-              Title
-            </div>
-          </div>
-          <div
-            data-name="Spec"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            15 / 500
-          </div>
-          <div
-            data-name="Fn"
-            style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            display · text::subheading
-          </div>
-        </div>
-        <div
-          data-name="Sample"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 15px; font-weight: 500; line-height: 18px; min-width: 0; min-height: 0"
-        >
-          Sync Google calendar
-        </div>
-        <div
-          data-name="Use"
-          style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 240px"
-        >
-          Card titles, list group titles, notification title
-        </div>
-      </div>
-      <div
-        data-name="Prose"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 24px; height: 86.5px; margin: 0px 0px -0.5px 0px; padding: 16px 0px; width: 1296px"
-      >
-        <div
-          data-name="Meta"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; width: 260px"
-        >
-          <div
-            data-name="Role Row"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="Role"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 600; white-space: nowrap"
-            >
-              Prose
-            </div>
-          </div>
-          <div
-            data-name="Spec"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            14 / 400 / 1.55
-          </div>
-          <div
-            data-name="Fn"
-            style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            ui · text::prose
-          </div>
-        </div>
-        <div
-          data-name="Sample"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 14px; font-weight: 400; line-height: 22px; min-width: 0; min-height: 0"
-        >
-          Thanks — the draft is in the shared folder. I moved the review to Thursday.
-        </div>
-        <div
-          data-name="Use"
-          style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 240px"
-        >
-          Mail bodies and long reading
-        </div>
-      </div>
-      <div
-        data-name="Body"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 24px; height: 86.5px; margin: 0px 0px -0.5px 0px; padding: 16px 0px; width: 1296px"
-      >
-        <div
-          data-name="Meta"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; width: 260px"
-        >
-          <div
-            data-name="Role Row"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="Role"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 600; white-space: nowrap"
-            >
-              Body
-            </div>
-          </div>
-          <div
-            data-name="Spec"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            13 / 400
-          </div>
-          <div
-            data-name="Fn"
-            style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            ui · chrome · text::body
-          </div>
-        </div>
-        <div
-          data-name="Sample"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 13px; font-weight: 400; line-height: 16px; min-width: 0; min-height: 0"
-        >
-          New Tab&nbsp;&nbsp;&nbsp;Move to Zone 3&nbsp;&nbsp;&nbsp;Workspaces
-        </div>
-        <div
-          data-name="Use"
-          style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 240px"
-        >
-          Buttons, rows, menus, menubar, fields
-        </div>
-      </div>
-      <div
-        data-name="Small"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 24px; height: 86.5px; margin: 0px 0px -0.5px 0px; padding: 16px 0px; width: 1296px"
-      >
-        <div
-          data-name="Meta"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; width: 260px"
-        >
-          <div
-            data-name="Role Row"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="Role"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 600; white-space: nowrap"
-            >
-              Small
-            </div>
-          </div>
-          <div
-            data-name="Spec"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            12 / 400
-          </div>
-          <div
-            data-name="Fn"
-            style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            ui · labeled_sm
-          </div>
-        </div>
-        <div
-          data-name="Sample"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 14px; min-width: 0; min-height: 0"
-        >
-          ⇧⌘T&nbsp;&nbsp;&nbsp;Reopen Closed Tab
-        </div>
-        <div
-          data-name="Use"
-          style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 240px"
-        >
-          Small buttons, shortcuts, notification body
-        </div>
-      </div>
-      <div
-        data-name="Caption"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 24px; height: 86.5px; margin: 0px 0px -0.5px 0px; padding: 16px 0px; width: 1296px"
-      >
-        <div
-          data-name="Meta"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; width: 260px"
-        >
-          <div
-            data-name="Role Row"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="Role"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 600; white-space: nowrap"
-            >
-              Caption
-            </div>
-          </div>
-          <div
-            data-name="Spec"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            11 / 400
-          </div>
-          <div
-            data-name="Fn"
-            style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            ui · text::caption
-          </div>
-        </div>
-        <div
-          data-name="Sample"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 11px; font-weight: 400; line-height: 13px; min-width: 0; min-height: 0"
-        >
-          Calendar · in 10 min
-        </div>
-        <div
-          data-name="Use"
-          style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 240px"
-        >
-          Sources, timestamps, help under a field
-        </div>
-      </div>
-      <div
-        data-name="Badge"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 24px; height: 86.5px; margin: 0px 0px -0.5px 0px; padding: 16px 0px; width: 1296px"
-      >
-        <div
-          data-name="Meta"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; width: 260px"
-        >
-          <div
-            data-name="Role Row"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="Role"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 600; white-space: nowrap"
-            >
-              Badge
-            </div>
-          </div>
-          <div
-            data-name="Spec"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            10 / 500 / +0.8 caps
-          </div>
-          <div
-            data-name="Fn"
-            style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            ui_medium
-          </div>
-        </div>
-        <div
-          data-name="Sample"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-ui); font-size: 10px; font-weight: 500; letter-spacing: 0.8px; line-height: 12px; min-width: 0; min-height: 0"
-        >
-          SOLA&nbsp;&nbsp;&nbsp;LIVE&nbsp;&nbsp;&nbsp;3
-        </div>
-        <div
-          data-name="Use"
-          style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 240px"
-        >
-          Badges, count marks, rail section labels
-        </div>
-      </div>
-      <div
-        data-name="Code"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 24px; height: 86.5px; margin: 0px 0px -0.5px 0px; padding: 16px 0px; width: 1296px"
-      >
-        <div
-          data-name="Meta"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; width: 260px"
-        >
-          <div
-            data-name="Role Row"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="Role"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 600; white-space: nowrap"
-            >
-              Code
-            </div>
-          </div>
-          <div
-            data-name="Spec"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            12 / 400
-          </div>
-          <div
-            data-name="Fn"
-            style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            mono · text::code
-          </div>
-        </div>
-        <div
-          data-name="Sample"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-mono); font-size: 12px; font-weight: 400; line-height: 14px; min-width: 0; min-height: 0"
-        >
-          ~/.config/sola/theme/current.yaml
-        </div>
-        <div
-          data-name="Use"
-          style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 240px"
-        >
-          Paths, ids, JSON, detail numbers
-        </div>
-      </div>
-      <div
-        data-name="Terminal"
-        style="align-items: center; border-color: var(--hairline); border-style: solid; border-width: 0px 0px 1px 0px; display: flex; flex-shrink: 0; gap: 24px; height: 86.5px; margin: 0px 0px -0.5px 0px; padding: 16px 0px; width: 1296px"
-      >
-        <div
-          data-name="Meta"
-          style="align-items: flex-start; display: flex; flex-direction: column; flex-shrink: 0; gap: 4px; height: fit-content; width: 260px"
-        >
-          <div
-            data-name="Role Row"
-            style="align-items: center; display: flex; flex-shrink: 0; gap: 8px; height: fit-content; width: fit-content"
-          >
-            <div
-              data-name="Role"
-              style="color: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 600; white-space: nowrap"
-            >
-              Terminal
-            </div>
-          </div>
-          <div
-            data-name="Spec"
-            style="color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            15 / 400
-          </div>
-          <div
-            data-name="Fn"
-            style="color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; font-weight: 400; white-space: nowrap"
-          >
-            mono · terminal grid
-          </div>
-        </div>
-        <div
-          data-name="Sample"
-          style="color: var(--text-primary); flex: 1 1 0; font-family: var(--font-mono); font-size: 15px; font-weight: 400; line-height: 18px; min-width: 0; min-height: 0"
-        >
-          $ grok --cwd ~/Workspace/Sola
-        </div>
-        <div
-          data-name="Use"
-          style="color: var(--text-secondary); flex-shrink: 0; font-family: var(--font-ui); font-size: 12px; font-weight: 400; line-height: 17px; width: 240px"
-        >
-          Terminal and Workspaces panes
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
+
+<script>
+  const ROLES = [
+    ["ui", "SF Pro Text", 400, "Body, rows, fields, buttons"],
+    ["ui_medium", "SF Pro Text Medium", 500, "Section caps, emphasis in rows"],
+    ["display", "SF Pro Text Medium", 500, "Headings, subheadings"],
+    ["chrome", "SF Pro Text", 400, "Titlebars, the top row, menus"],
+    ["mono", "Iosevka Term Slab", 400, "Code, terminals, figures"],
+  ];
+  document.getElementById("roles").innerHTML = ROLES.map(([r, f, w, use]) =>
+    `<div><span class="tok">${r}()</span><span class="face-name" style="font-family:${r === "mono" ? "var(--font-mono)" : "var(--font-ui)"};font-weight:${w}">${f}</span><span class="note">${use}</span></div>`).join("");
+
+  // [name, size, weight, family, extra css, spec, where, sample]
+  const SCALE = [
+    ["heading", 22, 500, "ui", "", "22 · display", "Page titles, dialog headers", "Appearance"],
+    ["launcher query", 16, 400, "ui", "", "16 · ui", "The launcher's field", "ca"],
+    ["subheading", 15, 500, "ui", "", "15 · display", "Sections within a page", "Background picture"],
+    ["terminal", 15, 400, "mono", "", "15 · mono", "Terminal and Projects panes", "❯ cargo make build"],
+    ["prose", 14, 400, "ui", "line-height:1.55", "14 · ui", "Mail bodies, long reading", "The Sola foundation review moved to Monday."],
+    ["launcher row", 14, 400, "ui", "", "14 · ui", "Launcher results", "Calendar"],
+    ["body", 13, 400, "ui", "", "13 · ui", "Rows, fields, buttons, menus, the top row", "Keyboard Shortcuts"],
+    ["titlebar menu", 13, 400, "ui", "", "13 · chrome", "Menu titles; the app name 600", "<b style='font-weight:600'>Projects</b>&nbsp;&nbsp;Project&nbsp;&nbsp;Edit&nbsp;&nbsp;Window"],
+    ["window title", 12.5, 400, "ui", "color:var(--ink-dim)", "12.5 · chrome · 55%", "The title at the titlebar's right", "kit-foundation · claude"],
+    ["small", 12, 400, "ui", "", "12 · ui", "Small buttons, shortcuts, chips", "⌘K"],
+    ["code", 12, 400, "mono", "", "12 · mono", "Inline code, hex values", "#3dd6f5"],
+    ["caption", 11, 400, "ui", "color:var(--ink-2)", "11 · ui · muted", "Timestamps, helper copy, settings captions", "Starts after the bus and the shell"],
+    ["section caps", 10, 500, "ui", "letter-spacing:1px;text-transform:uppercase;color:var(--ink-3)", "10 · 500 · caps +1", "Sidebar zones, settings sections", "Right"],
+  ];
+  document.getElementById("scale").innerHTML = SCALE.map(([n, s, w, f, x, spec, where, sample]) =>
+    `<div class="srow"><span class="tok">${n}</span><span class="spec">${spec}</span><span class="sample-line" style="font-family:var(--font-${f});font-size:${s}px;font-weight:${w};${x}">${sample}</span><span class="where">${where}</span></div>`).join("");
+  finish();
+</script>
 </body>
 </html>

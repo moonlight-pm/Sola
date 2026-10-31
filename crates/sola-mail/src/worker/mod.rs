@@ -6,6 +6,7 @@
 
 mod account;
 mod cmds;
+mod images;
 mod merge;
 mod read;
 mod send;
@@ -250,6 +251,7 @@ impl Coordinator {
                     fail(Op::Open(id), "that account is not connected");
                 }
             }
+            MailCmd::FetchImages { id, urls } => images::spawn(id, urls),
             MailCmd::SetFlag { id, flag, on } => {
                 let sent = self.handle_for(&id.account).is_some_and(|h| {
                     h.read(ReadReq::Flag {

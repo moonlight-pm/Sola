@@ -14,7 +14,7 @@ selection — with **macOS Dark Mode density and hierarchy** as craft reference,
 not a pixel-perfect HIG clone.
 
 Seed atoms live in `sola-kit::theme::hex::*` and `sola-core` `Palette::seed`
-(must stay in sync). Dogfood kit chrome in the storybook, not in external mocks.
+(must stay in sync). Dogfood kit chrome in the apps that use it, not in external mocks.
 
 We borrow Apple’s *structural* ideas — materials, elevation steps, menu bar
 roles, control density, type roles — and diverge where Sola’s windowing model
@@ -238,11 +238,10 @@ Use this when restyling or reviewing shell UI. Default comparison target: **macO
 Visual work should flow through existing machinery:
 
 1. **Compile-time kit atoms** — `sola_kit::theme::hex` defaults  
-2. **Bus theme** — `Topic::Theme`, palette tokens, presets  
+2. **Bus theme** — `Topic::Theme`, palette tokens  
 3. **Shell tokens** — `shell-*` group (the flower, backdrop, switcher, launcher)  
 4. **Font roles** — installed from theme; components call role accessors only  
-5. **Components** — `sola-kit` widgets + storybook pages as the regression surface  
-6. **Storybook** — dogfood every kit visual change  
+5. **Components** — `sola-kit` widgets, seen in the apps that use them  
 
 Order of work for redesigns:
 
@@ -282,14 +281,14 @@ Always pin for Sola work:
 - Stack: **iced + sola-kit only** (no WebView for shell/kit)  
 - **Tokens first**  
 - **Reuse kit components**  
-- **Storybook** for kit-side changes  
+- **Look at a kit change in the apps that use it**  
 - **One surface per pass** unless explicitly scoped broader  
 
 ### 6.3 Screenshot loop
 
 Verification for Sola is not a web browser loop:
 
-1. Capture current surface(s) (idle top row, an open titlebar menu, launcher, switcher, storybook).  
+1. Capture current surface(s) (idle top row, an open titlebar menu, launcher, switcher, the app a kit change touches).  
 2. Agree a short visual plan (keep / change / forbidden).  
 3. Implement where your tab is (a root tab works on master; a worktree only when asked).  
 4. `cargo make build` (user installs and runs from TTY).  
@@ -344,7 +343,7 @@ For visual work, prefer plan mode or an explicit “brief only, no code” turn 
 - [ ] Type uses role accessors, not raw families?  
 - [ ] Spacing on a small consistent scale?  
 - [ ] States: hover / selected / disabled / empty considered?  
-- [ ] Storybook updated if kit changed?  
+- [ ] Kit change looked at in an app that uses it?  
 - [ ] No new snowflake styles in shell views?  
 
 ---
@@ -373,7 +372,7 @@ roadmap are done):
 3. ~~**Menus & popovers**~~ — done (P4).  
 4. ~~**Launcher**~~ — done (P5).  
 5. ~~**Switcher**~~ — done (P6).  
-6. ~~**Kit controls**~~ — done (P7; storybook is the regression surface).  
+6. ~~**Kit controls**~~ — done (P7; the storybook that was their regression surface was retired 2026-10-30).  
 7. ~~**Settings / other kit apps**~~ — done (P8; inherit kit helpers, no per-app themes).  
 
 ---
@@ -390,7 +389,7 @@ roadmap are done):
 - Shell customization tokens: `docs/specs/2026-06-06-shell-customization-design.md`  
 - Shell iced port: `docs/specs/2026-05-22-sola-shell-iced-port-design.md`  
 - Kit theme implementation: `crates/sola-kit/src/theme.rs`  
-- Shell style extraction: kit `ShellStyle` / storybook Shell page  
+- Shell style extraction: kit `ShellStyle`  
 
 ### Apple HIG (authoritative external)
 

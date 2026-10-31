@@ -1,0 +1,171 @@
+---
+name: sola-projects
+description: Operate top bar — status marks are the product
+colors:
+  canvas: "#0c0e12"
+  raised: "#151922"
+  hover: "#1e2533"
+  fg: "#e9ecf2"
+  fg-muted: "#8b94a8"
+  accent: "#3dd6f5"
+  success: "#3ecf8e"
+  warning: "#e8b84a"
+typography:
+  ui:
+    fontFamily: "SF Pro Text, Inter, system-ui, sans-serif"
+    fontSize: "14px"
+    fontWeight: 400
+    lineHeight: 1.2
+    letterSpacing: "normal"
+  ui-caption:
+    fontFamily: "SF Pro Text, Inter, system-ui, sans-serif"
+    fontSize: "11px"
+    fontWeight: 400
+    lineHeight: 1.2
+    letterSpacing: "normal"
+  mono:
+    fontFamily: "Iosevka Term Slab, JetBrains Mono, ui-monospace, monospace"
+    fontSize: "15px"
+    fontWeight: 400
+    lineHeight: 1.2
+    letterSpacing: "normal"
+spacing:
+  mark-slot: "12px"
+  sidebar-default: "240px"
+components:
+  status-working:
+    textColor: "{colors.accent}"
+    size: "{spacing.mark-slot}"
+  status-waiting:
+    textColor: "{colors.warning}"
+    size: "{spacing.mark-slot}"
+  status-done:
+    textColor: "{colors.success}"
+    size: "{spacing.mark-slot}"
+  status-idle:
+    textColor: "{colors.fg-muted}"
+    size: "{spacing.mark-slot}"
+---
+
+# DESIGN
+
+Recorded from the built status-chrome surface. Tokens ride the Sola bus /
+sola-kit atoms — do not fork a private palette.
+
+## Overview
+
+Operate mode. A window per project (a tab in the shell's tab bar,
+named for the project): its tabs as chips along a top bar, the
+terminal grid below. The left rail is gone (2026-10-21). Status is the
+product. One signature: the reserved status mark. Everything else stays
+graphite and quiet.
+
+## Colors
+
+Restrained. Canvas / raised / hover from kit graphite. Accent (`#3dd6f5`)
+only for selection and the **working** ring. Warning diamond for waiting.
+Success check for done. Idle is foreground at ~40% alpha. Never infer
+state from hue alone — shape differs too.
+
+## Typography
+
+`fonts::ui()` on chrome. `fonts::mono()` on the grid. No display face.
+Tab title 14. No agent name on the row — status is the mark, the
+desk card names project, tab, and agent. Sibling rows use the kit hover × (`on_close`, lucide/x).
+Root has no row close. **Project** menu: New Project… (a name → its folder
+in `~/Projects`), Startup Script…, Close Window, then Open <folder> for each
+folder of `~/Projects` not open. **Edit** menu: Copy / Paste (⌘C / ⌘V) — script editor when
+open, otherwise the focused pane (same as sola-terminal). Startup is a per-project `/bin/sh` run in each new
+worktree (copy `.grok`, etc.). Script env: `$PROJECT` (folder on disk),
+`$WORKTREE` (this tab), `$NAME` (tab name). The editor lists them. Scripts
+are kept by folder (`startup.json`), so they outlive closing.
+⌘W closes the focused **pane**; ⇧⌘W (Project → Close Window) closes the
+project: its sessions end (tmux killed) and Projects forgets it; its
+folders and worktrees stay on disk, and opening it again starts on its
+root tab. Projects keeps only open projects (2026-10-28).
+A tab is always one chip in its project's top bar —
+splits stay in the grid, not as child tabs. The mark rolls up every
+Grok or Codex pane in that tab (waiting beats working beats done beats idle).
+
+## Layout
+
+```
+[ PROJECT                    + ]
+[ ●  root                      ]
+[ ●  worktree-a                ]
+[ NEXT PROJECT               + ]
+              terminal grid →
+```
+
+Mark slot is always 12×12 so titles do not shift. Groups stack at the
+top; a lone project may fill to scroll. Group `+` opens a name-only
+modal (worktree + branch). The new pane is a shell — start grok yourself.
+Drag a worktree row to reorder it inside that project; drag a project
+header to reorder groups. Hover a worktree for a pencil (or double-click)
+to rename — same as `tab.set --name` (slug + worktree move). Root
+has no pencil. Escape cancels the field.
+
+## Shapes
+
+- **Working** — open ring, round-cap stroke, accent, ~0.85s spin
+- **Waiting** — filled diamond, warning
+- **Done** — two-stroke check, success
+- **Idle** — dim disc, same slot
+- **Active** (generic kit apps) — filled success disc; unchanged
+
+Motion is state only (the working ring). No page-load choreography.
+
+## Components
+
+Kit `SidebarPanel` + `SidebarIndicator` / `status_mark`. Section labels
+toggle collapse; section `+` opens the name modal. The panel is
+`.reorder_within_sections()` so a tab cannot join another project.
+Hover close is kit `SidebarItem::on_close`; hover pencil is `on_edit`
+(worktrees). App-local: catalog, modal. Do not restyle mail / settings /
+terminal.
+
+## Do's and Don'ts
+
+- Do reserve the mark slot on every row, including idle.
+- Do keep who off the row; state is the mark. The desk card names
+  project, tab, and agent.
+- Do stack project groups at the top (do not fill the selected group).
+- Do use the kit hover × on siblings only; never on root.
+- Do drop the **project** from the menu only (unregister + kill every
+  tmux session in the group). Hover × never `git worktree remove`.
+  CLI `tab.rm --worktree` is the explicit checkout delete; a gone
+  path reaps the tab. Do not run `tmux kill-session` or
+  `git worktree remove` on the iced thread (the rail freezes).
+- Do show **Start new shell** only when the **last** pane's PTY has
+  exited (Ctrl-D). A split leaf that dies just closes. Hover must not
+  start a shell — only the button (or a sidebar click that attaches
+  every live leaf).
+- Do show a quiet `×N` on the tab row when a Grok or Codex pane
+  in that tab has compacted (loudest session). Grok: `compaction/segment_*.md`,
+  checkpoints, then `signals.json` `compactionCount` (often stays 0).
+  Codex: `type: compacted` records in `~/.codex/sessions/**/rollout-*-{id}.jsonl`.
+  Shell panes do not contribute.
+- Do keep splits off the top bar. One chip per tab; the mark watches
+  every Grok or Codex pane in the tab. Waiting (needs attention) beats working
+  beats done beats idle. A grok+shell split looks like a single pane.
+- Do return the mark to idle (grey disc) when no Grok pane is live
+  (every leaf is a shell). `/exit` / process gone is idle, not a stuck
+  done check.
+- Do remember the Grok session id on a live grok pane. After a reboot
+  (tmux gone) attach with `grok -r <id>` when that session is still on
+  disk. A shell after `/exit` does not resume.
+- Do put `+` at the end of the top bar (the new-tab card), not a form.
+- Do rename a worktree tab with a double-click on its chip
+  (`tab.set --title`). The chip shows that label, defaulting to the
+  worktree slug — do not prefix the slug onto a custom title. Root has
+  no rename. Order is `tab.set --before` or a drag in the top bar. `--name` still moves `.worktrees/<slug>`.
+- Do notify done and waiting only when unfocused (desk card, not
+  menubar whisper): title `{project} · {tab}`, body `grok is done` /
+  `grok needs attention`. Tab is the chip label (`root`, slug, or
+  `root`, the worktree slug, or `--title` when set).
+- Do bind ⌘T spawn sibling, ⌘N new project, ⌘⇧↓ split down, ⌘⇧→ split
+  right, ⌘W close pane.
+- Don't infer status from OSC 0/2 titles.
+- Don't let a tab drag into another project.
+- Don't cargo-cult Orca worktree cards or amber-everything dots.
+- Don't put siblings anywhere but `<root>/.worktrees/<slug>`.

@@ -1,10 +1,11 @@
-//! Per-app float-state tracking for kit apps that draw their own titlebar.
+//! Per-app float-state tracking: which of an app's windows float, so its
+//! frame ([`crate::window_frame`]) knows how to draw.
 //!
 //! **Policy:** the shell marks every window without a zone assignment as
-//! floating and emits sticky `Topic::WindowFloating`. Kit apps should honor
-//! that bit and draw CSD ([`crate::components::titlebar`]) while floating;
-//! zoned windows stay chrome-less. Size is the client's requested size unless
-//! a zone or restored float geometry applies.
+//! floating and emits sticky `Topic::WindowFloating`. Every kit window draws
+//! its frame ([`crate::window_frame`]); the float bit picks how: both clear
+//! their corners, a float also resizes from its edges and drags. Size is the client's requested size unless a zone
+//! or restored float geometry applies.
 //!
 //! An app doesn't know its own sola-river `window_id`, so we learn it by
 //! matching `(app_id, title)` from `Topic::Windows`, then track the float bit
@@ -17,10 +18,11 @@
 //! 2. `FloatState::new(APP_ID)` + `window_id: Option<window::Id>`
 //! 3. Boot: `window::latest().map(Msg::WindowReady)`
 //! 4. Bus: `float.update(&message)`
-//! 5. Theme: [`theme_for`] while floating — tiled is an opaque fill, which
-//!    the patched `iced_winit` turns into a Wayland opaque-region (River
-//!    GLES scanout). Float uses [`crate::theme::overlay`] and clears it.
-//! 6. View: [`wrap_if_floating`] around content
+//! 5. Theme: [`theme_for`] with the window's [`Chrome`] — a tile or a float
+//!    gets [`crate::theme::overlay`] (a clear fill, so its rounded corners
+//!    show what is under it); Cinema keeps the opaque fill, which the
+//!    patched `iced_winit` turns into a Wayland opaque-region (scanout).
+//! 6. View: [`crate::window_frame`] around content
 //! 7. Handlers: [`drag`] / [`drag_resize`] / [`close_app`]
 //!
 //! [`update`]: FloatState::update
@@ -30,10 +32,12 @@
 use std::collections::{HashMap, HashSet};
 
 use iced::window::Direction;
-use iced::{Element, Task, Theme};
+use iced::{Task, Theme};
 
 use sola_bus::Message;
 use sola_bus::topics::Topic;
+
+use crate::components::window_frame::Chrome;
 
 #[derive(Debug, Default)]
 pub struct FloatState {
@@ -42,6 +46,8 @@ pub struct FloatState {
     ids_by_title: HashMap<String, u32>,
     /// Currently-floating `window_id`s (all apps; filtered on read).
     floating: HashSet<u32>,
+    /// Windows the shell shows in Cinema (`Topic::WindowChrome`): no frame.
+    cinema: HashSet<u32>,
 }
 
 impl FloatState {
@@ -67,6 +73,15 @@ impl FloatState {
                     }
                 }
                 self.floating.retain(|id| live.contains(id));
+                self.cinema.retain(|id| live.contains(id));
+            }
+            // A retraction is the same topic, not sticky: the window left.
+            Some(Topic::WindowChrome(c)) => {
+                if msg.sticky && c.cinema {
+                    self.cinema.insert(c.window_id);
+                } else {
+                    self.cinema.remove(&c.window_id);
+                }
             }
             Some(Topic::WindowFloating(wf)) => {
                 if wf.floating {
@@ -93,24 +108,50 @@ impl FloatState {
             .any(|id| self.floating.contains(id))
     }
 
+    /// Is the sola-river window `window_id` floating? For apps with a
+    /// window per tab ([`crate::tabs::TabWindows::river_id`]).
+    pub fn is_window_floating(&self, window_id: u32) -> bool {
+        self.floating.contains(&window_id)
+    }
+
+    /// How to frame the sola-river window `window_id`.
+    pub fn chrome(&self, window_id: u32) -> Chrome {
+        if self.cinema.contains(&window_id) {
+            Chrome::Bare
+        } else {
+            self.is_window_floating(window_id).into()
+        }
+    }
+
+    /// How to frame this app's window. For single-window apps.
+    pub fn chrome_any(&self) -> Chrome {
+        if self.ids_by_title.values().any(|id| self.cinema.contains(id)) {
+            Chrome::Bare
+        } else {
+            self.is_floating_any().into()
+        }
+    }
+
     /// Any compositor `window_id` belonging to this app, if known.
     pub fn any_window_id(&self) -> Option<u32> {
         self.ids_by_title.values().copied().next()
     }
 }
 
-/// Theme while floating: clear `background.base` so rounded corners show
-/// the desktop (and Wayland opaque-region is cleared). Zoned: the live
-/// theme unchanged (opaque fill → compositor scanout).
-pub fn theme_for(floating: bool, theme: &Theme) -> Theme {
-    if floating {
-        crate::theme::overlay(theme)
-    } else {
-        theme.clone()
+/// The window's theme for how it is shown ([`Chrome`]; a `bool` is
+/// "floating"). Tiled or floating: `background.base` cleared, so the
+/// frame's rounded corners show what is under the window (the ground —
+/// black or the background picture — or other windows); the Wayland
+/// opaque-region is cleared with it. Cinema ([`Chrome::Bare`], square and
+/// full-output): the live theme unchanged (opaque fill → scanout).
+pub fn theme_for(chrome: impl Into<Chrome>, theme: &Theme) -> Theme {
+    match chrome.into() {
+        Chrome::Bare => theme.clone(),
+        Chrome::Tiled | Chrome::Floating => crate::theme::overlay(theme),
     }
 }
 
-/// Begin an interactive move of the app's iced window (CSD titlebar drag).
+/// Begin an interactive move of the app's iced window (titlebar drag).
 pub fn drag<Message>(window_id: Option<iced::window::Id>) -> Task<Message> {
     match window_id {
         Some(id) => iced::window::drag(id),
@@ -118,7 +159,7 @@ pub fn drag<Message>(window_id: Option<iced::window::Id>) -> Task<Message> {
     }
 }
 
-/// Begin an interactive edge/corner resize (floating_frame grip).
+/// Begin an interactive edge/corner resize (a floating frame's edge).
 pub fn drag_resize<Message>(
     window_id: Option<iced::window::Id>,
     direction: Direction,
@@ -129,30 +170,20 @@ pub fn drag_resize<Message>(
     }
 }
 
+/// Bring one of this app's windows forward: the shell shows it in its zone
+/// (switching workspace if it must) and focuses it (`Topic::ShowWindow`) —
+/// a single-instance app answering a second launch. `window_id` is the
+/// sola-river id ([`FloatState::any_window_id`]).
+pub fn show_window(window_id: u32) {
+    if let Ok(mut bus) = crate::app::bus().lock() {
+        let _ = bus.emit(Topic::ShowWindow(window_id));
+    }
+}
+
 /// Ask the session to close this app (`Topic::CloseApp`).
 pub fn close_app(app_id: &str) {
     if let Ok(mut bus) = crate::app::bus().lock() {
         let _ = bus.emit(Topic::CloseApp(app_id.into()));
-    }
-}
-
-/// Wrap `content` in [`floating_frame`] when floating; otherwise return it
-/// unchanged (zoned = no client titlebar).
-pub fn wrap_if_floating<'a, Message>(
-    floating: bool,
-    title: impl Into<String>,
-    on_drag: Message,
-    on_close: Message,
-    on_resize: impl Fn(Direction) -> Message + 'a,
-    content: Element<'a, Message, Theme>,
-) -> Element<'a, Message, Theme>
-where
-    Message: Clone + 'a,
-{
-    if floating {
-        crate::components::titlebar::floating_frame(title, on_drag, on_close, on_resize, content)
-    } else {
-        content
     }
 }
 
@@ -181,28 +212,16 @@ mod tests {
     }
 
     #[test]
-    fn theme_for_tiled_is_opaque_float_is_transparent() {
+    fn theme_for_cinema_is_opaque_tiles_and_floats_are_clear() {
         let base = crate::default_theme();
+        let fill = |chrome: Chrome| theme_for(chrome, &base).extended_palette().background.base.color.a;
         assert!(
-            theme_for(false, &base)
-                .extended_palette()
-                .background
-                .base
-                .color
-                .a
-                >= 0.999,
-            "tiled fill must be opaque so iced_winit can set opaque-region"
+            fill(Chrome::Bare) >= 0.999,
+            "Cinema fill must be opaque so iced_winit can set opaque-region"
         );
-        assert_eq!(
-            theme_for(true, &base)
-                .extended_palette()
-                .background
-                .base
-                .color
-                .a,
-            0.0,
-            "float overlay must clear the fill so rounded CSD can punch through"
-        );
+        assert_eq!(fill(Chrome::Tiled), 0.0, "a tile's corners show the ground");
+        assert_eq!(fill(Chrome::Floating), 0.0, "a float's corners show what is under it");
+        assert_eq!(fill(false.into()), 0.0);
     }
 
     #[test]
@@ -266,5 +285,33 @@ mod tests {
         // window closes → Windows no longer lists it
         fs.update(&Topic::Windows(vec![]).to_message());
         assert!(!fs.is_floating_any());
+    }
+
+    fn chrome_msg(window_id: u32, cinema: bool, sticky: bool) -> Message {
+        let mut msg = Topic::WindowChrome(sola_bus::topics::WindowChrome {
+            window_id,
+            tiled: true,
+            cinema,
+            rim: false,
+        })
+        .to_message();
+        msg.sticky = sticky;
+        msg
+    }
+
+    #[test]
+    fn cinema_drops_the_frame_until_it_ends() {
+        let mut fs = FloatState::new("sola-monitor");
+        fs.update(&Topic::Windows(vec![win(7, "sola-monitor", "Monitor")]).to_message());
+        assert_eq!(fs.chrome_any(), Chrome::Tiled);
+        fs.update(&chrome_msg(7, true, true));
+        assert_eq!(fs.chrome_any(), Chrome::Bare);
+        assert_eq!(fs.chrome(7), Chrome::Bare);
+        fs.update(&chrome_msg(7, false, true));
+        assert_eq!(fs.chrome_any(), Chrome::Tiled);
+        fs.update(&chrome_msg(7, true, true));
+        // A retraction (the window left its zone record) ends it too.
+        fs.update(&chrome_msg(7, true, false));
+        assert_eq!(fs.chrome(7), Chrome::Tiled);
     }
 }

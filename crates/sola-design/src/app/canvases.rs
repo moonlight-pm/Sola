@@ -1,15 +1,19 @@
-//! Live canvases: the one on screen, plus any an agent is working on in
-//! the background. Each keeps its own boards, files, and camera, so several
-//! agents can work at once and none of them moves what the human sees.
-//! Agents never bring a canvas to the front (`--raise` is the explicit
-//! exception). Boards nobody looks at sleep ([`crate::pace`]); when memory
-//! runs short, idle ones are discarded ([`super::budget`]). An off-screen
-//! canvas nobody has used for [`IDLE`] closes; the next call reopens it.
+//! Live canvases: the one in each project window, plus any an agent is
+//! working on in the background. Each keeps its own boards, files, and
+//! camera, so several agents can work at once and none of them moves what
+//! the human sees. The active window's canvas is *shown*: its view lives
+//! in the app. Every other canvas keeps its view parked — and a canvas
+//! another window shows draws from it. Agents never bring a canvas to the
+//! front (`--raise` is the explicit exception). Boards nobody looks at
+//! sleep ([`crate::pace`]); when memory runs short, idle ones are discarded
+//! ([`super::budget`]). A canvas no window shows that nobody has used for
+//! [`IDLE`] closes; the next call reopens it.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
+use iced::{Size, window};
 use sola_browser::engine::{BoardPace, Cmd, TabId};
 
 use super::budget::Admit;
@@ -20,10 +24,12 @@ use crate::camera::{self, Camera};
 use crate::canvas;
 use crate::pace;
 use crate::projects::CanvasRef;
+use crate::select::Selection;
+use crate::tour::{Notes, Tour};
 
 /// An off-screen canvas closes after this long without a call.
 pub(super) const IDLE: Duration = Duration::from_secs(10 * 60);
-/// The rail marks a canvas an agent called on within this.
+/// The top bar marks a canvas an agent called on within this.
 pub(super) const AGENT_RECENT: Duration = Duration::from_secs(30);
 
 pub(super) struct Live {
@@ -48,13 +54,20 @@ pub(super) struct Live {
     pub agent_at: Option<Instant>,
 }
 
-/// A canvas's view while another is on screen.
-#[derive(Debug, Clone, Copy)]
+/// A canvas's view while another is shown: what its window draws, and
+/// what comes back when it is shown again.
+#[derive(Debug, Clone)]
 pub(super) struct Parked {
     pub camera: Camera,
     pub fit_pending: bool,
     pub user_camera: bool,
     pub human_camera: bool,
+    /// The human's pick, tour and open notes there (kept only while the
+    /// canvas stays on screen in its window).
+    pub selection: Option<Selection>,
+    pub tour: Option<Tour>,
+    pub notes: Notes,
+    pub flows_open: bool,
 }
 
 impl Parked {
@@ -64,7 +77,19 @@ impl Parked {
             fit_pending: true,
             user_camera: false,
             human_camera: false,
+            selection: None,
+            tour: None,
+            notes: Notes::default(),
+            flows_open: false,
         }
+    }
+
+    /// The canvas left the screen: its pick, tour and notes go.
+    fn leave(&mut self) {
+        self.selection = None;
+        self.tour = None;
+        self.notes = Notes::default();
+        self.flows_open = false;
     }
 }
 
@@ -184,64 +209,168 @@ impl App {
             .collect()
     }
 
-    /// Put `at` on screen: the human picked it (or asked an agent to show
-    /// it). The canvas that was there keeps its view for later.
+    /// The canvas project window `window` shows: its project's selected
+    /// canvas while it is on disk, else the first. `None` for the
+    /// no-project window or a project without canvases.
+    pub(super) fn canvas_of(&self, window: window::Id) -> Option<CanvasRef> {
+        let project = self.windows.project_of(window)?;
+        let list = self.canvases.get(project)?;
+        let selected = self.catalog.project(project)?.selected.as_deref();
+        let name = selected
+            .filter(|s| list.iter().any(|c| c.name == *s))
+            .or_else(|| list.first().map(|c| c.name.as_str()))?;
+        Some(CanvasRef {
+            project: project.to_string(),
+            canvas: name.to_string(),
+        })
+    }
+
+    /// The window showing canvas `key`.
+    pub(super) fn displayed(&self, key: &str) -> Option<window::Id> {
+        self.windows
+            .iter()
+            .map(|(w, _)| w)
+            .find(|w| self.canvas_of(*w).is_some_and(|at| at.key() == key))
+    }
+
+    /// The plane of the window showing `key`, else the active one's.
+    pub(super) fn plane_of(&self, key: &str) -> Option<Size> {
+        self.displayed(key)
+            .and_then(|w| self.windows.get(w))
+            .and_then(|w| w.plane)
+            .or(self.plane_size)
+    }
+
+    /// The camera `key` is drawn with: the app's when shown, else its
+    /// parked one.
+    pub(super) fn view_camera(&self, key: &str) -> Option<Camera> {
+        if self.is_shown(key) {
+            return Some(self.camera);
+        }
+        self.live(key)?.parked.as_ref().map(|p| p.camera)
+    }
+
+    /// Put `at` on screen in its project's window, which becomes the active
+    /// one: the human picked it (or asked an agent to show it). The canvas
+    /// that was in that window leaves the screen, keeping its camera.
     pub(super) fn show_canvas(&mut self, at: CanvasRef) {
-        let Some(key) = self.ensure_live(&at) else {
-            return;
-        };
-        if self.is_shown(&key) {
+        let window = self.windows.window_of(&at.project);
+        let before = window.and_then(|w| self.canvas_of(w)).map(|c| c.key());
+        if self.catalog.selected.as_ref() != Some(&at) || before.as_deref() != Some(&at.key()) {
+            self.catalog.select(&at);
+            self.persist();
+        }
+        if let Some(old) = before.filter(|old| *old != at.key()) {
+            self.leave_screen(&old);
+        }
+        // A closed window shows it when it opens.
+        if let Some(window) = window {
+            self.activate(window);
+        }
+    }
+
+    /// `window` takes input from now on: its canvas comes off its parked
+    /// view into the app. The canvas that was shown stays on screen in its
+    /// own window, parked with its view, pick and tour.
+    pub(super) fn activate(&mut self, window: window::Id) {
+        self.windows.active = Some(window);
+        if let Some(w) = self.windows.get(window) {
+            self.plane_size = w.plane;
+            self.scale_factor = w.scale;
+        }
+        let key = self.canvas_of(window).and_then(|at| self.ensure_live(&at));
+        if key == self.shown {
             return;
         }
-        self.park_shown();
+        self.park_shown(false);
+        if let Some(key) = key {
+            self.unpark(&key);
+        }
+        self.grow_surfaces();
+    }
+
+    /// Show `key`: its parked view (a fresh one the first time) comes into
+    /// the app.
+    fn unpark(&mut self, key: &str) {
         let p = self
-            .live_mut(&key)
+            .live_mut(key)
             .and_then(|l| l.parked.take())
             .unwrap_or_else(Parked::fresh);
         self.camera = p.camera;
         self.fit_pending = p.fit_pending;
         self.user_camera = p.user_camera;
         self.human_camera = p.human_camera;
+        self.selection = p.selection;
+        self.tour = p.tour;
+        self.tween = None;
+        self.notes = p.notes;
+        self.flows_open = p.flows_open;
         tracing::info!(canvas = %key, "show canvas");
-        self.shown = Some(key);
-        self.catalog.selected = Some(at);
-        self.persist();
+        self.shown = Some(key.to_string());
+        self.check_tour();
         if self.fit_pending {
             self.fit();
         }
         self.details.poke(Instant::now());
     }
 
-    /// Take the canvas on screen off it: keep its view, drop the human's
-    /// focus and pick there, and its detail renders.
-    pub(super) fn park_shown(&mut self) {
+    /// Park the shown canvas: its view, and — unless it is `leaving` the
+    /// screen — the human's pick, tour and notes there, and its detail
+    /// renders (its window still draws it). Keyboard focus on its boards
+    /// goes either way.
+    pub(super) fn park_shown(&mut self, leaving: bool) {
         let Some(key) = self.shown.take() else {
             return;
         };
         self.focus_board(None);
-        self.selection = None;
-        self.reset_tour();
-        let parked = Parked {
+        self.tween = None;
+        let mut parked = Parked {
             camera: self.camera,
             fit_pending: self.fit_pending,
             user_camera: self.user_camera,
             human_camera: self.human_camera,
+            selection: self.selection.take(),
+            tour: self.tour.take(),
+            notes: std::mem::take(&mut self.notes),
+            flows_open: std::mem::take(&mut self.flows_open),
         };
-        for tab in self.tabs_of(&key) {
-            if let Some(ask) = self.details.retire(tab) {
-                self.ask(ask);
-            }
+        if let Some(l) = self.live_mut(&key) {
+            l.touched = Instant::now();
+        }
+        if leaving {
+            parked.leave();
+            self.retire_details(&key);
         }
         if let Some(l) = self.live_mut(&key) {
             l.parked = Some(parked);
-            l.touched = Instant::now();
+        }
+    }
+
+    /// Canvas `key` is no longer in any window: it drops the human's pick,
+    /// tour and notes there, and its detail renders.
+    pub(super) fn leave_screen(&mut self, key: &str) {
+        if self.is_shown(key) {
+            self.park_shown(true);
+            return;
+        }
+        if let Some(p) = self.live_mut(key).and_then(|l| l.parked.as_mut()) {
+            p.leave();
+        }
+        self.retire_details(key);
+    }
+
+    fn retire_details(&mut self, key: &str) {
+        for tab in self.tabs_of(key) {
+            if let Some(ask) = self.details.retire(tab) {
+                self.ask(ask);
+            }
         }
     }
 
     /// Close a live canvas and its boards.
     pub(super) fn close_live(&mut self, key: &str) {
         if self.is_shown(key) {
-            self.park_shown();
+            self.park_shown(true);
         }
         let Some(i) = self.live.iter().position(|l| l.at.key() == key) else {
             return;
@@ -271,7 +400,7 @@ impl App {
         let idle: Vec<String> = self
             .live
             .iter()
-            .filter(|l| !self.is_shown(&l.at.key()))
+            .filter(|l| self.displayed(&l.at.key()).is_none())
             .filter(|l| now.duration_since(l.touched) >= IDLE)
             .filter(|l| !l.boards.iter().any(|b| busy.contains(&b.tab.0)))
             .map(|l| l.at.key())
@@ -281,16 +410,30 @@ impl App {
         }
     }
 
-    /// Some canvas is live off screen (the eviction tick runs).
+    /// Some canvas no window shows is live (the eviction tick runs).
     pub(super) fn has_background(&self) -> bool {
-        self.live.iter().any(|l| !self.is_shown(&l.at.key()))
+        self.live
+            .iter()
+            .any(|l| self.displayed(&l.at.key()).is_none())
     }
 
-    /// Board `b` of the canvas on screen is in view (or the plane is not
-    /// laid out yet).
-    pub(super) fn in_view(&self, b: &Board) -> bool {
-        self.plane_size
-            .is_none_or(|p| pace::in_view(b.rect(), &self.camera, p))
+    /// Where canvas `key` is on the human's screen: the camera and plane
+    /// of the window showing it, while the shell shows that window.
+    pub(super) fn on_screen(&self, key: &str) -> Option<(Camera, Option<Size>)> {
+        let window = self.displayed(key).filter(|w| self.windows.shown(*w))?;
+        if self.is_shown(key) {
+            return Some((self.camera, self.plane_size));
+        }
+        let plane = self.windows.get(window).and_then(|w| w.plane);
+        Some((self.view_camera(key)?, plane))
+    }
+
+    /// Board `b` is in view of `screen` (see [`Self::on_screen`]; a plane
+    /// not laid out yet counts as in view).
+    pub(super) fn board_in_view(screen: Option<(Camera, Option<Size>)>, b: &Board) -> bool {
+        screen.is_some_and(|(camera, plane)| {
+            plane.is_none_or(|p| pace::in_view(b.rect(), &camera, p))
+        })
     }
 
     /// Send each board its pace ([`crate::pace`]) where that changed. A
@@ -299,7 +442,6 @@ impl App {
     pub(super) fn pace_boards(&mut self) {
         let busy = self.busy_tabs();
         let agents = self.agent_busy();
-        let readable = self.camera.zoom >= pace::READABLE_ZOOM;
         let mut want = Vec::new();
         let mut seen = Vec::new();
         let mut wake = Vec::new();
@@ -308,8 +450,12 @@ impl App {
         for l in &self.live {
             let key = l.at.key();
             let shown = self.is_shown(&key);
+            let screen = self.on_screen(&key);
+            let readable = self
+                .view_camera(&key)
+                .is_some_and(|c| c.zoom >= pace::READABLE_ZOOM);
             for b in &l.boards {
-                let in_view = shown && self.in_view(b);
+                let in_view = Self::board_in_view(screen, b);
                 if b.discarded {
                     if in_view {
                         wake.push(b.tab.0);
@@ -322,7 +468,7 @@ impl App {
                 let look = pace::Look {
                     busy: busy.contains(&b.tab.0),
                     in_view,
-                    focused: self.focused,
+                    focused: self.focused && shown,
                     readable,
                     agent: agents.contains(&key),
                 };
@@ -386,13 +532,13 @@ impl App {
         busy
     }
 
-    /// The camera of `key`, on screen or parked; a never-framed off-screen
-    /// canvas is fit to the plane first.
+    /// The camera of `key`, shown or parked; a never-framed parked canvas
+    /// is fit to its window's plane first.
     pub(super) fn camera_of(&mut self, key: &str) -> Option<Camera> {
         if self.is_shown(key) {
             return Some(self.camera);
         }
-        let plane = self.plane_size;
+        let plane = self.plane_of(key);
         let l = self.live_mut(key)?;
         if l.parked.is_none() {
             let mut p = Parked::fresh();
@@ -402,13 +548,13 @@ impl App {
             }
             l.parked = Some(p);
         }
-        l.parked.map(|p| p.camera)
+        l.parked.as_ref().map(|p| p.camera)
     }
 
-    /// Re-fit an off-screen canvas the human has not framed (its `auto`
-    /// boards grew).
+    /// Re-fit a parked canvas the human has not framed (its `auto` boards
+    /// grew, or its window laid out).
     pub(super) fn refit_parked(&mut self, key: &str) {
-        let plane = self.plane_size;
+        let plane = self.plane_of(key);
         let Some(l) = self.live_mut(key) else {
             return;
         };

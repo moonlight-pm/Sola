@@ -74,6 +74,8 @@ fn dispatch(state: &mut AppData, inc: Incoming) {
         }
         "windows" => inc.reply.ok(windows_json(state)),
         "input.click" => input_reply(inc.reply, click(state, &inc.params)),
+        "input.press" => input_reply(inc.reply, press(state, &inc.params, true)),
+        "input.release" => input_reply(inc.reply, press(state, &inc.params, false)),
         "input.move" => input_reply(inc.reply, move_ptr(state, &inc.params)),
         "input.scroll" => input_reply(inc.reply, scroll(state, &inc.params)),
         "input.key" => input_reply(inc.reply, key(state, &inc.params)),
@@ -150,17 +152,36 @@ fn windows_json(state: &AppData) -> serde_json::Value {
 fn click(state: &AppData, params: &serde_json::Value) -> Result<(), String> {
     let x = i32_param(params, "x")?;
     let y = i32_param(params, "y")?;
-    let button = match params
+    let button = button_param(params)?;
+    virtual_pointer::dispatch(state, &PointerAction::Click { button, x, y })
+}
+
+/// Press (`down`) or release a button, after moving to `x`, `y` when given.
+/// A press, moves, and a release make a drag.
+fn press(state: &AppData, params: &serde_json::Value, down: bool) -> Result<(), String> {
+    let button = button_param(params)?;
+    if let (Ok(x), Ok(y)) = (i32_param(params, "x"), i32_param(params, "y")) {
+        virtual_pointer::dispatch(state, &PointerAction::Move { x, y })?;
+    }
+    let action = if down {
+        PointerAction::Press { button }
+    } else {
+        PointerAction::Release { button }
+    };
+    virtual_pointer::dispatch(state, &action)
+}
+
+fn button_param(params: &serde_json::Value) -> Result<PointerButton, String> {
+    match params
         .get("button")
         .and_then(|v| v.as_str())
         .unwrap_or("left")
     {
-        "left" | "l" => PointerButton::Left,
-        "right" | "r" => PointerButton::Right,
-        "middle" | "m" => PointerButton::Middle,
-        other => return Err(format!("unknown button {other}")),
-    };
-    virtual_pointer::dispatch(state, &PointerAction::Click { button, x, y })
+        "left" | "l" => Ok(PointerButton::Left),
+        "right" | "r" => Ok(PointerButton::Right),
+        "middle" | "m" => Ok(PointerButton::Middle),
+        other => Err(format!("unknown button {other}")),
+    }
 }
 
 fn move_ptr(state: &AppData, params: &serde_json::Value) -> Result<(), String> {

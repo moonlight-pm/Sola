@@ -9,9 +9,10 @@ use crate::Message;
 /// Decode a payload from a `Message` into the expected type.
 ///
 /// Postcard is positional: adding fields to a payload breaks replay of
-/// stickies still encoded by an older bus. [`Application`] grows
-/// `kind`/`url` — if the current layout misses those trailing fields,
-/// fall back to the pre-wrapper four-string record.
+/// stickies still encoded by an older bus. [`Application`] grew
+/// `kind`/`url`, then `profile` — if the current layout misses trailing
+/// fields, fall back to the record before `profile`, then to the
+/// pre-wrapper four-string one.
 pub fn decode_payload<T: DeserializeOwned + 'static>(msg: &Message) -> io::Result<T> {
     let bytes = msg
         .payload
@@ -34,20 +35,43 @@ fn decode_legacy_application<T: 'static>(bytes: &[u8]) -> Option<T> {
         return None;
     }
     #[derive(Deserialize)]
+    struct ApplicationV2 {
+        app_id: String,
+        label: String,
+        command: String,
+        icon: String,
+        kind: AppKind,
+        url: Option<String>,
+    }
+    #[derive(Deserialize)]
     struct ApplicationV1 {
         app_id: String,
         label: String,
         command: String,
         icon: String,
     }
-    let v1: ApplicationV1 = postcard::from_bytes(bytes).ok()?;
-    let app = Application {
-        app_id: v1.app_id,
-        label: v1.label,
-        command: v1.command,
-        icon: v1.icon,
-        kind: AppKind::Command,
-        url: None,
+    let app = match postcard::from_bytes::<ApplicationV2>(bytes) {
+        Ok(v2) => Application {
+            app_id: v2.app_id,
+            label: v2.label,
+            command: v2.command,
+            icon: v2.icon,
+            kind: v2.kind,
+            url: v2.url,
+            profile: None,
+        },
+        Err(_) => {
+            let v1: ApplicationV1 = postcard::from_bytes(bytes).ok()?;
+            Application {
+                app_id: v1.app_id,
+                label: v1.label,
+                command: v1.command,
+                icon: v1.icon,
+                kind: AppKind::Command,
+                url: None,
+                profile: None,
+            }
+        }
     };
     let boxed: Box<dyn Any> = Box::new(app);
     boxed.downcast::<T>().ok().map(|b| *b)

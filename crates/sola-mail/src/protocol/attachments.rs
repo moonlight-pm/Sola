@@ -11,22 +11,39 @@ use super::types::MailAttachment;
 ///
 /// Nested `message/rfc822` parts flatten to their files; a wrapper with no
 /// nested files is kept as an `.eml`.
+#[cfg(test)]
 pub fn collect_attachments(parsed: &Message<'_>) -> Vec<MailAttachment> {
+    collect_attachments_except(parsed, &[])
+}
+
+/// [`collect_attachments`] without the inline parts the letter already
+/// shows (their `Content-ID`s, without `<>`).
+pub fn collect_attachments_except(parsed: &Message<'_>, shown: &[String]) -> Vec<MailAttachment> {
     let mut out = Vec::new();
-    collect_into(parsed, &mut out);
+    collect_into(parsed, shown, &mut out);
     out
 }
 
-fn collect_into(parsed: &Message<'_>, out: &mut Vec<MailAttachment>) {
+/// The part's `Content-ID` without the angle brackets.
+pub fn content_id(part: &MessagePart<'_>) -> Option<String> {
+    let id = part.content_id()?.trim();
+    let id = id.trim_start_matches('<').trim_end_matches('>').trim();
+    (!id.is_empty()).then(|| id.to_string())
+}
+
+fn collect_into(parsed: &Message<'_>, shown: &[String], out: &mut Vec<MailAttachment>) {
     for part in parsed.attachments() {
         if part.is_multipart() {
+            continue;
+        }
+        if content_id(part).is_some_and(|id| shown.contains(&id)) {
             continue;
         }
         if part.is_message()
             && let Some(nested) = part.message()
         {
             let before = out.len();
-            collect_into(nested, out);
+            collect_into(nested, shown, out);
             if out.len() > before {
                 continue;
             }

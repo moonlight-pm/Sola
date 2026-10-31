@@ -38,8 +38,8 @@ const OFFSET_Y: f32 = 3.0;
 /// Peak opacity of the shadow (premultiplied black).
 const PEAK_ALPHA: f32 = 0.28;
 
-/// Corner radius matching kit `RADIUS_XL` / floating_frame.
-const CORNER_RADIUS: f32 = 14.0;
+/// Corner radius matching the kit window frame (`window_frame::RADIUS`).
+const CORNER_RADIUS: f32 = 12.0;
 
 /// Cap buffer area so a pathological resize can't OOM the WM.
 const MAX_PIXELS: i64 = 16_000_000;

@@ -1,8 +1,8 @@
 //! Calendar accounts and shelf — Google, iCloud, CalDAV, ICS/webcal URLs,
 //! plus labels / colours / hidden. Persistent `Topic::CalendarConfig`.
 
-use iced::widget::{checkbox, column, container, mouse_area, row, scrollable, Space};
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Task, Theme};
+use iced::widget::{checkbox, column, container, mouse_area, row, Space};
+use iced::{Alignment, Background, Border, Color, Element, Length, Task, Theme};
 
 use sola_bus::topics::{
     calendar_url_label, google_calendar_client_id, normalize_calendar_url, CalendarAccount,
@@ -12,23 +12,15 @@ use sola_core::Encrypted;
 use sola_kit::app::bus;
 use sola_kit::components::color_picker;
 use sola_kit::components::form::{checkbox_style, form_row};
-use sola_kit::components::style::{RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, SPACE_XS};
+use sola_kit::components::style::{PAD_CONTROL, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::text_input;
 use sola_kit::components::{
-    button as kit_btn, card, field, popover, popover_anchored, text_input as kit_input, ColorPicker,
+    button as kit_btn, field, popover, popover_anchored, text_input as kit_input, ColorPicker,
 };
 use sola_kit::theme::{color_to_hex, try_parse};
 
-use crate::calendar_oauth;
-
-const LIST_WIDTH: f32 = 280.0;
-const ROW_PAD: Padding = Padding {
-    top: 8.0,
-    bottom: 8.0,
-    left: 12.0,
-    right: 8.0,
-};
+use crate::{calendar_oauth, page};
 
 #[derive(Debug, Clone)]
 pub struct CalendarState {
@@ -38,6 +30,8 @@ pub struct CalendarState {
     pub status: Option<String>,
     pub signing_in: bool,
     pub color_picker: Option<(String, ColorPicker)>,
+    /// "Add account" is asking which kind.
+    pub choosing: bool,
 }
 
 impl Default for CalendarState {
@@ -49,6 +43,7 @@ impl Default for CalendarState {
             status: None,
             signing_in: false,
             color_picker: None,
+            choosing: false,
         }
     }
 }
@@ -127,6 +122,8 @@ impl Draft {
 pub enum CalMsg {
     Select(String),
     SelectCal(String),
+    /// "Add account": show (again: hide) the kinds.
+    ChooseKind,
     AddGoogle,
     AddApple,
     AddUrl,
@@ -178,6 +175,7 @@ pub fn update(msg: CalMsg, cfg: &mut CalendarConfig, ui: &mut CalendarState) -> 
                 ui.status = None;
             }
         }
+        CalMsg::ChooseKind => ui.choosing = !ui.choosing,
         CalMsg::AddGoogle => start_draft(ui, CalendarAccountKind::Google),
         CalMsg::AddApple => start_draft(ui, CalendarAccountKind::Apple),
         CalMsg::AddUrl => start_draft(ui, CalendarAccountKind::Url),
@@ -370,6 +368,7 @@ fn start_draft(ui: &mut CalendarState, kind: CalendarAccountKind) {
         return;
     }
     ui.color_picker = None;
+    ui.choosing = false;
     ui.detail = Detail::Draft(Draft::of(kind));
     ui.error = None;
     ui.status = None;
@@ -622,200 +621,149 @@ fn emit(topic: Topic) {
 }
 
 pub fn view<'a>(cfg: &'a CalendarConfig, ui: &'a CalendarState) -> Element<'a, CalMsg> {
-    let header = column![
-        kit_text::subheading("Calendar"),
-        kit_text::caption(
-            "Accounts connect here. Hidden calendars, labels, and colours live under Calendars."
-        )
-        .style(kit_text::muted),
-    ]
-    .spacing(SPACE_SM);
-
-    let split = row![side_list(cfg, ui), detail_pane(cfg, ui)]
-        .spacing(SPACE_XL)
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-    column![header, split]
-        .spacing(SPACE_LG)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    page::page(vec![accounts_section(cfg, ui), calendars_section(cfg, ui)])
 }
 
-fn side_list<'a>(cfg: &'a CalendarConfig, ui: &'a CalendarState) -> Element<'a, CalMsg> {
-    let toolbar = column![
-        row![
-            kit_btn::labeled_sm("+ Google", kit_btn::ghost).on_press(CalMsg::AddGoogle),
-            kit_btn::labeled_sm("+ iCloud", kit_btn::ghost).on_press(CalMsg::AddApple),
-        ]
-        .spacing(SPACE_SM),
-        row![
-            kit_btn::labeled_sm("+ URL", kit_btn::ghost).on_press(CalMsg::AddUrl),
-            kit_btn::labeled_sm("+ CalDAV", kit_btn::ghost).on_press(CalMsg::AddCaldav),
-            Space::new().width(Length::Fill),
-            kit_text::caption(format!(
-                "{} {}",
-                cfg.accounts.len(),
-                if cfg.accounts.len() == 1 {
-                    "account"
-                } else {
-                    "accounts"
-                }
-            ))
-            .style(kit_text::muted),
-        ]
-        .spacing(SPACE_SM)
-        .align_y(Alignment::Center)
-        .width(Length::Fill),
-    ]
-    .spacing(SPACE_SM)
-    .width(Length::Fill);
-
-    let mut rows = column![].spacing(0).width(Length::Fill);
+/// The connected accounts; "Add account" first asks which kind.
+fn accounts_section<'a>(cfg: &'a CalendarConfig, ui: &'a CalendarState) -> Element<'a, CalMsg> {
+    let mut rows: Vec<Element<'a, CalMsg>> = Vec::new();
+    if ui.choosing {
+        let kind = |label: &'a str, mark: &'static str, msg: CalMsg| -> Element<'a, CalMsg> {
+            iced::widget::button(
+                row![page::glyph(page::icon(mark), 14, 0.8), kit_text::body(label)]
+                    .spacing(SPACE_SM)
+                    .align_y(Alignment::Center),
+            )
+            .padding(PAD_CONTROL)
+            .style(kit_btn::secondary)
+            .on_press(msg)
+            .into()
+        };
+        rows.push(page::plain(
+            column![
+                kit_text::caption("Add which kind of account?").style(kit_text::muted),
+                row![
+                    kind("Google", "simpleicons/google", CalMsg::AddGoogle),
+                    kind("iCloud", "simpleicons/icloud", CalMsg::AddApple),
+                    kind("CalDAV", "lucide/server", CalMsg::AddCaldav),
+                    kind("Calendar URL", "lucide/link", CalMsg::AddUrl),
+                ]
+                .spacing(SPACE_SM)
+                .wrap(),
+            ]
+            .spacing(SPACE_SM),
+        ));
+    }
     for acc in &cfg.accounts {
-        let selected = matches!(&ui.detail, Detail::Edit { id, .. } if *id == acc.id);
-        let label = column![
-            kit_text::body(acc.label.clone()),
-            kit_text::caption(acc.kind.label()).style(kit_text::muted),
-        ]
-        .spacing(SPACE_XS);
-        rows = rows.push(
-            iced::widget::button(label)
-                .on_press(CalMsg::Select(acc.id.clone()))
-                .padding(ROW_PAD)
-                .width(Length::Fill)
-                .style(kit_btn::list_item(selected)),
+        let open = matches!(&ui.detail, Detail::Edit { id, .. } if *id == acc.id);
+        rows.push(
+            page::item(acc.label.clone())
+                .subtitle(acc.kind.label())
+                .leading(page::glyph(page::icon(kind_mark(acc.kind)), 16, 0.8))
+                .open(open)
+                .on_press(if open {
+                    CalMsg::Close
+                } else {
+                    CalMsg::Select(acc.id.clone())
+                })
+                .into(),
         );
+        if let (true, Detail::Edit { draft, .. }) = (open, &ui.detail) {
+            rows.push(page::editor(editor(cfg, ui, draft)));
+        }
     }
     if let Detail::Draft(d) = &ui.detail {
-        let label = column![
-            kit_text::body(d.kind.label()),
-            kit_text::caption("New account").style(kit_text::muted),
-        ]
-        .spacing(SPACE_XS);
-        rows = rows.push(
-            iced::widget::button(label)
-                .padding(ROW_PAD)
-                .width(Length::Fill)
-                .style(kit_btn::list_item(true)),
+        rows.push(
+            page::item(d.kind.label())
+                .subtitle("New account")
+                .leading(page::glyph(page::icon(kind_mark(d.kind)), 16, 0.8))
+                .open(true)
+                .on_press(CalMsg::Close)
+                .into(),
         );
+        rows.push(page::editor(editor(cfg, ui, d)));
     }
-
-    rows = rows.push(Space::new().height(SPACE_MD));
-    rows = rows.push(kit_text::caption("Calendars").style(kit_text::muted));
-    if cfg.calendars.is_empty() {
-        rows = rows.push(
-            kit_text::caption("Open Calendar once to list them here.")
-                .style(kit_text::muted),
-        );
+    if rows.is_empty() {
+        rows.push(page::empty("No accounts yet."));
     }
-    for cal in &cfg.calendars {
-        let selected = matches!(&ui.detail, Detail::Calendar { id, .. } if *id == cal.id);
-        let fill = try_parse(shelf_color(cal)).unwrap_or(Color::from_rgb(0.48, 0.64, 0.97));
-        let caption = if cal.hidden {
-            "Hidden"
-        } else {
-            kind_caption(&cal.kind)
-        };
-        let label = row![
-            cal_disc(fill),
-            column![
-                kit_text::body(shelf_display(cal)),
-                kit_text::caption(caption).style(kit_text::muted),
-            ]
-            .spacing(SPACE_XS)
-            .width(Length::Fill),
-        ]
-        .spacing(SPACE_SM)
-        .align_y(Alignment::Center);
-        rows = rows.push(
-            iced::widget::button(label)
-                .on_press(CalMsg::SelectCal(cal.id.clone()))
-                .padding(ROW_PAD)
-                .width(Length::Fill)
-                .style(kit_btn::list_item(selected)),
-        );
-    }
-
-    container(
-        card(
-            column![
-                toolbar,
-                scrollable(rows).height(Length::Fill).width(Length::Fill)
-            ]
-            .spacing(SPACE_MD)
-            .width(Length::Fill)
-            .height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill),
+    let status = (matches!(ui.detail, Detail::Closed))
+        .then(|| ui.status.clone())
+        .flatten();
+    page::section(
+        "Accounts",
+        Some(page::add("Add account", CalMsg::ChooseKind)),
+        page::group(rows),
+        Some(status.unwrap_or_else(|| {
+            "Google and iCloud sign in; CalDAV is any server that speaks it \
+             (Fastmail, Nextcloud); a calendar URL is a read-only feed (ICS, webcal)."
+                .into()
+        })),
     )
-    .width(Length::Fixed(LIST_WIDTH))
-    .height(Length::Fill)
-    .into()
 }
 
-fn detail_pane<'a>(cfg: &'a CalendarConfig, ui: &'a CalendarState) -> Element<'a, CalMsg> {
-    let body: Element<'a, CalMsg> = match &ui.detail {
-        Detail::Closed => container(
-            column![
-                kit_text::subheading("No selection").style(kit_text::muted),
-                kit_text::caption(
-                    "Add an account, or pick a calendar to rename, recolour, or show again."
-                )
-                .style(kit_text::muted),
-            ]
-            .spacing(SPACE_SM)
-            .align_x(Alignment::Center),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into(),
-        Detail::Draft(d) | Detail::Edit { draft: d, .. } => editor(cfg, ui, d),
-        Detail::Calendar { id, alias } => calendar_editor(cfg, ui, id, alias),
-    };
-    container(card(body).width(Length::Fill).height(Length::Fill))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+fn kind_mark(kind: CalendarAccountKind) -> &'static str {
+    match kind {
+        CalendarAccountKind::Google => "simpleicons/google",
+        CalendarAccountKind::Apple => "simpleicons/icloud",
+        CalendarAccountKind::Url => "lucide/link",
+        CalendarAccountKind::Caldav => "lucide/server",
+    }
+}
+
+/// The accounts' calendars, as Calendar listed them.
+fn calendars_section<'a>(cfg: &'a CalendarConfig, ui: &'a CalendarState) -> Element<'a, CalMsg> {
+    let mut rows: Vec<Element<'a, CalMsg>> = Vec::new();
+    for cal in &cfg.calendars {
+        let open = matches!(&ui.detail, Detail::Calendar { id, .. } if *id == cal.id);
+        let fill = try_parse(shelf_color(cal)).unwrap_or(Color::from_rgb(0.48, 0.64, 0.97));
+        let mut item = page::item(shelf_display(cal))
+            .subtitle(kind_caption(&cal.kind))
+            .leading(page::dot(fill))
+            .open(open)
+            .on_press(if open {
+                CalMsg::Close
+            } else {
+                CalMsg::SelectCal(cal.id.clone())
+            });
+        if cal.hidden {
+            item = item.trailing(kit_text::caption("Hidden").style(kit_text::muted));
+        }
+        rows.push(item.into());
+        if let (true, Detail::Calendar { id, alias }) = (open, &ui.detail) {
+            rows.push(page::editor(calendar_editor(cfg, ui, id, alias)));
+        }
+    }
+    if rows.is_empty() {
+        rows.push(page::empty("Open Calendar once to list its calendars here."));
+    }
+    page::section(
+        "Calendars",
+        None,
+        page::group(rows),
+        Some("Rename, recolor or hide a calendar. Hidden ones stay off the board.".into()),
+    )
 }
 
 fn editor<'a>(cfg: &'a CalendarConfig, ui: &'a CalendarState, d: &'a Draft) -> Element<'a, CalMsg> {
-    let mut col = column![kit_text::subheading(d.kind.label())]
-        .spacing(SPACE_LG)
-        .padding(SPACE_SM)
-        .width(Length::Fill);
-    if let Some(err) = ui.error.as_deref() {
-        col = col.push(kit_text::caption(err).style(kit_text::danger));
-    }
-    if let Some(st) = ui.status.as_deref() {
-        col = col.push(kit_text::caption(st).style(kit_text::muted));
-    }
+    let editing = matches!(ui.detail, Detail::Edit { .. });
+    let mut col = column![].spacing(SPACE_LG).width(Length::Fill);
+    let mut left: Vec<Element<'a, CalMsg>> = Vec::new();
     match d.kind {
         CalendarAccountKind::Google => {
             col = col.push(
-                kit_text::caption(
-                    "Sign-in opens the browser. Add another Google account with + Google.",
-                )
-                .style(kit_text::muted),
+                kit_text::caption("Signing in opens the browser.").style(kit_text::muted),
             );
-            if matches!(ui.detail, Detail::Edit { .. }) && !d.label.is_empty() {
-                col = col.push(kit_text::body(d.label.clone()));
-            }
             let sign_in = if ui.signing_in {
-                kit_btn::labeled("Waiting for Google…", kit_btn::primary)
+                kit_btn::labeled_sm("Waiting for Google…", kit_btn::primary)
             } else {
-                let label = if matches!(ui.detail, Detail::Edit { .. }) {
+                let label = if editing {
                     "Sign in again"
                 } else {
                     "Sign in with Google"
                 };
-                kit_btn::labeled(label, kit_btn::primary).on_press(CalMsg::SignInGoogle)
+                kit_btn::labeled_sm(label, kit_btn::primary).on_press(CalMsg::SignInGoogle)
             };
-            col = col.push(sign_in.width(Length::Fill));
+            left.push(sign_in.into());
         }
         CalendarAccountKind::Apple => {
             col = col.push(
@@ -825,32 +773,33 @@ fn editor<'a>(cfg: &'a CalendarConfig, ui: &'a CalendarState, d: &'a Draft) -> E
                 .style(kit_text::muted),
             );
             col = col.push(name_field(d));
-            col = col.push(field(
-                "Apple ID",
-                text_input("you@icloud.com", &d.apple_id)
-                    .id(apple_id_field())
-                    .on_input(CalMsg::AppleId)
-                    .size(13)
-                    .style(kit_input::style),
-                None,
-                None,
-            ));
-            col = col.push(field(
-                "App-specific password",
-                text_input("xxxx-xxxx-xxxx-xxxx", &d.app_password)
-                    .id(apple_password_field())
-                    .secure(true)
-                    .on_input(CalMsg::ApplePassword)
-                    .size(13)
-                    .style(kit_input::style),
-                None,
-                None,
-            ));
             col = col.push(
-                kit_btn::labeled("Save", kit_btn::primary)
-                    .on_press(CalMsg::Save)
-                    .width(Length::Fill),
+                row![
+                    field(
+                        "Apple ID",
+                        text_input("you@icloud.com", &d.apple_id)
+                            .id(apple_id_field())
+                            .on_input(CalMsg::AppleId)
+                            .size(13)
+                            .style(kit_input::style),
+                        None,
+                        None,
+                    ),
+                    field(
+                        "App-specific password",
+                        text_input("xxxx-xxxx-xxxx-xxxx", &d.app_password)
+                            .id(apple_password_field())
+                            .secure(true)
+                            .on_input(CalMsg::ApplePassword)
+                            .size(13)
+                            .style(kit_input::style),
+                        None,
+                        None,
+                    ),
+                ]
+                .spacing(SPACE_MD),
             );
+            left.push(page::action("Save", kit_btn::primary, CalMsg::Save));
         }
         CalendarAccountKind::Url => {
             col = col.push(
@@ -870,11 +819,7 @@ fn editor<'a>(cfg: &'a CalendarConfig, ui: &'a CalendarState, d: &'a Draft) -> E
                 Some("https, http, or webcal"),
                 None,
             ));
-            col = col.push(
-                kit_btn::labeled("Save", kit_btn::primary)
-                    .on_press(CalMsg::Save)
-                    .width(Length::Fill),
-            );
+            left.push(page::action("Save", kit_btn::primary, CalMsg::Save));
         }
         CalendarAccountKind::Caldav => {
             col = col.push(
@@ -894,40 +839,49 @@ fn editor<'a>(cfg: &'a CalendarConfig, ui: &'a CalendarState, d: &'a Draft) -> E
                 None,
                 None,
             ));
-            col = col.push(field(
-                "Username",
-                text_input("you@example.com", &d.username)
-                    .id(username_field())
-                    .on_input(CalMsg::Username)
-                    .size(13)
-                    .style(kit_input::style),
-                None,
-                None,
-            ));
-            col = col.push(field(
-                "Password",
-                text_input("app password", &d.app_password)
-                    .id(apple_password_field())
-                    .secure(true)
-                    .on_input(CalMsg::ApplePassword)
-                    .size(13)
-                    .style(kit_input::style),
-                None,
-                None,
-            ));
             col = col.push(
-                kit_btn::labeled("Save", kit_btn::primary)
-                    .on_press(CalMsg::Save)
-                    .width(Length::Fill),
+                row![
+                    field(
+                        "Username",
+                        text_input("you@example.com", &d.username)
+                            .id(username_field())
+                            .on_input(CalMsg::Username)
+                            .size(13)
+                            .style(kit_input::style),
+                        None,
+                        None,
+                    ),
+                    field(
+                        "Password",
+                        text_input("app password", &d.app_password)
+                            .id(apple_password_field())
+                            .secure(true)
+                            .on_input(CalMsg::ApplePassword)
+                            .size(13)
+                            .style(kit_input::style),
+                        None,
+                        None,
+                    ),
+                ]
+                .spacing(SPACE_MD),
             );
+            left.push(page::action("Save", kit_btn::primary, CalMsg::Save));
         }
     }
-    if matches!(ui.detail, Detail::Edit { .. }) {
-        col = col.push(kit_btn::labeled("Disconnect", kit_btn::danger).on_press(CalMsg::Remove));
+    if let Some(err) = ui.error.as_deref() {
+        col = col.push(kit_text::caption(err).style(kit_text::danger));
     }
-    col = col.push(kit_btn::labeled("Close", kit_btn::ghost).on_press(CalMsg::Close));
+    if let Some(st) = ui.status.as_deref() {
+        col = col.push(kit_text::caption(st).style(kit_text::muted));
+    }
+    let mut right: Vec<Element<'a, CalMsg>> = Vec::new();
+    if editing {
+        right.push(page::action("Disconnect", kit_btn::danger_outline, CalMsg::Remove));
+    } else {
+        left.push(page::action("Discard", kit_btn::ghost, CalMsg::Close));
+    }
     let _ = cfg;
-    col.into()
+    col.push(page::footer(left, right)).into()
 }
 
 fn calendar_editor<'a>(
@@ -953,72 +907,50 @@ fn calendar_editor<'a>(
             .into(),
             None => swatch,
         };
-    let mut col = column![
-        kit_text::subheading(shelf_display(cal)),
-        kit_text::caption(format!("Original name · {}", cal.name)).style(kit_text::muted),
-    ]
-    .spacing(SPACE_LG)
-    .padding(SPACE_SM)
-    .width(Length::Fill);
+    let mut col = column![].spacing(SPACE_MD).width(Length::Fill);
     if let Some(err) = ui.error.as_deref() {
         col = col.push(kit_text::caption(err).style(kit_text::danger));
     }
     if let Some(st) = ui.status.as_deref() {
         col = col.push(kit_text::caption(st).style(kit_text::muted));
     }
-    col = col.push(field(
-        "Label",
-        text_input("Calendar name", alias)
-            .id(cal_alias_field())
-            .on_input(CalMsg::CalAlias)
-            .on_submit(CalMsg::SaveCal)
-            .size(13)
-            .style(kit_input::style),
-        Some("Shown in the Calendar sidebar. Leave empty for the original name."),
-        None,
-    ));
     col = col.push(
-        kit_btn::labeled("Save label", kit_btn::primary)
-            .on_press(CalMsg::SaveCal)
+        row![
+            container(field(
+                "Label",
+                text_input("Calendar name", alias)
+                    .id(cal_alias_field())
+                    .on_input(CalMsg::CalAlias)
+                    .on_submit(CalMsg::SaveCal)
+                    .size(13)
+                    .style(kit_input::style),
+                None,
+                None,
+            ))
             .width(Length::Fill),
+            kit_btn::labeled_sm("Save", kit_btn::primary).on_press(CalMsg::SaveCal),
+        ]
+        .spacing(SPACE_MD)
+        .align_y(Alignment::End),
     );
-    col = col.push(form_row("Colour", swatch));
+    col = col.push(
+        kit_text::caption(format!("Leave it empty for its own name, {}.", cal.name))
+            .style(kit_text::muted),
+    );
+    col = col.push(form_row("Color", swatch));
     col = col.push(form_row(
-        "Show in sidebar",
+        "Show in Calendar",
         checkbox(!cal.hidden)
             .on_toggle(CalMsg::CalShow)
             .style(checkbox_style),
     ));
-    if cal.hidden {
-        col = col.push(
-            kit_text::caption("Hidden calendars stay off the board until you show them again.")
-                .style(kit_text::muted),
-        );
-    }
-    col = col.push(kit_btn::labeled("Close", kit_btn::ghost).on_press(CalMsg::Close));
     col.into()
-}
-
-fn cal_disc<'a>(color: Color) -> Element<'a, CalMsg> {
-    container(Space::new().width(10).height(10))
-        .width(Length::Fixed(10.0))
-        .height(Length::Fixed(10.0))
-        .style(move |_| container::Style {
-            background: Some(Background::Color(color)),
-            border: Border {
-                color,
-                width: 1.5,
-                radius: 5.0.into(),
-            },
-            ..container::Style::default()
-        })
-        .into()
 }
 
 fn color_swatch<'a>(color: Color, on_press: CalMsg) -> Element<'a, CalMsg> {
     const SIZE: f32 = 16.0;
     let ink = if (0.299 * color.r + 0.587 * color.g + 0.114 * color.b) > 0.55 {
-        Color::from_rgb(0.12, 0.12, 0.14)
+        Color::from_rgb(0.1222, 0.12, 0.122)
     } else {
         Color::WHITE
     };

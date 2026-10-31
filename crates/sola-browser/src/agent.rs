@@ -13,7 +13,6 @@ use crate::app::{App, BLANK_URL, Msg};
 use crate::ax::{self, RefEntry};
 use crate::chord::{self, CdpKeyEvent};
 use crate::engine::{Cmd, Engine, NavCmd, TabId, TabInfo};
-use crate::groups::TabGroup;
 use iced::Task;
 use sola_call::Incoming;
 
@@ -469,12 +468,6 @@ impl<E: Engine> App<E> {
             "tab.open" => CallOut::Reply(self.cli_tab_open(params)),
             "tab.close" => CallOut::Reply(self.cli_tab_close(params)),
             "tab.focus" => CallOut::Reply(self.cli_tab_focus(params)),
-            "tab.move" => CallOut::Reply(self.cli_tab_move(params)),
-            "group.list" => CallOut::Reply(Ok(self.groups_json())),
-            "group.create" => CallOut::Reply(self.cli_group_create(params)),
-            "group.rename" => CallOut::Reply(self.cli_group_rename(params)),
-            "group.recolor" => CallOut::Reply(self.cli_group_recolor(params)),
-            "group.collapse" => CallOut::Reply(self.cli_group_collapse(params)),
             "goto" => self.cli_goto(params),
             "back" => self.cli_nav(params, NavCmd::Back),
             "forward" => self.cli_nav(params, NavCmd::Forward),
@@ -512,7 +505,7 @@ impl<E: Engine> App<E> {
                     "title": t.title,
                     "active": t.id == self.cached_active,
                     "loading": t.is_loading,
-                    "group": self.groups.of_tab(t.id),
+                    "profile": t.profile,
                 })
             })
             .collect();
@@ -522,31 +515,10 @@ impl<E: Engine> App<E> {
         })
     }
 
-    fn groups_json(&self) -> serde_json::Value {
-        let groups: Vec<serde_json::Value> = self
-            .groups
-            .groups
-            .iter()
-            .map(|g| group_json(g, &self.groups, &self.cached_tabs))
-            .collect();
-        serde_json::json!({ "groups": groups })
-    }
-
     fn cli_tab_open(&mut self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
         let url = param_str(params, "url").ok_or_else(|| "missing url".to_string())?;
         let select = param_bool(params, "select");
-        self.open_tab(url.clone(), select);
-        let id = self
-            .cached_tabs
-            .last()
-            .map(|t| t.id)
-            .unwrap_or(self.cached_active);
-        if let Some(g) = param_str(params, "group") {
-            let gid = self.resolve_group(&g)?;
-            self.groups.add_to(id, &gid);
-            self.groups.normalize(&mut self.cached_tabs);
-            self.persist_session();
-        }
+        let id = self.open_tab(url.clone(), select);
         self.agent.pending_nav.insert(id, PendingNav::Url(url));
         Ok(serde_json::json!({ "id": id.0, "selected": select }))
     }
@@ -564,14 +536,12 @@ impl<E: Engine> App<E> {
                 self.switch_active_tab(new_active);
             }
         }
-        self.slot.forget_tab(id);
-        self.slot.drop_paint_tabs.lock().unwrap().push(id.0);
-        self.slot.need_park_prime.lock().unwrap().remove(&id.0);
+        self.slot().forget_tab(id);
+        self.slot().drop_paint_tabs.lock().unwrap().push(id.0);
+        self.slot().need_park_prime.lock().unwrap().remove(&id.0);
         let _ = self.cmd_tx.send(Cmd::CloseTab(id));
         self.closed_tabs.insert(id);
         self.cached_tabs.retain(|t| t.id != id);
-        self.groups.on_tab_closed(id);
-        self.favicons.remove(&id);
         self.agent.snaps.remove(&id);
         self.agent.ready.remove(&id);
         self.agent.pending_nav.remove(&id);
@@ -584,67 +554,6 @@ impl<E: Engine> App<E> {
         self.switch_active_tab(id);
         self.persist_session();
         Ok(serde_json::json!({ "id": id.0 }))
-    }
-
-    fn cli_tab_move(&mut self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let id = self.resolve_tab(param_str(params, "tab").as_deref())?;
-        match param_str(params, "group") {
-            Some(g) => {
-                let gid = self.resolve_group(&g)?;
-                self.groups.add_to(id, &gid);
-            }
-            None => self.groups.ungroup(id),
-        }
-        self.groups.normalize(&mut self.cached_tabs);
-        self.persist_session();
-        Ok(serde_json::json!({ "ok": true, "id": id.0 }))
-    }
-
-    fn cli_group_create(
-        &mut self,
-        params: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        let id = self.resolve_tab(param_str(params, "tab").as_deref())?;
-        let gid = self.groups.new_group(id);
-        if let Some(name) = param_str(params, "name") {
-            self.groups.rename(&gid, name);
-        }
-        self.groups.normalize(&mut self.cached_tabs);
-        self.persist_session();
-        Ok(serde_json::json!({ "id": gid, "tab": id.0 }))
-    }
-
-    fn cli_group_rename(
-        &mut self,
-        params: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        let gid = self.resolve_group(param_str(params, "group").as_deref().unwrap_or(""))?;
-        let name = param_str(params, "name").ok_or_else(|| "missing name".to_string())?;
-        self.groups.rename(&gid, name);
-        self.persist_session();
-        Ok(serde_json::json!({ "ok": true, "id": gid }))
-    }
-
-    fn cli_group_recolor(
-        &mut self,
-        params: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        let gid = self.resolve_group(param_str(params, "group").as_deref().unwrap_or(""))?;
-        let color = param_str(params, "color");
-        self.groups.set_color(&gid, color);
-        self.persist_session();
-        Ok(serde_json::json!({ "ok": true, "id": gid }))
-    }
-
-    fn cli_group_collapse(
-        &mut self,
-        params: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        let gid = self.resolve_group(param_str(params, "group").as_deref().unwrap_or(""))?;
-        self.groups
-            .set_collapsed(&gid, param_bool(params, "collapsed"));
-        self.persist_session();
-        Ok(serde_json::json!({ "ok": true, "id": gid }))
     }
 
     fn cli_goto(&mut self, params: &serde_json::Value) -> CallOut {
@@ -1184,48 +1093,11 @@ impl<E: Engine> App<E> {
         }
     }
 
-    fn resolve_group(&self, q: &str) -> Result<String, String> {
-        if q.is_empty() {
-            return Err("missing group".into());
-        }
-        if let Some(g) = self.groups.group(q) {
-            return Ok(g.id.clone());
-        }
-        let ql = q.to_ascii_lowercase();
-        let hits: Vec<&TabGroup> = self
-            .groups
-            .groups
-            .iter()
-            .filter(|g| {
-                g.name.to_ascii_lowercase() == ql || g.name.to_ascii_lowercase().contains(&ql)
-            })
-            .collect();
-        match hits.len() {
-            1 => Ok(hits[0].id.clone()),
-            0 => Err(format!("no group matching {q}")),
-            n => Err(format!("{n} groups match {q}; pass an id")),
-        }
-    }
 }
 
 enum CallOut {
     Reply(Result<serde_json::Value, String>),
     Engine(AgentRequest),
-}
-
-fn group_json(g: &TabGroup, groups: &crate::groups::Groups, tabs: &[TabInfo]) -> serde_json::Value {
-    let members: Vec<u64> = tabs
-        .iter()
-        .filter(|t| groups.of_tab(t.id) == Some(g.id.as_str()))
-        .map(|t| t.id.0)
-        .collect();
-    serde_json::json!({
-        "id": g.id,
-        "name": g.name,
-        "collapsed": g.collapsed,
-        "color": g.color,
-        "tabs": members,
-    })
 }
 
 fn default_shot_path() -> String {

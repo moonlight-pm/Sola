@@ -32,6 +32,7 @@ use xkbcommon::xkb::{self, KeyDirection, Keycode};
 
 use crate::clip::{self, ClipConfig, ClipHandle};
 use crate::protocol::Packet;
+use crate::link::Keys;
 use crate::udp::{Listener, UdpError};
 
 /// Linux `BTN_LEFT` / `BTN_RIGHT` / `BTN_MIDDLE`.
@@ -368,20 +369,16 @@ fn write_memfd(name: &str, bytes: &[u8]) -> Result<File, String> {
     Ok(file)
 }
 
-/// Bind UDP and inject until the process is killed.
-///
-/// `key`: the pair key (`sola-kvm pair`); with one, only input sealed with
-/// it is injected. Without one, anything that reaches the port is.
+/// Bind UDP and inject until the process is killed. Only the paired
+/// server's input (`sola-kvm pair`) is injected.
 pub fn run_listen(
     bind: &str,
     fallback_w: i32,
     fallback_h: i32,
     clip_cfg: Option<ClipConfig>,
-    key: Option<[u8; 32]>,
+    keys: Keys,
 ) -> Result<(), String> {
-    let listener = Listener::bind(bind)
-        .map_err(|e| format!("bind {bind}: {e}"))?
-        .sealed(key.as_ref());
+    let mut listener = Listener::bind(bind, keys).map_err(|e| format!("bind {bind}: {e}"))?;
     listener
         .set_read_timeout(Some(Duration::from_millis(16)))
         .map_err(|e| format!("udp timeout: {e}"))?;
@@ -402,7 +399,8 @@ pub fn run_listen(
         },
         None => None,
     };
-    // Dropped (unpaired or forged) input: logged at most this often.
+    // Dropped input (not from the paired server, or replayed): logged at
+    // most this often.
     let mut dropped_logged: Option<Instant> = None;
     loop {
         match listener.recv() {
@@ -421,7 +419,7 @@ pub fn run_listen(
             {
                 inj.dispatch();
             }
-            Err(e @ UdpError::Sealed { .. }) => {
+            Err(e @ UdpError::Dropped { .. }) => {
                 if dropped_logged.is_none_or(|at| at.elapsed() >= Duration::from_secs(10)) {
                     warn!("input {e}");
                     dropped_logged = Some(Instant::now());
@@ -436,10 +434,8 @@ pub fn run_listen(
 }
 
 /// Dump packets to the log (no inject). Debug stand-in.
-pub fn run_dump(bind: &str, key: Option<[u8; 32]>) -> Result<(), String> {
-    let listener = Listener::bind(bind)
-        .map_err(|e| format!("bind {bind}: {e}"))?
-        .sealed(key.as_ref());
+pub fn run_dump(bind: &str, keys: Keys) -> Result<(), String> {
+    let mut listener = Listener::bind(bind, keys).map_err(|e| format!("bind {bind}: {e}"))?;
     let local = listener.local_addr().ok();
     info!(?local, "listening for sola-kvm UDP packets (dump)");
     loop {

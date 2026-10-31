@@ -4,6 +4,7 @@
 
 use std::time::{Duration, Instant};
 
+use iced::advanced::image as img;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
 use iced::advanced::text::{self, Highlight, Paragraph as _, Span, Text};
@@ -16,8 +17,8 @@ use iced::{
 };
 
 use super::{
-    LayoutLine, ProseBlock, ProseRun, iter_lines, selected_visible, snap_byte, visible_text,
-    word_at,
+    Figure, LayoutLine, ProseBlock, ProseImages, ProseRun, iter_lines, selected_visible,
+    snap_byte, visible_text, word_at,
 };
 use crate::components::style::{HAIRLINE_A, SPACE_LG, SPACE_MD, mix_white};
 use crate::components::text::PROSE_SIZE;
@@ -55,8 +56,26 @@ pub fn prose_selectable<'a, Message: Clone + 'a>(
         .into()
 }
 
+/// [`prose_selectable`] for a letter with pictures: `images` holds the
+/// pixels its [`ProseBlock::Image`]s name (missing ones take no room).
+pub fn prose_letter<'a, Message: Clone + 'a>(
+    blocks: impl IntoIterator<Item = ProseBlock>,
+    theme: &Theme,
+    select_all: u64,
+    images: ProseImages,
+    on_link: impl Fn(String) -> Message + 'a,
+    on_select: impl Fn(Option<String>) -> Message + 'a,
+) -> Element<'a, Message, Theme> {
+    let mut view = ProseView::new(blocks, theme, on_link)
+        .select_all(select_all)
+        .on_select(on_select);
+    view.images = Some(images);
+    view.into()
+}
+
 struct ProseView<'a, Message> {
     blocks: Vec<ProseBlock>,
+    images: Option<ProseImages>,
     select_all: u64,
     on_link: Box<dyn Fn(String) -> Message + 'a>,
     on_select: Option<Box<dyn Fn(Option<String>) -> Message + 'a>>,
@@ -64,6 +83,8 @@ struct ProseView<'a, Message> {
     quote_ink: Color,
     sel_bg: Color,
     ink: Color,
+    /// Rules and the quote bar.
+    rule: Color,
 }
 
 impl<'a, Message> ProseView<'a, Message> {
@@ -75,6 +96,7 @@ impl<'a, Message> ProseView<'a, Message> {
         let p = theme.extended_palette();
         Self {
             blocks: blocks.into_iter().collect(),
+            images: None,
             select_all: 0,
             on_link: Box::new(on_link),
             on_select: None,
@@ -82,6 +104,9 @@ impl<'a, Message> ProseView<'a, Message> {
             quote_ink: p.secondary.base.text,
             sel_bg: crate::theme::selection(),
             ink: p.background.base.text,
+            // A tile clears `background.base` (the frame paints the face),
+            // so mix into the palette's background, not the cleared base.
+            rule: mix_white(theme.palette().background, HAIRLINE_A + 0.06),
         }
     }
 
@@ -94,6 +119,74 @@ impl<'a, Message> ProseView<'a, Message> {
         self.on_select = Some(Box::new(f));
         self
     }
+
+    /// A figure's box in a column `width` wide: a rule is a hairline;
+    /// pictures keep their proportions at the width their author asked
+    /// for (or their own), side by side, scaled down together when the line
+    /// would overflow; pictures with no pixels take no room.
+    fn figure_size(&self, figure: &Figure, width: f32) -> (Size, Option<FigureState>) {
+        match figure {
+            Figure::Rule => (Size::new(width, 1.0), Some(FigureState::Rule)),
+            Figure::Images(images) => {
+                let shown: Vec<_> = images
+                    .iter()
+                    .filter_map(|image| {
+                        let px = self.images.as_ref()?.get(&image.key)?;
+                        let asked = (image.width, image.height);
+                        Some((image, px, picture_size(asked, px.width, px.height, width)))
+                    })
+                    .collect();
+                if shown.is_empty() {
+                    return (Size::new(width, 0.0), None);
+                }
+                let gaps = SPACE_MD * (shown.len() - 1) as f32;
+                let total: f32 = shown.iter().map(|(_, _, (w, _))| w).sum::<f32>() + gaps;
+                let scale = if total > width {
+                    ((width - gaps) / (total - gaps)).max(0.05)
+                } else {
+                    1.0
+                };
+                let mut x = 0.0;
+                let mut height: f32 = 0.0;
+                let placed = shown
+                    .into_iter()
+                    .map(|(image, px, (w, h))| {
+                        let (w, h) = (w * scale, (h * scale).round());
+                        let bounds = Rectangle::new(Point::new(x, 0.0), Size::new(w, h));
+                        x += w + SPACE_MD;
+                        height = height.max(h);
+                        Placed {
+                            handle: px.handle.clone(),
+                            bounds,
+                            url: image.url.clone(),
+                            plate: px.plate,
+                        }
+                    })
+                    .collect();
+                (Size::new(width, height), Some(FigureState::Images(placed)))
+            }
+        }
+    }
+}
+
+/// Drawn size of a `natural_w` × `natural_h` picture the author asked to
+/// show at `asked` (width, height; either may be missing) in a
+/// `column`-wide column. Proportions are the picture's own.
+fn picture_size(
+    asked: (Option<u32>, Option<u32>),
+    natural_w: u32,
+    natural_h: u32,
+    column: f32,
+) -> (f32, f32) {
+    let natural_w = natural_w.max(1) as f32;
+    let natural_h = natural_h.max(1) as f32;
+    let w = match asked {
+        (Some(w), _) => w as f32,
+        (None, Some(h)) => h as f32 * natural_w / natural_h,
+        (None, None) => natural_w,
+    };
+    let w = w.min(column).max(1.0);
+    (w, (w * natural_h / natural_w).round())
 }
 
 struct LineState<P: text::Paragraph> {
@@ -104,7 +197,26 @@ struct LineState<P: text::Paragraph> {
     start: usize,
     text: String,
     quote: bool,
+    figure: Option<FigureState>,
 }
+
+enum FigureState {
+    Rule,
+    /// Pictures placed in the line (bounds relative to it).
+    Images(Vec<Placed>),
+}
+
+struct Placed {
+    handle: img::Handle,
+    bounds: Rectangle,
+    url: Option<String>,
+    plate: bool,
+}
+
+/// The plate under a picture made for white pages, and how far it reaches
+/// past the picture.
+const PLATE: Color = Color::from_rgb(0.96, 0.96, 0.96);
+const PLATE_PAD: f32 = 4.0;
 
 struct State<P: text::Paragraph> {
     lines: Vec<LineState<P>>,
@@ -141,7 +253,7 @@ impl<P: text::Paragraph> Default for State<P> {
 impl<Message, Renderer> Widget<Message, Theme, Renderer> for ProseView<'_, Message>
 where
     Message: Clone,
-    Renderer: text::Renderer<Font = iced::Font>,
+    Renderer: text::Renderer<Font = iced::Font> + img::Renderer<Handle = img::Handle>,
 {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<State<Renderer::Paragraph>>()
@@ -189,6 +301,25 @@ where
         // was the reading pane's main cost.
         let mut prev = std::mem::take(&mut state.lines).into_iter();
         for (i, line) in plan.iter().enumerate() {
+            if let Some(figure) = &line.figure {
+                prev.next();
+                let (size, figure) = self.figure_size(figure, width);
+                state.lines.push(LineState {
+                    paragraph: Renderer::Paragraph::default(),
+                    spans: Vec::new(),
+                    width,
+                    start: line.start,
+                    text: String::new(),
+                    quote: false,
+                    figure,
+                });
+                children.push(layout::Node::new(size).move_to(Point::new(0.0, y)));
+                y += size.height;
+                if size.height > 0.0 && i + 1 < plan.len() && line.gap >= 2 {
+                    y += SPACE_LG;
+                }
+                continue;
+            }
             let x = if line.quote { 1.0 + SPACE_MD } else { 0.0 };
             let line_w = (width - x).max(0.0);
             let spans = spans_for_line(
@@ -217,6 +348,7 @@ where
                 start: line.start,
                 text: line.text.clone(),
                 quote: line.quote,
+                figure: None,
             });
             children.push(layout::Node::new(size).move_to(Point::new(x, y)));
             y += size.height;
@@ -255,7 +387,12 @@ where
             let abs = Point::new(bounds.x + pos.x, bounds.y + pos.y);
             if let Some((i, local)) = line_at(layout, abs) {
                 if let Some(line) = state.lines.get(i) {
-                    if let Some(span_i) = line.paragraph.hit_span(local) {
+                    if let Some(FigureState::Images(placed)) = &line.figure {
+                        state.hovered_link = placed
+                            .iter()
+                            .find(|p| p.bounds.contains(local))
+                            .and_then(|p| p.url.clone());
+                    } else if let Some(span_i) = line.paragraph.hit_span(local) {
                         if let Some(url) = line.spans.get(span_i).and_then(|s| s.link.clone()) {
                             state.hovered_link = Some(url);
                         }
@@ -377,7 +514,7 @@ where
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        theme: &Theme,
+        _theme: &Theme,
         defaults: &renderer::Style,
         layout: Layout<'_>,
         _cursor: mouse::Cursor,
@@ -389,7 +526,7 @@ where
         let state = tree.state.downcast_ref::<State<Renderer::Paragraph>>();
         let children: Vec<_> = layout.children().collect();
 
-        draw_quote_rules(renderer, state, &children, viewport, theme);
+        draw_quote_rules(renderer, state, &children, viewport, self.rule);
 
         for (i, child) in children.iter().enumerate() {
             let Some(line) = state.lines.get(i) else {
@@ -397,6 +534,40 @@ where
             };
             if !child.bounds().intersects(viewport) {
                 continue;
+            }
+            match &line.figure {
+                Some(FigureState::Rule) => {
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: child.bounds(),
+                            ..Default::default()
+                        },
+                        self.rule,
+                    );
+                    continue;
+                }
+                Some(FigureState::Images(placed)) => {
+                    let origin = child.bounds().position() - Point::ORIGIN;
+                    for p in placed {
+                        let bounds = p.bounds + origin;
+                        if p.plate {
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds: bounds.expand(PLATE_PAD),
+                                    border: Border {
+                                        radius: 6.0.into(),
+                                        ..Border::default()
+                                    },
+                                    ..Default::default()
+                                },
+                                PLATE,
+                            );
+                        }
+                        renderer.draw_image(img::Image::new(p.handle.clone()), bounds, bounds);
+                    }
+                    continue;
+                }
+                None => {}
             }
             let translation = child.bounds().position() - Point::ORIGIN;
             for (index, span) in line.spans.iter().enumerate() {
@@ -425,6 +596,26 @@ where
                                 bounds: Rectangle::new(
                                     bounds.position() + baseline
                                         - iced::Vector::new(0.0, size.0 * 0.08),
+                                    Size::new(bounds.width, 1.0),
+                                ),
+                                ..Default::default()
+                            },
+                            color,
+                        );
+                    }
+                }
+                // Through the middle of the x-height, as iced's rich text.
+                if span.strikethrough {
+                    let size = span.size.unwrap_or(Pixels(PROSE_SIZE));
+                    let line_height = span.line_height.unwrap_or(LINE_HEIGHT).to_absolute(size);
+                    let color = span.color.unwrap_or(defaults.text_color);
+                    let baseline = translation
+                        + iced::Vector::new(0.0, size.0 + (line_height.0 - size.0) / 2.0);
+                    for bounds in &regions {
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle::new(
+                                    bounds.position() + baseline - iced::Vector::new(0.0, size.0 / 2.0),
                                     Size::new(bounds.width, 1.0),
                                 ),
                                 ..Default::default()
@@ -618,14 +809,16 @@ fn layout_paragraph<Renderer: text::Renderer<Font = iced::Font>>(
 }
 
 /// Span equality for paragraph reuse. iced's `Span: PartialEq` ignores
-/// highlight (our selection), links and underline.
+/// highlight (our selection), links, underline and strike-through.
 fn same_spans(
     a: &[Span<'static, String, iced::Font>],
     b: &[Span<'static, String, iced::Font>],
 ) -> bool {
     a.len() == b.len()
         && a.iter().zip(b).all(|(x, y)| {
-            x == y && x.highlight == y.highlight && x.link == y.link && x.underline == y.underline
+            x == y && x.highlight == y.highlight && x.link == y.link
+                && x.underline == y.underline
+                && x.strikethrough == y.strikethrough
         })
 }
 
@@ -719,7 +912,8 @@ fn styled_span(
     let mut s = Span::new(text.to_string())
         .font(run_font(run, line))
         .size(size)
-        .line_height(line_height_for(line));
+        .line_height(line_height_for(line))
+        .strikethrough(run.strike);
     if run.url.is_some() {
         s = s.link(run.url.clone().unwrap()).underline(true).color(link);
     } else if run.code || line.code {
@@ -741,7 +935,7 @@ fn draw_quote_rules<Renderer, P>(
     state: &State<P>,
     children: &[Layout<'_>],
     viewport: &Rectangle,
-    theme: &Theme,
+    rule: Color,
 ) where
     Renderer: renderer::Renderer,
     P: text::Paragraph,
@@ -773,10 +967,23 @@ fn draw_quote_rules<Renderer, P>(
                 bounds,
                 ..Default::default()
             },
-            Background::Color(mix_white(
-                theme.extended_palette().background.base.color,
-                HAIRLINE_A + 0.06,
-            )),
+            Background::Color(rule),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::picture_size;
+
+    #[test]
+    fn pictures_keep_proportions_inside_the_column() {
+        // As asked (a retina picture shown at half its pixels).
+        assert_eq!(picture_size((Some(300), None), 600, 200, 640.0), (300.0, 100.0));
+        // A height alone sets the width through the proportions.
+        assert_eq!(picture_size((None, Some(40)), 400, 100, 640.0), (160.0, 40.0));
+        // Its own width when nothing was asked; capped by the column.
+        assert_eq!(picture_size((None, None), 400, 100, 640.0), (400.0, 100.0));
+        assert_eq!(picture_size((Some(1200), None), 1200, 600, 600.0), (600.0, 300.0));
     }
 }

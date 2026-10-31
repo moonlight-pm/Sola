@@ -1,4 +1,5 @@
-//! sola-paint application: tabs of open images + graphite edit stage.
+//! sola-paint application: a window per open image (Next; see
+//! [`crate::windows`]) + graphite edit stage.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -10,25 +11,21 @@ use iced::widget::tooltip::Position as TooltipPosition;
 use iced::widget::{Space, column, container, row, text, tooltip};
 use iced::{
     Alignment, Background, Border, Color, Element, Event, Length, Padding, Subscription, Task,
-    Theme,
+    Theme, window,
 };
 
-use sola_bus::topics::{FocusTarget, PaintSession, Topic, TopicKind};
+use sola_bus::topics::{MenuDefinition, MenuItem, PaintSession, Topic, TopicKind};
 use sola_core::KeyCode;
-use sola_kit::app::{
-    BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup,
-    window_settings_transparent,
-};
+use sola_kit::app::{BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcome};
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::popover;
 use sola_kit::components::style::{
-    CHROME_SURFACE, HAIRLINE_A, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XL, mix_white,
+    chrome_surface, HAIRLINE_A, SPACE_LG, SPACE_SM, SPACE_XL, mix_white,
 };
 use sola_kit::components::text as kit_text;
 use sola_kit::components::toolbar::toolbar_icon;
-use sola_kit::components::{SidebarDensity, SidebarItem, SidebarPanel, SidebarSection};
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 
@@ -36,10 +33,14 @@ use crate::Msg;
 use crate::doc::{Doc, Loaded};
 use crate::geom;
 use crate::stage::{self, CropGesture};
+use crate::windows::{EMPTY, PaintWindows};
 
 pub const APP_ID: &str = "sola-paint";
-const HEADER_H: f32 = 52.0;
+const HEADER_H: f32 = sola_kit::components::style::BAR_H;
 const MAX_DOCS: usize = 32;
+/// How long boot waits for the saved session before showing the empty
+/// window.
+const BOOT_SETTLE: Duration = Duration::from_millis(400);
 
 pub fn run() -> iced::Result {
     startup(APP_ID);
@@ -59,15 +60,18 @@ pub fn run() -> iced::Result {
     BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
         .app_menu("Paint", [("quit", "Quit Paint", KeyCode::Q.meta())])
-        .app_menu(
-            "File",
-            [
-                ("open", "Open…", KeyCode::O.meta()),
-                ("save", "Save", KeyCode::S.meta()),
-                ("save_as", "Save As…", KeyCode::S.meta().shift()),
-                ("close_tab", "Close Tab", KeyCode::W.meta()),
+        .app_menu_definition(MenuDefinition {
+            label: "File".into(),
+            items: vec![
+                item("open", "Open…", Some(KeyCode::O.meta())),
+                item("save", "Save", Some(KeyCode::S.meta())),
+                item("save_as", "Save As…", Some(KeyCode::S.meta().shift())),
+                MenuItem::Divider,
+                item("set_background", "Set as Background", None),
+                MenuItem::Divider,
+                item("close_tab", "Close Window", Some(KeyCode::W.meta())),
             ],
-        )
+        })
         .app_menu(
             "Edit",
             [
@@ -87,16 +91,22 @@ pub fn run() -> iced::Result {
         )
         .install();
 
-    let mut settings = window_settings_transparent(APP_ID);
-    settings.size = iced::Size::new(1180.0, 800.0);
-
-    iced::application(App::boot, App::update, App::view)
+    iced::daemon(App::boot, App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)
         .default_font(fonts::ui())
-        .window(settings)
         .run()
+}
+
+fn item(id: &str, label: &str, shortcut: Option<sola_core::KeyChord>) -> MenuItem {
+    MenuItem::Action {
+        id: id.into(),
+        label: label.into(),
+        shortcut,
+        disabled: false,
+        checked: false,
+    }
 }
 
 struct Icons {
@@ -133,22 +143,23 @@ enum PickerKind {
 
 pub struct App {
     docs: Vec<Doc>,
+    /// The focused window's image: the one the tools, keys and menus act
+    /// on.
     selected: Option<u64>,
     next_id: u64,
+    /// A window per image ([`crate::windows`]).
+    windows: PaintWindows,
     cropping: bool,
     crop: Option<CropGesture>,
     /// Pointer at pan start + the pan vector at that moment.
     panning: Option<(iced::Point, iced::Vector)>,
-    last_cursor: Option<iced::Point>,
-    stage_size: iced::Size,
-    picker: Option<(PickerKind, FilePicker)>,
+    /// An open file dialog, in the window it was opened from.
+    picker: Option<(PickerKind, FilePicker, window::Id)>,
     last_dir: Option<PathBuf>,
     status: Option<String>,
     theme: Theme,
     float: sola_kit::FloatState,
-    window_id: Option<iced::window::Id>,
     icons: Icons,
-    stage_cache: iced::widget::canvas::Cache,
     /// True after the first sticky `PaintSession` (restore or our emit).
     restored: bool,
     /// True while a restore batch is decoding — don't persist mid-flight.
@@ -161,19 +172,16 @@ impl Default for App {
             docs: Vec::new(),
             selected: None,
             next_id: 1,
+            windows: PaintWindows::new(APP_ID),
             cropping: false,
             crop: None,
             panning: None,
-            last_cursor: None,
-            stage_size: iced::Size::new(800.0, 600.0),
             picker: None,
             last_dir: None,
             status: None,
             theme: default_theme(),
             float: sola_kit::FloatState::new(APP_ID),
-            window_id: None,
             icons: Icons::new(),
-            stage_cache: iced::widget::canvas::Cache::new(),
             restored: false,
             restoring: false,
         }
@@ -181,38 +189,89 @@ impl Default for App {
 }
 
 impl App {
+    /// Open a window for each image on the command line (the first in
+    /// front); with none, wait a moment for the saved session before
+    /// showing the empty window.
     pub fn boot() -> (Self, Task<Msg>) {
         let mut app = Self::default();
+        let mut tasks = Vec::new();
         for arg in std::env::args().skip(1) {
             if arg.is_empty() {
                 continue;
             }
-            app.open_path_sync(abs_path(PathBuf::from(arg)));
+            tasks.push(app.open_path_sync(abs_path(PathBuf::from(arg))));
         }
-        (app, sola_kit::window_ready_task(Msg::WindowReady))
+        tasks.push(Task::perform(tokio::time::sleep(BOOT_SETTLE), |()| {
+            Msg::BootSettled
+        }));
+        (app, Task::batch(tasks))
     }
 
-    pub fn title(&self) -> String {
-        match self.selected_doc() {
-            Some(doc) => format!("Paint — {}", doc.label()),
-            None => "Paint".into(),
-        }
+    /// A window's title: its image's file name (the shell's bar row).
+    pub fn title(&self, window: window::Id) -> String {
+        self.windows
+            .doc_of(window)
+            .and_then(|id| self.docs.iter().find(|d| d.id == id))
+            .map_or_else(|| "Paint".into(), Doc::label)
     }
 
-    pub fn theme(&self) -> Theme {
-        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
+    pub fn theme(&self, window: window::Id) -> Theme {
+        sola_kit::theme_for(self.chrome(window), &self.theme)
+    }
+
+    fn chrome(&self, window: window::Id) -> sola_kit::Chrome {
+        self.windows
+            .river_id(window)
+            .map_or(sola_kit::Chrome::Tiled, |id| self.float.chrome(id))
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
-            event::listen_with(|event, _status, _id| match event {
-                Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                    Some(Msg::KeyPressed(key, modifiers))
-                }
+            if self.picker.is_some() {
+                FilePicker::keys().map(Msg::Picker)
+            } else {
+                Subscription::none()
+            },
+            event::listen_with(|event, _status, id| match event {
+                Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => Some(
+                    Msg::At(id, Box::new(Msg::KeyPressed(key, modifiers))),
+                ),
+                Event::Window(
+                    e @ (window::Event::Focused
+                    | window::Event::CloseRequested
+                    | window::Event::Closed),
+                ) => Some(Msg::Window(id, e)),
                 _ => None,
             }),
         ])
+    }
+
+    /// `window` is the one acted on from now on: its image is selected. A
+    /// crop in progress elsewhere is dropped.
+    fn focus(&mut self, window: window::Id) {
+        let Some(doc) = self.windows.doc_of(window) else {
+            return;
+        };
+        self.windows.focused = Some(window);
+        let selected = (doc != EMPTY).then_some(doc);
+        if selected != self.selected {
+            self.selected = selected;
+            self.cancel_crop();
+            // Not before the saved session is read: it would be replaced.
+            if self.restored {
+                self.persist_session();
+            }
+        }
+    }
+
+    /// The focused window's stage.
+    fn stage(&self) -> Option<&crate::windows::Win> {
+        self.windows.get(self.windows.focused?)
+    }
+
+    fn stage_mut(&mut self) -> Option<&mut crate::windows::Win> {
+        self.windows.get_mut(self.windows.focused?)
     }
 
     fn selected_doc(&self) -> Option<&Doc> {
@@ -226,51 +285,90 @@ impl App {
     }
 
     fn invalidate_stage(&mut self) {
-        self.stage_cache.clear();
+        if let Some(win) = self.stage_mut() {
+            win.cache.clear();
+        }
     }
 
-    fn insert_doc(&mut self, doc: Doc) {
-        self.selected = Some(doc.id);
+    /// Add `doc` and open its window (`background`: behind, unfocused).
+    /// The no-image window goes; past [`MAX_DOCS`] the oldest close.
+    fn insert_doc(&mut self, doc: Doc, background: bool) -> Task<Msg> {
+        let mut tasks = Vec::new();
+        if let Some(empty) = self.windows.of_doc(EMPTY) {
+            self.windows.forget(empty);
+            tasks.push(window::close(empty));
+        }
+        let (window, open) = self
+            .windows
+            .open(APP_ID, doc.id, doc.path.as_deref(), background);
+        tasks.push(open.discard());
         self.docs.insert(0, doc);
-        if self.docs.len() > MAX_DOCS {
-            self.docs.truncate(MAX_DOCS);
-            if let Some(id) = self.selected {
-                if !self.docs.iter().any(|d| d.id == id) {
-                    self.selected = self.docs.first().map(|d| d.id);
-                }
+        while self.docs.len() > MAX_DOCS {
+            let Some(oldest) = self.docs.pop() else {
+                break;
+            };
+            if let Some(w) = self.windows.of_doc(oldest.id) {
+                self.windows.forget(w);
+                tasks.push(window::close(w));
             }
         }
-        self.cancel_crop();
+        if !background {
+            self.focus(window);
+        }
         self.invalidate_stage();
         self.status = None;
+        Task::batch(tasks)
+    }
+
+    /// With no window open, the no-image window (it offers Open).
+    fn ensure_window(&mut self) -> Task<Msg> {
+        if !self.windows.is_empty() {
+            return Task::none();
+        }
+        let (_, open) = self.windows.open(APP_ID, EMPTY, None, false);
+        open.discard()
+    }
+
+    /// Bring image `id`'s window up and act on it.
+    fn show_doc(&mut self, id: u64) {
+        if let Some(window) = self.windows.of_doc(id) {
+            self.focus(window);
+            self.windows.show(window);
+        }
     }
 
     /// Sync open — boot only, before iced is pumping frames.
-    fn open_path_sync(&mut self, path: PathBuf) {
-        if let Some(existing) = self.docs.iter().find(|d| d.path.as_ref() == Some(&path)) {
-            self.selected = Some(existing.id);
-            self.cancel_crop();
-            return;
+    fn open_path_sync(&mut self, path: PathBuf) -> Task<Msg> {
+        if let Some(id) = self.doc_at(&path) {
+            self.show_doc(id);
+            return Task::none();
         }
         match Doc::load(self.next_id, path.clone()) {
             Ok(doc) => {
                 self.next_id += 1;
                 tracing::info!(path = %path.display(), "opened");
-                self.insert_doc(doc);
+                let background = !self.docs.is_empty();
+                self.insert_doc(doc, background)
             }
             Err(e) => {
                 self.status = Some(e);
+                Task::none()
             }
         }
     }
 
+    /// The open image at `path`.
+    fn doc_at(&self, path: &PathBuf) -> Option<u64> {
+        self.docs
+            .iter()
+            .find(|d| d.path.as_ref() == Some(path))
+            .map(|d| d.id)
+    }
+
     /// Decode off the UI thread so Open / MIME / bus opens don't hitch chrome.
     fn open_path(&mut self, path: PathBuf) -> Task<Msg> {
-        if let Some(existing) = self.docs.iter().find(|d| d.path.as_ref() == Some(&path)) {
-            self.selected = Some(existing.id);
-            self.cancel_crop();
-            self.invalidate_stage();
-            self.persist_session();
+        if let Some(id) = self.doc_at(&path) {
+            self.show_doc(id);
             return Task::none();
         }
         let id = self.next_id;
@@ -287,29 +385,22 @@ impl App {
         )
     }
 
-    fn on_loaded(&mut self, result: Result<Loaded, String>) {
+    fn on_loaded(&mut self, result: Result<Loaded, String>) -> Task<Msg> {
         match result {
             Ok(loaded) => {
-                let path = loaded.path.clone();
-                if self
-                    .docs
-                    .iter()
-                    .any(|d| d.path.as_ref() == Some(&loaded.path))
-                {
-                    if let Some(existing) = self
-                        .docs
-                        .iter()
-                        .find(|d| d.path.as_ref() == Some(&loaded.path))
-                    {
-                        self.selected = Some(existing.id);
-                    }
-                    return;
+                if let Some(id) = self.doc_at(&loaded.path) {
+                    self.show_doc(id);
+                    return Task::none();
                 }
-                tracing::info!(path = %path.display(), "opened");
-                self.insert_doc(Doc::from_loaded(loaded));
+                tracing::info!(path = %loaded.path.display(), "opened");
+                let open = self.insert_doc(Doc::from_loaded(loaded), false);
                 self.persist_session();
+                open
             }
-            Err(e) => self.set_err(e),
+            Err(e) => {
+                self.set_err(e);
+                Task::none()
+            }
         }
     }
 
@@ -353,14 +444,11 @@ impl App {
             })
             .collect();
         if jobs.is_empty() {
-            if let Some(p) = select {
-                if let Some(doc) = self.docs.iter().find(|d| d.path.as_ref() == Some(&p)) {
-                    self.selected = Some(doc.id);
-                    self.invalidate_stage();
-                }
+            if let Some(id) = select.and_then(|p| self.doc_at(&p)) {
+                self.show_doc(id);
             }
             self.persist_session();
-            return Task::none();
+            return self.ensure_window();
         }
         self.restoring = true;
         self.status = Some("Opening…".into());
@@ -388,39 +476,55 @@ impl App {
         )
     }
 
-    fn on_session_loaded(&mut self, loaded: Vec<Loaded>, select: Option<PathBuf>) {
-        for item in loaded {
-            if self
-                .docs
-                .iter()
-                .any(|d| d.path.as_ref() == Some(&item.path))
-            {
+    /// The saved session decoded: a window each, the one that was
+    /// selected in front (else the first), the rest behind.
+    fn on_session_loaded(&mut self, loaded: Vec<Loaded>, select: Option<PathBuf>) -> Task<Msg> {
+        let front = select
+            .filter(|p| loaded.iter().any(|l| l.path == *p))
+            .or_else(|| (self.docs.is_empty()).then(|| loaded.first().map(|l| l.path.clone())).flatten());
+        let mut tasks = Vec::new();
+        // Oldest first, so the list keeps the saved order (newest first).
+        for item in loaded.into_iter().rev() {
+            if self.doc_at(&item.path).is_some() {
                 continue;
             }
-            self.docs.push(Doc::from_loaded(item));
-            if self.docs.len() > MAX_DOCS {
-                self.docs.truncate(MAX_DOCS);
-            }
-        }
-        if let Some(p) = select {
-            if let Some(doc) = self.docs.iter().find(|d| d.path.as_ref() == Some(&p)) {
-                self.selected = Some(doc.id);
-            } else if self.selected.is_none() {
-                self.selected = self.docs.first().map(|d| d.id);
-            }
-            self.invalidate_stage();
+            let background = front.as_ref() != Some(&item.path);
+            tasks.push(self.insert_doc(Doc::from_loaded(item), background));
         }
         self.restoring = false;
         self.status = None;
         self.persist_session();
+        // Every saved image gone: still a window to open one in.
+        tasks.push(self.ensure_window());
+        Task::batch(tasks)
     }
 
-    fn close_tab(&mut self, id: u64) {
+    /// Close image `id` and its window. The last window closing quits.
+    fn close_doc(&mut self, id: u64) -> Task<Msg> {
         self.docs.retain(|d| d.id != id);
         if self.selected == Some(id) {
-            self.selected = self.docs.first().map(|d| d.id);
+            self.selected = None;
         }
         self.cancel_crop();
+        let Some(window) = self.windows.of_doc(id) else {
+            return Task::none();
+        };
+        self.close_window(window)
+    }
+
+    /// Close `window` (its image is gone, or it is the no-image window).
+    /// Another window is acted on from now on; the last one closing quits.
+    fn close_window(&mut self, window: window::Id) -> Task<Msg> {
+        self.windows.forget(window);
+        if let Some(next) = self.windows.focused {
+            self.focus(next);
+        }
+        self.persist_session();
+        if self.windows.is_empty() {
+            tracing::info!("last paint window closed; quitting");
+            return Task::batch([window::close(window), iced::exit()]);
+        }
+        window::close(window)
     }
 
     fn cancel_crop(&mut self) {
@@ -437,9 +541,10 @@ impl App {
             return Err("Draw a crop first".into());
         };
         let doc = self.selected_doc().ok_or("No image open")?;
+        let stage = self.stage().map_or(iced::Size::new(800.0, 600.0), |w| w.stage);
         let dest = geom::dest_rect(
             iced::Size::new(doc.pixels.width() as f32, doc.pixels.height() as f32),
-            self.stage_size,
+            stage,
             doc.zoom,
             doc.pan,
         );
@@ -452,18 +557,24 @@ impl App {
         Ok(())
     }
 
+    /// A second launch: bring the focused window up.
     fn raise_self(&self) {
-        let Some(window_id) = self.float.any_window_id() else {
-            return;
-        };
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-            let _ = bus.emit(Topic::Focus(FocusTarget { window_id }));
+        if let Some(window) = self.windows.focused {
+            self.windows.show(window);
+        }
+    }
+
+    /// The focused window's stage was laid out at `size`, the pointer at
+    /// `cursor`.
+    fn note_stage(&mut self, cursor: iced::Point, size: iced::Size) {
+        if let Some(win) = self.stage_mut() {
+            win.stage = size;
+            win.cursor = Some(cursor);
         }
     }
 
     fn apply_zoom(&mut self, cursor: iced::Point, size: iced::Size, factor: f32) {
-        self.stage_size = size;
-        self.last_cursor = Some(cursor);
+        self.note_stage(cursor, size);
         let Some(doc) = self.selected_doc_mut() else {
             return;
         };
@@ -474,11 +585,11 @@ impl App {
     }
 
     fn zoom_from_key(&mut self, factor: f32) {
-        let cursor = self.last_cursor.unwrap_or(iced::Point::new(
-            self.stage_size.width * 0.5,
-            self.stage_size.height * 0.5,
-        ));
-        self.apply_zoom(cursor, self.stage_size, factor);
+        let Some((size, cursor)) = self.stage().map(|w| (w.stage, w.cursor)) else {
+            return;
+        };
+        let cursor = cursor.unwrap_or(iced::Point::new(size.width * 0.5, size.height * 0.5));
+        self.apply_zoom(cursor, size, factor);
     }
 
     fn zoom_fit(&mut self) {
@@ -498,6 +609,41 @@ impl App {
         }
     }
 
+    /// Make the focused image the desktop's background: Sola keeps a copy
+    /// (`sola_core::background`) and sola-river draws it.
+    fn set_background(&mut self) {
+        let Some(doc) = self.selected_doc() else {
+            self.set_err("No image open");
+            return;
+        };
+        let path = match doc.background_copy() {
+            Ok(path) => path,
+            Err(e) => {
+                tracing::warn!(error = %e, "set as background failed");
+                self.set_err(e);
+                return;
+            }
+        };
+        let set_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64);
+        let topic = Topic::Background(sola_bus::topics::Background {
+            path: path.to_string_lossy().into_owned(),
+            set_at,
+        });
+        let sent = sola_kit::app::bus()
+            .lock()
+            .map_err(|_| "bus unavailable".to_string())
+            .and_then(|mut bus| bus.emit(topic).map_err(|e| e.to_string()));
+        match sent {
+            Ok(()) => self.set_ok("Set as background"),
+            Err(e) => {
+                tracing::warn!(error = %e, "emit background failed");
+                self.set_err(format!("Could not set the background: {e}"));
+            }
+        }
+    }
+
     fn set_ok(&mut self, msg: impl Into<String>) {
         self.status = Some(msg.into());
     }
@@ -510,8 +656,15 @@ impl App {
         match msg {
             Msg::Bus(message) => {
                 self.float.update(&message);
+                self.windows.update(&message);
+                // The tab bar's stoplight: as the window's own close.
+                if let Some(window) = self.windows.close_request(&message) {
+                    return self.update(Msg::Window(window, window::Event::CloseRequested));
+                }
                 if apply_theme_update(&message, &mut self.theme) {
-                    self.invalidate_stage();
+                    for win in self.windows.iter_mut() {
+                        win.cache.clear();
+                    }
                 }
                 if is_self_quit(&message, APP_ID) {
                     return iced::exit();
@@ -539,19 +692,39 @@ impl App {
                     _ => {}
                 }
             }
-            Msg::Select(id) => {
-                self.selected = Some(id);
-                self.cancel_crop();
-                self.invalidate_stage();
-                self.persist_session();
+            Msg::At(window, msg) => {
+                self.focus(window);
+                return self.update(*msg);
             }
-            Msg::Close(id) => {
-                self.close_tab(id);
-                self.invalidate_stage();
-                self.persist_session();
+            Msg::Window(window, event) => match event {
+                window::Event::Focused => self.focus(window),
+                window::Event::CloseRequested => {
+                    return match self.windows.doc_of(window) {
+                        Some(doc) if doc != EMPTY => self.close_doc(doc),
+                        _ => self.close_window(window),
+                    };
+                }
+                window::Event::Closed => {
+                    // Closed under us (not through close_window).
+                    if let Some(doc) = self.windows.forget(window) {
+                        self.docs.retain(|d| d.id != doc);
+                        self.persist_session();
+                    }
+                    if self.windows.is_empty() {
+                        return iced::exit();
+                    }
+                }
+                _ => {}
+            },
+            Msg::BootSettled => {
+                if !self.restoring {
+                    return self.ensure_window();
+                }
             }
-            Msg::DocLoaded(result) => self.on_loaded(result),
-            Msg::SessionLoaded { loaded, select } => self.on_session_loaded(loaded, select),
+            Msg::DocLoaded(result) => return self.on_loaded(result),
+            Msg::SessionLoaded { loaded, select } => {
+                return self.on_session_loaded(loaded, select);
+            }
 
             Msg::OpenDialog => self.open_picker(),
             Msg::SaveAsDialog => self.save_picker(),
@@ -580,8 +753,7 @@ impl App {
                 }
             }
             Msg::StagePress(pt, size) => {
-                self.stage_size = size;
-                self.last_cursor = Some(pt);
+                self.note_stage(pt, size);
                 if self.cropping {
                     self.panning = None;
                     self.crop = Some(CropGesture {
@@ -593,8 +765,7 @@ impl App {
                 }
             }
             Msg::StageMove(pt, size) => {
-                self.stage_size = size;
-                self.last_cursor = Some(pt);
+                self.note_stage(pt, size);
                 if let Some(g) = self.crop.as_mut() {
                     g.current = pt;
                     self.invalidate_stage();
@@ -671,12 +842,22 @@ impl App {
                 }
             }
             Msg::KeyPressed(key, mods) => return self.on_key(key, mods),
-            Msg::WindowReady(id) => self.window_id = id,
-            Msg::TitleDrag => return sola_kit::drag(self.window_id),
-            Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
-            Msg::TitleClose => sola_kit::close_app(APP_ID),
+            Msg::TitleDrag => return sola_kit::drag(self.windows.focused),
+            Msg::TitleResize(dir) => return sola_kit::drag_resize(self.windows.focused, dir),
+            Msg::TitleClose => return self.close_focused(),
         }
         Task::none()
+    }
+
+    /// Close the focused window (its image, or the no-image window).
+    fn close_focused(&mut self) -> Task<Msg> {
+        match self.selected {
+            Some(id) => self.close_doc(id),
+            None => match self.windows.focused {
+                Some(window) => self.close_window(window),
+                None => Task::none(),
+            },
+        }
     }
 
     fn on_menu(&mut self, action: &str) -> Task<Msg> {
@@ -684,12 +865,11 @@ impl App {
             "open" => self.update(Msg::OpenDialog),
             "save" => self.update(Msg::Save),
             "save_as" => self.update(Msg::SaveAsDialog),
-            "close_tab" => {
-                if let Some(id) = self.selected {
-                    self.close_tab(id);
-                }
+            "set_background" => {
+                self.set_background();
                 Task::none()
             }
+            "close_tab" => self.close_focused(),
             "undo" => self.update(Msg::Undo),
             "crop" => self.update(Msg::ToggleCrop),
             "rotate_cw" => self.update(Msg::RotateCw),
@@ -702,19 +882,17 @@ impl App {
     }
 
     fn on_key(&mut self, key: keyboard::Key, mods: keyboard::Modifiers) -> Task<Msg> {
+        // The panel takes its own keys (FilePicker::keys).
+        if self.picker.is_some() {
+            return Task::none();
+        }
         if matches!(key, keyboard::Key::Named(NamedKey::Escape)) {
-            if self.picker.is_some() {
-                return self.on_picker(PickerMsg::Cancel);
-            }
             if self.cropping {
                 self.cancel_crop();
                 return Task::none();
             }
         }
         if matches!(key, keyboard::Key::Named(NamedKey::Enter)) {
-            if self.picker.is_some() {
-                return self.on_picker(PickerMsg::Confirm);
-            }
             if self.cropping {
                 return self.update(Msg::ApplyCrop);
             }
@@ -726,12 +904,7 @@ impl App {
             keyboard::Key::Character("o") => self.update(Msg::OpenDialog),
             keyboard::Key::Character("s") if mods.shift() => self.update(Msg::SaveAsDialog),
             keyboard::Key::Character("s") => self.update(Msg::Save),
-            keyboard::Key::Character("w") => {
-                if let Some(id) = self.selected {
-                    self.close_tab(id);
-                }
-                Task::none()
-            }
+            keyboard::Key::Character("w") => self.close_focused(),
             keyboard::Key::Character("z") => self.update(Msg::Undo),
             keyboard::Key::Character("k") if mods.shift() => self.update(Msg::ToggleCrop),
             keyboard::Key::Character("r") if mods.shift() => self.update(Msg::RotateCcw),
@@ -754,10 +927,13 @@ impl App {
 
     fn open_picker(&mut self) {
         let picker = FilePicker::open()
-            .title("Open image")
+            .multiple()
+            .title("Open images")
             .filter("Images", sola_core::open_image::IMAGE_EXTENSIONS)
             .start_dir(self.start_dir());
-        self.picker = Some((PickerKind::Open, picker));
+        if let Some(window) = self.windows.focused {
+            self.picker = Some((PickerKind::Open, picker, window));
+        }
     }
 
     fn save_picker(&mut self) {
@@ -778,17 +954,31 @@ impl App {
             .filter("Images", sola_core::open_image::IMAGE_EXTENSIONS)
             .start_dir(dir)
             .suggested_name(seed);
-        self.picker = Some((PickerKind::SaveAs, picker));
+        if let Some(window) = self.windows.focused {
+            self.picker = Some((PickerKind::SaveAs, picker, window));
+        }
     }
 
     fn on_picker(&mut self, msg: PickerMsg) -> Task<Msg> {
-        let Some((kind, picker)) = self.picker.as_mut() else {
+        let Some((kind, picker, _)) = self.picker.as_mut() else {
             return Task::none();
         };
         let kind = *kind;
-        match picker.update(msg) {
+        let outcome = picker.update(msg);
+        let follow = picker.scroll_task().map(Msg::Picker);
+        match outcome {
             Some(Outcome::Cancelled) => {
                 self.picker = None;
+            }
+            // Each image its own window.
+            Some(Outcome::PickedMany(paths)) => {
+                if let Some(parent) = paths.first().and_then(|p| p.parent()) {
+                    self.last_dir = Some(parent.to_path_buf());
+                }
+                self.picker = None;
+                let opens: Vec<Task<Msg>> =
+                    paths.into_iter().map(|path| self.open_path(path)).collect();
+                return Task::batch(opens);
             }
             Some(Outcome::Picked(path)) => {
                 if let Some(parent) = path.parent() {
@@ -809,63 +999,47 @@ impl App {
                     },
                 }
             }
-            None => {}
+            None => return follow,
         }
         Task::none()
     }
 
-    pub fn view(&self) -> Element<'_, Msg> {
-        let nav = self.sidebar();
-        let main = column![self.header_bar(), self.body_pane()]
+    /// An image's window: the tool strip and its stage (or, with no image,
+    /// the way to open one). Every message from it acts on it.
+    pub fn view(&self, window: window::Id) -> Element<'_, Msg> {
+        let doc = self
+            .windows
+            .doc_of(window)
+            .and_then(|id| self.docs.iter().find(|d| d.id == id));
+        let content = column![self.header_bar(doc), self.body_pane(window, doc)]
             .width(Length::Fill)
             .height(Length::Fill);
 
-        let content: Element<'_, Msg> = row![nav, main]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-
-        let framed = sola_kit::wrap_if_floating(
-            self.float.is_floating_any(),
-            "Paint",
+        let framed = sola_kit::window_frame(
+            self.chrome(window),
+            self.title(window),
             Msg::TitleDrag,
             Msg::TitleClose,
             Msg::TitleResize,
-            content,
+            content.into(),
         );
 
-        if let Some((_, picker)) = self.picker.as_ref() {
-            iced::widget::stack![framed, picker.overlay().map(Msg::Picker)].into()
-        } else {
-            framed
-        }
+        let view = match self.picker.as_ref().filter(|(_, _, w)| *w == window) {
+            Some((_, picker, _)) => {
+                iced::widget::stack![framed, picker.overlay().map(Msg::Picker)].into()
+            }
+            None => framed,
+        };
+        view.map(move |msg| Msg::At(window, Box::new(msg)))
     }
 
-    fn sidebar(&self) -> Element<'_, Msg> {
-        let items: Vec<SidebarItem<'_, Msg>> = self
-            .docs
-            .iter()
-            .map(|doc| {
-                SidebarItem::new(doc.label(), Msg::Select(doc.id))
-                    .active(self.selected == Some(doc.id))
-                    .id(doc.id.to_string())
-                    .subtitle(doc.dims_label())
-                    .on_close(Msg::Close(doc.id))
-            })
-            .collect();
+    fn header_bar<'a>(&'a self, doc: Option<&'a Doc>) -> Element<'a, Msg> {
+        let has_doc = doc.is_some();
+        let can_undo = doc.is_some_and(|d| d.can_undo());
+        // A crop and the status line belong to the image acted on.
+        let acting = doc.is_some_and(|d| self.selected == Some(d.id));
 
-        let sections = vec![SidebarSection::unlabeled(items).fill()];
-
-        SidebarPanel::new(sections)
-            .density(SidebarDensity::Large)
-            .build()
-    }
-
-    fn header_bar(&self) -> Element<'_, Msg> {
-        let has_doc = self.selected_doc().is_some();
-        let can_undo = self.selected_doc().is_some_and(|d| d.can_undo());
-
-        let tools = if self.cropping {
+        let tools = if self.cropping && acting {
             row![
                 kit_btn::labeled_sm("Apply crop", kit_btn::primary).on_press(Msg::ApplyCrop),
                 kit_btn::labeled_sm("Cancel", kit_btn::secondary).on_press(Msg::CancelCrop),
@@ -907,7 +1081,7 @@ impl App {
             .align_y(Alignment::Center)
         };
 
-        let meta: Element<'_, Msg> = match self.selected_doc() {
+        let meta: Element<'_, Msg> = match doc {
             Some(doc) => {
                 let title = text(doc.label()).font(fonts::ui_medium()).size(14);
                 let sub = text(format!("{} · {}", doc.dims_label(), doc.zoom_label()))
@@ -927,7 +1101,7 @@ impl App {
             .into(),
         };
 
-        let status: Element<'_, Msg> = match self.status.as_deref() {
+        let status: Element<'_, Msg> = match self.status.as_deref().filter(|_| acting || !has_doc) {
             Some(s) => text(s).size(11).style(kit_text::muted).into(),
             None => Space::new().width(0).into(),
         };
@@ -938,28 +1112,33 @@ impl App {
                 .align_y(Alignment::Center)
                 .width(Length::Fill)
                 .padding(Padding {
-                    top: SPACE_MD,
+                    top: 0.0,
                     right: SPACE_LG,
-                    bottom: SPACE_MD,
+                    bottom: 0.0,
                     left: SPACE_LG,
                 }),
         )
         .width(Length::Fill)
         .height(Length::Fixed(HEADER_H))
+        .center_y(Length::Fixed(HEADER_H))
         .style(header_style)
         .into()
     }
 
-    fn body_pane(&self) -> Element<'_, Msg> {
-        match self.selected_doc() {
-            Some(doc) => stage::view(
-                doc,
-                self.cropping,
-                self.crop,
-                self.panning.is_some(),
-                &self.theme,
-                &self.stage_cache,
-            ),
+    fn body_pane<'a>(&'a self, window: window::Id, doc: Option<&'a Doc>) -> Element<'a, Msg> {
+        let stage = doc.zip(self.windows.get(window));
+        match stage {
+            Some((doc, win)) => {
+                let acting = self.selected == Some(doc.id);
+                stage::view(
+                    doc,
+                    self.cropping && acting,
+                    self.crop.filter(|_| acting),
+                    self.panning.is_some() && acting,
+                    &self.theme,
+                    &win.cache,
+                )
+            }
             None => container(
                 column![
                     kit_text::heading("Paint"),
@@ -1023,10 +1202,10 @@ fn header_style(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(Color {
             a: 0.96,
-            ..CHROME_SURFACE
+            ..chrome_surface()
         })),
         border: Border {
-            color: mix_white(CHROME_SURFACE, HAIRLINE_A),
+            color: mix_white(chrome_surface(), HAIRLINE_A),
             width: 1.0,
             radius: 0.0.into(),
         },

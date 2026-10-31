@@ -125,11 +125,16 @@ impl Drop for SourceRoot {
 /// move forward. Without it, those packs stay pinned to whatever HEAD
 /// resolved to on the last pull.
 pub fn sync(refresh: bool) {
+    sync_into(Path::new(SHARE_ROOT), refresh);
+}
+
+/// [`sync`] into another share root (an Oath package's staging cache).
+pub fn sync_into(root: &Path, refresh: bool) {
     let upstream = read_upstream();
     for (name, pack) in &upstream.packs {
-        sync_pack(name, pack, refresh);
+        sync_pack(root, name, pack, refresh);
     }
-    remove_orphans(&upstream);
+    remove_orphans(root, &upstream);
     println!("sync complete");
 }
 
@@ -145,8 +150,8 @@ struct ResolvedSource {
 /// Per-pack sync step: resolve the upstream pin, compare to the
 /// installed manifest (both pin AND intent hash), pull if either
 /// drifts.
-fn sync_pack(name: &str, pack: &Pack, refresh: bool) {
-    let dest = dest_dir(name, pack);
+fn sync_pack(root: &Path, name: &str, pack: &Pack, refresh: bool) {
+    let dest = dest_dir(root, name, pack);
     let installed = read_manifest(&dest);
     let populated = dest_populated(&dest);
     let desired_intent = pack_intent_hash(pack);
@@ -201,13 +206,13 @@ fn sync_pack(name: &str, pack: &Pack, refresh: bool) {
         "{name}: pulling ({reason}) -> {}",
         short_pin(&resolved.pin)
     );
-    pull_pack(name, pack, resolved.nix_path);
+    pull_pack(root, name, pack, resolved.nix_path);
     write_manifest(&dest, &resolved.pin, &desired_intent);
 }
 
-/// Where a pack's content lives under `/opt/sola/share/`.
-fn dest_dir(name: &str, pack: &Pack) -> PathBuf {
-    PathBuf::from(SHARE_ROOT).join(&pack.category).join(name)
+/// Where a pack's content lives under the share root.
+fn dest_dir(root: &Path, name: &str, pack: &Pack) -> PathBuf {
+    root.join(&pack.category).join(name)
 }
 
 /// `true` if `dest` exists and contains at least one entry.
@@ -366,7 +371,7 @@ fn nix_build_attr(attr: &str) -> PathBuf {
 /// aren't declared in `upstream.toml`. Only categories that currently
 /// contain at least one declared pack are scanned, so a hand-managed
 /// directory under an unrelated category name is left alone.
-fn remove_orphans(upstream: &Upstream) {
+fn remove_orphans(root: &Path, upstream: &Upstream) {
     let categories: BTreeSet<&str> = upstream
         .packs
         .values()
@@ -375,11 +380,11 @@ fn remove_orphans(upstream: &Upstream) {
     let declared: BTreeSet<PathBuf> = upstream
         .packs
         .iter()
-        .map(|(name, pack)| dest_dir(name, pack))
+        .map(|(name, pack)| dest_dir(root, name, pack))
         .collect();
 
     for category in categories {
-        let cat_path = Path::new(SHARE_ROOT).join(category);
+        let cat_path = root.join(category);
         let Ok(entries) = fs::read_dir(&cat_path) else {
             continue;
         };
@@ -407,7 +412,7 @@ fn remove_orphans(upstream: &Upstream) {
 pub fn needs_sync() -> bool {
     let upstream = read_upstream();
     upstream.packs.iter().any(|(name, pack)| {
-        let dest = dest_dir(name, pack);
+        let dest = dest_dir(Path::new(SHARE_ROOT), name, pack);
         if !dest_populated(&dest) {
             return true;
         }
@@ -418,7 +423,7 @@ pub fn needs_sync() -> bool {
     })
 }
 
-fn pull_pack(name: &str, pack: &Pack, nix_resolved: Option<PathBuf>) {
+fn pull_pack(share_root: &Path, name: &str, pack: &Pack, nix_resolved: Option<PathBuf>) {
     println!("pulling {name} from {}", pack.source);
 
     let root = fetch_source(name, &pack.source, &pack.rev, nix_resolved);
@@ -432,7 +437,7 @@ fn pull_pack(name: &str, pack: &Pack, nix_resolved: Option<PathBuf>) {
         exit(1);
     }
 
-    let dest = dest_dir(name, pack);
+    let dest = dest_dir(share_root, name, pack);
     wipe_dir(&dest);
 
     match pack.kind {

@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Foundation / 05 The window</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="foundation.css">
+<script src="foundation.js"></script>
+<style>
+  /* Board-local: the app name is the first menu after the close dot. */
+  .tb__close + .tb__menu { font-weight: 600; }
+  .anat { position: relative; height: 260px; }
+  .anat__win { position: absolute; left: 40px; top: 70px; transform: scale(2); transform-origin: 0 0; }
+  .anat__win .win { position: relative; }
+  .pairs { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  .pair { position: relative; height: 230px; }
+  .vals { display: grid; grid-template-columns: 110px 1fr 1fr; gap: 0; margin-top: 12px; border-top: 1px solid var(--hairline); }
+  .vals > * { padding: 7px 0; border-bottom: 1px solid var(--hairline); font: 400 12px/16px var(--f-chrome); color: var(--ink-2); }
+  .vals > .k { color: var(--ink-3); }
+  .vals .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; box-shadow: inset 0 0 0 1px #ffffff1a; }
+  .vals code { font: 400 11.5px/1 var(--f-spec); color: var(--ink); }
+  .menu-stage { position: relative; height: 480px; }
+  .row2 { display: grid; grid-template-columns: 1fr 380px; gap: 40px; align-items: start; }
+  .narrow { display: flex; flex-direction: column; gap: 14px; }
+  .narrow__row { display: grid; grid-template-columns: 70px 1fr; gap: 16px; align-items: center; }
+  .narrow__row .stage { height: 58px; }
+  .zoom { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+  /* A foreign float: square, River's 1 px border outside the content. */
+  .win--foreign { border-radius: 0; box-shadow: 0 0 0 1px var(--rim-rest), 0 3px 11px #00000047; }
+  .win--foreign::after { display: none; }
+  .win--tile-foreign::after { box-shadow: inset 0 0 0 1px var(--rim-rest); }
+  .steam { display: flex; flex-direction: column; height: 100%; background: linear-gradient(180deg, #1b2838, #171a21); color: #c7d5e0; font: 400 12px/1.4 Arial, sans-serif; }
+  .steam__top { height: 34px; display: flex; align-items: center; gap: 18px; padding: 0 16px; background: #171a21; font-size: 13px; letter-spacing: 0.4px; color: #dcdedf; }
+  .steam__top b { color: #1a9fff; font-weight: 400; }
+  .steam__tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 18px; }
+  .steam__tiles i { display: block; height: 96px; border-radius: 2px; background: linear-gradient(135deg, #2a475e, #1b2838); }
+  .cinema { position: relative; width: 480px; height: 270px; border-radius: 0; }
+  .game { position: absolute; inset: 0; background: radial-gradient(500px 220px at 70% 30%, #ffb80055, #ffb80000 70%), linear-gradient(180deg, #1b2347, #3a2746 55%, #6b3a3a); display: grid; place-items: center; font: 700 26px/1 var(--f-chrome); letter-spacing: 6px; color: #f3e6c8; }
+</style>
+</head>
+<body class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num">05</span><div class="head__title">The window</div></div>
+    <div class="head__lead">Every kit window draws the same frame: a 38 px titlebar that carries the app's own menus, 12 px corners, and a 1 px rim. Focus is the window itself: a brighter bar, a red close dot, the highlight on the rim. Other apps' tiles get the same corners and rim from sola-river; there is no global menubar.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">The titlebar · 2×</div>
+    <div class="stage anat" id="anat"><div class="anat__win" id="anatWin"></div></div>
+    <div class="legend" style="margin-top:28px">
+      <div><span class="n">1</span><div><b>Close</b><span>A 12 px dot, 13 px in. Red only on the focused window; white at 12% on the rest. It is the only light.</span></div></div>
+      <div><span class="n">2</span><div><b>The app's name</b><span>Its first menu, in semibold: About and Quit live there.</span></div></div>
+      <div><span class="n">3</span><div><b>Menus</b><span>13 px pills, 24 tall, 8 px pad, 1 px apart. An open one takes ink at 14%.</span></div></div>
+      <div><span class="n">4</span><div><b>Window</b><span>The kit adds it last when the app publishes none: Hide, Cycle, Float, the zones.</span></div></div>
+      <div><span class="n">5</span><div><b>Title</b><span>12.5 px at the right, 10 px in, 18 px clear of the last menu. Left out when it repeats the app's name.</span></div></div>
+      <div><span class="n">6</span><div><b>Rim</b><span>1 px, opaque. Focused: the highlight a step lighter in its hue. At rest: the face 7% lighter.</span></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">Focused and not · the grey base, then the Rose scheme · 1:1</div>
+    <div class="pairs" id="pairs"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">A menu, open · 1:1</div>
+    <div class="row2">
+      <div class="stage menu-stage" id="menuStage"></div>
+      <div class="facts" style="grid-template-columns: 110px 1fr">
+        <span>Sheet</span><span>Drawn by the kit inside the window, under its title. The raised fill, a 10% edge, 12 px corners, 5 px pad, at least 200 wide, 4 px clear of the window's edges.</span>
+        <span>Rows</span><span>26 tall, 10 px pad, 7 px corners. Labels 13, shortcuts 12 at 55%. Separators white at 7%.</span>
+        <span>Hover</span><span>The accent at 14%. (The shell's own menus hover grey; see 09.)</span>
+        <span>Moving</span><span>Hover another title to switch menus. Left and Right walk them; Esc closes.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">The Window menu, as the kit publishes it · 1:1</div>
+    <div class="row2">
+      <div class="stage menu-stage" id="windowStage" style="height:520px"></div>
+      <div class="note">Every kit app gets this menu unless it publishes its own. Hide, Cycle Windows, Float, Left, Right, Full and Cinema act. <b>Top, Bottom and the Middle zones are left from the three-column desk</b>: the shell logs "no such zone on the Full / halves layout" and does nothing (dimmed here; see 11).</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">Narrow windows · 1:1</div>
+    <div class="narrow" id="narrow"></div>
+    <div class="note" style="margin-top:16px">The title goes first: cut with an ellipsis, then left out under 32 px of room. Then menus that do not fit are left off from the right, the Window menu with them. There is no fold into "···".</div>
+  </div>
+
+  <div class="section">
+    <div class="label">Corners clear to the ground · 4×</div>
+    <div class="zoom" id="zoom"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Other apps' windows · 1:2</div>
+    <div id="foreign"></div>
+    <div class="note" style="margin-top:16px;max-width:900px">An app that draws no Sola frame (Steam, any foreign app) gets no titlebar. Tiled, sola-river rounds it with four decorations above the window — the corners painted from the ground or the picture under them, and the rim along the edge — so it sits in the grid like a kit tile. Floating, it stays square with River's 1 px border in the rim colors, outside the content.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">Cinema · 1:4</div>
+    <div class="grid2">
+      <div class="sample"><div class="stage stage--picture cinema" id="cinA"></div><h4>Tiled</h4><p>The frame, the bar, the islands, the gaps.</p></div>
+      <div class="sample"><div class="stage cinema"><div class="game">HOLLOW LANTERN</div></div><h4>Cinema (⌘ Pad Enter)</h4><p>One window over the whole output, the top row included. No titlebar, square corners, opaque — so it can scan out.</p></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="label">The numbers</div>
+    <div class="facts">
+      <span>Titlebar</span><span>38 tall (<code>window_frame::HEIGHT</code>), a 1 px line of black at 50% under it. Focused: the raised fill. Unfocused: halfway from the face to raised; ink at 55%, the title at 38%.</span>
+      <span>Corners</span><span>12 (<code>window_frame::RADIUS</code>), tiled and floating alike. The corners outside the radius are cleared, so the ground shows: black, or the picture.</span>
+      <span>Rim</span><span>1 px, opaque. Focused <code>focus_rim(highlight)</code>; rest <code>lift_in_hue(face, 0.07)</code>. Opaque because a translucent rim let the picture brighten every edge.</span>
+      <span>Close</span><span><code>#ff5f57</code>, hover <code>#ff736b</code>; unfocused white at 12% (20% on hover). No yellow or green lights.</span>
+      <span>Dropdown</span><span>Inside the window (<code>dropdown.rs</code>): pad 5, rows 26, row radius 7, sheet radius 12, min 200, margin 4.</span>
+      <span>Shadow</span><span>Floats only, drawn by sola-river: 28%, y 3, blur 11, corner 12. Tiles cast none.</span>
+      <span>Foreign</span><span>No server-side titlebar. Tiles: corners and rim from <code>client/corners.rs</code>. Floats: River's square 1 px border (<code>client/manage.rs</code>).</span>
+      <span>Bare</span><span>Cinema: content only, square, opaque, no titlebar.</span>
+    </div>
+  </div>
+
+<script>
+  const term = (n = 6) => `<div class="term" style="font-size:12.5px;line-height:20px">${termClaude().slice(0, n).join("\n")}</div>`;
+
+  /* 1 · Anatomy: a 600-wide window at 2×, measured once fonts are in. */
+  document.getElementById("anatWin").innerHTML = win("projects", { x: 0, y: 0, w: 600, h: 46, focus: true, body: "", tb: { open: "Window" }, style: "position:relative" });
+
+  /* 2 · Focus pairs */
+  const pair = (scheme) => {
+    const W = 300, H = 170;
+    const a = win("projects", { x: 16, y: 30, w: W, h: H, focus: true, body: term(5) });
+    const b = win("terminal", { x: 16 + W + 12, y: 30, w: W, h: H, body: `<div class="term" style="font-size:12.5px">${termHome()}</div>` });
+    const rows = [
+      ["Titlebar", "--tb-fill", "--tb-fill-off"],
+      ["Rim", "--rim-focus", "--rim-rest"],
+      ["Close", "--close-dot", "--close-off"],
+      ["Highlight", "--highlight", "--highlight"],
+    ];
+    const vals = rows.map(([k, f, u]) => `<span class="k">${k}</span>${[f, u].map((t) => `<span><i class="sw" style="background:var(${t})"></i><code data-hex="${t}"></code></span>`).join("")}`).join("");
+    return `<div class="${scheme ? "scheme-" + scheme : ""}">
+      <div class="stage pair${scheme ? " stage--picture" : ""}">${a}${b}</div>
+      <div class="vals"><span class="k"></span><span class="k">${scheme ? "Rose scheme" : "Grey"} · focused</span><span class="k">not focused</span>${vals}</div>
+    </div>`;
+  };
+  document.getElementById("pairs").innerHTML = pair("") + pair("rose");
+
+  /* 3 · A menu open */
+  document.getElementById("menuStage").innerHTML =
+    win("projects", { x: 24, y: 24, w: 760, h: 430, focus: true, body: projectsBody(), tb: { open: "Projects" }, sheet: "Projects", sheetOpts: { top: 42 } });
+
+  /* 4 · The Window menu as published (kit menu.rs WINDOW_MENU_ENTRIES) */
+  SHEETS.WindowAsBuilt = [["Hide", "⌘H"], ["Cycle Windows", "⌘`"], "-", ["Float", "⌘ Pad *"], "-", ["Left", "⌘ Pad 4", true], ["Right", "⌘ Pad 6"], ["Top", "⌘ Pad =", "off"], ["Bottom", "⌘ Pad .", "off"], "-",
+    ["Top Middle", "⌘ Pad 8", "off"], ["Full Middle", "⌘ Pad 5", "off"], ["Bottom Middle", "⌘ Pad 2", "off"], ["Middle Right", "⌘ Pad +", "off"], "-", ["Full", "⌘ Pad 0"], ["Cinema", "⌘ Pad Enter"]];
+  const wsheet = SHEETS.WindowAsBuilt.map((r) => r === "-" ? `<div class="sep"></div>`
+    : `<div class="row${r[2] === true ? " is-hot" : r[2] === "off" ? " is-off" : ""}">${r[0]}<span class="row__key">${r[1]}</span></div>`).join("");
+  document.getElementById("windowStage").innerHTML =
+    win("terminal", { x: 24, y: 24, w: 760, h: 470, focus: true, body: `<div class="term">${termHome()}</div>`, tb: { open: "Window" } });
+  // Hang the as-built Window sheet inside that window.
+  document.querySelector("#windowStage .win").insertAdjacentHTML("beforeend", `<div class="sheet" data-under="Window" style="top:42px">${wsheet}</div>`);
+
+  /* 5 · Narrow: the same Mail titlebar at four widths, fitted like bar.rs */
+  const widths = [640, 420, 360, 240];
+  document.getElementById("narrow").innerHTML = widths.map((w) =>
+    `<div class="narrow__row"><span class="spec">${w} px</span><div class="stage" style="width:${w + 32}px">${win("mail", { x: 16, y: 10, w, h: 38, focus: true, body: "", tb: { title: "Inbox · 12 unread" } })}</div></div>`).join("");
+
+  /* 6 · Corners at 4× */
+  const rose = (wins, o = {}) => desk({ picture: true, scheme: "rose", wins, top: { gpu: false }, ...o });
+  const kit = rose([{ app: "projects", zone: "left", focus: true }, { app: "terminal", zone: "right" }]);
+  const steamWin = { app: "steam", zone: "right", tb: false, cls: "win--tile-foreign", body: steamBody() };
+  const foreignTile = rose([{ app: "projects", zone: "left", focus: true }, steamWin]);
+  const foreignFloat = rose([{ app: "projects", zone: "left" }, { app: "terminal", zone: "right" },
+    { app: "steam", rect: { x: 1300, y: 420, w: 520, h: 360 }, tb: false, float: true, focus: true, cls: "win--foreign", body: steamBody() }]);
+  const zoomed = (html, x, y, title, text) =>
+    `<div class="sample">${view(html, { x, y, w: 400, h: 240, s: 4, picture: true })}<h4>${title}</h4><p>${text}</p></div>`;
+  document.getElementById("zoom").innerHTML = [
+    zoomed(kit, 236, 36, "A kit tile", "The tab bar's corner and the window's, one gap apart. The cleared corners show the picture; the rim follows the curve."),
+    zoomed(foreignTile, 1076, 36, "A foreign tile", "Steam has no frame of its own. sola-river paints the same corners from the picture's pixels there, and the rim."),
+    zoomed(foreignFloat, 1290, 410, "A foreign float", "Square, with River's 1 px border just outside the content. Its corners have windows behind them, so they are not painted."),
+  ].join("");
+
+  /* 7 · Foreign next to kit at 1:2 */
+  document.getElementById("foreign").innerHTML = view(foreignTile, { w: 960, h: 540, s: 0.5, picture: true });
+
+  /* 8 · Cinema, tiled side */
+  document.getElementById("cinA").innerHTML = `<div style="position:absolute;inset:0;transform:scale(0.25);transform-origin:0 0">${rose([{ app: "browser", zone: "full", focus: true }], { style: "background-size:cover" })}</div>`;
+
+  function steamBody() {
+    return `<div class="steam"><div class="steam__top"><b>STORE</b><span>LIBRARY</span><span>COMMUNITY</span><span>HOME</span></div><div class="steam__tiles"><i></i><i></i><i></i><i></i><i></i><i></i></div></div>`;
+  }
+
+  document.querySelectorAll("[data-hex]").forEach((el) => { el.textContent = tokenValue(el.dataset.hex, el.parentElement); });
+
+  /* Fit the narrow titlebars like bar.rs: drop menus past the limit, then the title under 32 px. */
+  function fitBars() {
+    document.querySelectorAll(".win").forEach((w) => {
+      if (!w.querySelector(".tb") || w.closest("#anat")) return;
+      const tb = w.querySelector(".tb");
+      const limit = w.clientWidth - 10;
+      let cut = false;
+      tb.querySelectorAll(".tb__menu").forEach((m) => {
+        if (cut || m.offsetLeft + m.offsetWidth > limit) { cut = true; m.remove(); }
+      });
+      const menus = tb.querySelectorAll(".tb__menu");
+      const last = menus[menus.length - 1];
+      if (!last) return;
+      const room = limit - (last.offsetLeft + last.offsetWidth + 18);
+      if (room < 32) tb.querySelector(".tb__title")?.remove();
+    });
+  }
+
+  /* Dimension marks on the 2× titlebar. */
+  function marks() {
+    const st = document.getElementById("anat");
+    const sr = st.getBoundingClientRect();
+    const r = (el) => { const b = el.getBoundingClientRect(); return { x: b.left - sr.left, y: b.top - sr.top, w: b.width, h: b.height }; };
+    const w = r(st.querySelector(".win"));
+    const tb = r(st.querySelector(".tb"));
+    const close = r(st.querySelector(".tb__close"));
+    const pills = [...st.querySelectorAll(".tb__menu")].map(r);
+    const title = r(st.querySelector(".tb__title"));
+    const add = (html) => st.insertAdjacentHTML("beforeend", html);
+    const h = (x1, x2, y, t) => add(`<div class="dm dm--h" style="left:${x1}px;top:${y}px;width:${x2 - x1}px"><span>${t}</span></div>`);
+    const v = (y1, y2, x, t) => add(`<div class="dm dm--v" style="left:${x}px;top:${y1}px;height:${y2 - y1}px"><span>${t}</span></div>`);
+    const num = (x, y, n) => add(`<div class="dm" style="left:${x}px;top:${y}px;font-size:12px">${n}</div>`);
+    const b = w.y + w.h;           // below the window
+    const last = pills[pills.length - 1];
+    v(tb.y, tb.y + tb.h, w.x - 14, "38");
+    h(w.x, close.x, w.y - 16, "13");
+    h(close.x, close.x + close.w, w.y - 34, "12");
+    h(close.x + close.w, pills[0].x, w.y - 16, "9");
+    v(last.y, last.y + last.h, last.x + last.w + 8, "24");
+    h(last.x, last.x + 16, b + 16, "8");
+    h(last.x + last.w, last.x + last.w + 36, b + 40, "18 min");
+    h(title.x + title.w, w.x + w.w, b + 16, "10");
+    num(close.x + 6, b + 64, "1");
+    num(pills[0].x + pills[0].w / 2 - 4, b + 64, "2");
+    num(pills[1].x + pills[1].w / 2 - 4, b + 64, "3");
+    num(last.x + last.w / 2 - 4, b + 64, "4");
+    num(title.x + title.w / 2 - 4, b + 64, "5");
+    num(w.x + w.w + 10, w.y + w.h / 2, "6");
+  }
+
+  finish();
+  document.fonts.ready.then(() => { fitBars(); marks(); });
+</script>
+</body>
+</html>

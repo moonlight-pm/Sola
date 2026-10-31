@@ -77,6 +77,11 @@ pub fn day_title(date: NaiveDate) -> String {
     )
 }
 
+/// `Wed, Oct 28`.
+pub fn short_day(date: NaiveDate) -> String {
+    date.format("%a, %b %-d").to_string()
+}
+
 pub fn pretty_date(date: NaiveDate) -> String {
     format!(
         "{} {}, {}",

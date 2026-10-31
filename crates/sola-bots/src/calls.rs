@@ -2,6 +2,7 @@
 
 use sola_call::{ArgSpec, ArgType, Incoming, MethodSpec};
 
+use crate::ai::Ai;
 use crate::host::Host;
 use std::sync::Arc;
 
@@ -18,8 +19,19 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "new",
-            "Create a named bot (`~/Bots/<slug>/`)",
-            &[req_s("name", Some('n'), "Display name")],
+            "Create a named bot (`~/Bots/<slug>/`) on an AI, fixed after",
+            &[
+                req_s("name", Some('n'), "Display name"),
+                req_s("ai", Some('a'), "grok, claude, or gab"),
+            ],
+        ),
+        method(
+            "setup",
+            "Choose the AI of a bot directory that has none",
+            &[
+                req_s("bot", Some('b'), "Bot id, slug, or name"),
+                req_s("ai", Some('a'), "grok, claude, or gab"),
+            ],
         ),
         method_ms(
             "send",
@@ -37,7 +49,7 @@ pub fn methods() -> Vec<MethodSpec> {
         ),
         method(
             "rm",
-            "Delete a bot: catalog, home directory, Grok session",
+            "Delete a bot: its home directory (and a Grok bot's session)",
             &[req_s("bot", Some('b'), "Bot id, slug, or name")],
         ),
         method(
@@ -69,12 +81,21 @@ pub fn dispatch(host: &Arc<Host>, incoming: Incoming) {
     match method.as_str() {
         "list" => reply.ok(host.list_json()),
         "poll" => reply.ok(host.poll_json(str_arg("bot").as_deref())),
-        "new" => match str_arg("name") {
-            Some(name) => match host.create(&name) {
+        "new" => match (str_arg("name"), ai_arg(str_arg("ai"))) {
+            (Some(name), Ok(ai)) => match host.create(&name, ai) {
                 Ok(v) => reply.ok(v),
                 Err(e) => reply.err(e),
             },
-            None => reply.err("name required"),
+            (None, _) => reply.err("name required"),
+            (_, Err(e)) => reply.err(e),
+        },
+        "setup" => match (str_arg("bot"), ai_arg(str_arg("ai"))) {
+            (Some(bot), Ok(ai)) => match host.setup(&bot, ai) {
+                Ok(v) => reply.ok(v),
+                Err(e) => reply.err(e),
+            },
+            (None, _) => reply.err("bot required"),
+            (_, Err(e)) => reply.err(e),
         },
         "send" => {
             let bot = str_arg("bot");
@@ -110,6 +131,12 @@ pub fn dispatch(host: &Arc<Host>, incoming: Incoming) {
         },
         other => reply.err(format!("unknown method {other}")),
     }
+}
+
+/// The AI a request names.
+pub fn ai_arg(name: Option<String>) -> Result<Ai, String> {
+    let name = name.ok_or("ai required: grok, claude, or gab")?;
+    Ai::parse(&name).ok_or_else(|| format!("unknown AI {name}: grok, claude, or gab"))
 }
 
 fn method(name: &str, summary: &str, args: &[ArgSpec]) -> MethodSpec {
@@ -162,7 +189,7 @@ mod tests {
         let n: Vec<_> = methods.iter().map(|m| m.name.as_str()).collect();
         assert_eq!(
             n,
-            ["list", "poll", "new", "send", "transcript", "rm", "cancel"]
+            ["list", "poll", "new", "setup", "send", "transcript", "rm", "cancel"]
         );
     }
 }

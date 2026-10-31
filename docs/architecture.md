@@ -39,8 +39,8 @@ bus, a call host, and multi-process **Iced** apps sharing `sola-kit`.
          │                   │  Unix sockets (sola-bus, sola-call)
          │              ┌────┴────────────────────────┐
          │              │  shell · settings · terminal │
-         │              │  workspaces · browser        │
-         │              │  wrapper · mail · calendar · bots · scope · spotify │
+         │              │  projects · browser · mail   │
+         │              │  calendar · bots · scope     │
          │              └─────────────────────────────┘
          └──── Wayland (surfaces / input) ─────────────┘
 ```
@@ -56,30 +56,29 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | Path | Role |
 |------|------|
 | `crates/sola` | Process manager (binary entry) |
-| `crates/sola-bus` | Bus host + client library + topics |
+| `crates/sola-bus` | Bus host + client library + topics (an app brings its own window forward with ephemeral `Topic::ShowWindow(window_id)` → the shell; `Topic::Focus` stays the shell's word to sola-river) |
 | `crates/sola-call` | Call host + client library (request/reply) |
-| `crates/sola-bots` | Named informational LLM sessions. Daemon `sola-botsd` (supervisor `MANAGED`, owner `bots`, HTTP `0.0.0.0:27419`, SSE `GET /events`) + iced **Bots** (HTTP/SSE client, same as the phone). Homes `~/Bots/<slug>/`. ACP `grok agent stdio` (yolo). Phone: SolaBot on Ember. `solactl bots` stays on sola-call. Not Workspaces. |
-| `crates/sola-core` | Shared primitives (env, process, config, log, …) |
+| `crates/sola-bots` | Named informational LLM sessions. A bot is a directory `~/Bots/<slug>/` (`bot.json`: name, AI, model, session; `dialog.json`), listed by scanning `~/Bots` like Projects. Daemon `sola-botsd` (supervisor `MANAGED` on NixOS; `pkg:sola` carries it on Oath, no `svc` yet; owner `bots`; HTTP + SSE `GET /events` on the Unix socket `$XDG_RUNTIME_DIR/sola-bots`, no token) + iced **Bots** (its client). Each bot's AI is fixed at creation: Grok (`acp.rs`, `grok agent stdio` per bot, yolo), Claude (`claude.rs`, `claude -p` per turn on the bot's session, subscription login), Gab AI (`gab.rs`, the chat API, a key). `solactl bots` stays on sola-call. Not Projects. |
+| `crates/sola-core` | Shared primitives (env, process, config, log, `login` — Oath's login service at `/oath/run/login.sock`: status, check, set, auto-login, desk down —, `open_url`, `omnibox` — typed words as an address or a Kagi search, and the browser's visit history read and ranked — …) |
 | `crates/sola-river` | River ↔ bus bridge |
-| `crates/sola-session` | User-app session manager (spawn / close / reap) |
-| `crates/sola-shell` | Menubar, launcher, switcher, Super+K shortcuts overlay, zoning, notification HUD, Bluetooth popover, volume popover + 12-band LED spectrum (iced daemon; BlueZ over system D-Bus; PipeWire via `pw-dump`/`wpctl`/`pw-cat`; Lamzu mouse battery over hidraw). Flower menu: Restart Shell, Quit Sola, Restart Computer, Shut Down (logind). |
-| `crates/sola-kit` | Iced app kit + storybook (incl. `FilePicker`, shared **Window** menu, compositor clipboard helper for images) |
-| `crates/sola-settings` | Settings panel (theme, apps, mail config, calendar accounts + shelf, …) |
-| `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). |
-| `crates/sola-workspaces` | Project / workspace rail + agent-aware PTYs (tmux `sola-ws`). Catalog `~/.config/sola/workspaces/catalog.json` (migrates `agent-terminal/`). Siblings under `<root>/.worktrees/`, or root tabs (`kind: root`, `workspace.spawn --root`) in the project root itself — no worktree, no startup script, never `git worktree remove`d. Call owner `workspaces` (`solactl workspaces …`; methods: `ps`, `project.{list,add,rm,startup,reorder}`, `workspace.{list,spawn,set,rm,select,exec}`, `pane.{list,send,read,wait}`, `whoami`). `workspace.set --name` `git worktree move`s to `.worktrees/<slug>` (id stays; restamps `SOLA_WS_PATH`); `--title` is the rail label (default slug); `--before` reorders in the project; `--branch` is `git branch -m`. `workspace.rm --worktree` also `git worktree remove`s (after the tab drops; tmux kill + git run off the iced thread); a gone checkout reaps the tab. `pane.send` / `workspace.exec --prompt` tmux `load-buffer` + `paste-buffer -p` then Enter (not raw client-PTY dump). Per-project `startup` script runs in a new worktree after spawn. `project.rm` unregisters a project + kills its tmux, leaves worktrees. Attach stamps `SOLA_WS_PATH`; restart attaches only on path match and quarantines leftovers. `last-status.json` keeps the Grok `session_id`; a new tmux (reboot) execs `grok -r` when Grok was running and the session dir exists. Tmux session `-t` is exact (`=name`) so a parent id is not a prefix of a split leaf; pane/window commands use `=name:` (a bare `=name` is an exact pane name and fails). Grok hooks on `$XDG_RUNTIME_DIR/sola-ws-hooks.sock` (`POST /hook/grok`); Codex hooks merge into `~/.codex/hooks.json` (`POST /hook/codex`) without dropping Impeccable groups. Claude hooks merge into `~/.claude/settings.json` (`POST /hook/claude`) without dropping permissions, plugins, or other hooks. OSC 9999 stripped in the term lib. Compaction `×N` on the workspace row is the loudest Grok, Codex, or Claude pane. Grok reads `~/.grok/sessions/<encoded-cwd>/<sid>/` (`compaction/segment_*.md`, `compaction_checkpoints/`, then `signals.json` `compactionCount`). Codex counts `type: compacted` records in `~/.codex/sessions/**/rollout-*-{session_id}.jsonl`. Claude counts `subtype: compact_boundary` in `~/.claude/projects/<encoded-cwd>/<session_id>.jsonl` (non-alphanumeric cwd bytes become `-`). The rail mark rolls up Grok, Codex, and Claude panes in a split (waiting > working > done > idle). Unfocused done/waiting emit `Topic::AppNotification` (title `{project} · {tab}`, body `grok is done` / `codex is done` / `claude is done` / `needs attention`). |
-| `crates/sola-browser` | Iced chrome + CEF engine (single crate). Default web + PDF MIME / `xdg-open` (`sola-browser.desktop`). Web `Notification` → `Topic::AppNotification`. Call owner `browser` (`solactl browser …`). |
-| `crates/sola-wrapper` | Website wrappers as first-class apps (`sola-wrapper <id>`; CEF via sola-browser lib; catalog `kind`/`url` on `Topic::Application`) |
+| `crates/sola-session` | User-app session manager (spawn / close / reap; `SessionApps` restore; apps that exit with their compositor — `display.rs`, the Wayland socket's identity — stay saved and start again on the next one; a restarted session adopts the running saved apps — `adopted.rs`) |
+| `crates/sola-shell` | Menubar, launcher (a running app comes forward — `activate_window` on its last-used window — except Terminal, which opens a new window; picking Browser opens the Browser field (`launcher/web.rs`: an address or a search over the browser's visits via `sola_core::omnibox`, the pick handed to `sola_core::open_url`); while an app starts, a ghost row in the tab bar at `Stacks::landing_slot`; its Projects chooser lists `~/Projects` and calls Projects' `project.list` / `project.open` on the call plane), switcher, Super+K shortcuts overlay, zoning, notification HUD, Bluetooth popover, volume popover + 12-band LED spectrum (iced daemon; BlueZ over system D-Bus; PipeWire via `pw-dump`/`wpctl`/`pw-cat`; Lamzu mouse battery over hidraw). Flower menu: Exit Sola, Restart Computer, Shut Down (logind; on Oath `sudo oath set host:local power=reboot|halt` + `oath apply --confirm host:local`). |
+| `crates/sola-kit` | Iced app kit, a library (the storybook binary retired 2026-10-30) (incl. `TabWindows` — per-document windows that take the compositor's close requests; `FilePicker` — the one Open / Save / Choose Folder panel, keys and several files; `style::BAR_H` for app bars; `show_window` → `Topic::ShowWindow`; shared **Window** menu, compositor clipboard helper for images; `scroll` — the kit scrollbar, a pill in a rounded channel, which apps take through `scroll::scrollable`; `prose_letter` — prose with rules and lines of pictures the app supplies by key) |
+| `crates/sola-settings` | Settings panel (theme, apps, mail config, calendar accounts + shelf, Login — the password and auto-login through Oath's login service, …) |
+| `crates/sola-oath` | **Oath** catalog app: packages, Needs / Used by, pins, apply, over `oath --json` (sudo for writes). Launcher entry **Oath** only when `/oath/INDEX.md` exists |
+| `crates/sola-terminal` | Untitled-shell terminal (alacritty grid + iced). Also a **library** for the grid/PTY (`tmux::configure` for other sockets). On `next`: an `iced::daemon` with a window per tab (each a tab in the shell's bar via kit `tabs::TabWindows`), no tab strip, one process (`$XDG_RUNTIME_DIR/sola/terminal.sock`; a second launch emits `MenuAction new_tab` and exits). |
+| `crates/sola-projects` | **Projects** (named Workspaces until 2026-10-21; "workspace" now means a desktop workspace): a window per project (a tab in the shell's bar, whose row shows the project's activity) with its tabs on a top bar, + agent-aware PTYs (tmux `sola-ws`). A project may be on another computer (`host` on the project and its tabs): each tab's PTY runs `ssh -t <host>` into a tmux there on socket `sola-ws-remote` (`sola_terminal::remote`, ssh options in `sola_core::ssh`); the launcher's chooser lists that computer's `~/Projects` over ssh and opens one with `project.open --host`. Per host, a link (`link.rs`: Projects' own `ssh -N -R`) forwards a hook socket there to `sola-ws-hooks-<host>.sock` here (hooks tagged with their host); `machine.rs` (`Machine`: here, or a host over the shared ssh connection) runs git, startup scripts and session-file reads for status, worktrees and resume; `remote.rs` runs what waits on ssh off the UI thread (attach, a 3 s status tick per host, remote calls, island scans). A project is a folder of `~/Projects` (or another computer's); the catalog `~/.config/sola/projects/catalog.json` holds only the open ones — closing a project's window ends its sessions and forgets it; startup scripts by folder in `startup.json`. Catalog (migrated once from `workspaces/`, before that `agent-terminal/`; a `workspaces` key still loads and saves as `tabs`). Siblings under `<root>/.worktrees/`, or root tabs (`kind: root`, `tab.spawn --root`) in the project root itself — no worktree, no startup script, never `git worktree remove`d. Call owner `projects` (`solactl projects …`; methods: `ps`, `project.{list,open,close,startup}`, `tab.{list,spawn,set,rm,select,exec}`, `pane.{list,send,read,wait}`, `whoami`). Single instance: `$XDG_RUNTIME_DIR/sola/projects.sock` (a later launch sends `MenuAction` `raise` — show the selected project's window — and exits before any tmux helper). `tab.set --name` `git worktree move`s to `.worktrees/<slug>` (id stays; restamps `SOLA_WS_PATH`); `--title` is the top-bar label (default slug); `--before` reorders in the project; `--branch` is `git branch -m`. `tab.rm --worktree` also `git worktree remove`s (after the tab drops; tmux kill + git run off the iced thread); a gone checkout reaps the tab. `pane.send` / `tab.exec --prompt` tmux `load-buffer` + `paste-buffer -p` then Enter (not raw client-PTY dump). Per-project `startup` script runs in a new worktree after spawn. Closing a project's window (or `project.close`) kills its tmux and forgets it; worktrees stay. Attach stamps `SOLA_WS_PATH`; restart attaches only on path match and quarantines leftovers. `last-status.json` keeps the Grok `session_id`; a new tmux (reboot) execs `grok -r` when Grok was running and the session dir exists. Tmux session `-t` is exact (`=name`) so a parent id is not a prefix of a split leaf; pane/window commands use `=name:` (a bare `=name` is an exact pane name and fails). Grok hooks on `$XDG_RUNTIME_DIR/sola-ws-hooks.sock` (`POST /hook/grok`); Codex hooks merge into `~/.codex/hooks.json` (`POST /hook/codex`) without dropping Impeccable groups. Claude hooks merge into `~/.claude/settings.json` (`POST /hook/claude`) without dropping permissions, plugins, or other hooks. On start, existing Codex / Claude entries are found by script file name and rewritten in place (statusMessage "Sola Projects status"). OSC 9999 stripped in the term lib. Compaction `×N` on the tab row is the loudest Grok, Codex, or Claude pane. Grok reads `~/.grok/sessions/<encoded-cwd>/<sid>/` (`compaction/segment_*.md`, `compaction_checkpoints/`, then `signals.json` `compactionCount`). Codex counts `type: compacted` records in `~/.codex/sessions/**/rollout-*-{session_id}.jsonl`. Claude counts `subtype: compact_boundary` in `~/.claude/projects/<encoded-cwd>/<session_id>.jsonl` (non-alphanumeric cwd bytes become `-`). A tab's mark rolls up Grok, Codex, and Claude panes in a split (waiting > working > done > idle); each project window sends its project's roll-up as sticky `Topic::TabActivity` (working / waiting only) for its row in the shell's bar. Unfocused done/waiting emit `Topic::AppNotification` (title `{project} · {tab}`, body `grok is done` / `codex is done` / `claude is done` / `needs attention`). Agent islands (`islands.rs`, on `next`): a session that asks or finishes is published as sticky `Topic::AgentIsland` (keyed by pane; the ask from its hook, the choices off its screen, Claude's last message from its transcript); `Topic::AgentIslandAction` from the shell types a choice's key or a reply into the pane, or shows its tab. |
+| `crates/sola-browser` | Iced chrome + CEF engine (single crate). Default web + PDF MIME / `xdg-open` (`sola-browser.desktop`). Web `Notification` → `Topic::AppNotification`. A page's file chooser: the helper's CEF `DialogHandler` holds the callback and sends `FromEngine::FileDialog`; the chrome shows the kit `FilePicker` over the page (`file_dialog.rs`) and answers `ToEngine::FileDialog` (paths, or cancel). Call owner `browser` (`solactl browser …`). Hosts **web apps** (`sola-browser --app <id>`; [Web apps](#web-apps-as-built)). |
 | `crates/sola-design` | HTML artboards on a canvas, edited by agents. Own project list `~/.config/sola/design/projects.json`; canvases `<root>/design/<canvas>/canvas.toml`. One CEF board tab per artboard in one `--engine --profile=sola-design` helper; idle boards are discarded (tab closed, picture kept) when free memory runs short (`/proc/meminfo`). No editing UI. Call owner `design` (`solactl design …`: `project.{list,add,remove}`, `open`, `canvas.close`, `status`, `selection`, `view`, `wait`, `reload`, `screenshot`, `inspect`). |
-| `crates/sola-mail` | Kit-native mail client. Emits sticky `Topic::MailStatus` (inbox unread) for the menubar; retracts on quit. Subscribes to Theme, MenuAction, CloseApp, Windows, WindowFloating, MailConfig only. `Topic::MailConfig`: IMAP-enabled accounts combined into six canonical boxes; `aliases` + `from_hidden` + extra SMTP `accounts` + `primary_from`. Threads: UI; coordinator (`sola-mail-worker`: config, account slots, fan-out jobs, retry backoff); per account a read session (`-r-`), write session (`-w-`: MOVE / delete / erase / append / move rules) and IDLE (`-idle-`) — 3 IMAP logins; SMTP send on a short-lived thread. Rows are keyed account + mailbox + UID. Attachments: IMAP `BODYSTRUCTURE` + MIME parts; SMTP `multipart/mixed`; kit FilePicker. Last-session list snapshot (versioned) under `~/.local/state/sola/mail/snapshot.json`. Gmail `CREATE Archive` if unmapped. |
-| `crates/sola-calendar` | Kit-native calendar. Local **On This Computer** plus Google Calendar API v3 (shipped Desktop OAuth client, PKCE), iCloud / generic CalDAV, and ICS/webcal URL feeds. Accounts and calendar shelf (hidden / alias / colour) from persistent `Topic::CalendarConfig` (Settings → Calendar; multiple of each kind). Events `~/.local/state/sola/calendar/store.json`; reminders `reminders.json` (local offsets). View prefs `~/.config/sola/calendar/settings.json`. Due reminders emit `AppNotification` with a `sola-persist:` tag so the desk card stays until dismissed. Launcher **Calendar** (`lucide/calendar`). Single instance: `$XDG_RUNTIME_DIR/sola/calendar.sock` (a later launch writes its argv paths, one per line, and exits; an empty connect is a probe). `.ics` paths (argv or handoff) become a new-event draft (`invite.rs`). Default `text/calendar` handler (`dist/applications/sola-calendar.desktop`); `sola_core::open_calendar` is the opener for Mail attachment Open and `solactl open`. |
+| `crates/sola-mail` | Kit-native mail client. Emits sticky `Topic::MailStatus` (inbox unread) for the menubar; retracts on quit. Subscribes to Theme, MenuAction, CloseApp, Windows, WindowFloating, MailConfig only. `Topic::MailConfig`: IMAP-enabled accounts combined into six canonical boxes; `aliases` + `from_hidden` + extra SMTP `accounts` + `primary_from`. Threads: UI; coordinator (`sola-mail-worker`: config, account slots, fan-out jobs, retry backoff); per account a read session (`-r-`), write session (`-w-`: MOVE / delete / erase / append / move rules) and IDLE (`-idle-`) — 3 IMAP logins; SMTP send on a short-lived thread. Rows are keyed account + mailbox + UID. Attachments: IMAP `BODYSTRUCTURE` + MIME parts; SMTP `multipart/mixed`; kit FilePicker. Last-session list snapshot (versioned) under `~/.local/state/sola/mail/snapshot.json`. Gmail `CREATE Archive` if unmapped. UI in `ui/` drawn as Next's mail (`style.rs`: the face from `palette().background`): a bar across the window (`bar.rs`), the mailboxes beside the list from a 1040 px window, else a menu under the bar's title. HTML letters: `protocol/html/` (html5ever → own `Rc` DOM → a safe subset walked into kit prose blocks; link labels), pictures decoded on the worker (`protocol/picture.rs`, `image`); web pictures fetched on **Load Pictures** by `worker/images.rs` (`ureq`, threads `sola-mail-img-*`, `MailCmd::FetchImages` → `MailEvent::Image` / `ImagesDone`). Ships in `pkg:sola` on Oath (on `next`). |
+| `crates/sola-calendar` | Kit-native calendar. Local **On This Computer** plus Google Calendar API v3 (shipped Desktop OAuth client, PKCE), iCloud / generic CalDAV, and ICS/webcal URL feeds. Accounts and calendar shelf (hidden / alias / colour) from persistent `Topic::CalendarConfig` (Settings → Calendar; multiple of each kind). Events `~/.local/state/sola/calendar/store.json`; reminders `reminders.json` (local offsets). View prefs `~/.config/sola/calendar/settings.json`. Due reminders emit `AppNotification` with a `sola-persist:` tag so the desk card stays until dismissed. Launcher **Calendar** (`lucide/calendar`). Single instance: `$XDG_RUNTIME_DIR/sola/calendar.sock` (a later launch writes its argv paths, one per line, and exits; an empty connect is a probe). `.ics` paths (argv or handoff) become a new-event draft (`invite.rs`). Default `text/calendar` handler (`dist/applications/sola-calendar.desktop`); `sola_core::open_calendar` is the opener for Mail attachment Open and `solactl open`. Publishes persistent `Topic::CalendarAgenda` (`agenda.rs`; namespace `calendar/agenda` → `~/.config/sola/calendar/agenda.yaml`): the shown calendars' events from today through the next week, a day at a time, for the menubar clock; `NotificationActivate { app_id: sola-calendar, url: id }` (a reminder card, the clock's panel) shows that event on its day, held until the store loads. Board in `ui/board.rs`. Ships in `pkg:sola` on Oath (on `next`). |
 | `crates/sola-monitor` | System monitor: bus audit + call-plane observer |
-| `crates/sola-kvm` | KVM / input bridge (novus server → Linux or Mac client); `pair` installs a shared key over ssh (`~/.config/sola-kvm/pair.key`), and paired machines seal input and clipboard with it (`seal.rs`, shared with `apps/sola-kvm-mac`) |
+| `crates/sola-kvm` | KVM / input bridge (server → Linux or Mac client). The server captures through the compositor (`capture.rs`: layer-shell edge strip, exclusive keyboard, pointer lock, relative motion, shortcuts inhibitor), not `/dev/input`. `pair` swaps static public keys over ssh (`~/.config/sola-kvm/key`, `key.pub`, `peer.pub`); input and clipboard run Noise IK between them (`link.rs`, also built into `apps/sola-kvm-mac`); neither side starts unpaired |
+| `crates/sola-lock` | The lock screen: `ext-session-lock-v1` via smithay-client-toolkit, drawn with tiny-skia + cosmic-text (no iced: it cannot make lock surfaces), the password checked by `sola_core::login`. Started by the shell (`sola-shell/src/lock.rs`): Super+L, the desk's start (password and no auto-login; once per compositor socket), the idle fade's end (`Appearance.lock_idle`); started again if it dies while locked. Exit Sola's last step on Oath is `login::desk_down` once sola-session is gone |
 | `crates/sola-preview` | Argv / launcher image viewer (shell hotkeys copy screenshots to the clipboard) |
-| `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; tabs in `~/.config/sola/paint.yaml`) |
+| `crates/sola-paint` | Default image viewer/editor (MIME, `solactl open`; singleton via `OpenImage`; on `next` a window per image, kit `TabWindows` keyed by path; open images in sticky `PaintSession`; ships in `pkg:sola` on Oath) |
 | `crates/sola-scope` | Pixel loupe: magnified grid around the pointer (`compositor.sample`) |
-| `crates/sola-spotify` | Kit Spotify client: Web API + librespot Connect, MPRIS. Catalogue reads (playlists, rootlist, albums, artist top tracks) prefer the librespot session (`session_reads.rs`; no per-app quota) and fall back to the shared Web API app, whose traffic is budgeted (`api/client.rs` cooldown/probe/background slots; `worker.rs` page freshness, single-flight library, incremental liked sync, slow remote poll nudged by Connect cluster pushes). Disk writes from the UI go through one writer thread (`cache.rs`). Tokens + `skipped.json` + `liked.json` + `profile.json` (last profile, so sign-in skips `/me`) under `~/.local/state/sola/spotify/`; settings (last page + last track + last playlist + Back/Forward stack, max 20 back) `~/.config/sola/spotify/settings.json`; page/audio/art cache `~/.cache/sola/spotify/`. |
-| `crates/sola-arcade` | Steam library browser + windowed-gamescope game launch |
-| `crates/solactl` | Operator CLI (`compositor`, `session`, `workspaces`, `browser`, `bots`, `design`, emit, logs, …). `Path` args resolve against the caller's cwd before the call. `solactl mcp`: stdio MCP server — live owners' methods as `<owner>_<method>` tools (schema from `ArgSpec`), `tools/list_changed` on a 2 s catalog rescan, calls on their own thread, a reply `path` to a PNG / JPEG returned as image content. |
+| `crates/solactl` | Operator CLI (`compositor`, `session`, `projects`, `browser`, `bots`, `design`, emit, logs, …). `Path` args resolve against the caller's cwd before the call. `solactl mcp`: stdio MCP server — live owners' methods as `<owner>_<method>` tools (schema from `ArgSpec`), `tools/list_changed` on a 2 s catalog rescan, calls on their own thread, a reply `path` to a PNG / JPEG returned as image content. |
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |
 | `crates/sola-make` | `cargo make` xtask (build / install / publish / **vm** / **iso**) |
 | `crates/sola-assets` | Vendored icons/assets |
@@ -105,29 +104,29 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | IPC control plane | **Sola Bus** over a Unix socket |
 | IPC call plane | **sola-call** over `$XDG_RUNTIME_DIR/sola-call` |
 | Surfaces / input | Wayland protocols via River. sola-river turns **NumLock on** for each keyboard (`river-xkb-config-v1`) so the number pad types digits; Super+Numpad zoning still matches both keysym sets. CEF OSR maps iced `Location::Numpad` + produced key to `VK_NUMPAD*` (unmodified `key` is still Home/End). |
-| Launch | Dev: physical TTY → `/opt/sola/bin/sola`. Dist image: loginless `sola-desktop` → Sola |
+| Launch | Dev: physical TTY → `/opt/sola/bin/sola`. Dist image: loginless `sola-desktop` → Sola. **Oath:** PID 1 runs `svc:sola-{bus,call,river,shell,session,kvm}` (and tmux) as the desk user; `crates/sola` refuses to start there |
+| Directories | `sola_core::paths`: `bin_dir` / `share_dir` / `log_dir`, each `SOLA_BIN_DIR` / `SOLA_SHARE_DIR` / `SOLA_LOG_DIR`, else the platform default — NixOS `/opt/sola/{bin,share,log}`; Oath (`/oath/INDEX.md`) `/bin`, `/oath/store/pkg/sola/share`, `$XDG_STATE_HOME/sola` |
 | Binaries | Dev install `/opt/sola/bin/`; images stage from `target/release` |
-| Logs | `/opt/sola/log/` (and tracing to TTY when run interactively) |
-| Persistent stickies | Bus writes `~/.config/sola/state.yaml` (some topics have their own files, e.g. `theme/current.yaml`) |
+| Logs | `paths::log_dir()` (`/opt/sola/log/` on NixOS); stderr too, coloured only on a terminal |
+| Wayland socket | The PM publishes `$XDG_RUNTIME_DIR/sola-wayland`; without it (Oath) sola-river and the session use a live `wayland-*` socket |
+| Persistent stickies | Bus writes `~/.config/sola/state.yaml` (some topics have their own files, e.g. `theme/current.yaml`; the shell seeds `Topic::Theme` when that file is missing and, on `next`, re-emits a saved theme still on the retired slate values with their greys) |
 | Browser vault session | `~/.local/share/sola/browser/vault-session.json` (age-encrypted tokens + user key; **Log out** deletes). Prefs `~/.config/sola/browser/vault.json`. |
 | Browser HTTP auth | Per-profile `profiles/<uuid>/http-auth.json` (age-encrypted Basic/Digest; kit Sign in). |
-| Arcade library cache | `~/.config/sola/arcade-library.json` (scan snapshot; bg rescan on open; `steamapps/` watch) |
-| Arcade nest settings | `~/.config/sola/arcade-nest.json` (per-title Fit vs locked resolution; default 1080p) |
-| Arcade singleton | `$XDG_RUNTIME_DIR/sola/arcade.lock.sock` (second spawn raises) |
-| Spotify state | settings `~/.config/sola/spotify/settings.json` (last page + last track + last playlist + nav history, max 20 back); tokens + skipped + liked URIs + last profile `~/.local/state/sola/spotify/`; page/audio/art cache `~/.cache/sola/spotify/` |
-| Workspaces catalog | `~/.config/sola/workspaces/catalog.json` (projects / workspaces / selected; migrates `agent-terminal/`) |
-| Workspaces last-status | `~/.config/sola/workspaces/last-status.json` (per-pane status / agent / Grok or Claude `session_id`; a new tmux after reboot execs `grok -r` or `claude --resume`) |
-| Workspaces calls | sola-call owner `workspaces` (`solactl workspaces …`). First-class: [`2026-08-18-workspaces-cli-design.md`](specs/2026-08-18-workspaces-cli-design.md) |
+| Projects catalog | `~/.config/sola/projects/catalog.json` (projects / tabs / selected; migrated once from `~/.config/sola/workspaces/`, before that `agent-terminal/`; a `workspaces` key still loads). Hook scripts (`grok-hook.sh`, `codex-hook.sh`, `claude-hook.sh`) live in the same dir |
+| Projects on another computer | Recent hosts `~/.config/sola/shell/remote-hosts.json` (the launcher's chooser; eight, latest first). Shared ssh connections `$XDG_RUNTIME_DIR/sola-ssh/%C` (`ControlMaster`, 10 min). Per-host hook socket here `$XDG_RUNTIME_DIR/sola-ws-hooks-<host>.sock`. On the host: tmux socket `sola-ws-remote`, sessions `sws-<pane>`, config `~/.config/sola/sola-ws-remote.tmux.conf`; the link's hook socket `~/.config/sola/remote/hooks-<this computer>.sock` and hook scripts `~/.config/sola/remote/{claude,codex,grok}-hook.sh` |
+| Projects last-status | `~/.config/sola/projects/last-status.json` (per-pane status / agent / Grok or Claude `session_id`; a new tmux after reboot execs `grok -r` or `claude --resume`) |
+| Projects calls | sola-call owner `projects` (`solactl projects …`; no `workspaces` alias). First-class: [`2026-08-18-workspaces-cli-design.md`](specs/2026-08-18-workspaces-cli-design.md) (old names in the body) |
 | Browser calls | sola-call owner `browser` (`solactl browser …`). Snapshot/act by `--tab`; CSS-pixel click/hover; `fill --file` / `get` / `links`; `wait --control`; `fill`/`type` paste into contenteditable; `key --chord` (one char); `scroll`. A timeout while the owner is still advertised is a wedged chrome (close X / Flower, relaunch). First-class: [`2026-09-11-sola-browser-agent-control-design.md`](specs/2026-09-11-sola-browser-agent-control-design.md) |
-| Grok sessions | `~/.grok/sessions/` (Workspaces compaction `×N` + reboot resume; not an ACP leader socket) |
-| Codex sessions | `~/.codex/sessions/YYYY/MM/DD/rollout-*-{id}.jsonl` (Workspaces compaction `×N`; `CODEX_HOME` override) |
+| Grok sessions | `~/.grok/sessions/` (Projects compaction `×N` + reboot resume; not an ACP leader socket) |
+| Codex sessions | `~/.codex/sessions/YYYY/MM/DD/rollout-*-{id}.jsonl` (Projects compaction `×N`; `CODEX_HOME` override) |
 | Self-update of apps | Binary watch → re-exec when `/opt/sola/bin/<name>` changes (`SOLA_NO_SELF_WATCH=1` skips) |
 
 ### Communication layers
 
 1. **Sola Bus** — lifecycle, focus, themes, app menus, session commands,
    stickies. Fan-out facts. No request/reply. Mail unread is
-   `Topic::MailStatus` (sticky, not persisted).  
+   `Topic::MailStatus` (sticky, not persisted). Calendar's coming days are
+   `Topic::CalendarAgenda` (persistent), for the clock's panel.  
 2. **sola-call** — live method registry; request id, timeout, error to the
    caller. `solactl compositor` / `session`; kit apps advertise via
    `CallSetup` / `BusSetup::calls`. Fail if the owner is not connected.
@@ -150,10 +149,9 @@ open — [T3](open-questions.md#t3--d-bus-replacement-on-sola-bus-p2).
 |-------|-----|-----|-----|
 | `sola-shell` Bluetooth chip (`bluetooth/`) | system | `org.bluez` — adapters, devices, pairing agent | `zbus` in process |
 | `solactl media` (shell media keys) | session | finds the Playing MPRIS player | `zbus` in process |
-| `sola-spotify` (`mpris.rs`) | session | registers `org.mpris.MediaPlayer2.sola-spotify` | `mpris-server` |
 | `sola-shell` flower Restart / Shut Down (`power.rs`) | system | logind reboot / power-off | `loginctl` / `systemctl` |
 | `sola-session` app launch / stop | user systemd | `systemd-run --user --scope`, `systemctl --user stop` | CLI |
-| CEF (`sola-browser`, `sola-wrapper`, `sola-design`) | — | Chromium links `libdbus-1` (nix-ld list in `nix/module.nix`) | third-party |
+| CEF (`sola-browser`, `sola-design`) | — | Chromium links `libdbus-1` (nix-ld list in `nix/module.nix`) | third-party |
 | Installer image | session | `dbus-run-session` around cage (`nix/image/installer-session.nix`) | image |
 
 ---
@@ -170,12 +168,12 @@ always-on vsync pumps** to “fix” a gesture or helper drain.
 |------------|--------|-----------|------------------------|---------------------|
 | No 16 ms chrome timer | `sola-browser` `subscription` | Page copy + context menu wake iced via `chrome_wake::wake` from the CEF router | Morph2 tab reorder is **not** this timer | Idle chrome presenting ~60 Hz; copy/right-click delayed >1 frame if wake is dropped |
 | Chrome `Tick` is not a 250 ms pump | `sola-browser` `Msg::Tick` | Helper queues (tabs, downloads, handoff, vault, ⌘-click, copy/menu) **wake** `Tick`. 250 ms `time::every` only while copy-URL flash, vault TOTP on the open item, or vault fill-wait | Loading titles/progress still wake on `FromEngine::Tabs` | Strip titles / load line frozen; handoff (`solactl open`) ignored until another chrome event; copy-URL check never clears |
-| Working ring `At` ~20 Hz | `sola-kit` `status_mark` | `RedrawRequest::At(50ms)` on `RedrawRequested`, **not** `NextFrame` / `window::frames()` | n/a | Storybook Sidebar or a Working Grok row pins GPU; ring frozen (no `RedrawRequested` after status change) |
-| Workspaces pointer gated | `sola-workspaces` `subscription` | No `window::frames()`; `CursorMoved` only while a split drag is live; ignored mouse is not `Msg::Input` | Split divider drag | Split resize only updates on press; whole window presents on every pixel over empty chrome |
+| Working ring `At` ~20 Hz | `sola-kit` `status_mark` | `RedrawRequest::At(50ms)` on `RedrawRequested`, **not** `NextFrame` / `window::frames()` | n/a | A Working Grok row pins GPU; ring frozen (no `RedrawRequested` after status change) |
+| Projects pointer gated | `sola-projects` `subscription` | No `window::frames()`; `CursorMoved` only while a split drag is live; ignored mouse is not `Msg::Input` | Split divider drag | Split resize only updates on press; whole window presents on every pixel over empty chrome |
 | Morph2 drag pump | `sola-kit` `sidebar/strip.rs` | Idle: no vsync chain | While `dragging` / FLIP: `invalidate_layout` on pointer (ghost Y is layout) + `request_redraw` on `RedrawRequested` | Tab/group reorder stutters or ghost stuck; idle vsync if `request_redraw` is left on when not dragging |
 | Browser HTML5 drag | `sola-browser` `FrameSlot.page_drag` + shader `should_pump` | Idle: hangover 50 ms after last paint | While helper `FrameMeta.drag`: `request_redraw` without `Msg::NewFrame` | Kanban ghost lags / smears if overlay full-uploads; idle vsync if `page_drag` sticks after drop |
 | Shell overlays parked 2×2 | `sola-shell` `ensure_overlay_windows` + `zoning::overlay_frame` | Menu / launcher / switcher / shortcuts / selection / **notify** stay mapped after the menubar’s first Composition. **Dismissed = 2×2 swapchain off-output** (`OVERLAY_PARK_X/Y` −10000; winit Wayland min is 2×1 — 1×1 + `resizable=false` is `xdg_toplevel` invalid_size). **Shown = live Frame while hidden, Composition after iced `Resized` ≥64×64** (next-tick hop so view/present run first). Notify live Frame is a tight top-right card stack, not the full usable area. Menu and Super+K live Frames are the card + shadow pad, not the full usable area. | River hides any window not in last Composition; do not stack a parked buffer | GPU spike if a dismissed overlay is left at full output; overlay visible before iced `Resized`; Super+Space hangs if `Resized` never fires; 1920 placeholder jump if live Frame forgets output size; **shell panic-loop if park size is 1×1**; notify overlay covering apps if Frame is full-area instead of card-sized; Super+K / menu filling 1080p on software GL |
-| Tiled kit opaque-region | patched `iced_winit` `State::synchronize` | Kit apps still create an ARGB swapchain (`window_settings_transparent` for float CSD). **Tiled:** `theme_for(false)` opaque `background.base` → `wl_surface.set_opaque_region` (full) so River GLES can scan out. **Float / shell overlay:** transparent base → region cleared | n/a | Idle GPU if tiled windows stay without opaque-region; float CSD square black corners if opaque-region left on while overlay theme is active; overlay launcher dimmed wrong if marked opaque |
+| Kit opaque-region | patched `iced_winit` `State::synchronize` | Kit apps create an ARGB swapchain (`window_settings_transparent`). **Cinema:** `theme_for(Chrome::Bare)` opaque `background.base` → `wl_surface.set_opaque_region` (full) so River GLES can scan out. **Tiled / float / shell overlay:** transparent base (the frame clears its corners so the ground shows) → region cleared | n/a | Cinema without opaque-region cannot scan out; square black corners on a tile or float if opaque-region is left on while the overlay theme is active (the ground hidden); overlay launcher dimmed wrong if marked opaque |
 | Design plane | `sola-design` `subscription` | No idle timers: a 200 ms tick only while a `wait` / `auto` measure is pending, 40 ms while a detail plan is due, frames while a glow animates or the camera glides to a tour step, 60 s while a canvas is live off screen, 5 s while an agent's call in the last 30 s keeps a canvas awake. Board frames wake once per batch; helper queues wake `Poll` via `chrome_wake`; the rail rescan thread messages only when the canvas list changed; the canvas watcher only on file events | Pointer moves message only while right-drag panning or over a live page | Idle presents if a timer creeps in; boards blank if the frame wake is lost |
 | Scope live sample | `sola-scope` `Msg::Tick` | 100 ms `time::every` **only while the loupe process is running** (the job is live pixels). No `window::frames()` | n/a | Scope closed: no extra presents. Open: ~10 Hz is expected |
 
@@ -211,14 +209,113 @@ swapchains in the background (see
 | Shortcuts | Super+K cheatsheet (parked 2×2 while dismissed; live Frame is the card + shadow pad, not the usable output) |
 | Selection | Super+Shift+4 freeze-then-marquee (RGBA still of the live output, then crop; parked 2×2 while dismissed; live Frame is full output) |
 | Notify | Live notification cards (tight Frame under the menubar, trailing edge with the clock; parked 2×2 while empty) |
+| Tab bar (`next` only) | Next's one tab list ([spec](specs/2026-10-21-next-tab-bar-design.md)): docked left under the menubar (240 px, one gap in: 10, 38 on canto), always mapped, composed right above the menubar. Kit `SidebarPanel` on a kit `island` (rounded, rimmed, ground-black corners): one list of the workspace's windows in its own order, not grouped by zone (2026-10-28), a row per window (app icon, title); click shows, drag reorders (the window keeps its zone). Model in `stacks/` (a desk per workspace: its tabs in bar order, each with its zone) |
 
-Zoning / floating is coordinated with `sola-river` over the bus:
-unassigned windows **default-float** (client size + `Topic::WindowFloating`);
-saved zones restore frames; Meta+numpad snaps assign zones.
+**On `next` (Next tab bar):** every app window is a tab in a zone. The two
+tiled zones (Left / Right, 50 / 50 of the content area right of the bar;
+an empty zone gives its width away) each show one tab; the shell leaves
+the other tabs out of `Topic::Composition`, so River hides them and they
+keep running. Floats (Floating zone; the loupe, Preview, gamescope, and
+apps floated with Super+KP_*) all show. A window with a River parent
+(sola-river's sticky `Topic::WindowParent`) is a dialog: no row, composed
+above its parent. A new window joins the focused zone; a window back from a
+restart or a session restore takes its app's place from the persistent
+`Topic::TabLayout` (`~/.config/sola/shell/tabs.yaml`). An app with a window
+per tab announces each window before it opens (sticky `Topic::Tab`: key, pid,
+`seq`); the shell pairs a process's tabs with its new windows in order
+(`pairing.rs`), answers sticky `Topic::TabWindow` (key → sola-river id), and
+remembers the tab by its key. An app marks a tab's row with sticky
+`Topic::TabActivity` (key → idle / working / waiting; kit
+`TabWindows::set_activity`): the bar draws the mark in the row's icon slot.
+Projects sends each project window's roll-up (a tab waiting on a decision
+beats a tab working). `Topic::Zones` is no
+longer read or written on `next`. Zones are Full (`Zone::Fullscreen`, the
+content area) · Left · Right · Floating; each desk remembers whether Full or
+the halves were picked last (`TabLayout.full`) and composes only that side.
+Super+KP_0 / KP_4 / KP_6 move a tab to Full / Left / Right; KP_Enter shows it
+in Cinema (output).
+
+**On `next`, workspaces (slice 5):** the shell keeps a desk of zones per
+desktop workspace (`stacks/`; readers without a window answer for the
+showing one) and composes only the showing workspace; windows elsewhere
+are hidden by River and keep running. The workspaces (id, name, order) and
+which one shows persist inside `TabLayout` and go out as sticky
+`Topic::Workspaces`; each window's workspace as sticky
+`Topic::WindowWorkspace`. The switcher is the tab bar's head and its
+menu (`tabbar/head.rs`, `menu/workspace.rs`; the menu overlay hangs under
+the head, `MenuOverlaySpec.y`); Super+1…9 / Super+Ctrl+1…9 /
+Super+(Shift+)Tab. The
+browser runs one CEF helper per profile, all live: its router keeps a page
+→ profile map and routes commands by page (the rest to the active page's
+helper), merges every helper's pages, and makes a helper front only while
+it has a page on screen or the active one; helper-minted page ids sit in a
+per-profile range above chrome's. Light or dark (`Appearance.light`) goes
+to every helper as `Cmd::ColorScheme` (told again to each new one); a
+helper emulates `prefers-color-scheme` on each page's DevTools session
+(`Emulation.setEmulatedMedia`). Each workspace has a profile of its
+own, paired by the workspace's id (`profiles.json` `workspaces`,
+`profiles::pair`; a profile is only a uuid, so a workspace renames
+freely; no Profiles menu since 2026-10-26); a page runs its
+workspace's profile and reopens in place when that differs
+(`app/pages.rs`); a deleted workspace's profile stays on disk, its helper
+stopped; sessions are saved per profile.
+
+**On `next`, window frames (slice 6):** one 10 px gap (`zoning::GAP`)
+around the output under the menubar, between the bar and the tiles, and
+between tiles. Every kit window draws its own frame (`sola-kit`
+`components/window_frame`): a 38 px titlebar with the app's menus (the kit
+keeps the app's latest `AppMenuPayload` from `BusSetup` / `menu::publish`;
+a dropdown is an overlay inside the window; a Window item goes on the bus as
+`MenuAction` and the shell acts on its focused window, any other item is
+handed back to the app's own bus stream), 12 px corners, a lit rim. Tiles
+and floats alike clear their corners (`theme_for(chrome)`: a clear fill
+unless Cinema), so the ground shows there. The ground is the background
+picture when one is set (persistent `Topic::Background`, Sola's copy under
+`~/.config/sola/background/` via `sola_core::background`, which keeps every
+picture set — `kept` / `forget`, Settings → Appearance's gallery sets one
+again; set by Paint, Browser or `solactl background`): sola-river draws it as a River shell surface at the
+bottom of the render list (`client/background.rs`, decoded and scaled off
+the loop), else the compositor's black. With Settings → Appearance's
+*Adapt colors to the background* on (persistent `Topic::Appearance`), the
+shell samples the picture (`adapt.rs`, off the UI thread) and rewrites
+`Topic::Theme`'s color tokens from it (`sola_core::theme::Scheme`,
+`Theme::adapt`: the grey's lightness, one of the picture's modal colors —
+narrow OKLCH cells scored as Material Color Utilities' `Score`; `unadapt`
+when off; a scheme per color, `Appearance.variation` picks, the shell
+publishes the choices as sticky `Topic::ThemeVariations` for Settings;
+your colors over it, `Appearance.colors`, kept as looks in
+`Appearance.customs`; each kept picture's look in `Appearance.pictures`,
+which the shell (`pictures.rs`) updates and wears on a picture change);
+the kit's chrome surface follows the theme (`style::chrome_surface`,
+`theme::install_atoms`). The desk's opacity and the idle fade are
+sola-river's (`client/fade.rs`): a shell surface at the top of the render
+list shows the picture (or black) at `100 − Appearance.opacity` % at rest
+(none at 100 %, none over a fullscreen window; made again when the
+picture, the output size or the kept rectangle change);
+`ext_idle_notifier_v1` says idle / resumed, and the opacity rises from
+there over `fade_over_min` (`wp_alpha_modifier_v1`), stepped back down to
+the rest over a second on input. Once it is full, the dim (`client/fade/dim.rs`) waits `dim_after_min`, then raises a black output-sized surface over it to 90 % over `dim_over_min` (a tenth of the picture's light left), and steps it down with the return. The overlay is cut in pieces (sub-buffers of the picture's memory) around
+the shell's sticky `Topic::IdleKeep` — the top row's flower and agent
+islands — whose piece stays at the rest. Sticky `Topic::IdleFade`
+says it is fading and, once full, `out`: the shell then reports every tab
+window off screen (`TabWindow.shown`), so the browser's pages rest. The menubar carries no
+app menus. The shell publishes sticky
+`Topic::WindowChrome` (window id → tiled, Cinema, rim; `chrome.rs`):
+sola-river sends `set_tiled` on change and a 1 px border on windows whose
+app published no menu (foreign apps) — tiled ones get rounded corners
+instead, four decorations above the window painting the corners the ground
+(the picture's own pixels under them, `background::sample`) and the rim
+along them (`client/corners.rs`); kit apps drop the frame in
+Cinema (`FloatState::chrome`).
+
+**On master:** zoning / floating is coordinated with `sola-river` over the
+bus: unassigned windows **default-float** (client size +
+`Topic::WindowFloating`); saved zones restore frames; Meta+numpad snaps
+assign zones.
 
 **Hide (Super+H):** sticky `Topic::AppHidden` omits that app’s surfaces from
-`Topic::Composition` (River `hide` — not send-to-back). Restore: Super+Tab
-(switcher still lists hidden apps), launcher on an already-running hidden app
+`Topic::Composition` (River `hide` — not send-to-back). Restore: a tab bar
+row or Super+Backtick (showing a tab unhides its app), launcher on an already-running hidden app
 (unhide + raise, no second spawn), or any `raise_app` path (OpenUrl, mail
 unread, notification click). Last window of a hidden app retracts the sticky
 so a later map is not stuck hidden. No menubar chip.
@@ -231,21 +328,11 @@ A hard-killed `sola-shell` can leave parked surfaces in sola-river (no
 `closed`). River prunes entries whose `/proc/<pid>` is gone so a respawn
 can map a new menubar. Shell composition also ignores dead-pid windows.
 
-### Games / Arcade (as-built)
+### Games
 
-| Piece | Role |
-|-------|------|
-| `sola-arcade` | Kit app: Steam library gallery (search; A–Z / Recent; Ready-to-play filter default on; Install on uninstalled; Stop-on-row). Singleton (`$XDG_RUNTIME_DIR/sola/arcade.lock.sock`); second spawn raises. |
-| Library data | Offline: ACF manifests + `localconfig` activity + `appinfo.vdf` names; cache `~/.config/sola/arcade-library.json`; UI opens from cache, full scan always in background; debounced non-recursive watch on each `steamapps/` (ACF + `libraryfolders.vdf`) |
-| Gallery prefs | `~/.config/sola/arcade-prefs.json` — A–Z / Recent sort (default A–Z) |
-| Banners | Lazy viewport decode (+ overscan); paths resolved when row visible |
-| Launch | `Topic::LaunchApp` → `sola-arcade --run <id> <w> <h> [fit]` → `gamescope … --cursor-scale-height <H> -- sola-arcade --nested-steam <id>` → desktop Steam `-applaunch` (no BPM). Play **refused** if a desktop Steam client is already running (no exclusive fullscreen). Nested helper kills nested Steam when the **game** `AppId=` reaper exits (not `Install=1` / `iscriptevaluator`). `<w> <h>` from per-title nest (Fit or locked res). Host cursor is downsampled to desktop size (nested X cursors otherwise present 1:1 to River). |
-| Fit follow | Arcade UI watches `Topic::Windows` / `WindowGeometry` for `app_id=gamescope` and pokes **nested** X only (`DISPLAY` from `--nested-steam`, never gamescope's host `:0`), debounced ~250 ms. Writes `GAMESCOPE_XWAYLAND_MODE_CONTROL` + focused window `0,0,w,h`. Locked res does not follow. |
-| Session lock | Active Play → Stop on that row; other Plays disabled. Session end is `UserAppExited` on `steam-game-<id>` (`--run` waits on gamescope). Stop: `CloseApp` then Arcade-owned pids only (`--run` / `--nested-steam` / that gamescope), never `pkill AppId=`. |
-| River | gamescope pre-init pin then zone/float; Cinema exit-fullscreen on next zone Frame; empty app_id → `gamescope` via pid; nest `-S fit` letterbox |
-| AppHidden | Super+H + switcher/launcher restore (no menubar chip); Arcade UI does not expose hide-Steam |
-
-Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
+`sola-arcade` (the Steam library in a window, each game in a gamescope
+nest) was retired on 2026-10-30; it stays in git history. sola-river and
+the shell still give any `gamescope` window its nest size and float it.
 
 ---
 
@@ -253,12 +340,12 @@ Operator: [`manual/sola-arcade.md`](manual/sola-arcade.md).
 
 | Piece | Role |
 |-------|------|
-| `crates/sola-browser` | **Product browser** — iced chrome (full-width bar: kit identity select + nav + omnibox + vault + downloads; etch tab strip with kit reorder; unified Bitwarden panel with item edit) + CEF CPU OSR under `src/cef/` |
+| `crates/sola-browser` | **Product browser** — iced chrome (a window per page, each a shell tab (`page_windows.rs`); the active page's window has the full-width bar: nav + omnibox + vault + downloads; the others a read-only address bar; unified Bitwarden panel with item edit) + CEF CPU OSR under `src/cef/`. New page windows open at the last page window's size; the engine re-checks a page 300 ms after a resize or show and, with no frame at its window's size yet, hides and shows it (`check_page_size`) |
 | App id / binary | `sola-browser` → `/opt/sola/bin/sola-browser` (shell launcher: one “Browser” entry; one Wayland window). `dist/applications/sola-browser.desktop` is the xdg-open default for http(s), HTML, XHTML, PDF, `about:`, unknown. |
 | Engine helpers | Per-profile headless `sola-browser --engine --profile=<uuid>` (no iced / no xdg_toplevel). Control socket `profiles/<uuid>/engine.sock`; pixel frames on `engine.frame.sock` (raw BGRA, not bincode). Page copy is JS extract → `FromEngine::Clipboard` on the control socket → chrome writes Wayland. Paste is `ToEngine::PasteImage` (`File` event) or `ToEngine::PasteText` (synthetic `ClipboardEvent` + focused-frame fallback; not Chromium `insertText` of the whole payload — that flattens newlines). Chrome reads the compositor via `sola_kit::clipboard` (data-control), not iced, so an image offer is not dropped. Favicons: helper `DisplayHandler::on_favicon_urlchange` + `download_image` → `FromEngine::Favicon` (PNG) → chrome 16px leading slot (globe fallback). ⌘-click hit-test is JS → `FromEngine::OpenBackgroundTab` → chrome `open_tab_beside` (below current tab, same group; click not sent to CEF). `window.open` with features (`NEW_POPUP`) / `about:blank` is a windowless CEF browser (so `window.open` returns a `Window`); chrome adopts that engine tab and focuses it beside the opener. `target=_blank` / `NEW_WINDOW` cancel the native popup and open a focused chrome tab. ⌘T / `OpenUrl` / `xdg-open` use `open_tab` (loose, end of strip). An outside open (`chrome.sock` / `Topic::OpenUrl` with `activate`) asks the shell to raise the existing window (click-activation: MRU + composition + seat; sock probes are not activate). Browser → Developer Tools (and page-menu Inspect) docks a second windowless OSR browser under the page (bundled frontend over the helper `/json/list` websocket; dual `FrameSlot` page + inspector paints; `FromEngine::DevTools`). Chrome-runtime `ShowDevTools` cannot be windowless and is not used. It is not a strip tab. Super+left/right are not WM pointer bindings (CSD titlebar still moves floats). Page right-click is `ContextMenuHandler::run_context_menu` (native cancelled) → `FromEngine::PageContext` → kit menu. Session history rides the tab snapshot (`TabInfo.history`); hold-nav uses `NavCmd::GoHistory`. IME caret is `OnImeCompositionRangeChanged` → `FromEngine::ImeCaret` (view px) so chrome can `request_input_method` at the composition box. JS `alert` / `confirm` / `prompt` / leave-page: helper `JsDialogHandler` → `FromEngine::JsDialog` → kit modal; chrome replies `ToEngine::JsDialog`. Continue drops the pending-callback `RefCell` before calling CEF (OnReset re-enters). Park / navigate resets pending callbacks. Find: helper `FindHandler` + `BrowserHost::find` → `FromEngine::FindResult`; chrome `ToEngine::Find` / `StopFind`. Idle omnibox is a label until click / `⌘L` (no query/fragment; clipped). Edit paste uses the tracked omnibox flag — `is_focused` is `None` while the field is unmounted. Downloads: helper `DownloadHandler` → `FromEngine::Download` (any helper, including parked) → chrome list; cancel is `ToEngine::CancelDownload`. Passkey **get** / **create**: renderer V8 `OnContextCreated` eval (document-start) plus load-handler inject in every frame → `FromEngine::WebAuthn` → chrome vault picker (same-site same-action coalesced; advertises a platform authenticator so Google does not wait on Chromium’s OSR-invisible sheet; `create()` confirms then `Fido2Client::register` + POST/PUT cipher). One iced chrome (`chrome.sock`); a second process hands off a URL and exits. Chrome start **Shutdown**-flushes helpers (cookie store) before SIGTERM leftovers. Helper death respawns CEF and restores chrome’s tab list (does not resurrect closed tabs from a stale helper snapshot). Reap only orphan / pre-`exec_self` helpers. `<select>` is `PET_POPUP` blitted onto the VIEW CPU frame (not a second window). Only the front helper composites (`SetFront` + `was_hidden` + `windowless_frame_rate`). CEF `root_cache_path` = that profile’s `…/cef/` so cookies persist. |
-| CEF pin | `cef` crate `156.2.0` + workspace `cef-version` (`156.0.14+g4fa4ab5+chromium-156.0.8078.48`); `cargo make install-cef` unpacks the public tarball to `~/.cache/sola/cef-<ver>/`. `cef-dll-sys` resolves `download-cef` to `crates/download-cef-stub` (links the cache, writes the one `include/cef_api_versions.h` line its build script reads, so no CEF headers are needed — Oath's `pkg:cef` has none). H.264/AAC: replace that tree with `scripts/cef-codecs/` (recipe still pinned to 147). Since 156 ANGLE is inside `libcef.so` (no `libEGL.so` / `libGLESv2.so` beside it). |
-| CEF switches | `--ozone-platform=wayland`; `--password-store=basic`; `--remote-allow-origins=*`; `--autoplay-policy=no-user-gesture-required`. The 147.0.10 cache on novus was a codecs rebuild (`proprietary_codecs=true ffmpeg_branding=Chrome`, `use_vaapi=false`; recipe `scripts/cef-codecs/`); the 156.0.14 pin is the public tarball, which has no H.264/AAC. No Widevine CDM; Steam store trailers are clear DASH, not EME. |
-| Profiles (D8) | Registry `profiles.json`; data/cache under `profiles/<uuid>/`; session `session.json` (tabs + optional `group_id` + `groups[]` with optional `color` + `closed[]` for ⌘⇧T); shared downloads index `shared/downloads.json`; visit history `shared/history.json` (omnibox); chrome parks tab-strip snapshots + last CPU composites (`FrameSlot.parked_frames`); switch points the router at the target helper (pages stay loaded). Parks are never evicted (`tab_cache` snapshot; dropped only on profile delete or window close) |
+| CEF pin | CEF 156.0.14: `cef` crate `156.2.0` + workspace `cef-version`; the program asks libcef for API version 15600 (`CEF_API_VERSION_LAST`), not the experimental 999999. `cargo make install-cef` unpacks the public tarball to `~/.cache/sola/cef-<ver>/`. H.264/AAC: replace that tree with `scripts/cef-codecs/` (same pin). On Oath that cache is a link to `pkg:cef`'s live slot, and `crates/download-cef-stub` (download-cef 3.x) hands cef-dll-sys that tree plus the one-line `include/cef_api_versions.h` it reads (Oath's pack has no headers). Since 156 ANGLE is inside `libcef.so` (no `libEGL.so` / `libGLESv2.so` beside it). |
+| CEF switches | `--ozone-platform=wayland`; `--password-store=basic`; `--remote-allow-origins=*`; Chromium's own autoplay policy (muted video plays while in view; sound after a click). A page off screen is `was_hidden` (the active one too). H.264/AAC need a codecs build (`proprietary_codecs=true ffmpeg_branding=Chrome`, `use_vaapi=false`); the public cef-builds tarball has neither. On Oath, `pkg:cef` is one: Oath builds CEF 156.0.14 from Chromium's and CEF's source with Chrome's codecs (Oath R40, `sha256-2a2cc750`, on the bucket); canto runs it since 2026-10-29. On NixOS, `scripts/cef-codecs/` rebuilds the `cef-version` pin into the cache. No Widevine CDM; Steam store trailers are clear DASH, not EME. |
+| Profiles (D8) | Registry `profiles.json`; data/cache under `profiles/<uuid>/`; session `session.json` (pages with stable ids + `closed[]` for ⌘⇧T; older files' groups and sidebar width are ignored); shared downloads index `shared/downloads.json`; visit history `shared/history.json` (omnibox); chrome parks page-list snapshots + last CPU composites (`FrameSlot.parked_frames`); switch points the router at the target helper (pages stay loaded). Nothing is evicted for idle time or tab count (the `tab_cache` policy is gone, 2026-10-25) |
 | Tab / profile paint | `present_tab`: same-size parked frame → GPU this frame; miss → blank immediately (never keep the previous page). Helpers skip same-size `Resize` so the parked compositor stays live. Iced presents paints via the shader `request_redraw` pump (does not rebuild chrome at 60 Hz). Partial `on_paint` dirty copies only onto a uniquely-owned complete last-frame (the pixel ring does not pin that Arc); otherwise the CPU buffer full-blits from CEF’s view. Latest-wins hops absorb dropped-frame dirty into the survivor so GPU damage is continuous since the last texture upload. HTML5 OSR drag keeps `last_frame` clean and composites a host ghost with union dirty (`FrameMeta.drag`); skipped overlays keep ghost/view damage until the mailbox is empty; chrome does not park overlay frames; shader pumps while `page_drag` on the painted tab. Chrome `Tick` is `chrome_wake` from helper queues (plus a 250 ms timer only for copy-URL flash / TOTP / fill-wait), not an idle 16 ms or 250 ms pump. |
 
 Former split (`sola-browser-core` / `-wpe` / `-cef` dispatcher) and the WPE
@@ -267,17 +354,21 @@ content-plane path are **retired**. CEF: do **not** enable `accelerated_osr`
 
 ---
 
-## Wrapper (as-built)
+## Web apps (as-built)
+
+A page the browser hosts as its own app ([spec](specs/2026-10-23-web-apps-design.md);
+branch `next`). `sola-wrapper` (one CEF process and profile per app) is
+retired there; master still has it.
 
 | Piece | Role |
 |-------|------|
-| `crates/sola-wrapper` | Kit iced chrome (CSD while floating) + one CEF page. Not sola-browser (no tabs/omnibox/vault). |
-| Binary / argv | `sola-wrapper <id>`; helper `sola-wrapper --engine --profile=<id>` (same binary, `current_exe`). |
-| App id | The configured id (`slack`), set on kit `startup` / `window_settings_transparent`. |
-| Catalog | `Topic::Application` fields `kind: wrapper` + `url`. Command synthesized `env::bin_path("sola-wrapper")` (`/bin` on Oath, `/opt/sola/bin` on NixOS) + ` <id>`. Launch lookup: `state.yaml` (bus persistence). |
-| Profile | Durable `~/.config/sola/wrapper/<id>/cef`; cache `$XDG_CACHE_HOME/sola/wrapper/<id>/`. Notification grants `…/notifications.json`; mic/camera `…/media.json`. `profiles::bind_external` so this is **not** `browser_data_root()`. |
-| Chrome | Kit CSD while floating + one CEF page. **Edit** menubar (⌘X/C/V/A) via shell `MenuAction`; paste is compositor clipboard → `PasteImage` (`File`) or `PasteText`. Web `Notification` → desk card (`app_id` = wrapper id). Off-site `target=_blank` / ⌘-click / `window.open` → `sola_core::open_url` (sola-browser). Same-site / `about:blank` NEW_POPUP is a windowless CEF tab (huddle). `getUserMedia` → kit Allow / Block; Chromium `MEDIASTREAM_CAMERA` / `MEDIASTREAM_MIC` content settings follow `media.json`. |
-| Singleton | `$XDG_RUNTIME_DIR/sola/wrapper/<id>.sock` — second spawn raises the live window. |
+| Catalog | `Topic::Application` kind `web` (the old `wrapper` kind reads as `web`): app id `web-<uuid>`, `label`, `icon` (the page's favicon saved under `~/.local/share/sola/icons/<id>.png`, else `lucide/globe`), `url` (start), `profile` (the browser profile it was wrapped from). Command synthesized: `paths::bin_path("sola-browser")` + ` --app <id>`. The browser writes the entry (Wrap) and retracts it (Remove). |
+| Registry | `crates/sola-browser/src/app/webapps.rs` — `WebApps`: the catalog's web apps, page → app, the Wrap and Remove sheets. The session keeps each page's `app` (`SessionTab.app`). |
+| Windows | `PageWindows::open` with the app's id: kit `TabWindows::open_as` (tab key `<app_id>/<page_id>`, Wayland app id = the app's). The shell pairs one process's tabs and windows by `(pid, app_id)`. Titlebar: the app's name and menus (`WindowFrame::menus`); the shell gets them through `menu::publish_for` (shortcuts). A restored app page waits up to 2 s for its catalog entry, then opens (as a browser page if the app is gone). |
+| Launch | `sola-browser --app <id>`: a running browser gets the `@app <id>` handoff (instance socket) and raises the app's window or opens its start URL on its profile. With none up, the `--app` process emits `LaunchApp` for `sola-browser` (so `sola-session` tracks and restores the browser as itself), waits for its socket, hands off and exits; without a bus it becomes the browser. |
+| Links / popups | Engine `Cmd::AppSite { id, start }` per app page (router replays it to a restarted helper): `on_before_browse` cancels a user-gesture, non-redirect main-frame navigation to another site and asks chrome for a browser page. `target=_blank` and popups from an app page join the app when same-site (`same_site`: last two host labels). |
+| Notifications | `notify::to_bus_for(app_id)` with the app's label as source; activation shows the app's page. |
+| Profile | The browser profile's — no profile of its own; removing the app keeps its sign-in. |
 
 ---
 

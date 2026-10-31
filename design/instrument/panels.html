@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Instrument / 07 Panels on today's desk</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../foundation/foundation.css">
+<script src="../foundation/foundation.js"></script>
+<script src="instrument.js"></script>
+<style>
+  /* Instrument's dot renderer, on the theme instead of its function key. */
+  .dotted {
+    --fn-value: var(--text-primary);
+    --lamp-look: var(--warning);
+    --lamp-live: var(--danger);
+    --fn-focus: var(--accent);
+    --fn-signal: var(--success);
+    --dot-off: var(--led-off);
+  }
+  [data-dots], [data-graph], [data-bar] { display: inline-block; line-height: 0; flex-shrink: 0; }
+  .dots, .meter { display: block; }
+  .dots__off rect { fill: var(--dot-off); }
+  .dots__on rect { fill: currentColor; }
+
+  .card { width: 324px; padding: 12px; display: flex; flex-direction: column; gap: 14px; color: var(--ink); }
+  .cap { display: flex; justify-content: space-between; align-items: baseline; }
+  .caps { font: 500 10px/12px var(--f-chrome); letter-spacing: 1px; text-transform: uppercase; color: var(--ink-3); white-space: nowrap; }
+  .fig { font: 400 11px/14px var(--f-mono); color: var(--ink-2); white-space: nowrap; }
+  .card__head { display: flex; justify-content: space-between; align-items: flex-start; }
+  .card__id { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .card__model { font-size: 12px; color: var(--ink-2); }
+  .well { display: inline-flex; align-self: flex-start; padding: 6px 7px; margin-top: 8px; border-radius: 5px; background: var(--field-well); box-shadow: inset 0 0 0 1px var(--field-edge); line-height: 0; }
+  .sec { display: flex; flex-direction: column; gap: 7px; }
+  .rule { height: 1px; background: var(--hairline); }
+  .procs { display: flex; flex-direction: column; gap: 6px; }
+  .proc { display: grid; grid-template-columns: 1fr auto 44px; gap: 12px; align-items: center; font-size: 12.5px; color: var(--ink-2); }
+  .proc .fig { text-align: right; }
+  .foot { display: flex; justify-content: space-between; }
+  .pair { display: flex; gap: 8px; align-items: baseline; }
+  .split { display: flex; gap: 14px; }
+  .split span { display: flex; gap: 5px; align-items: baseline; }
+
+  .pairs { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .pairs > div { display: flex; flex-direction: column; gap: 10px; }
+  .row4 { display: grid; grid-template-columns: repeat(2, 324px); gap: 24px; align-items: start; }
+  .lists { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+  .take { display: grid; grid-template-columns: 22px 1fr; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--hairline); font: 400 13px/20px var(--f-chrome); color: var(--ink-2); }
+  .take b { color: var(--ink); font-weight: 500; }
+  .take .n { font: 500 12px/20px var(--f-spec); color: var(--accent); }
+  .take .n--no { color: var(--ink-3); }
+  .ask .n { color: var(--success); }
+</style>
+</head>
+<body class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num">07</span><div class="head__title">Panels on today's desk</div></div>
+    <div class="head__lead">The islands' meters already speak this canvas's language: 12 × 5 LEDs, unlit dots that show capacity, a column that turns past 75% and 90%. The panels that hang from them do not — a cyan line graph, blue bars, a big mono number, every color fixed in code. Here is board 01's drop panel moved onto the foundation as built (2026-10-24): the island's dots at the panel's 4 / 5 grid, the theme's colors, nothing else from the front panel.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">CPU under the meters island · today, then Instrument's · 1:1</div>
+    <div class="pairs" id="cpu"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">MEM under the meters island · today, then Instrument's · 1:1</div>
+    <div class="pairs" id="mem"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">RX under the network island · today, then Instrument's · 1:1</div>
+    <div class="pairs" id="rx"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">GPU and TX, the same rules · 1:1</div>
+    <div class="row4 dotted" id="others"></div>
+    <div class="note" style="margin-top:14px;max-width:900px">canto has no NVIDIA card, so its row has no GPU island; this one is drawn from the panel's fields (gpu.rs). TX hangs from the network island like RX.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">On the Rose scheme · today, then Instrument's · 1:1</div>
+    <div class="pairs" id="blue"></div>
+    <div class="note" style="margin-top:14px;max-width:900px">Today's panel keeps its cyan and blue whatever the picture does. The dotted one is the theme: at rest the scheme's ink, past 75% its warning, past 90% its danger, unlit cells its ink at 16% — so the panel and the island above it always agree.</div>
+  </div>
+
+  <div class="section">
+    <div class="lists">
+      <div>
+        <div class="label">Take</div>
+        <div id="take"></div>
+      </div>
+      <div>
+        <div class="label">Leave</div>
+        <div id="leave"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="lists">
+      <div>
+        <div class="label">What it takes</div>
+        <div id="cost"></div>
+      </div>
+      <div>
+        <div class="label">Decided · Joshua, 2026-10-24 · built on next</div>
+        <div id="asks" class="ask"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  /* ── Data: canto (Xeon E5-1620 v2, 4C / 8T, 31 GB, net0) during a
+   * release build — the same numbers Foundation 09 draws today's panels
+   * with. ── */
+  const hist = (f) => Array.from({ length: 60 }, (_, i) => Math.max(1, Math.round(f(i))));
+  const cpuHist = hist((i) => 14 + i * 1.1 + 8 * Math.sin(i / 3) + 4 * Math.sin(i * 1.7));
+  cpuHist.splice(50, 10, 78, 84, 88, 86, 91, 85, 80, 87, 83, 83);
+  const cores = [96, 88, 74, 91, 82, 69, 93, 77];
+  const threads = cores.flatMap((v, i) => (i % 2 === 0 && i ? [0, v] : [v]));
+  const memHist = hist((i) => 40 + 1.2 * Math.sin(i / 7));
+  const rxHist = hist((i) => (i % 17 < 5 ? 1.6e6 + 3.2e6 * Math.sin(i) ** 2 : 1e5 + 8e4 * Math.sin(i * 2)));
+  const gpuHist = hist((i) => 6 + 5 * Math.sin(i / 2.7) + (i > 40 ? 30 : 0));
+  const txHist = hist((i) => 4e4 + 3e4 * Math.sin(i / 3) + (i % 13 === 0 ? 1.1e6 : 0));
+
+  /* ── Instrument's panel, on the theme ────────────────────────── */
+  const pct = (v) => (v >= 90 ? "var(--danger)" : v >= 75 ? "var(--warning)" : "var(--text-primary)");
+  const readout = (text, color, cells = 4) =>
+    `<span class="well"><span data-dots="${text}" data-cols="${cells * 6 - 1}" data-align="right" data-dot="4" data-pitch="5" style="color:${color}"></span></span>`;
+  const graph = (vals, o = {}) =>
+    `<span data-graph="${vals.join(" ")}" data-cols="${o.cols || 60}" data-rows="${o.rows || 8}" data-dot="4" data-pitch="5"${o.tint ? ` data-tint="${o.tint}"` : ""}${o.max ? ` data-max="${o.max}"` : ""}></span>`;
+  const ledBar = (v, cells = 16, tint = "value") => `<span data-bar="${v}" data-cells="${cells}" data-dot="4" data-pitch="5" data-tint="${tint}"></span>`;
+  const head = (label, value, color, model, sub, cells) =>
+    `<div class="card__head"><div><div class="caps">${label}</div>${readout(value, color, cells)}</div><div class="card__id"><span class="card__model">${model}</span><span class="fig">${sub}</span></div></div>`;
+  const cap = (l, r) => `<div class="cap"><span class="caps">${l}</span><span class="fig">${r}</span></div>`;
+  const procs = (rows, kind) => `<div class="sec">${cap("Top processes", "by " + kind)}<div class="procs">${rows.map(([n, f, v]) =>
+    `<div class="proc"><span>${n}</span>${ledBar(f)}<span class="fig">${v}</span></div>`).join("")}</div></div>`;
+  const foot = (pairs) => `<div class="foot">${pairs.map(([l, v]) => `<span class="pair"><span class="caps">${l}</span><span class="fig">${v}</span></span>`).join("")}</div>`;
+  const card = (inner) => `<div class="pop card dotted" style="position:relative">${inner}</div>`;
+
+  const DOTTED = {
+    cpu: () => card(
+      head("CPU", "83%", pct(83), "Xeon E5-1620 v2", "4C / 8T") +
+      `<div class="sec">${cap("Last 60 seconds", "peak 91%")}${graph(cpuHist)}</div>` +
+      `<div class="sec">${cap("Per-thread load", "8 threads")}${graph(threads, { cols: threads.length, rows: 6 })}</div>` +
+      `<div class="rule"></div>` +
+      procs([["rustc", 1, "38%"], ["rustc", 0.82, "31%"], ["sola-browser", 0.24, "9%"], ["river", 0.08, "3%"]], "CPU") +
+      `<div class="rule"></div>` + foot([["Load", "6.2  4.8  3.1"], ["Up", "2d 6h 41m"]])),
+    mem: () => card(
+      head("MEM", "41%", pct(41), "31 GB", "RAM") +
+      `<div class="sec">${cap("Last 60 seconds", "peak 42%")}${graph(memHist)}</div>` +
+      `<div class="sec">${cap("Memory", "")}${ledBar(0.41, 60)}
+        <div class="split"><span><span class="caps">Used</span><span class="fig">12.7 GB</span></span><span><span class="caps">Cache</span><span class="fig">11.8 GB</span></span><span><span class="caps">Free</span><span class="fig">6.5 GB</span></span></div></div>` +
+      `<div class="rule"></div>` +
+      procs([["sola-browser", 1, "2140 MB"], ["sola-design", 0.57, "1210 MB"], ["claude", 0.23, "486 MB"], ["sola-shell", 0.1, "212 MB"]], "RAM") +
+      `<div class="rule"></div>` + foot([["Swap", "0.0 / 8 GB"], ["Pressure", "41%"]])),
+    rx: () => card(
+      head("RX", "1.2M", "var(--accent)", "Receive", "net0") +
+      `<div class="sec">${cap("Last 60 seconds", "peak 4.8 MB/s")}${graph(rxHist, { tint: "focus", max: Math.max(...rxHist) })}</div>` +
+      `<div class="rule"></div>` + foot([["Interface", "net0  10.0.0.3"], ["Session", "3.1 GB"]])),
+    gpu: () => card(
+      head("GPU", "38%", pct(38), "RTX 3090 Ti", "24 GB") +
+      `<div class="sec">${cap("Last 60 seconds", "peak 41%")}${graph(gpuHist)}</div>` +
+      `<div class="sec">${cap("VRAM", "6.2 / 24 GB")}${ledBar(0.26, 60)}</div>` +
+      `<div class="rule"></div>` +
+      procs([["sola-browser", 1, "22%"], ["sola-river", 0.4, "9%"]], "GPU") +
+      `<div class="rule"></div>` + foot([["Temp", "54°C"], ["Power", "142 W"], ["Fan", "31%"]])),
+    tx: () => card(
+      head("TX", "180K", "var(--success)", "Transmit", "net0") +
+      `<div class="sec">${cap("Last 60 seconds", "peak 1.1 MB/s")}${graph(txHist, { tint: "signal", max: Math.max(...txHist) })}</div>` +
+      `<div class="rule"></div>` + foot([["Interface", "net0  10.0.0.3"], ["Session", "412 MB"]])),
+  };
+
+  /* ── Today's panels: Foundation's statPanel (stats/view.rs as built) ── */
+  const TODAY = {
+    cpu: () => statPanel({ anchor: "CPU", label: "CPU", value: "83%", color: "#ffd60a", model: "Xeon E5-1620 v2", sub: "4C / 8T", peak: "peak 91%", hist: cpuHist, max: 100,
+      body: `<div class="st__sec"><div class="st__cap"><span>Per-thread load</span><span>8 threads</span></div><div class="st__cores">${cores.map((p) => `<i style="height:${Math.max(2, (p / 100) * 22)}px"></i>`).join("")}</div></div>
+        <div class="st__div"></div><div class="st__cap"><span>Top processes</span><span>by CPU</span></div>${statProcs([["rustc", 38], ["rustc", 31], ["sola-browser", 9], ["river", 3]], (v) => v + "%")}
+        <div class="st__div"></div>${statFoot("LOAD AVG", "6.2  4.8  3.1", "UPTIME", "2d 6h 41m")}` }),
+    mem: () => statPanel({ anchor: "MEM", label: "MEM", value: "41%", color: "#ececec", model: "31 GB", sub: "RAM", peak: "peak 42%", hist: memHist, max: 100,
+      body: `<div class="st__sec"><div class="st__cap"><span>Memory</span><span></span></div><div class="st__seg"><i style="flex:41;background:#00d4ff"></i><i style="flex:38;background:#1f6feb"></i><i style="flex:21;background:#2c2c2c"></i></div></div>
+        <div class="st__div"></div><div class="st__cap"><span>Top processes</span><span>by RAM</span></div>${statProcs([["sola-browser", 2140], ["sola-design", 1210], ["claude", 486], ["sola-shell", 212]], (v) => v + " MB")}
+        <div class="st__div"></div>${statFoot("SWAP", "0.0 / 8 GB", "PRESSURE", "41%")}` }),
+    rx: () => statPanel({ anchor: "RX", label: "RX", value: "1.2 MB/s", color: "#ececec", model: "Receive", sub: "net0", peak: "peak 4.8 MB/s", hist: rxHist, max: Math.max(...rxHist),
+      body: `<div class="st__div"></div>${statFoot("INTERFACE", "net0  10.0.0.3", "SESSION", "3.1 GB")}` }),
+  };
+
+  /* A crop of the desk's right end with a panel hung under the meters island. */
+  const hung = (panelHtml, o = {}) => {
+    const anchor = o.anchor || "CPU", net = anchor === "RX" || anchor === "TX";
+    const top = { gpu: false, l: [I.flower()], r: [I.extras({ mail: 12 }), I.spectrum(), I.meters({ open: !net, hot: true, gpu: false }), I.net(net), I.clock("18:35 Sat 2026-10-24")] };
+    const deskHtml = desk({ w: 1920, h: 1080, scheme: o.scheme, picture: o.picture, top, wins: [{ app: "projects", zone: "left" }, { app: "terminal", zone: "right", focus: true }],
+      extra: `<div class="hang" data-anchor="${anchor}" style="position:absolute;left:0;top:38px;z-index:20">${panelHtml}</div>` });
+    return view(deskHtml, { x: 1920 - 636, y: 0, w: 636, h: o.h || 600, picture: o.picture });
+  };
+
+  /* statPanel draws its own absolute card; inside .hang it sits at 0,0. */
+  const today = (k) => TODAY[k]().replace('style="top:38px"', 'style="position:relative;top:0"');
+
+  const pair = (k, o = {}) =>
+    `<div>${hung(today(k), o)}<div class="spec">Today · stats/view.rs</div></div>` +
+    `<div class="dotted">${hung(DOTTED[k](), o)}<div class="spec">Instrument's, on the theme</div></div>`;
+  document.getElementById("cpu").innerHTML = pair("cpu");
+  document.getElementById("mem").innerHTML = pair("mem", { anchor: "MEM", h: 600 });
+  document.getElementById("rx").innerHTML = pair("rx", { anchor: "RX", h: 380 });
+  document.getElementById("others").innerHTML = ["gpu", "tx"].map((k) => `<div style="position:relative">${DOTTED[k]()}</div>`).join("");
+  document.getElementById("blue").innerHTML = pair("cpu", { scheme: "rose", picture: true });
+
+  const list = (id, rows, no) => (document.getElementById(id).innerHTML = rows.map(([h, p], i) =>
+    `<div class="take"><span class="n${no ? " n--no" : ""}">${i + 1}</span><span><b>${h}</b> ${p}</span></div>`).join(""));
+  list("take", [
+    ["One dot from island to panel.", "The panel draws the island's LEDs, larger: 4 px dots on a 5 px pitch instead of 2 on 3. The meter you clicked and the panel it opened read as one instrument."],
+    ["The number you came for, in dots.", "The value in a 5 × 7 readout with fixed cells: 83% keeps a dark cell and never shifts. The only dotted number in the panel."],
+    ["History as columns, not a line.", "60 samples, 8 rows, each column tinted by its own value. A build that crosses 75% shows where it crossed, which a cyan line cannot."],
+    ["Per-thread as a shape.", "One column per thread, siblings side by side, a dark column between cores. No numbers."],
+    ["Lists stay type.", "Process names in SF Pro, figures in Iosevka, a 16-cell LED bar between. Dots only for the number you came for."],
+    ["The theme's colors.", "Ink at rest, warning past 75%, danger past 90%; RX the accent, TX success. Fixes the hard-coded cyan and blue and Graphite's P6 in one pass (board 11 on Foundation)."],
+  ]);
+  list("leave", [
+    ["A separate black for the shell.", "Instrument's panel black and module grey predate the grey base and the picture. The panels stay popovers in the theme's raised fill."],
+    ["New lamp colors.", "Orange #ff8a3d and red #ff4a3d next to gold #ffb800 were Instrument's own risk. The theme's warning and danger already mean look and act."],
+    ["A new label face.", "Iosevka Fixed Extended is not shipped by Sola. The panel's captions use the sidebar's caps (10 px medium, tracked)."],
+    ["The rest of the front panel.", "A dot clock, capture lamps, an agent count (agent islands now do that), the bar's anatomy — all written for the 28 px bar that no longer exists. Super+K as a keycap map is its own idea; worth a board of its own."],
+  ], true);
+  list("cost", [
+    ["The raster grows a size.", "pixel.rs already paints Bayer-dithered 2 × 2 cells to a nearest-neighbor image; give it the cell size and grid as parameters (2/3 for islands, 4/5 for panels)."],
+    ["A glyph table.", "A 5 × 7 font (digits, %, ., K, M, G, /) and a fixed-cell raster beside pixel.rs — dots.rs. Rebuilt when the value changes, once a second at most."],
+    ["stats/view.rs, re-drawn.", "Graph (iced canvas line) → the raster; core_bar / proc_row / seg_bar / level_bar → one LED bar; the header's 30 px mono value → the readout. Colors from the theme."],
+    ["level_color takes the theme.", "stats/mod.rs AMBER and RED become the palette's warning and danger, for islands and panels both."],
+  ]);
+  list("asks", [
+    ["Type, after all.", "The value was a dot readout for an evening; Joshua: “i don't like the 'digital' number. Just make it a normal font.” It is SF Pro Text medium, 28 px, tinted like the meter. The boards above still show the dot version."],
+    ["Whole dots.", "The panels dithered the top lit cell over 2 × 2 quarters, as the islands do; at 4 px the quarters read as broken dots (Joshua: “I don't like how it looks”). A panel dot lights once its column reaches its middle; a bar's dot takes the run its middle falls in. The islands' 2 px meters and the volume spectrum followed (2026-10-26): no LED dithers."],
+    ["Threads a gap apart.", "Siblings side by side, 1 px apart, read as one wide bar (Joshua: “it says 8 threads, but its only showing four bars”). Each thread now has a gap, a core two."],
+    ["The theme's warm colors.", "Warning past 75%, danger past 90%, for islands and panels both; #ffd60a / #ff453a are gone."],
+    ["Network in color.", "RX in the accent, TX in success, as the islands draw them."],
+  ]);
+  finish();
+  Instrument.render(document);
+
+  /* Hang each panel as the shell does (app.rs menu spec): x is its item's
+   * left edge (anchors.rs), clamped so the card ends a gutter inside the
+   * output; y is the top row's 38. */
+  const place = () => document.querySelectorAll(".hang").forEach((h) => {
+    const deskEl = h.closest(".desk");
+    const label = [...deskEl.querySelectorAll(".isl.is-open .stat")].find((s) => s.textContent.trim().startsWith(h.dataset.anchor));
+    if (!label) return;
+    const x = label.getBoundingClientRect().left - deskEl.getBoundingClientRect().left;
+    const w = h.firstElementChild.offsetWidth;
+    h.style.left = Math.min(x, 1920 - w - 10) + "px";
+  });
+  place();
+  document.fonts.ready.then(place);
+</script>
+</body>
+</html>

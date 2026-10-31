@@ -3,12 +3,6 @@
 Scope (`sola-scope`) is a pixel loupe. It magnifies the pixels under the
 pointer.
 
-Scope does not ship on Oath: `pkg:sola` does not carry `sola-scope`. The
-launcher still lists **Scope**, and picking it there fails (the top row
-says it could not launch). The call it reads, `solactl compositor sample`
-(below), is part of `sola-river` and `solactl`, which do ship. The rest of
-this note is how the app works where it is installed.
-
 ## Use
 
 - Launch **Scope** from the launcher.

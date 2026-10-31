@@ -18,8 +18,8 @@ path = "src/main.rs"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-# Paired traffic: `seal.rs`, shared with sola-kvm.
-chacha20poly1305 = "0.10"
+# Paired traffic: `link.rs` (Noise IK), shared with sola-kvm.
+snow = "0.10"
 getrandom = "0.2"
 
 # CoreGraphics / CoreFoundation are linked only on macOS (see inject.rs).

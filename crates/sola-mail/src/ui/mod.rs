@@ -1,8 +1,11 @@
 //! Kit UI: three-pane mail client (mailboxes · list · letter / compose).
 
+mod bar;
 mod chrome;
 mod compose;
 mod contacts;
+mod edit;
+mod flags;
 mod format;
 mod keys;
 mod list;
@@ -20,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use iced::widget::Id as ScrollId;
 use iced::widget::scrollable::Viewport;
-use iced::widget::{Space, column, container, row, text_editor};
+use iced::widget::{column, container, opaque, row};
 use iced::{Element, Event, Length, Padding, Subscription, Task, Theme, event, keyboard};
 use sola_bus::Message;
 use sola_bus::topics::{MailConfig, Topic, mail_addr_key};
@@ -28,6 +31,7 @@ use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcome};
 use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM};
 use sola_kit::components::text as kit_text;
+use sola_kit::components::text_input::{MenuEdit, MenuEdited};
 use sola_kit::theme::default_theme;
 
 use crate::bridge::{self, mail_send};
@@ -41,6 +45,7 @@ use crate::worker::{Flag, LinkState, MailCmd, MailEvent, Op, Page};
 use chrome::Toast;
 use compose::{Compose, Edit, Field};
 use contacts::Contacts;
+use flags::PendingFlags;
 use list::{ListState, Load, SearchState};
 use moves::{Confirmed, Moves};
 use reader::{Letter, Reader};
@@ -56,8 +61,9 @@ const TOAST_TTL: Duration = Duration::from_secs(5);
 const SETTLE_SELECT: Duration = Duration::from_millis(120);
 /// Safety net when IDLE stays quiet (another client's expunge, other boxes).
 const POLL: Duration = Duration::from_secs(45);
-/// Shared list-header / reader-toolbar height so icons sit on one line.
-const CHROME_H: f32 = 40.0;
+/// The mailboxes show beside the list from this window width (a half
+/// tile is narrower: the list head's title picks the mailbox there).
+const MAILBOXES_FROM: f32 = 1040.0;
 /// An update or view slower than this is logged (UI felt frozen).
 const SLOW: Duration = Duration::from_millis(150);
 
@@ -70,6 +76,7 @@ pub enum Msg {
     Bus(Arc<Message>),
     Worker(MailEvent),
     WindowReady(Option<iced::window::Id>),
+    WindowResized(f32),
     /// Keyboard focus entered or left this window.
     WindowFocus(bool),
     TitleDrag,
@@ -88,9 +95,13 @@ pub enum Msg {
         id: MailId,
         generation: u64,
     },
+    /// Focus the bar's search field.
+    SearchFocus,
     SearchChanged(String),
     SearchSubmit,
     SearchClear,
+    /// The bar's mailbox menu (the mailboxes are not beside the list).
+    MailboxMenu(bool),
     ListScrolled(Viewport),
     /// Quiet background re-fetch (IDLE + multi-client safety net).
     PollRefresh,
@@ -102,6 +113,8 @@ pub enum Msg {
     BodySelect(Option<String>),
     CopyBody,
     RetryBody,
+    /// Fetch the open letter's pictures from the web.
+    LoadImages,
     OpenAttachment(usize),
     SaveAttachment(usize),
 
@@ -128,6 +141,8 @@ pub enum Msg {
     Attach,
     RemoveAttach(usize),
     ClipboardPasted(Option<String>),
+    /// An Edit menu command, and what the focused field did with it.
+    MenuEdited(MenuEdit, Option<MenuEdited>),
     Picker(PickerMsg),
     /// Enter in a compose field: take the top suggestion, else move on.
     ComposeSubmit(Field),
@@ -165,6 +180,8 @@ pub struct App {
     theme: Theme,
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
+    /// The window's width: the mailboxes show from [`MAILBOXES_FROM`].
+    window_w: f32,
     /// Last keyboard-focus state. Focus re-lists only on the rising edge.
     window_focused: bool,
     config: MailConfig,
@@ -174,10 +191,14 @@ pub struct App {
     smart: Vec<Folder>,
     list: ListState,
     search_input: String,
+    /// The bar's mailbox menu is open.
+    mailbox_menu: bool,
     selected: Option<MailId>,
     reader: Reader,
     compose: Option<Box<Compose>>,
     moves: Moves,
+    /// Flags we set that the server's lists don't show yet.
+    flags: PendingFlags,
     toast: Option<Toast>,
     /// Bumped on every toast so a late expiry cannot hide a newer one.
     toast_gen: u64,
@@ -228,6 +249,7 @@ impl App {
             theme: default_theme(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
+            window_w: 0.0,
             window_focused: false,
             config: MailConfig::default(),
             setup: Setup::Unknown,
@@ -236,10 +258,12 @@ impl App {
             smart: Vec::new(),
             list,
             search_input: String::new(),
+            mailbox_menu: false,
             selected: None,
             reader: Reader::Empty,
             compose: None,
             moves: Moves::default(),
+            flags: PendingFlags::default(),
             toast: None,
             toast_gen: 0,
             confirm: None,
@@ -252,12 +276,22 @@ impl App {
         (app, sola_kit::window_ready_task(Msg::WindowReady))
     }
 
+    /// The window's name (the shell's bar lists it).
     pub fn title(&self) -> String {
         "Mail".into()
     }
 
+    /// The titlebar's title, as Next's: the mailbox and its unread, or the
+    /// search.
+    fn frame_title(&self) -> String {
+        match &self.list.search {
+            Some(s) => format!("Search · “{}”", s.query),
+            None => mailbox_title(&self.list_title(), self.list_unread()),
+        }
+    }
+
     pub fn theme(&self) -> Theme {
-        sola_kit::theme_for(self.float.is_floating_any(), &self.theme)
+        sola_kit::theme_for(self.float.chrome_any(), &self.theme)
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
@@ -269,6 +303,11 @@ impl App {
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
             bridge::mail_subscription().map(Msg::Worker),
+            if self.picker.is_some() {
+                FilePicker::keys().map(Msg::Picker)
+            } else {
+                Subscription::none()
+            },
             event::listen_with(|event, status, _id| match event {
                 Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     Some(Msg::KeyPressed {
@@ -276,6 +315,9 @@ impl App {
                         mods: modifiers,
                         captured: status == event::Status::Captured,
                     })
+                }
+                Event::Window(iced::window::Event::Resized(size)) => {
+                    Some(Msg::WindowResized(size.width))
                 }
                 Event::Window(iced::window::Event::Focused) => Some(Msg::WindowFocus(true)),
                 Event::Window(iced::window::Event::Unfocused) => Some(Msg::WindowFocus(false)),
@@ -308,7 +350,18 @@ impl App {
         match msg {
             Msg::Bus(message) => return self.on_bus(&message),
             Msg::Worker(ev) => return self.on_worker(ev),
-            Msg::WindowReady(id) => self.window_id = id,
+            Msg::WindowReady(id) => {
+                self.window_id = id;
+                if let Some(id) = id {
+                    return iced::window::size(id).map(|s| Msg::WindowResized(s.width));
+                }
+            }
+            Msg::WindowResized(w) => {
+                self.window_w = w;
+                if self.mailboxes_beside() {
+                    self.mailbox_menu = false;
+                }
+            }
             Msg::WindowFocus(focused) => {
                 let rising = focused && !self.window_focused;
                 self.window_focused = focused;
@@ -327,12 +380,20 @@ impl App {
                 captured,
             } => return self.on_key(key, mods, captured),
 
-            Msg::SelectFolder(folder) => self.open_folder(folder),
+            Msg::SelectFolder(folder) => {
+                self.mailbox_menu = false;
+                self.open_folder(folder);
+            }
+            Msg::MailboxMenu(open) => self.mailbox_menu = open,
             Msg::SelectMessage(id) => self.request_select(id),
             Msg::SettleSelect { id, generation } => {
                 if generation == self.select_gen && self.selected.as_ref() == Some(&id) {
                     self.open_message(id);
                 }
+            }
+            Msg::SearchFocus => {
+                self.mailbox_menu = false;
+                return iced::widget::operation::focus(bar::search_id());
             }
             Msg::SearchChanged(q) => self.search_input = q,
             Msg::SearchSubmit => self.submit_search(),
@@ -355,6 +416,17 @@ impl App {
                 if let Some(id) = self.selected.clone() {
                     self.reader = Reader::Loading;
                     mail_send(MailCmd::FetchBody(id));
+                }
+            }
+            Msg::LoadImages => {
+                if let Some(letter) = self.reader.letter_mut()
+                    && letter.web == reader::Web::Hidden
+                {
+                    letter.web = reader::Web::Loading;
+                    mail_send(MailCmd::FetchImages {
+                        id: letter.body.id.clone(),
+                        urls: letter.body.remote_images.clone(),
+                    });
                 }
             }
             Msg::OpenAttachment(i) => return self.open_attachment(i),
@@ -437,14 +509,9 @@ impl App {
                     c.touch();
                 }
             }
-            Msg::ClipboardPasted(Some(t)) => {
-                if let Some(c) = self.compose.as_mut() {
-                    c.apply(Edit::Body(text_editor::Action::Edit(
-                        text_editor::Edit::Paste(Arc::new(t)),
-                    )));
-                }
-            }
+            Msg::ClipboardPasted(Some(t)) => return self.menu_edit(MenuEdit::Paste(t)),
             Msg::ClipboardPasted(None) => {}
+            Msg::MenuEdited(edit, done) => return self.on_menu_edited(edit, done),
             Msg::Picker(m) => return self.on_picker(m),
 
             Msg::ComposeSubmit(field) => return self.compose_submit(field),
@@ -529,13 +596,10 @@ impl App {
 
     fn on_menu_action(&mut self, action: &str) -> Task<Msg> {
         let msg = match action {
-            "cut" => return self.edit_cut(),
-            "copy" => return self.edit_copy(),
+            "cut" => return self.menu_edit(MenuEdit::Cut),
+            "copy" => return self.menu_edit(MenuEdit::Copy),
             "paste" => return self.edit_paste(),
-            "select_all" => {
-                self.select_all();
-                return Task::none();
-            }
+            "select_all" => return self.menu_edit(MenuEdit::SelectAll),
             "quit" => return self.quit(),
             "refresh" => Msg::Refresh,
             "compose" => Msg::Compose,
@@ -554,6 +618,10 @@ impl App {
             "copy_message" => Msg::CopyBody,
             "empty_junk" => Msg::AskErase("Junk".into()),
             "empty_trash" => Msg::AskErase("Trash".into()),
+            other if other.starts_with("box:") => {
+                Msg::SelectFolder(FolderRef::Mailbox(other["box:".len()..].to_string()))
+            }
+            "find" => Msg::SearchFocus,
             "next" => return self.select_next(true),
             "prev" => return self.select_prev(true),
             _ => return Task::none(),
@@ -632,6 +700,8 @@ impl App {
                 }
                 if let Some(search) = self.list.search.as_mut() {
                     search.capped = capped;
+                    let mut rows = rows;
+                    self.flags.settle(&mut rows);
                     let gone = self.moves.gone();
                     self.list.rows = rows.into_iter().filter(|m| !gone.contains(&m.id)).collect();
                     self.list.load = Load::Idle;
@@ -652,11 +722,21 @@ impl App {
                         attachments = body.attachments.len(),
                         "opened message body"
                     );
-                    self.reader = Reader::Open(Box::new(Letter {
-                        body: *body,
-                        selection: None,
-                        select_all: 0,
-                    }));
+                    self.reader = Reader::Open(Box::new(Letter::new(*body)));
+                }
+            }
+            MailEvent::Image { id, image } => {
+                if let Some(letter) = self.reader.letter_mut()
+                    && letter.body.id == id
+                {
+                    letter.add_image(*image);
+                }
+            }
+            MailEvent::ImagesDone(id) => {
+                if let Some(letter) = self.reader.letter_mut()
+                    && letter.body.id == id
+                {
+                    letter.web = reader::Web::None;
                 }
             }
             MailEvent::Moved { id, dest, dest_uid } => {
@@ -721,18 +801,19 @@ impl App {
         epoch: u64,
         folder: FolderRef,
         page: Page,
-        rows: Vec<MessageSummary>,
+        mut rows: Vec<MessageSummary>,
         total: u32,
         failed: Vec<String>,
     ) {
         if epoch != self.list.epoch || folder != self.list.folder || self.list.search.is_some() {
             return;
         }
+        self.flags.settle(&mut rows);
         self.list.load = Load::Idle;
         let mailbox = folder.mailbox().to_string();
         match page {
             Page::Replace | Page::Refresh => {
-                self.moves.prune(&mailbox, &rows);
+                self.moves.prune(&mailbox, &rows, &failed);
                 let gone = self.moves.gone();
                 self.list.rows = if page == Page::Replace {
                     rows.into_iter().filter(|m| !gone.contains(&m.id)).collect()
@@ -784,7 +865,8 @@ impl App {
                 }
                 Task::none()
             }
-            Op::Flag(_) => {
+            Op::Flag(id) => {
+                self.flags.failed(&id);
                 self.refresh(true);
                 self.show_toast(format!("Couldn’t update the message: {message}"), false)
             }
@@ -954,6 +1036,7 @@ impl App {
             .filter(|m| !m.seen)
             .map(|m| m.seen = true);
         if unread.is_some() {
+            self.flags.set(&id, Flag::Seen, true);
             mail_send(MailCmd::SetFlag {
                 id: id.clone(),
                 flag: Flag::Seen,
@@ -1004,6 +1087,7 @@ impl App {
                 m.flagged
             }
         };
+        self.flags.set(&id, flag, on);
         mail_send(MailCmd::SetFlag {
             id: id.clone(),
             flag,
@@ -1209,7 +1293,9 @@ impl App {
             self.compose = Some(Box::new(Compose::new(compose::blank(self.default_from()))));
         }
         let picker = FilePicker::open()
-            .title("Attach file")
+            .multiple()
+            .title("Attach files")
+            .action("Attach")
             .start_dir(self.picker_start_dir());
         self.picker = Some((PickerKind::Attach, picker));
     }
@@ -1303,10 +1389,19 @@ impl App {
             return Task::none();
         };
         let kind = *kind;
-        match picker.update(msg) {
+        let outcome = picker.update(msg);
+        let follow = picker.scroll_task().map(Msg::Picker);
+        match outcome {
             Some(Outcome::Cancelled) => {
                 self.picker = None;
                 Task::none()
+            }
+            Some(Outcome::PickedMany(paths)) => {
+                if let Some(parent) = paths.first().and_then(|p| p.parent()) {
+                    self.last_picker_dir = Some(parent.to_path_buf());
+                }
+                self.picker = None;
+                Task::batch(paths.into_iter().map(|path| self.attach_path(path)).collect::<Vec<_>>())
             }
             Some(Outcome::Picked(path)) => {
                 if let Some(parent) = path.parent() {
@@ -1330,67 +1425,7 @@ impl App {
                     }
                 }
             }
-            None => Task::none(),
-        }
-    }
-
-    // ── Edit menu ─────────────────────────────────────────────────────
-
-    fn copy_letter(&self) -> Task<Msg> {
-        match self.reader.body().map(|b| b.display_text()) {
-            Some(t) if !t.is_empty() => iced::clipboard::write(t),
-            _ => Task::none(),
-        }
-    }
-
-    fn edit_copy(&self) -> Task<Msg> {
-        if let Some(c) = &self.compose {
-            let t = c
-                .draft
-                .body
-                .selection()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| c.draft.body.text());
-            return if t.is_empty() {
-                Task::none()
-            } else {
-                iced::clipboard::write(t)
-            };
-        }
-        match self.reader.letter().and_then(|l| l.selection.clone()) {
-            Some(sel) if !sel.is_empty() => iced::clipboard::write(sel),
-            // No selection → copy the open letter (flatten includes URLs).
-            _ => self.copy_letter(),
-        }
-    }
-
-    fn edit_cut(&mut self) -> Task<Msg> {
-        let Some(c) = self.compose.as_mut() else {
-            return Task::none();
-        };
-        let Some(sel) = c.draft.body.selection().filter(|s| !s.is_empty()) else {
-            return Task::none();
-        };
-        c.apply(Edit::Body(text_editor::Action::Edit(
-            text_editor::Edit::Delete,
-        )));
-        iced::clipboard::write(sel)
-    }
-
-    fn edit_paste(&self) -> Task<Msg> {
-        if self.compose.is_none() {
-            return Task::none();
-        }
-        iced::clipboard::read().map(Msg::ClipboardPasted)
-    }
-
-    fn select_all(&mut self) {
-        if let Some(c) = self.compose.as_mut() {
-            c.apply(Edit::Body(text_editor::Action::SelectAll));
-        } else if let Some(l) = self.reader.letter_mut() {
-            l.select_all += 1;
-            let visible = sola_kit::components::prose::visible_text(&l.body.blocks);
-            l.selection = (!visible.is_empty()).then_some(visible);
+            None => follow,
         }
     }
 
@@ -1505,44 +1540,51 @@ impl App {
                 Some(c) => c.view(&self.identities(), &self.contacts),
                 None => self.view_reader(),
             };
-            row![
-                self.view_sidebar(),
-                widgets::v_hairline(),
-                self.view_list(),
-                widgets::v_hairline(),
-                column![self.view_toolbar(), pane]
-                    .width(Length::Fill)
-                    .height(Length::Fill),
+            // The bar runs over the list and the letter; the mailboxes,
+            // when there is room for them, take the full height beside.
+            let beside = self.mailboxes_beside();
+            let main = column![
+                self.view_bar(beside),
+                widgets::h_hairline(),
+                row![self.view_list(), widgets::v_hairline(), pane].height(Length::Fill),
             ]
-            .height(Length::Fill)
-            .into()
+            .width(Length::Fill)
+            .height(Length::Fill);
+            if beside {
+                row![self.view_sidebar(), widgets::v_hairline(), main]
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                main.into()
+            }
         };
 
-        let mut col = column![content].width(Length::Fill).height(Length::Fill);
-        if self.setup == Setup::Ready && self.show_link_card() {
-            col = col.push(
-                row![Space::new().width(Length::Fill), self.view_link_card()].padding(Padding {
-                    top: 0.0,
-                    right: SPACE_LG,
-                    bottom: SPACE_MD,
-                    left: SPACE_LG,
-                }),
-            );
-        }
-        if let Some(folder) = &self.confirm {
-            col = col.push(self.view_erase_confirm(folder));
-        } else if let Some(toast) = &self.toast {
-            col = col.push(self.view_toast(toast));
-        }
-        let body: Element<'_, Msg> = container(col)
+        // Accounts still connecting (or failed) float over the panes'
+        // bottom-right corner rather than taking a band under them (the
+        // toast floats over the foot of the list: `view_list`).
+        let content: Element<'_, Msg> = if self.setup == Setup::Ready && self.show_link_card() {
+            iced::widget::stack![
+                content,
+                container(opaque(self.view_link_card()))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(iced::Alignment::End)
+                    .align_y(iced::Alignment::End)
+                    .padding(Padding::from([SPACE_MD, SPACE_LG])),
+            ]
+            .into()
+        } else {
+            content
+        };
+        let body: Element<'_, Msg> = container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(style::canvas)
             .into();
 
-        let framed = sola_kit::wrap_if_floating(
-            self.float.is_floating_any(),
-            "Mail",
+        let framed = sola_kit::window_frame(
+            self.float.chrome_any(),
+            self.frame_title(),
             Msg::TitleDrag,
             Msg::TitleClose,
             Msg::TitleResize,
@@ -1554,6 +1596,22 @@ impl App {
             }
             None => framed,
         }
+    }
+}
+
+impl App {
+    /// The mailboxes beside the list (an unknown width counts as wide).
+    fn mailboxes_beside(&self) -> bool {
+        self.window_w <= 0.0 || self.window_w >= MAILBOXES_FROM
+    }
+}
+
+/// `Inbox · 12 unread`, or the mailbox alone when it is read.
+fn mailbox_title(mailbox: &str, unread: u32) -> String {
+    if unread == 0 {
+        mailbox.to_string()
+    } else {
+        format!("{mailbox} · {} unread", format::format_count(unread))
     }
 }
 
@@ -1585,6 +1643,8 @@ fn worker_label(ev: &MailEvent) -> &'static str {
         MailEvent::Messages { .. } => "worker:messages",
         MailEvent::SearchResults { .. } => "worker:search",
         MailEvent::Body(_) => "worker:body",
+        MailEvent::Image { .. } => "worker:image",
+        MailEvent::ImagesDone(_) => "worker:images-done",
         MailEvent::Moved { .. } => "worker:moved",
         MailEvent::MoveFailed { .. } => "worker:move-failed",
         MailEvent::Emptied { .. } => "worker:emptied",
@@ -1592,5 +1652,17 @@ fn worker_label(ev: &MailEvent) -> &'static str {
         MailEvent::DraftSaved => "worker:draft-saved",
         MailEvent::NewMail => "worker:new-mail",
         MailEvent::Failed { .. } => "worker:failed",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mailbox_title;
+
+    #[test]
+    fn title_names_the_mailbox_and_its_unread() {
+        assert_eq!(mailbox_title("Inbox", 12), "Inbox · 12 unread");
+        assert_eq!(mailbox_title("Sent", 0), "Sent");
+        assert_eq!(mailbox_title("Inbox", 1234), "Inbox · 1,234 unread");
     }
 }

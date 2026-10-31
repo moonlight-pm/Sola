@@ -1,28 +1,37 @@
-//! Message list: state, header (search / count / erase) and rows.
+//! Message list: state and rows, drawn as Next's `.mail__list`: a 290 px
+//! column on the raised fill, rows a hairline apart, an accent dot on
+//! unread mail.
 
 use chrono::{DateTime, Local};
-use std::time::Duration;
 
+use iced::font::Weight;
 use iced::widget::text::Wrapping;
-use iced::widget::{
-    Space, button, column, container, keyed_column, row, scrollable, text, tooltip,
-};
-use iced::{Element, Length, Padding};
-use sola_kit::components::button as kit_btn;
-use sola_kit::components::popover;
-use sola_kit::components::status_mark::{STATUS_MARK_SLOT, SidebarIndicator, status_mark};
-use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_XL};
+use iced::widget::{Space, button, column, container, keyed_column, row, stack, text};
+use iced::{Alignment, Element, Font, Length, Padding};
+use sola_kit::components::style::{SPACE_MD, SPACE_XL};
 use sola_kit::components::text as kit_text;
-use sola_kit::components::text_input::text_input;
 use sola_kit::fonts;
 
-use super::format::{account_tag, format_count, recipients_short, short_name};
-use super::widgets::{accent_icon, default_cursor, muted_icon, tool};
-use super::{App, CHROME_H, Msg, style};
+use super::format::{account_tag, recipients_short, short_name};
+use super::widgets::{accent_icon, default_cursor, h_hairline, muted_icon};
+use super::{App, Msg, style};
+use crate::protocol::FolderRef;
+use crate::protocol::MessageSummary;
 use crate::protocol::date::list_stamp;
-use crate::protocol::{FolderRef, MessageSummary};
+use sola_kit::components::scroll;
 
-const LIST_W: f32 = 328.0;
+/// Next's list column.
+pub const LIST_W: f32 = 290.0;
+/// A row's side padding, and the width its lines have between (a pixel
+/// spare for rounding).
+const ROW_PAD_X: f32 = 16.0;
+const ROW_TEXT_W: f32 = LIST_W - ROW_PAD_X * 2.0 - 1.0;
+/// The unread dot, a row's flag / paperclip, and the gap beside each.
+const DOT: f32 = 7.0;
+const MARK: f32 = 12.0;
+const MARK_GAP: f32 = 6.0;
+/// The account tag after the subject.
+const TAG_SIZE: f32 = 11.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Load {
@@ -102,56 +111,16 @@ struct RowCtx<'a> {
     tag_accounts: bool,
 }
 
+fn semibold() -> Font {
+    Font {
+        weight: Weight::Semibold,
+        ..fonts::ui()
+    }
+}
+
 impl App {
     pub(super) fn view_list(&self) -> Element<'_, Msg> {
         let list = &self.list;
-        let search = text_input("Search mail", &self.search_input)
-            .on_input(Msg::SearchChanged)
-            .on_submit(Msg::SearchSubmit)
-            .size(13)
-            .padding(Padding {
-                top: 5.0,
-                right: 10.0,
-                bottom: 5.0,
-                left: 10.0,
-            })
-            .width(Length::Fill);
-
-        let count = match (&list.search, list.load) {
-            (_, Load::Replacing) => "…".to_string(),
-            (Some(s), _) if s.capped => format!("{}+ found", list.rows.len()),
-            (Some(_), _) => format!("{} found", format_count(list.rows.len() as u32)),
-            (None, _) => format_count(list.total),
-        };
-        let mut header = row![
-            search,
-            check_mark(list.checking()),
-            kit_text::caption(count).style(kit_text::muted)
-        ]
-        .spacing(SPACE_MD)
-        .align_y(iced::Alignment::Center);
-        if !self.search_input.is_empty() || list.search.is_some() {
-            header = header.push(tool("lucide/x", "Clear search", Some(Msg::SearchClear)));
-        }
-        if let Some(folder) = list.erasable() {
-            header = header.push(tool(
-                "lucide/trash-2",
-                "Erase folder…",
-                Some(Msg::AskErase(folder.to_string())),
-            ));
-        }
-        let header = container(header)
-            .width(Length::Fill)
-            .height(Length::Fixed(CHROME_H))
-            .padding(Padding {
-                top: 0.0,
-                right: SPACE_LG,
-                bottom: 0.0,
-                left: SPACE_LG,
-            })
-            .align_y(iced::Alignment::Center)
-            .style(style::canvas);
-
         let body: Element<'_, Msg> = if list.rows.is_empty() && list.load != Load::Replacing {
             let caption = match &list.search {
                 Some(s) => format!(
@@ -162,7 +131,7 @@ impl App {
                 None => "No messages".into(),
             };
             container(kit_text::caption(caption).style(kit_text::muted))
-                .padding(Padding::from([SPACE_XL, SPACE_MD]))
+                .padding(Padding::from([SPACE_XL, 16.0]))
                 .width(Length::Fill)
                 .into()
         } else {
@@ -185,24 +154,33 @@ impl App {
             keyed_column(rows).spacing(0).width(Length::Fill).into()
         };
 
-        container(
-            column![
-                header,
-                scrollable(default_cursor(body))
-                    .id(super::list_scroll_id())
+        let scroller: Element<'_, Msg> = scroll::scrollable(default_cursor(body))
+            .id(super::list_scroll_id())
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .on_scroll(Msg::ListScrolled)
+            .into();
+        // The toast floats over the foot of the list: it never resizes it.
+        let pane: Element<'_, Msg> = match self.view_notice() {
+            Some(card) => stack![
+                scroller,
+                container(card)
                     .height(Length::Fill)
-                    .width(Length::Fill)
-                    .on_scroll(Msg::ListScrolled),
+                    .align_y(Alignment::End)
+                    .padding(SPACE_MD),
             ]
-            .height(Length::Fill),
-        )
-        .width(Length::Fixed(LIST_W))
+            .into(),
+            None => scroller,
+        };
+        container(pane)
+            .width(Length::Fixed(LIST_W))
         .height(Length::Fill)
-        .style(style::canvas)
+        .style(style::raised)
         .into()
     }
 }
 
+/// Next's `.msg`: who and when, then the subject; the dot on unread mail.
 fn message_row<'a>(m: &MessageSummary, selected: bool, ctx: &RowCtx<'_>) -> Element<'a, Msg> {
     // Sent / Drafts list who it went to; everything else who sent it.
     let outgoing = matches!(m.id.folder.as_str(), "Sent" | "Drafts");
@@ -216,67 +194,76 @@ fn message_row<'a>(m: &MessageSummary, selected: bool, ctx: &RowCtx<'_>) -> Elem
     } else {
         m.subject.clone()
     };
-    // Mail.app: unread is weight, not a leading dot. Both lines clip to
-    // one row so the column stays scannable.
-    let weight = if m.seen {
-        fonts::ui()
-    } else {
-        fonts::ui_medium()
-    };
-    let who = text(who)
-        .font(weight)
-        .size(13)
-        .wrapping(Wrapping::None)
-        .width(Length::Fill);
-    let mut subject = text(subject)
-        .font(weight)
-        .size(13)
-        .wrapping(Wrapping::None)
-        .width(Length::Fill);
-    if m.seen {
-        subject = subject.style(kit_text::muted);
-    }
-
-    let mut top = row![container(who).width(Length::Fill).clip(true)]
-        .spacing(SPACE_MD)
-        .align_y(iced::Alignment::Center)
-        .width(Length::Fill);
-    if m.flagged {
-        top = top.push(accent_icon("lucide/flag", 12.0));
-    }
-    if m.has_attachment {
-        top = top.push(muted_icon("lucide/paperclip", 12.0));
-    }
-    let top = top.push(kit_text::caption(list_stamp(m.date, ctx.now)).style(kit_text::muted));
-
-    let mut bottom = row![container(subject).width(Length::Fill).clip(true)]
-        .spacing(SPACE_MD)
-        .align_y(iced::Alignment::Center)
-        .width(Length::Fill);
+    let unread = !m.seen;
+    let stamp = list_stamp(m.date, ctx.now);
     let tag = match &m.forwarded_for {
         Some(addr) => Some(format!("↳ {}", account_tag(addr, ctx.peers))),
         None if ctx.tag_accounts => Some(account_tag(&m.id.account, ctx.peers)),
         None => None,
     };
+
+    // Both lines end in an ellipsis where they meet what is beside them.
+    let name_font = if unread { semibold() } else { fonts::ui_medium() };
+    let mut name_room = ROW_TEXT_W - MARK_GAP - fonts::line_width(&stamp, 12.0, fonts::ui());
+    if unread {
+        name_room -= DOT + MARK_GAP;
+    }
+    for mark in [m.flagged, m.has_attachment] {
+        if mark {
+            name_room -= MARK + MARK_GAP;
+        }
+    }
+    let mut subject_room = ROW_TEXT_W;
+    if let Some(tag) = &tag {
+        subject_room -= fonts::line_width(tag, TAG_SIZE, fonts::ui()) + SPACE_MD;
+    }
+
+    let mut top = row![].spacing(MARK_GAP).align_y(Alignment::Center);
+    if unread {
+        top = top.push(
+            container(Space::new().width(DOT).height(DOT))
+                .width(DOT)
+                .height(DOT)
+                .style(style::dot),
+        );
+    }
+    let who = text(fonts::fit_line(&who, 13.0, name_font, name_room))
+        .font(name_font)
+        .size(13)
+        .wrapping(Wrapping::None);
+    top = top.push(container(who).width(Length::Fill).clip(true));
+    if m.flagged {
+        top = top.push(accent_icon("lucide/flag", MARK));
+    }
+    if m.has_attachment {
+        top = top.push(muted_icon("lucide/paperclip", MARK));
+    }
+    let top = top.push(text(stamp).size(12).style(kit_text::muted));
+
+    let subject = text(fonts::fit_line(&subject, 13.0, fonts::ui(), subject_room))
+        .font(fonts::ui())
+        .size(13)
+        .wrapping(Wrapping::None);
+    let mut bottom = row![container(subject).width(Length::Fill).clip(true)]
+        .spacing(SPACE_MD)
+        .align_y(Alignment::Center);
     if let Some(tag) = tag {
-        bottom = bottom.push(kit_text::caption(tag).style(kit_text::muted));
+        bottom = bottom.push(text(tag).size(TAG_SIZE).style(kit_text::muted));
     }
 
     let content = column![top, bottom]
-        .spacing(6.0)
+        .spacing(3.0)
         .width(Length::Fill)
-        .padding(Padding {
-            top: 14.0,
-            right: 16.0,
-            bottom: 14.0,
-            left: 16.0,
-        });
-    button(content)
-        .on_press(Msg::SelectMessage(m.id.clone()))
-        .padding(0)
-        .width(Length::Fill)
-        .style(kit_btn::list_item(selected))
-        .into()
+        .padding(Padding::from([12.0, ROW_PAD_X]));
+    column![
+        button(content)
+            .on_press(Msg::SelectMessage(m.id.clone()))
+            .padding(0)
+            .width(Length::Fill)
+            .style(style::list_row(selected)),
+        h_hairline(),
+    ]
+    .into()
 }
 
 fn row_key(m: &MessageSummary) -> u64 {
@@ -284,39 +271,6 @@ fn row_key(m: &MessageSummary) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     m.id.hash(&mut h);
     h.finish()
-}
-
-/// Working ring while a check is in flight. The slot stays reserved so
-/// the count does not jump when the ring appears.
-fn check_mark<'a>(busy: bool) -> Element<'a, Msg> {
-    let slot: Element<'a, Msg> = if busy {
-        let tip = container(kit_text::caption("Checking mail"))
-            .padding(Padding {
-                top: 5.0,
-                right: 8.0,
-                bottom: 5.0,
-                left: 8.0,
-            })
-            .style(popover::style);
-        tooltip(
-            status_mark(SidebarIndicator::Working),
-            tip,
-            tooltip::Position::Bottom,
-        )
-        .gap(6)
-        .delay(Duration::from_millis(280))
-        .into()
-    } else {
-        Space::new()
-            .width(Length::Fixed(STATUS_MARK_SLOT))
-            .height(Length::Fixed(STATUS_MARK_SLOT))
-            .into()
-    };
-    container(slot)
-        .width(Length::Fixed(STATUS_MARK_SLOT))
-        .height(Length::Fixed(STATUS_MARK_SLOT))
-        .align_y(iced::Alignment::Center)
-        .into()
 }
 
 #[cfg(test)]

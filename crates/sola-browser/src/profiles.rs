@@ -1,18 +1,20 @@
-//! Browser profiles (D8) — registry, paths, first-run wipe, switch/manage.
+//! Browser profiles (D8) — registry, paths, first-run wipe, and the
+//! workspaces they belong to.
 //!
-//! Freeze: `docs/specs/2026-08-10-sola-browser-profiles-design.md`.
-//! One active profile in the process; switching updates the registry and
-//! in-memory active handle so chrome can replace tabs + CEF request context
-//! without tearing down the window.
+//! Freeze: `docs/specs/2026-08-10-sola-browser-profiles-design.md`; since
+//! 2026-10-26 a profile is a desktop workspace's: one each, paired by the
+//! workspace's id (`docs/specs/2026-10-21-next-tab-bar-design.md`). A
+//! profile is only its uuid — no name, so a workspace renames freely. There
+//! is no picking, making or deleting one by hand.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
+use sola_bus::topics::Workspace;
 
 const REGISTRY_VERSION: u32 = 1;
-const DEFAULT_NAME: &str = "Primary";
 
 static ACTIVE: OnceLock<RwLock<ActiveProfile>> = OnceLock::new();
 static REGISTRY: OnceLock<RwLock<Option<ProfilesRegistry>>> = OnceLock::new();
@@ -28,7 +30,6 @@ fn registry_cache() -> &'static RwLock<Option<ProfilesRegistry>> {
 #[derive(Debug, Clone)]
 pub struct ActiveProfile {
     pub id: String,
-    pub name: String,
     /// Per-profile durable web data (cookies/storage for the engine, `session.json`).
     pub data_dir: PathBuf,
     /// Per-profile discardable cache.
@@ -48,7 +49,7 @@ impl ActiveProfile {
     }
 }
 
-/// Bind this process to an externally-owned CEF profile (sola-wrapper).
+/// Bind this process to an externally-owned CEF profile (sola-design).
 ///
 /// Does **not** read or write `profiles.json` / [`browser_data_root`].
 /// After this, [`list`] returns only `id`, and engine sockets live under
@@ -68,7 +69,6 @@ pub fn bind_external(
     EXTERNAL.store(true, Ordering::SeqCst);
     let profile = ActiveProfile {
         id: id.to_string(),
-        name: id.to_string(),
         data_dir,
         cache_dir,
     };
@@ -85,18 +85,23 @@ pub fn is_external() -> bool {
     EXTERNAL.load(Ordering::Relaxed)
 }
 
-/// One row in the registry (public for menus / manage UI).
+/// One row in the registry: a uuid. (Rows from before 2026-10-26 carry a
+/// `name`; it is ignored, and dropped on the next write.)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProfileEntry {
     pub id: String,
-    pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ProfilesRegistry {
     version: u32,
+    /// The showing workspace's profile: pages open under it before the
+    /// shell has said which workspace shows.
     active: String,
     profiles: Vec<ProfileEntry>,
+    /// Desktop workspace id → its profile, one each (Next slice 5).
+    #[serde(default)]
+    workspaces: std::collections::BTreeMap<String, String>,
 }
 
 /// Ensure registry + active profile dirs exist, wipe legacy paths once,
@@ -107,7 +112,6 @@ pub fn ensure_active() -> ActiveProfile {
         wipe_legacy_paths();
         tracing::info!(
             id = %profile.id,
-            name = %profile.name,
             data = %profile.data_dir.display(),
             cache = %profile.cache_dir.display(),
             "browser profile active (D8)"
@@ -115,19 +119,6 @@ pub fn ensure_active() -> ActiveProfile {
         RwLock::new(profile)
     });
     lock.read().expect("profile lock").clone()
-}
-
-/// Write `profiles.json` active id without changing this process's CEF bind.
-pub fn set_registry_active(id: &str) -> Result<(), String> {
-    let mut reg = load_registry_or_empty();
-    if !reg.profiles.iter().any(|p| p.id == id) {
-        return Err("profile not found".into());
-    }
-    if reg.active != id {
-        reg.active = id.to_string();
-        write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
-    }
-    Ok(())
 }
 
 /// Registry's active profile id (may differ from this process's CEF bind).
@@ -149,6 +140,128 @@ pub fn bind_process_only(id: &str) -> Result<ActiveProfile, String> {
     set_process_active(resolve_entry(&entry))
 }
 
+// ---------------------------------------------------------------------------
+// Workspaces (Next slice 5): each desktop workspace has a profile of its
+// own, and every page window on it runs that profile.
+// ---------------------------------------------------------------------------
+
+/// The desktop workspace showing, as the shell last said.
+static SHOWING: RwLock<Option<String>> = RwLock::new(None);
+
+/// `workspace`'s profile; the registry's active one for a workspace not
+/// heard of yet.
+pub fn profile_for_workspace(workspace: &str) -> String {
+    let reg = load_registry_or_empty();
+    reg.workspaces
+        .get(workspace)
+        .filter(|id| reg.profiles.iter().any(|p| &p.id == *id))
+        .cloned()
+        .unwrap_or(reg.active)
+}
+
+/// The profile new pages open under: the showing workspace's, or the
+/// registry's active one before the shell has said which shows.
+pub fn showing_profile() -> String {
+    match SHOWING.read().ok().and_then(|s| s.clone()) {
+        Some(ws) => profile_for_workspace(&ws),
+        None => registry_active_id(),
+    }
+}
+
+/// The workspace showing, if the shell has said.
+pub fn showing_workspace() -> Option<String> {
+    SHOWING.read().ok().and_then(|s| s.clone())
+}
+
+/// The shell's workspaces changed: pair each with a profile of its own
+/// ([`pair`]). Returns true when the showing workspace changed.
+pub fn adopt_workspaces(workspaces: &[Workspace], showing: &str) -> bool {
+    let previous = showing_workspace();
+    let mut reg = load_registry_or_empty();
+    let before = reg.clone();
+    let ids: Vec<&str> = workspaces.iter().map(|w| w.id.as_str()).collect();
+    pair(&mut reg, &ids, showing, new_profile_id);
+    if reg != before {
+        for p in reg.profiles.iter().filter(|p| !before.profiles.contains(p)) {
+            ensure_profile_dirs(&p.id);
+            tracing::info!(id = %p.id, "new workspace profile");
+        }
+        if let Err(e) = write_registry(&registry_path(), &reg) {
+            tracing::warn!(error = %e, "save workspace profiles failed");
+        }
+    }
+    if let Ok(mut s) = SHOWING.write() {
+        *s = Some(showing.to_string());
+    }
+    previous.as_deref() != Some(showing)
+}
+
+/// Give every workspace (by id) a profile of its own:
+///
+/// - a workspace the shell no longer lists (deleted) lets go of its
+///   profile; the profile and its data stay, unused;
+/// - a profile two workspaces share (the days a workspace picked one)
+///   stays with the first; the others get new ones;
+/// - a workspace without one gets a new one, except that when none has
+///   one (the first time, or every one is new) the first takes the
+///   registry's active profile, so the pages already open keep theirs;
+/// - the showing workspace's becomes the registry's active profile.
+fn pair(
+    reg: &mut ProfilesRegistry,
+    workspaces: &[&str],
+    showing: &str,
+    mut new_id: impl FnMut() -> String,
+) {
+    if workspaces.is_empty() {
+        return;
+    }
+    let exists = |reg: &ProfilesRegistry, id: &str| reg.profiles.iter().any(|p| p.id == id);
+    let mut paired = std::collections::BTreeMap::new();
+    let mut taken = std::collections::HashSet::new();
+    for &ws in workspaces {
+        if let Some(id) = reg.workspaces.get(ws) {
+            if exists(reg, id) && taken.insert(id.clone()) {
+                paired.insert(ws.to_string(), id.clone());
+            }
+        }
+    }
+    let mut heir = Some(reg.active.clone())
+        .filter(|a| paired.is_empty() && exists(reg, a) && !taken.contains(a));
+    for &ws in workspaces {
+        if paired.contains_key(ws) {
+            continue;
+        }
+        let id = heir.take().unwrap_or_else(|| {
+            let id = new_id();
+            reg.profiles.push(ProfileEntry { id: id.clone() });
+            id
+        });
+        paired.insert(ws.to_string(), id);
+    }
+    if let Some(id) = paired.get(showing) {
+        reg.active = id.clone();
+    }
+    reg.workspaces = paired;
+}
+
+/// The profiles some workspace runs. None in an app that embeds the
+/// engine under its own profile ([`bind_external`], Design): a helper it
+/// started on the browser's profile would share that profile's data with
+/// the browser's own, and Chromium answers with plain "New Tab" windows.
+pub fn workspace_profiles() -> Vec<String> {
+    if is_external() {
+        return Vec::new();
+    }
+    let reg = load_registry_or_empty();
+    let mut out: Vec<String> = Vec::new();
+    for id in reg.workspaces.values() {
+        if reg.profiles.iter().any(|p| &p.id == id) && !out.contains(id) {
+            out.push(id.clone());
+        }
+    }
+    out
+}
+
 /// Active profile (panics if [`ensure_active`] was never called).
 pub fn active() -> ActiveProfile {
     ACTIVE
@@ -166,108 +279,12 @@ pub fn active() -> ActiveProfile {
 pub fn list() -> Vec<ProfileEntry> {
     if is_external() {
         if let Some(p) = active_if_bound() {
-            return vec![ProfileEntry {
-                id: p.id,
-                name: p.name,
-            }];
+            return vec![ProfileEntry { id: p.id }];
         }
     }
     read_registry(&registry_path())
         .map(|r| r.profiles)
         .unwrap_or_default()
-}
-
-/// Create a new profile with a friendly `name`, make it active in the
-/// registry and in this process. Caller reloads session / CEF context.
-pub fn create_and_activate(name: &str) -> Result<ActiveProfile, String> {
-    let name = sanitize_name(name)?;
-    let mut reg = load_registry_or_empty();
-    let id = new_profile_id();
-    let entry = ProfileEntry {
-        id: id.clone(),
-        name,
-    };
-    reg.profiles.push(entry.clone());
-    reg.active = id;
-    ensure_profile_dirs(&entry.id);
-    write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
-    tracing::info!(id = %entry.id, name = %entry.name, "created and activated profile");
-    set_process_active(resolve_entry(&entry))
-}
-
-/// Rename a profile by id.
-pub fn rename(id: &str, name: &str) -> Result<(), String> {
-    let name = sanitize_name(name)?;
-    let mut reg = load_registry_or_empty();
-    {
-        let Some(entry) = reg.profiles.iter_mut().find(|p| p.id == id) else {
-            return Err("profile not found".into());
-        };
-        entry.name = name.clone();
-    }
-    write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
-    // Keep in-memory name in sync if this is the active profile.
-    if let Some(lock) = ACTIVE.get() {
-        let mut g = lock.write().expect("profile lock");
-        if g.id == id {
-            g.name = name.clone();
-        }
-    }
-    tracing::info!(id, name = %name, "renamed profile");
-    Ok(())
-}
-
-/// Set the active profile in the registry and this process.
-pub fn activate(id: &str) -> Result<ActiveProfile, String> {
-    let mut reg = load_registry_or_empty();
-    let entry = reg
-        .profiles
-        .iter()
-        .find(|p| p.id == id)
-        .cloned()
-        .ok_or_else(|| "profile not found".to_string())?;
-    if reg.active != id {
-        reg.active = id.to_string();
-        write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
-    }
-    ensure_profile_dirs(&entry.id);
-    let profile = resolve_entry(&entry);
-    set_process_active(profile)
-}
-
-/// Delete a profile. Removes registry entry and data/cache dirs.
-///
-/// - Cannot delete the last remaining profile.
-/// - If deleting the active profile, activates another and returns
-///   `Some(new_active)` so the caller can reload the workspace.
-/// - If deleting a non-active profile, returns `None`.
-pub fn delete(id: &str) -> Result<Option<ActiveProfile>, String> {
-    let mut reg = load_registry_or_empty();
-    if reg.profiles.len() <= 1 {
-        return Err("cannot delete the only profile".into());
-    }
-    if !reg.profiles.iter().any(|p| p.id == id) {
-        return Err("profile not found".into());
-    }
-
-    let was_active = reg.active == id;
-    reg.profiles.retain(|p| p.id != id);
-    if was_active {
-        reg.active = reg.profiles[0].id.clone();
-    }
-    write_registry(&registry_path(), &reg).map_err(|e| e.to_string())?;
-
-    remove_path(&profile_data_dir(id));
-    remove_path(&profile_cache_dir(id));
-    tracing::info!(id, was_active, "deleted profile");
-
-    if was_active {
-        let entry = reg.profiles[0].clone();
-        ensure_profile_dirs(&entry.id);
-        Ok(Some(set_process_active(resolve_entry(&entry))?))
-    } else {
-        Ok(None)
-    }
 }
 
 fn set_process_active(profile: ActiveProfile) -> Result<ActiveProfile, String> {
@@ -280,7 +297,6 @@ fn set_process_active(profile: ActiveProfile) -> Result<ActiveProfile, String> {
     }
     tracing::info!(
         id = %profile.id,
-        name = %profile.name,
         data = %profile.data_dir.display(),
         "browser profile activated"
     );
@@ -295,28 +311,9 @@ fn resolve_entry(entry: &ProfileEntry) -> ActiveProfile {
     let _ = std::fs::create_dir_all(data_dir.join("cef"));
     ActiveProfile {
         id: entry.id.clone(),
-        name: entry.name.clone(),
         data_dir,
         cache_dir,
     }
-}
-
-fn sanitize_name(name: &str) -> Result<String, String> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err("name cannot be empty".into());
-    }
-    if name.len() > 64 {
-        return Err("name too long (max 64)".into());
-    }
-    // Avoid control chars / path tricks in the label only (id is UUID).
-    if name
-        .chars()
-        .any(|c| c.is_control() || c == '/' || c == '\\')
-    {
-        return Err("name contains invalid characters".into());
-    }
-    Ok(name.to_string())
 }
 
 fn load_or_create_active() -> ActiveProfile {
@@ -338,10 +335,8 @@ fn load_or_create_active() -> ActiveProfile {
             let reg = ProfilesRegistry {
                 version: REGISTRY_VERSION,
                 active: id.clone(),
-                profiles: vec![ProfileEntry {
-                    id: id.clone(),
-                    name: DEFAULT_NAME.to_string(),
-                }],
+                profiles: vec![ProfileEntry { id: id.clone() }],
+                workspaces: Default::default(),
             };
             if let Err(e) = write_registry(&reg_path, &reg) {
                 tracing::error!(error = %e, path = %reg_path.display(), "failed to write profiles.json");
@@ -363,10 +358,7 @@ fn load_or_create_active() -> ActiveProfile {
         .unwrap_or_else(|| {
             let id = new_profile_id();
             reg.active = id.clone();
-            let e = ProfileEntry {
-                id,
-                name: DEFAULT_NAME.to_string(),
-            };
+            let e = ProfileEntry { id };
             reg.profiles.push(e.clone());
             let _ = write_registry(&reg_path, &reg);
             e
@@ -380,6 +372,7 @@ fn load_registry_or_empty() -> ProfilesRegistry {
         version: REGISTRY_VERSION,
         active: String::new(),
         profiles: Vec::new(),
+        workspaces: Default::default(),
     })
 }
 
@@ -392,6 +385,11 @@ fn ensure_profile_dirs(id: &str) {
 }
 
 fn new_profile_id() -> String {
+    new_uuid()
+}
+
+/// A UUID v4 string (profiles, page ids).
+pub(crate) fn new_uuid() -> String {
     // UUID v4 without pulling uuid: 16 random bytes formatted.
     let mut b = [0u8; 16];
     fill_random(&mut b);
@@ -608,10 +606,79 @@ mod tests {
         assert_eq!(id.chars().filter(|c| *c == '-').count(), 4);
     }
 
+    fn registry(profiles: &[&str], workspaces: &[(&str, &str)]) -> ProfilesRegistry {
+        ProfilesRegistry {
+            version: REGISTRY_VERSION,
+            active: profiles[0].into(),
+            profiles: profiles.iter().map(|id| ProfileEntry { id: (*id).into() }).collect(),
+            workspaces: workspaces
+                .iter()
+                .map(|(w, p)| ((*w).into(), (*p).into()))
+                .collect(),
+        }
+    }
+
+    /// Pair, minting `new-1`, `new-2`, … for new profiles.
+    fn paired(reg: &mut ProfilesRegistry, list: &[&str], showing: &str) -> Vec<(String, String)> {
+        let mut n = 0;
+        pair(reg, list, showing, || {
+            n += 1;
+            format!("new-{n}")
+        });
+        reg.workspaces.clone().into_iter().collect()
+    }
+
+    fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter().map(|(a, b)| ((*a).into(), (*b).into())).collect()
+    }
+
     #[test]
-    fn sanitize_name_rejects_empty_and_path_chars() {
-        assert!(sanitize_name("  ").is_err());
-        assert!(sanitize_name("a/b").is_err());
-        assert_eq!(sanitize_name("  Work  ").unwrap(), "Work");
+    fn the_first_workspace_keeps_the_open_pages_profile_and_the_rest_get_new_ones() {
+        let mut reg = registry(&["primary"], &[]);
+        let got = paired(&mut reg, &["main", "ws-2"], "ws-2");
+        assert_eq!(got, pairs(&[("main", "primary"), ("ws-2", "new-1")]));
+        assert_eq!(reg.active, "new-1");
+    }
+
+    #[test]
+    fn a_shared_profile_stays_with_the_first_workspace() {
+        let mut reg = registry(&["p"], &[("main", "p"), ("ws-2", "p")]);
+        let got = paired(&mut reg, &["main", "ws-2"], "main");
+        assert_eq!(got, pairs(&[("main", "p"), ("ws-2", "new-1")]));
+    }
+
+    #[test]
+    fn a_deleted_workspace_lets_go_and_a_new_one_starts_clean() {
+        let mut reg = registry(&["p", "q"], &[("main", "p"), ("ws-2", "q")]);
+        let got = paired(&mut reg, &["main"], "main");
+        assert_eq!(got, pairs(&[("main", "p")]));
+        // Its profile stays (data and all), but no workspace takes it.
+        assert!(reg.profiles.iter().any(|p| p.id == "q"));
+        let got = paired(&mut reg, &["main", "ws-3"], "ws-3");
+        assert_eq!(got, pairs(&[("main", "p"), ("ws-3", "new-1")]));
+    }
+
+    #[test]
+    fn when_every_workspace_is_new_the_first_takes_the_active_profile() {
+        let mut reg = registry(&["p", "q"], &[("old", "q")]);
+        reg.active = "q".into();
+        let got = paired(&mut reg, &["ws-a", "ws-b"], "ws-a");
+        assert_eq!(got, pairs(&[("ws-a", "q"), ("ws-b", "new-1")]));
+    }
+
+    #[test]
+    fn pairing_twice_changes_nothing() {
+        let mut reg = registry(&["p"], &[("main", "p")]);
+        paired(&mut reg, &["main", "ws-2"], "main");
+        let before = reg.clone();
+        paired(&mut reg, &["main", "ws-2"], "main");
+        assert_eq!(reg, before, "nothing changed, nothing to save");
+    }
+
+    #[test]
+    fn a_registry_row_with_a_name_still_reads() {
+        let raw = r#"{"version":1,"active":"p","profiles":[{"id":"p","name":"Primary"}],"workspaces":{"main":"p"}}"#;
+        let reg: ProfilesRegistry = serde_json::from_str(raw).unwrap();
+        assert_eq!(reg.profiles, vec![ProfileEntry { id: "p".into() }]);
     }
 }

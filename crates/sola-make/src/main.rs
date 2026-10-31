@@ -10,6 +10,7 @@ mod cef;
 mod install;
 mod iso;
 mod isolated;
+mod oath;
 mod publish;
 mod vm;
 mod watch;
@@ -99,6 +100,34 @@ enum Commands {
     Iso {
         #[command(subcommand)]
         action: IsoAction,
+    },
+
+    /// Sola's packages for Oath, on an Oath machine (`oath store` /
+    /// `set` / `apply`).
+    Oath {
+        #[command(subcommand)]
+        action: OathAction,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum OathAction {
+    /// Build and assemble each package's tree under `target/oath/`.
+    Stage {
+        #[arg(long)]
+        debug: bool,
+    },
+    /// Stage, store, pin and apply them (needs the owner's go-ahead).
+    Apply {
+        #[arg(long)]
+        debug: bool,
+    },
+    /// Build each from a plan in `oath build`'s sandbox and upload packs,
+    /// plans and sources to Oath's origin (needs the owner's go-ahead).
+    Publish {
+        /// Build the plans here; upload nothing.
+        #[arg(long)]
+        local: bool,
     },
 }
 
@@ -260,6 +289,11 @@ fn main() {
                 auto_build: !no_build,
                 force_rebuild: rebuild,
             }),
+        },
+        Commands::Oath { action } => match action {
+            OathAction::Stage { debug } => oath::run(oath::Action::Stage, !debug),
+            OathAction::Apply { debug } => oath::run(oath::Action::Apply, !debug),
+            OathAction::Publish { local } => oath::run(oath::Action::Publish { local }, true),
         },
     }
 }

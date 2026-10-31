@@ -7,7 +7,6 @@ use sola_kit::menu::{WINDOW_MENU_ENTRIES, WindowAction, WindowMenuEntry, parse_w
 #[derive(Clone, Debug)]
 pub enum ShortcutAction {
     OpenLauncher,
-    OpenSwitcher,
     OpenShortcuts,
     Hide,
     CloseApp,
@@ -16,6 +15,11 @@ pub enum ShortcutAction {
     ScreenshotRegion,
     ScreenshotWindow,
     Zone(Zone),
+    /// Show workspace N (0-based).
+    ShowWorkspace(usize),
+    /// Send the focused window to workspace N (0-based).
+    SendToWorkspace(usize),
+    StepWorkspace { back: bool },
     Menu { app_id: String, action_id: String },
 }
 
@@ -150,9 +154,8 @@ fn menu_group(label: &str) -> &'static str {
         "File" => "File",
         "View" => "View",
         "Browser" => "Browser",
-        "Profiles" => "Profiles",
         "Project" => "Project",
-        "Workspaces" => "Workspaces",
+        "Projects" => "Projects",
         "Mail" => "Mail",
         "Terminal" => "Terminal",
         _ => "App",
@@ -166,12 +169,6 @@ fn shell_rows() -> Vec<ShortcutRow> {
             "Launch Application",
             Some(KeyCode::SPACE.meta()),
             ShortcutAction::OpenLauncher,
-        ),
-        row(
-            "Shell",
-            "App Switcher",
-            Some(KeyCode::TAB.meta()),
-            ShortcutAction::OpenSwitcher,
         ),
         row(
             "Shell",
@@ -193,9 +190,33 @@ fn shell_rows() -> Vec<ShortcutRow> {
         ),
         row(
             "Shell",
-            "Cycle Windows",
+            "Next Tab",
             Some(KeyCode::GRAVE.meta()),
             ShortcutAction::Cycle,
+        ),
+        row(
+            "Workspaces",
+            "Show Workspace 1 (to 9)",
+            Some(KeyCode::KEY_1.meta()),
+            ShortcutAction::ShowWorkspace(0),
+        ),
+        row(
+            "Workspaces",
+            "Send Window to Workspace 1 (to 9)",
+            Some(KeyCode::KEY_1.meta().ctrl()),
+            ShortcutAction::SendToWorkspace(0),
+        ),
+        row(
+            "Workspaces",
+            "Next Workspace",
+            Some(KeyCode::TAB.meta()),
+            ShortcutAction::StepWorkspace { back: false },
+        ),
+        row(
+            "Workspaces",
+            "Previous Workspace",
+            Some(KeyCode::TAB.meta().shift()),
+            ShortcutAction::StepWorkspace { back: true },
         ),
         row(
             "Capture",

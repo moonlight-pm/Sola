@@ -39,6 +39,11 @@ fn identity() -> &'static TmuxIdentity {
     IDENTITY.get().unwrap_or(&DEFAULT_IDENTITY)
 }
 
+/// This process's tmux socket name (`-L`).
+pub(crate) fn socket() -> &'static str {
+    identity().socket
+}
+
 fn config_path() -> PathBuf {
     let config_dir = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -83,7 +88,10 @@ pub fn reload_config() {
 //
 // update-environment pulls the client-side values into the session on
 // create/attach; set-environment -g seeds the global env for new panes even
-// when a session already exists.
+// when a session already exists. WAYLAND_DISPLAY and XDG_SESSION_TYPE come
+// from the client too: a server started outside the desktop session (a
+// service, at boot) has neither, and the river socket's name is only known
+// once the session is up.
 //
 // smcup/rmcup are forwarded. tmux sends smcup when a client attaches, so
 // the outer grid is on the alternate screen for the whole session. That
@@ -96,7 +104,7 @@ pub fn reload_config() {
 // `set -gu terminal-overrides` drops a sticky `*:smcup@:rmcup@` left on a
 // server that was started from an older config. `source-file` does not
 // delete an option this file no longer mentions.
-const TMUX_CONF: &str = "\
+pub(crate) const TMUX_CONF: &str = "\
 set -gu terminal-overrides
 set -g status off
 set -g prefix None
@@ -110,7 +118,7 @@ set -g extended-keys-format csi-u
 set -as terminal-features 'xterm*:extkeys'
 set -g set-titles off
 set -g allow-passthrough on
-set -ga update-environment ' TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM'
+set -ga update-environment ' TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM WAYLAND_DISPLAY XDG_SESSION_TYPE'
 set-environment -g TERM_PROGRAM alacritty
 set-environment -g COLORTERM truecolor
 ";
@@ -185,7 +193,7 @@ pub fn kill_orphaned_clients() {
             continue;
         }
 
-        // A live sola-terminal / sola-workspaces still owns this client.
+        // A live sola-terminal / sola-projects still owns this client.
         // LaunchApp always spawns a new process; sweeping those clients
         // hangs up the other window's PTY (which then kills the tmux
         // session on PtyExit). Ghosts from a dead app are reparented to

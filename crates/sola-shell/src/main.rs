@@ -1,41 +1,48 @@
 //! sola-shell — iced-native desktop shell. Multi-window daemon
-//! (menubar, menu, launcher, switcher, shortcuts, selection marquee,
+//! (menubar, tab bar, menu, launcher, shortcuts, selection marquee,
 //! notifications).
 
 use sola_bus::topics::TopicKind;
 use sola_kit::app::{BusSetup, startup};
 use sola_kit::fonts::INTER;
 
+mod adapt;
+mod agents;
 mod app;
 pub mod audio;
 pub mod bluetooth;
 mod builtins;
 pub mod calendar;
+pub mod chrome;
 pub mod components;
 pub mod keys;
 pub mod launcher;
+mod lock;
 pub mod media;
 pub mod menu;
 pub mod menubar;
 pub mod mouse;
 pub mod notify;
+pub mod pairing;
+mod pictures;
 mod power;
 mod screenshot;
 pub mod selection;
 pub mod shortcuts;
+pub mod stacks;
 pub mod stats;
-pub mod switcher;
+pub mod tabbar;
 pub mod zoning;
 
 const APP_ID: &str = "sola-shell";
 
 fn main() -> iced::Result {
     startup(APP_ID);
+    // A password and no auto-login: the desk starts locked.
+    lock::at_start();
 
     // Flower / system menu (and the shell's own app menu when focused).
-    // "Restart Shell" exits this process only — the process manager
-    // respawns `/opt/sola/bin/sola-shell`. "Quit Sola" shuts the whole
-    // session down via `Topic::Shutdown`. "Restart Computer" / "Shut Down"
+    // "Exit Sola" shuts the whole session down via `Topic::Shutdown`. "Restart Computer" / "Shut Down"
     // ask logind to reboot or power off. "Launch Application…" opens
     // the launcher overlay.
     BusSetup::new(APP_ID)
@@ -52,10 +59,13 @@ fn main() -> iced::Result {
         .theme(app::Shell::theme)
         .default_font(INTER);
     match iced_daemon.run() {
-        Ok(()) if app::clean_shutdown() => Ok(()),
+        Ok(()) if app::clean_shutdown() => {
+            lock::desk_down_after_session();
+            Ok(())
+        }
         Ok(()) => {
-            // Restart Shell, or the compositor went away. Exit 1 so
-            // the process manager brings the menubar back. Quit Sola
+            // The compositor went away. Exit 1 so
+            // `restart=on-failure` brings the menubar back. Exit Sola
             // sets clean_shutdown and stays down.
             tracing::error!("sola-shell event loop ended");
             std::process::exit(1);

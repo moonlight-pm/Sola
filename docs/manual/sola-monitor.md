@@ -3,11 +3,6 @@
 Monitor (`sola-monitor`) is the desk inspector for Sola's two IPC planes:
 the bus and the call plane.
 
-Monitor does not ship on Oath: `pkg:sola` does not carry `sola-monitor`.
-The launcher still lists **Monitor**, and picking it there fails (the top
-row says it could not launch). The rest of this note is how the app works
-where it is installed.
-
 ## Planes
 
 Pick a plane in the left rail.

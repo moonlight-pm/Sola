@@ -12,7 +12,7 @@ pub mod cef;
 pub mod chrome_wake;
 pub mod downloads;
 pub mod engine;
-pub mod groups;
+pub mod file_dialog;
 pub mod http_auth;
 pub mod input;
 pub mod instance;
@@ -22,17 +22,18 @@ pub mod media;
 pub mod notify;
 pub mod page_menu;
 pub mod page_paste;
+pub mod page_windows;
 pub mod paste_js;
 pub mod popup;
 pub mod profiles;
 pub mod run;
 pub mod session;
 pub mod shader;
-pub mod tab_cache;
 pub mod util;
 #[cfg(feature = "bitwarden")]
 pub mod vault;
 pub mod visit_history;
+pub mod wallpaper;
 
 pub use app::Msg;
 pub use cef::CefEngine;

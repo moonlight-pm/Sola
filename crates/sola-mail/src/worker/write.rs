@@ -114,10 +114,19 @@ impl Writer {
         match cmd {
             WriteCmd::Move { id, dest } => match self.move_one(&id, &dest) {
                 Ok(dest_uid) => bridge::emit(MailEvent::Moved { id, dest, dest_uid }),
-                Err(e) => bridge::emit(MailEvent::MoveFailed {
-                    id,
-                    message: e.to_string(),
-                }),
+                Err(e) => {
+                    warn!(
+                        account = self.id.as_str(),
+                        folder = id.folder.as_str(),
+                        uid = id.uid,
+                        dest = dest.as_str(),
+                        "move failed: {e}"
+                    );
+                    bridge::emit(MailEvent::MoveFailed {
+                        id,
+                        message: e.to_string(),
+                    });
+                }
             },
             WriteCmd::Delete(id) => {
                 let result = self

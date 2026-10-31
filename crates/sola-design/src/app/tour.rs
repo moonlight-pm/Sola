@@ -13,6 +13,7 @@ use super::{App, Msg};
 use crate::boards::Board;
 use crate::camera;
 use crate::scene::{Choice, Scene};
+use crate::annot::Annotations;
 use crate::tour::{self, Nav, Notes, Tour, Tween};
 
 impl App {
@@ -23,21 +24,11 @@ impl App {
             .unwrap_or_default()
     }
 
-    /// A different canvas came on screen: tours, open notes, and glides
-    /// belong to the one that left.
-    pub(super) fn reset_tour(&mut self) {
-        self.tour = None;
-        self.tween = None;
-        self.notes = Notes::default();
-        self.flows_open = false;
-    }
-
     /// Whether any note card on the canvas on screen is open (hovered
     /// ones aside).
     pub(super) fn any_note_open(&self) -> bool {
-        let step = self.tour.as_ref().map(Tour::step);
         self.shown_live()
-            .is_some_and(|l| l.annot.notes.iter().any(|n| self.notes.open(n.n, n.board(), step)))
+            .is_some_and(|l| any_note_open(&l.annot, &self.notes, self.tour.as_ref()))
     }
 
     /// After a re-layout of the canvas on screen: a tour keeps only the
@@ -259,4 +250,11 @@ fn floating<'a>(body: impl Into<Element<'a, Msg>>) -> Element<'a, Msg> {
             left: 16.0,
         })
         .into()
+}
+
+/// Whether any note card of `annot` is open as `notes` says, on `tour`'s
+/// step (hovered ones aside).
+pub(super) fn any_note_open(annot: &Annotations, notes: &Notes, tour: Option<&Tour>) -> bool {
+    let step = tour.map(Tour::step);
+    annot.notes.iter().any(|n| notes.open(n.n, n.board(), step))
 }

@@ -149,6 +149,13 @@ pub struct PageContext {
     pub x: i32,
     #[serde(default)]
     pub y: i32,
+    /// The page right-clicked (a window per page shows the menu there).
+    #[serde(default)]
+    pub tab_id: u64,
+    /// The click is on a picture (`src_url` is it): Use as Desktop
+    /// Background.
+    #[serde(default)]
+    pub image: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -169,6 +176,10 @@ pub struct TabInfo {
     /// Index of the current history entry in [`Self::history`].
     #[serde(default)]
     pub history_index: i32,
+    /// The profile whose helper runs this page (set by the router; empty
+    /// on a chrome-side guess until the helper reports).
+    #[serde(default)]
+    pub profile: String,
 }
 
 impl TabInfo {
@@ -183,6 +194,7 @@ impl TabInfo {
             load_progress: 0.0,
             history: Vec::new(),
             history_index: 0,
+            profile: String::new(),
         }
     }
 }
@@ -249,7 +261,7 @@ pub enum Cmd<E: Engine> {
     /// tab so a parked profile stops compositing (and stops sending frames).
     SetFront(bool),
     Nav(NavCmd),
-    /// `title` seeds the tab strip before WebKit reports one (session restore).
+    /// `title` names the page's window before CEF reports one (session restore).
     OpenTab {
         id: TabId,
         url: String,
@@ -273,24 +285,14 @@ pub enum Cmd<E: Engine> {
     /// Script is sourced from chrome; do not put untrusted page content here
     /// without escaping — vault fill embeds secrets via JSON string literals.
     EvaluateJs(String),
-    /// Profile workspace switch without reloading parked pages.
-    ///
-    /// 1. Hide + park the current live tabs under `park_as_profile_id`
-    ///    (same CEF browsers + request context stay in memory).
-    /// 2. If a park exists for `resume_profile_id`, restore it.
-    /// 3. Else create a request context at `cef_cache_path` and open
-    ///    `create_tabs` (cold profile / after eviction).
-    /// 4. Apply the shared eviction policy (idle / tab budget / park count).
-    SwitchProfileWorkspace {
-        park_as_profile_id: String,
-        resume_profile_id: String,
-        cef_cache_path: String,
-        /// `None` → resume from park only (must exist). `Some` → create these
-        /// tabs if not parked (or after forced create).
-        create_tabs: Option<Vec<(TabId, String, String)>>,
-        active: TabId,
+    /// Run `cmd` on `profile`'s helper (started if needed). An `OpenTab`
+    /// inside opens the page under that profile; commands that name a page
+    /// route by the page without this.
+    InProfile {
+        profile: String,
+        cmd: Box<Cmd<E>>,
     },
-    /// Drop a parked profile workspace (eviction / profile deleted).
+    /// Stop a profile's helper (its workspace was deleted).
     DropParkedProfile {
         profile_id: String,
     },
@@ -314,6 +316,12 @@ pub enum Cmd<E: Engine> {
         id: u64,
         success: bool,
         input: String,
+    },
+    /// Answer a page's file chooser: the files (or folder) chosen, or
+    /// `None` when cancelled.
+    FileDialog {
+        id: u64,
+        paths: Option<Vec<String>>,
     },
     /// Complete HTTP Basic / Digest auth.
     HttpAuth {
@@ -397,6 +405,29 @@ pub enum Cmd<E: Engine> {
     BoardPace {
         id: TabId,
         pace: BoardPace,
+    },
+    /// A window per page (Next): run `cmd` against `tab` instead of the
+    /// active tab. A `Resize` inside gives that page its own view size.
+    Target {
+        tab: TabId,
+        cmd: Box<Cmd<E>>,
+    },
+    /// A window per page: the page's window is (not) on screen. A shown page
+    /// paints whether or not it is the active tab; a hidden one rests.
+    ShowPage {
+        id: TabId,
+        shown: bool,
+    },
+    /// Page `id` is a web app's, which starts at `start`: a link the user
+    /// follows to another site opens as a browser page instead.
+    AppSite {
+        id: TabId,
+        start: String,
+    },
+    /// Light or dark, as pages see it (`prefers-color-scheme`): Settings →
+    /// Appearance (`Appearance.light`). Every helper takes it.
+    ColorScheme {
+        light: bool,
     },
     Quit,
 }
@@ -568,7 +599,15 @@ pub enum PaintSurface {
 
 /// Shared between `App` (fills `pending`) and the engine's shader Program
 /// (drains it on next prepare). `cmd_tx` goes back to the engine worker.
+///
+/// One per page window when the browser has a window per page (Next):
+/// `windowed`, painting only its own tab, and the page commands its shader
+/// sends (resize, input, focus) are addressed to that tab.
 pub struct FrameSlot<E: Engine> {
+    /// Unique per slot: the shader keeps one page texture per key.
+    pub key: u64,
+    /// A page window's slot (see the type doc).
+    pub windowed: bool,
     /// Latest frame for the painted tab (and optional one-shot park primes).
     pub pending: Mutex<Option<PendingFrame<E>>>,
     /// Command channel to the engine worker (input, resize, nav, release, …).
@@ -617,6 +656,11 @@ pub struct FrameSlot<E: Engine> {
     pub last_frame_ms: AtomicU64,
     /// Composition caret (helper) / last pointer fallback (chrome).
     pub ime: ImeHandle,
+    /// A page window's slot: the size of the last frame of its page that
+    /// was not the window's size. CEF can paint a stale size last (a new
+    /// window is sized more than once), so the window asks for its size
+    /// again, once per stray size until a frame fits.
+    pub stray_size: Mutex<Option<(u32, u32)>>,
 }
 
 impl<E: Engine> FrameSlot<E> {
@@ -628,7 +672,10 @@ impl<E: Engine> FrameSlot<E> {
         height: u32,
     ) -> Self {
         let dt_h = height.max(3) / 3;
+        static NEXT_KEY: AtomicU64 = AtomicU64::new(1);
         Self {
+            key: NEXT_KEY.fetch_add(1, Ordering::Relaxed),
+            windowed: false,
             pending: Mutex::new(None),
             cmd_tx,
             last_size: Mutex::new((width, height)),
@@ -649,6 +696,39 @@ impl<E: Engine> FrameSlot<E> {
             osr: OsrChromeTelem::default(),
             last_frame_ms: AtomicU64::new(0),
             ime,
+            stray_size: Mutex::new(None),
+        }
+    }
+
+    /// The slot of the window of page `tab` (a window per page). It starts
+    /// unsized, so its first draw sizes the page (and DevTools) to the
+    /// window: a page opened behind gets its size when first shown.
+    pub fn for_page(
+        cmd_tx: Sender<Cmd<E>>,
+        cursor: CursorHandle,
+        ime: ImeHandle,
+        tab: TabId,
+    ) -> Self {
+        let slot = Self {
+            windowed: true,
+            last_size: Mutex::new((0, 0)),
+            devtools_last_size: Mutex::new((0, 0)),
+            ..Self::new(cmd_tx, cursor, ime, 0, 0)
+        };
+        slot.paint_tab.store(tab.0, Ordering::Relaxed);
+        slot
+    }
+
+    /// A page command from this slot's shader: addressed to its page when
+    /// the slot is a page window's, else to the active tab.
+    pub fn page_cmd(&self, cmd: Cmd<E>) -> Cmd<E> {
+        if self.windowed {
+            Cmd::Target {
+                tab: TabId(self.paint_tab.load(Ordering::Relaxed)),
+                cmd: Box::new(cmd),
+            }
+        } else {
+            cmd
         }
     }
 
@@ -754,6 +834,8 @@ pub struct ImeCaret {
     pub y: i32,
     pub w: i32,
     pub h: i32,
+    /// The page it is in (a window per page shows it in that window).
+    pub tab_id: u64,
 }
 
 impl ImeCaret {
@@ -782,6 +864,7 @@ mod ime_caret_tests {
             y: 80,
             w: 0,
             h: 0,
+            tab_id: 0,
         };
         let r = c.logical_rect(
             iced::Rectangle::new(iced::Point::new(10.0, 20.0), iced::Size::new(100.0, 100.0)),
@@ -808,6 +891,8 @@ pub type PageMenusHandle = Arc<Mutex<Vec<PageContext>>>;
 pub struct ChromeTabRequest {
     pub url: String,
     pub activate: bool,
+    /// The opener's profile: the new page runs under it.
+    pub profile: String,
 }
 
 /// Queue of [`ChromeTabRequest`]. Name is historical (cmd-click was
@@ -817,6 +902,8 @@ pub type BackgroundTabsHandle = Arc<Mutex<Vec<ChromeTabRequest>>>;
 pub type NotificationsHandle = Arc<Mutex<Vec<crate::notify::Ipc>>>;
 /// Helper → chrome: `alert` / `confirm` / `prompt` / leave-page.
 pub type JsDialogsHandle = Arc<Mutex<Vec<crate::js_dialog::Event>>>;
+/// Helper → chrome: a page's file chooser.
+pub type FileDialogsHandle = Arc<Mutex<Vec<crate::file_dialog::Ipc>>>;
 /// Helper → chrome: HTTP Basic / Digest auth prompt.
 pub type HttpAuthHandle = Arc<Mutex<Vec<crate::http_auth::Event>>>;
 /// Helper → chrome: tab favicon PNG (empty bytes = clear).
@@ -844,6 +931,9 @@ pub enum DevToolsEvent {
 pub struct FindResult {
     pub count: i32,
     pub ordinal: i32,
+    /// The page searched.
+    #[serde(default)]
+    pub tab_id: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -895,6 +985,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn background_tabs_handle(&self) -> BackgroundTabsHandle;
     fn notifications_handle(&self) -> NotificationsHandle;
     fn js_dialogs_handle(&self) -> JsDialogsHandle;
+    fn file_dialogs_handle(&self) -> FileDialogsHandle;
     fn http_auth_handle(&self) -> HttpAuthHandle;
     fn favicons_handle(&self) -> FaviconsHandle;
     fn find_results_handle(&self) -> FindResultsHandle;

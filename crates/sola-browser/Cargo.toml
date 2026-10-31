@@ -32,7 +32,6 @@ bitwarden = [
     "dep:thiserror",
     "dep:zeroize",
     "dep:url",
-    "dep:reqwest",
     "dep:serde_qs",
     "dep:sha2",
     "dep:getrandom",
@@ -42,18 +41,20 @@ bitwarden = [
 ]
 
 [dependencies]
-iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "image", "canvas"] }
 iced_futures = { version = "0.14", features = ["tokio"] }
 sola-bus = { path = "../sola-bus" }
 sola-call = { path = "../sola-call" }
 sola-core = { path = "../sola-core" }
 sola-kit = { path = "../sola-kit" }
 tracing = "0.1"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
 base64 = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bincode = "1.3"
+# Use as Desktop Background: decode, crop, encode.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 
 # Shared sample pipeline (WGSL fullscreen triangle) for CEF CPU frames.
 wgpu = { version = "27", features = ["vulkan-portability"] }
@@ -78,7 +79,8 @@ async-trait = { version = "0.1", optional = true }
 thiserror = { version = "2", optional = true }
 zeroize = { version = "1", optional = true }
 url = { version = "2", optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+# Page images for Use as Desktop Background (and the vault's API calls).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde_qs = { version = "0.13", optional = true }
 sha2 = { version = "0.10", optional = true }
 getrandom = { version = "0.2", optional = true }
