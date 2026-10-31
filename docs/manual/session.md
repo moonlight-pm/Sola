@@ -240,7 +240,7 @@ its window comes back within a second, empty.
 | When | `sola-session` quits it |
 |---|---|
 | Its last window is closed from Sola: the bar's ×, Super+W (`CloseWindow`) | Yes, at once |
-| It had a window and has had none for 5 s: its own close button, its last window crashing | Yes |
+| It had a window and has had none for 5 s (30 s in its first 2 minutes, while it starts): its own close button, its last window crashing | Yes |
 | It has shown no window 2 minutes after it started | Yes |
 | `CloseApp`: Super+Q, the `close` call | Yes, at once |
 | **Exit Sola** | Yes, within the 6 s every application gets |
