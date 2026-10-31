@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-31  
 **Status:** **decided** (Joshua, 2026-10-31: the answers below); slice 1 in progress.  
-**Implementation (2026-10-31):** slices 1 and 2 built on branch `sola-open` (tests and `cargo make build`; not merged or applied). The Browser opens a link it does not load only on a click. A choice in `defaults.json` may name a `.desktop` file.  
+**Implementation (2026-10-31):** slices 1 and 2 on master (74f0dada), applied on novus from next@39318219; a web link and a `mailto:` checked through `xdg-open`. The Browser opens a link it does not load only on a click. A choice in `defaults.json` may name a `.desktop` file.  
 **Branch:** `sola-open`  
 **Related:** [D14](../open-questions.md#d14--what-pkgsola-ships-on-oath-p2) (answered: Sola owns `/bin/xdg-open`), decision log "Link and file handlers", [session manager](../manual/session.md#opening-links-and-files).
 
