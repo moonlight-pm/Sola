@@ -298,62 +298,31 @@ fn parse_chord(s: &str) -> Result<KeyChord, String> {
 
 fn parse_keycode(s: &str) -> Option<KeyCode> {
     let upper = s.to_ascii_uppercase();
-    match upper.as_str() {
-        "TAB" => Some(KeyCode::TAB),
+    let alias = match upper.as_str() {
         "`" | "GRAVE" | "BACKTICK" => Some(KeyCode::GRAVE),
-        "KP0" => Some(KeyCode::KP_0),
-        "KP2" => Some(KeyCode::KP_2),
-        "KP4" => Some(KeyCode::KP_4),
-        "KP5" => Some(KeyCode::KP_5),
-        "KP6" => Some(KeyCode::KP_6),
-        "KP8" => Some(KeyCode::KP_8),
         "KPENTER" => Some(KeyCode::KP_ENTER),
-        "KPMULTIPLY" | "KP*" => Some(KeyCode::KP_MULTIPLY),
+        "KPMULTIPLY" => Some(KeyCode::KP_MULTIPLY),
         "KPADD" => Some(KeyCode::KP_ADD),
-        "KPEQUAL" | "KP=" => Some(KeyCode::KP_EQUAL),
-        "KPDECIMAL" | "KP." => Some(KeyCode::KP_DECIMAL),
+        "KPEQUAL" => Some(KeyCode::KP_EQUAL),
+        "KPDECIMAL" => Some(KeyCode::KP_DECIMAL),
         "ESC" | "ESCAPE" => Some(KeyCode::ESCAPE),
         "ENTER" | "RETURN" => Some(KeyCode::ENTER),
         "BACKSPACE" | "BS" => Some(KeyCode::BACKSPACE),
-        "SPACE" => Some(KeyCode::SPACE),
+        "TAB" => Some(KeyCode::TAB),
         "LEFT" => Some(KeyCode::LEFT),
         "RIGHT" => Some(KeyCode::RIGHT),
-        "A" => Some(KeyCode::A),
-        "B" => Some(KeyCode::B),
-        "C" => Some(KeyCode::C),
-        "D" => Some(KeyCode::D),
-        "E" => Some(KeyCode::E),
-        "F" => Some(KeyCode::F),
-        "G" => Some(KeyCode::G),
-        "H" => Some(KeyCode::H),
-        "I" => Some(KeyCode::I),
-        "J" => Some(KeyCode::J),
-        "K" => Some(KeyCode::K),
-        "L" => Some(KeyCode::L),
-        "M" => Some(KeyCode::M),
-        "N" => Some(KeyCode::N),
-        "O" => Some(KeyCode::O),
-        "P" => Some(KeyCode::P),
-        "Q" => Some(KeyCode::Q),
-        "R" => Some(KeyCode::R),
-        "S" => Some(KeyCode::S),
-        "T" => Some(KeyCode::T),
-        "U" => Some(KeyCode::U),
-        "V" => Some(KeyCode::V),
-        "W" => Some(KeyCode::W),
-        "X" => Some(KeyCode::X),
-        "Y" => Some(KeyCode::Y),
-        "Z" => Some(KeyCode::Z),
-        "0" => Some(KeyCode::KEY_0),
-        "1" => Some(KeyCode::KEY_1),
-        "2" => Some(KeyCode::KEY_2),
-        "3" => Some(KeyCode::KEY_3),
-        "4" => Some(KeyCode::KEY_4),
-        "5" => Some(KeyCode::KEY_5),
-        "6" => Some(KeyCode::KEY_6),
-        "7" => Some(KeyCode::KEY_7),
-        "8" => Some(KeyCode::KEY_8),
-        "9" => Some(KeyCode::KEY_9),
+        "UP" => Some(KeyCode::UP),
+        "DOWN" => Some(KeyCode::DOWN),
+        "DELETE" | "DEL" => Some(KeyCode::DELETE),
+        "MINUS" => Some(KeyCode::MINUS),
+        "EQUAL" => Some(KeyCode::EQUAL),
         _ => None,
-    }
+    };
+    // Else any key by its name in the key table ("KP7", "F5", "PgUp", "=").
+    alias.or_else(|| {
+        sola_core::keys::KEYS
+            .iter()
+            .find(|k| k.label.eq_ignore_ascii_case(&upper))
+            .map(|k| k.code)
+    })
 }

@@ -51,7 +51,7 @@ fn items(shell: &Shell, index: usize) -> Vec<MenuItem> {
         .map(|(i, ws)| MenuItem::Action {
             id: format!("workspace.show.{i}"),
             label: ws.name,
-            shortcut: crate::keys::WORKSPACE_KEYS.get(i).map(|k| k.meta()),
+            shortcut: shell.keys.key(crate::bindings::Act::ShowWorkspace(i)),
             disabled: false,
             checked: i == index,
         })

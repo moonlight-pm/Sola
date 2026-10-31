@@ -5,10 +5,10 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use sola_bus::topics::{TabLayout, TabLayoutZone, Workspace, Zone};
+use sola_bus::topics::{TabLayout, TabLayoutZone, Workspace, WorkspacePicks, Zone};
 
 use super::desk::Desk;
-use super::{GHOST_GRACE, RESTORE_GRACE, Stacks, ZONES};
+use super::{FULL, GHOST_GRACE, RESTORE_GRACE, Stacks};
 
 /// A remembered place: a workspace, a zone, a key, its index in that
 /// workspace's bar, and whether the zone showed it.
@@ -23,17 +23,19 @@ pub(super) struct Slot {
 
 impl Stacks {
     /// Take the saved layout: its workspaces (when it has any), which
-    /// shows, which have Full up, and the places windows that come within
+    /// shows, each one's zones in the order they were picked (an older
+    /// file: whether Full was up), and the places windows that come within
     /// [`RESTORE_GRACE`] take. Its zones are runs of a workspace's bar, in
     /// order (a layout saved before the bar mixed zones has one run per
-    /// zone: Full, Left, Right, Floating). A zone saved before workspaces
-    /// belongs to the first one.
+    /// zone). A zone saved before workspaces belongs to the first one; a
+    /// zone the layout no longer has sends its windows to Full when they
+    /// come.
     pub fn load(&mut self, layout: &TabLayout, now: Instant) {
         if !layout.workspaces.is_empty() {
             self.desks = layout
                 .workspaces
                 .iter()
-                .map(|w| Desk::new(w.id.clone(), w.name.clone()))
+                .map(|w| Desk::new(w.id.clone(), w.name.clone(), &self.layout.zones()))
                 .collect();
             self.showing = self
                 .desks
@@ -42,16 +44,20 @@ impl Stacks {
                 .unwrap_or(0);
         }
         for d in &mut self.desks {
-            d.full = layout.full.contains(&d.id);
+            d.picks = match layout.picks.iter().find(|p| p.workspace == d.id) {
+                Some(p) => p.zones.clone(),
+                None if layout.full.contains(&d.id) => vec![FULL],
+                None => Vec::new(),
+            };
+            if let Some(&z) = d.picks.first() {
+                d.last_zone = z;
+            }
         }
         let first = self.desks[0].id.clone();
         self.restore.clear();
         // Each workspace's next index in its bar.
         let mut next: HashMap<String, usize> = HashMap::new();
         for z in &layout.zones {
-            if !ZONES.contains(&z.zone) {
-                continue;
-            }
             let workspace = if z.workspace.is_empty() {
                 first.clone()
             } else {
@@ -134,8 +140,17 @@ impl Stacks {
             full: self
                 .desks
                 .iter()
-                .filter(|d| d.full)
+                .filter(|d| d.picks.first() == Some(&FULL))
                 .map(|d| d.id.clone())
+                .collect(),
+            picks: self
+                .desks
+                .iter()
+                .filter(|d| !d.picks.is_empty())
+                .map(|d| WorkspacePicks {
+                    workspace: d.id.clone(),
+                    zones: d.picks.clone(),
+                })
                 .collect(),
         }
     }

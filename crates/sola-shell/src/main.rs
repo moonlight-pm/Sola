@@ -22,6 +22,7 @@ pub mod media;
 pub mod menu;
 pub mod menubar;
 pub mod mouse;
+pub mod bindings;
 pub mod notify;
 pub mod pairing;
 mod pictures;

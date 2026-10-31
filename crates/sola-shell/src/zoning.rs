@@ -4,11 +4,9 @@
 //! Functions return Frames; the caller (`Shell`) emits them.
 use std::collections::{HashMap, HashSet};
 
-use sola_bus::topics::{FloatGeometry, FrameUpdate, OutputGeometry, WindowGeometry, Zone};
-use sola_core::KeyCode;
+use sola_bus::topics::{FloatGeometry, FrameUpdate, OutputGeometry, WindowGeometry, Zone, ZoneLayout};
 use tracing::info;
 
-use crate::stacks::HALVES;
 
 /// An island of the top row (board 03): the flower, the workspaces, the
 /// instruments, the clock — 28 px pills on the ground.
@@ -336,10 +334,17 @@ pub fn bar_frame(window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
     }
 }
 
-/// A tiled zone's rectangle: Full is the content area; a half keeps its
-/// share of it whether or not the other half has a tab. Halves sit one
-/// [`GAP`] apart.
-pub fn tile_frame(window_id: u32, zone: Zone, output_w: i32, output_h: i32) -> FrameUpdate {
+/// A tiled zone's rectangle: Full is the content area; a grid zone its
+/// cells of it, which it keeps whether or not its neighbours have tabs.
+/// Cells sit one [`GAP`] apart; a zone spanning several takes the gaps
+/// between them.
+pub fn tile_frame(
+    window_id: u32,
+    layout: &ZoneLayout,
+    zone: Zone,
+    output_w: i32,
+    output_h: i32,
+) -> FrameUpdate {
     let (cx, cy, cw, ch) = content_rect(output_w, output_h);
     let mut frame = FrameUpdate {
         window_id,
@@ -349,17 +354,29 @@ pub fn tile_frame(window_id: u32, zone: Zone, output_w: i32, output_h: i32) -> F
         height: ch,
         fullscreen: false,
     };
-    let Some(index) = HALVES.iter().position(|(z, _)| *z == zone) else {
+    let Some(z) = (match zone {
+        Zone::Grid(id) => layout.grid(id),
+        _ => None,
+    }) else {
         return frame;
     };
-    let avail = (cw - GAP * (HALVES.len() as i32 - 1)).max(1) as f32;
-    let before: f32 = HALVES[..index].iter().map(|(_, f)| f).sum();
-    let gaps = index as i32 * GAP;
-    let x0 = cx + (avail * before).round() as i32 + gaps;
-    let x1 = cx + (avail * (before + HALVES[index].1)).round() as i32 + gaps;
+    let (x0, x1) = span(cx, cw, layout.columns, z.column, z.columns);
+    let (y0, y1) = span(cy, ch, layout.rows, z.row, z.rows);
     frame.x = x0;
+    frame.y = y0;
     frame.width = (x1 - x0).max(1);
+    frame.height = (y1 - y0).max(1);
     frame
+}
+
+/// Cells `first .. first + n` of `count` along `len` from `from`: their
+/// start and end, one [`GAP`] between neighbouring cells.
+fn span(from: i32, len: i32, count: u8, first: u8, n: u8) -> (i32, i32) {
+    let count = i32::from(count.max(1));
+    let avail = (len - GAP * (count - 1)).max(1) as f32;
+    let edge = |i: i32| from + (avail * i as f32 / count as f32).round() as i32 + i * GAP;
+    let (first, n) = (i32::from(first), i32::from(n.max(1)));
+    (edge(first), edge(first + n) - GAP)
 }
 
 /// A tab in Cinema: the whole output, menubar and bar included. The
@@ -594,26 +611,6 @@ impl ZoningState {
     }
 }
 
-/// The numpad zone keys (with Super) on the two-zone layout.
-pub const ZONING_KEYCODES: &[u32] = &[
-    KeyCode::KP_4.raw(),
-    KeyCode::KP_6.raw(),
-    KeyCode::KP_0.raw(),
-    KeyCode::KP_ENTER.raw(),
-    KeyCode::KP_MULTIPLY.raw(),
-];
-
-pub fn zone_for_keycode(code: u32) -> Option<Zone> {
-    match code {
-        c if c == KeyCode::KP_4.raw() => Some(Zone::Left),
-        c if c == KeyCode::KP_6.raw() => Some(Zone::Right),
-        c if c == KeyCode::KP_0.raw() => Some(Zone::Fullscreen),
-        c if c == KeyCode::KP_ENTER.raw() => Some(Zone::Cinema),
-        c if c == KeyCode::KP_MULTIPLY.raw() => Some(Zone::Float),
-        _ => None,
-    }
-}
-
 /// Default frame for a freshly-floated window with nothing to shrink
 /// from: the content area inset by `FLOAT_MARGIN` on every edge.
 fn float_frame(window_id: u32, output_w: i32, output_h: i32) -> FrameUpdate {
@@ -690,13 +687,37 @@ mod tests {
         // Under the top row: gap + island + gap = 48 (board 03).
         assert_eq!(MENUBAR_HEIGHT + GAP, 48);
         assert_eq!(rect(&bar_frame(1, 1920, 1080)), (10, 48, 240, 1022));
-        assert_eq!(rect(&tile_frame(1, Zone::Left, 1920, 1080)), (260, 48, 820, 1022));
-        assert_eq!(rect(&tile_frame(1, Zone::Right, 1920, 1080)), (1090, 48, 820, 1022));
+        let l = ZoneLayout::default();
+        assert_eq!(rect(&tile_frame(1, &l, Zone::Grid(1), 1920, 1080)), (260, 48, 820, 1022));
+        assert_eq!(rect(&tile_frame(1, &l, Zone::Grid(2), 1920, 1080)), (1090, 48, 820, 1022));
+    }
+
+    #[test]
+    fn three_columns_and_a_wide_zone_on_novus() {
+        use sola_bus::topics::GridZone;
+        let l = ZoneLayout {
+            rows: 2,
+            columns: 3,
+            zones: vec![
+                GridZone { id: 1, row: 0, column: 0, rows: 2, columns: 1 },
+                GridZone { id: 2, row: 0, column: 1, rows: 1, columns: 2 },
+                GridZone { id: 3, row: 1, column: 2, rows: 1, columns: 1 },
+            ],
+        };
+        // Content: x 260.., w 5120 − 270 = 4850; y 48.., h 2160 − 58 = 2102.
+        let one = rect(&tile_frame(1, &l, Zone::Grid(1), 5120, 2160));
+        let two = rect(&tile_frame(1, &l, Zone::Grid(2), 5120, 2160));
+        let three = rect(&tile_frame(1, &l, Zone::Grid(3), 5120, 2160));
+        assert_eq!(one, (260, 48, 1610, 2102));
+        assert_eq!(two.0, one.0 + one.2 + GAP);
+        assert_eq!(two.0 + two.2, 260 + 4850);
+        assert_eq!(three.1, two.1 + two.3 + GAP);
+        assert_eq!(three.1 + three.3, 48 + 2102);
     }
 
     #[test]
     fn full_is_the_content_area() {
-        let f = tile_frame(1, Zone::Fullscreen, 1920, 1080);
+        let f = tile_frame(1, &ZoneLayout::default(), Zone::Fullscreen, 1920, 1080);
         assert_eq!((rect(&f), f.fullscreen), ((260, 48, 1650, 1022), false));
     }
 
@@ -759,16 +780,6 @@ mod tests {
         let aspect = f.width as f32 / f.height as f32;
         assert!((aspect - 16.0 / 9.0).abs() < 0.01, "{aspect}");
         assert!(s.float("gamescope", 10, false).is_some());
-    }
-
-    #[test]
-    fn numpad_keys_on_two_zones() {
-        assert_eq!(zone_for_keycode(KeyCode::KP_4.raw()), Some(Zone::Left));
-        assert_eq!(zone_for_keycode(KeyCode::KP_6.raw()), Some(Zone::Right));
-        assert_eq!(zone_for_keycode(KeyCode::KP_0.raw()), Some(Zone::Fullscreen));
-        assert_eq!(zone_for_keycode(KeyCode::KP_MULTIPLY.raw()), Some(Zone::Float));
-        assert_eq!(zone_for_keycode(KeyCode::KP_8.raw()), None);
-        assert!(ZONING_KEYCODES.contains(&KeyCode::KP_ENTER.raw()));
     }
 
     #[test]

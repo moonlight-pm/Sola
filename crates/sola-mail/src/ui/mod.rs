@@ -84,6 +84,7 @@ pub enum Msg {
     TitleClose,
     KeyPressed {
         key: keyboard::Key,
+        physical: keyboard::key::Physical,
         mods: keyboard::Modifiers,
         captured: bool,
     },
@@ -309,9 +310,15 @@ impl App {
                 Subscription::none()
             },
             event::listen_with(|event, status, _id| match event {
-                Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key,
+                    physical_key,
+                    modifiers,
+                    ..
+                }) => {
                     Some(Msg::KeyPressed {
                         key,
+                        physical: physical_key,
                         mods: modifiers,
                         captured: status == event::Status::Captured,
                     })
@@ -376,9 +383,10 @@ impl App {
             Msg::TitleClose => sola_kit::close_app(APP_ID),
             Msg::KeyPressed {
                 key,
+                physical,
                 mods,
                 captured,
-            } => return self.on_key(key, mods, captured),
+            } => return self.on_key(key, physical, mods, captured),
 
             Msg::SelectFolder(folder) => {
                 self.mailbox_menu = false;
@@ -614,7 +622,7 @@ impl App {
             "trash" => Msg::MoveSelected("Trash".into()),
             "junk" => Msg::MoveSelected("Junk".into()),
             "inbox" => Msg::MoveSelected("INBOX".into()),
-            "undo" => Msg::Undo,
+            "undo_move" | "undo" => Msg::Undo,
             "copy_message" => Msg::CopyBody,
             "empty_junk" => Msg::AskErase("Junk".into()),
             "empty_trash" => Msg::AskErase("Trash".into()),

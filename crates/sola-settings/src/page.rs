@@ -48,7 +48,7 @@ pub fn page<'a, M: 'a>(sections: Vec<Element<'a, M>>) -> Element<'a, M> {
 /// A section: `title` (and `action` on the right) over `body`, `caption`
 /// under it.
 pub fn section<'a, M: 'a>(
-    title: &'a str,
+    title: impl iced::widget::text::IntoFragment<'a>,
     action: Option<Element<'a, M>>,
     body: Element<'a, M>,
     caption: Option<String>,
@@ -180,7 +180,7 @@ pub fn footer<'a, M: 'a>(left: Vec<Element<'a, M>>, right: Vec<Element<'a, M>>) 
 
 /// A small labeled button for an editor's footer.
 pub fn action<'a, M: Clone + 'a>(
-    label: &'a str,
+    label: impl iced::widget::text::IntoFragment<'a>,
     style: impl Fn(&Theme, button::Status) -> button::Style + 'a,
     on_press: M,
 ) -> Element<'a, M> {

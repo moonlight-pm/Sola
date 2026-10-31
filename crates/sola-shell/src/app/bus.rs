@@ -16,6 +16,7 @@ use sola_bus::topics::{
 };
 use sola_core::theme::Theme as BusTheme;
 
+use crate::bindings::Act;
 use crate::keys;
 
 use super::{Msg, Shell};
@@ -36,6 +37,28 @@ impl Shell {
             }
             Topic::Background(b) => self.adapt_picture(message.sticky.then_some(b)),
             Topic::Appearance(a) => self.adapt_appearance(message.sticky.then_some(a)),
+            Topic::KeyActions(d) => {
+                let owner = d.owner.clone();
+                if self.keys.set_declared(&owner, message.sticky.then_some(d)) {
+                    self.emit_registered_chords();
+                }
+                Task::none()
+            }
+            Topic::Keybindings(k) => {
+                if self.keys.set_overrides(if message.sticky { k } else { Default::default() }) {
+                    self.emit_registered_chords();
+                }
+                Task::none()
+            }
+            Topic::KeyCapture(_) => self.on_key_capture(message.sticky),
+            Topic::ZoneLayout(l) => {
+                self.on_zone_layout(message.sticky.then_some(l));
+                Task::none()
+            }
+            Topic::FullscreenRequest(r) => {
+                self.on_fullscreen_request(r);
+                Task::none()
+            }
             Topic::OutputGeometry(g) => {
                 self.on_output_geometry(g);
                 Task::none()
@@ -1014,6 +1037,90 @@ impl Shell {
     // -------------------------------------------------------------------------
 
     /// Dispatch a chord event through the shell's action table.
+    /// Settings started (`sticky`) or ended waiting for a key: drop every
+    /// grab while it waits, so the key reaches its window. A capture ends
+    /// on its own after a while, in case Settings went away.
+    fn on_key_capture(&mut self, sticky: bool) -> Task<Msg> {
+        self.keys.capturing = sticky;
+        self.key_capture_gen += 1;
+        tracing::info!(capturing = sticky, "key capture");
+        self.emit_registered_chords();
+        if !sticky {
+            return Task::none();
+        }
+        let generation = self.key_capture_gen;
+        Task::perform(tokio::time::sleep(Duration::from_secs(20)), move |_| {
+            Msg::KeyCaptureExpire(generation)
+        })
+    }
+
+    /// Run a system action (a key, or a Super+K row).
+    pub(crate) fn run_act(&mut self, act: Act) -> Task<Msg> {
+        match act {
+            Act::Launcher if self.launcher.active => Task::done(Msg::CloseLauncher),
+            Act::Launcher => Task::done(Msg::OpenLauncher),
+            Act::Shortcuts if self.shortcuts.active => Task::done(Msg::CloseShortcuts),
+            Act::Shortcuts => Task::done(Msg::OpenShortcuts),
+            Act::Lock => self.lock_screen("key"),
+            Act::CloseApp => {
+                if let Some(focused) = self.focused_app_id.clone() {
+                    tracing::info!(app_id = %focused, "close focused app");
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::CloseApp(focused));
+                    }
+                }
+                Task::none()
+            }
+            Act::Hide => {
+                self.hide_focused_app();
+                Task::none()
+            }
+            Act::NextTab => Task::done(Msg::CycleTabs { back: false }),
+            Act::PrevTab => Task::done(Msg::CycleTabs { back: true }),
+            Act::NextWorkspace => {
+                self.step_workspace(false);
+                Task::none()
+            }
+            Act::PrevWorkspace => {
+                self.step_workspace(true);
+                Task::none()
+            }
+            Act::ShowWorkspace(index) => {
+                self.show_workspace(index);
+                Task::none()
+            }
+            Act::SendToWorkspace(index) => {
+                self.send_focused_to_workspace(index);
+                Task::none()
+            }
+            Act::ScreenshotFull => {
+                tracing::info!("full-output screenshot");
+                self.arm_screenshot_handoff();
+                crate::screenshot::full()
+            }
+            Act::ScreenshotRegion => Task::done(Msg::OpenSelection),
+            Act::ScreenshotWindow => {
+                let Some(app_id) = self.focused_app_id.clone() else {
+                    self.menubar
+                        .push_toast("Screenshot failed: no focused window");
+                    let toast_gen = self.menubar.toast_generation;
+                    return Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+                        Msg::ToastExpire(toast_gen)
+                    });
+                };
+                let title = self.focused_window_id.and_then(|wid| {
+                    self.known_windows
+                        .iter()
+                        .find(|w| w.window_id == wid)
+                        .map(|w| w.title.clone())
+                });
+                self.arm_screenshot_handoff();
+                crate::screenshot::window(app_id, title)
+            }
+            Act::Zone(zone) => self.snap_focused_zone(zone),
+        }
+    }
+
     fn on_chord(&mut self, evt: ChordEvent) -> Task<Msg> {
         // Global media keys never map to a shell KeyChord — they're handled
         // out-of-process (MPRIS / wpctl via `solactl media`). Recognise them
@@ -1062,35 +1169,22 @@ impl Shell {
             }
         }
 
+        let act = self.keys.act_for(&chord);
+
         // Selection marquee is modal — Escape cancels; ignore other chords.
         // Pending freeze is not modal (overlay is not up yet) but it owns the
-        // screenshot slot, so ignore competing Super+Shift+3/4/5.
+        // screenshot slot, so ignore competing screenshot keys.
         if self.selection.active {
             return Task::none();
         }
-        if self.selection.pending
-            && chord.meta
-            && chord.shift
-            && matches!(
-                chord.keycode,
-                sola_core::KeyCode::KEY_3 | sola_core::KeyCode::KEY_4 | sola_core::KeyCode::KEY_5
-            )
-        {
+        if self.selection.pending && act.is_some_and(Act::is_screenshot) {
             return Task::none();
         }
 
-        // Super+K: keyboard-shortcuts overlay (Omarchy). Toggle even while
-        // the launcher is up so the cheatsheet is always one chord away.
-        if chord.meta
-            && !chord.shift
-            && !chord.ctrl
-            && !chord.alt
-            && chord.keycode == sola_core::KeyCode::K
-        {
-            if self.shortcuts.active {
-                return Task::done(Msg::CloseShortcuts);
-            }
-            return Task::done(Msg::OpenShortcuts);
+        // Keyboard Shortcuts (Omarchy). Toggle even while the launcher is
+        // up so the cheatsheet is always one chord away.
+        if act == Some(Act::Shortcuts) {
+            return self.run_act(Act::Shortcuts);
         }
 
         // Launcher / shortcuts are modal — they own the keyboard while
@@ -1100,152 +1194,21 @@ impl Shell {
         }
 
         // A dropdown menu is transient — any non-Escape chord should
-        // dismiss it and then proceed normally (so Meta+Space still
-        // opens the launcher, Meta+Tab still moves between groups, etc.
-        // even if the user left a menu hanging open).
-        // Screenshot chords are the exception: they must copy the live
+        // dismiss it and then proceed normally (so the launcher key still
+        // opens the launcher, etc. even if the user left a menu hanging
+        // open). Screenshot keys are the exception: they must copy the live
         // scene (open notifications panel, text selections) before chrome
         // moves.
-        let screenshot = chord.meta
-            && chord.shift
-            && !chord.ctrl
-            && !chord.alt
-            && matches!(
-                chord.keycode,
-                sola_core::KeyCode::KEY_3 | sola_core::KeyCode::KEY_4 | sola_core::KeyCode::KEY_5
-            );
-        if self.menu_open && !screenshot {
+        if self.menu_open && !act.is_some_and(Act::is_screenshot) {
             let _ = self.dismiss_open_menu();
             self.emit_overlay_frames();
             self.emit_composition();
             self.emit_registered_chords();
         }
 
-        // Meta+Space: toggle launcher.
-        if chord.meta && chord.keycode == sola_core::KeyCode::SPACE {
-            tracing::info!(
-                launcher_active = self.launcher.active,
-                "Meta+Space — toggling launcher"
-            );
-            if self.launcher.active {
-                return Task::done(Msg::CloseLauncher);
-            } else {
-                return Task::done(Msg::OpenLauncher);
-            }
-        }
-
-        // Meta+Q: close focused app.
-        if chord.meta && chord.keycode == sola_core::KeyCode::Q {
-            tracing::info!("Meta+Q — close focused app");
-            if let Some(ref focused) = self.focused_app_id.clone() {
-                if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                    let _ = bus.emit(Topic::CloseApp(focused.clone()));
-                }
-            }
-            return Task::none();
-        }
-
-        // Meta+H: hide focused app (omit from composition; River hide).
-        if chord.meta
-            && !chord.shift
-            && !chord.ctrl
-            && !chord.alt
-            && chord.keycode == sola_core::KeyCode::H
-        {
-            self.hide_focused_app();
-            return Task::none();
-        }
-
-        // Super+Shift+3: full-output screenshot (auto path) → toast + preview.
-        if chord.meta
-            && chord.shift
-            && !chord.ctrl
-            && !chord.alt
-            && chord.keycode == sola_core::KeyCode::KEY_3
-        {
-            tracing::info!("Super+Shift+3 — full-output screenshot");
-            self.arm_screenshot_handoff();
-            return crate::screenshot::full();
-        }
-
-        // Super+Shift+4: freeze live output (menus still composed), then
-        // selection marquee on that still.
-        if chord.meta
-            && chord.shift
-            && !chord.ctrl
-            && !chord.alt
-            && chord.keycode == sola_core::KeyCode::KEY_4
-        {
-            tracing::info!("Super+Shift+4 — selection freeze");
-            return Task::done(Msg::OpenSelection);
-        }
-
-        // Super+Shift+5: focused-window region screenshot → toast + preview.
-        if chord.meta
-            && chord.shift
-            && !chord.ctrl
-            && !chord.alt
-            && chord.keycode == sola_core::KeyCode::KEY_5
-        {
-            tracing::info!("Super+Shift+5 — focused-window screenshot");
-            let Some(app_id) = self.focused_app_id.clone() else {
-                self.menubar
-                    .push_toast("Screenshot failed: no focused window");
-                let toast_gen = self.menubar.toast_generation;
-                return Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
-                    Msg::ToastExpire(toast_gen)
-                });
-            };
-            let title = self.focused_window_id.and_then(|wid| {
-                self.known_windows
-                    .iter()
-                    .find(|w| w.window_id == wid)
-                    .map(|w| w.title.clone())
-            });
-            self.arm_screenshot_handoff();
-            return crate::screenshot::window(app_id, title);
-        }
-
-        // Meta+` / Meta+Shift+`: next / previous tab in the bar.
-        if chord.meta && chord.keycode == sola_core::KeyCode::GRAVE {
-            return Task::done(Msg::CycleTabs { back: chord.shift });
-        }
-
-        // Workspaces: Meta+1…9 shows one, Meta+Ctrl+1…9 sends the focused
-        // window there, Meta+(Shift+)Tab steps.
-        if chord.meta && !chord.alt {
-            if let Some(index) = crate::keys::workspace_index(chord.keycode) {
-                if chord.ctrl && !chord.shift {
-                    self.send_focused_to_workspace(index);
-                    return Task::none();
-                }
-                if !chord.ctrl && !chord.shift {
-                    self.show_workspace(index);
-                    return Task::none();
-                }
-            }
-            if !chord.ctrl && chord.keycode == sola_core::KeyCode::TAB {
-                self.step_workspace(chord.shift);
-                return Task::none();
-            }
-        }
-
-        // Zone snapping (Meta+Numpad).
-        if let Some(zone) = crate::zoning::zone_for_keycode(chord.keycode.raw()) {
-            return self.snap_focused_zone(zone);
-        }
-
-        // Shell system menu shortcuts (Exit Sola has none — Super+Q is CloseApp).
-        if let Some(action) = self.menus.lookup_shortcut(&chord, Self::APP_ID) {
-            tracing::info!(action_id = %action.action_id, "shell shortcut");
-            let flash = self.flash_menu_action(&action.app_id, &action.action_id);
-            return Task::batch([
-                flash,
-                Task::done(Msg::MenuAction {
-                    app_id: action.app_id,
-                    action_id: action.action_id,
-                }),
-            ]);
+        if let Some(act) = act {
+            tracing::info!(?act, "system key");
+            return self.run_act(act);
         }
 
         // Focused app menu shortcut lookup.
@@ -1469,13 +1432,9 @@ impl Shell {
                 tiled: self
                     .tabs
                     .zone_of(w.window_id)
-                    .is_some_and(|z| crate::stacks::TILED.contains(&z))
+                    .is_some_and(|z| matches!(z, Zone::Fullscreen | Zone::Grid(_)))
                     && !self.zoning.is_floating(w.window_id),
-                cinema: self
-                    .tabs
-                    .desk_of(w.window_id)
-                    .and_then(|d| self.tabs.cinema_on(d))
-                    == Some(w.window_id),
+                cinema: self.tabs.zone_of(w.window_id) == Some(Zone::Cinema),
                 rim: self.menus.get_menu(&w.app_id).is_none(),
             })
             .collect();
