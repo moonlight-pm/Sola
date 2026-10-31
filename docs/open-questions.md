@@ -247,7 +247,7 @@ session open). Recorded in the spec's D16.
 
 ---
 
-### D17 — Vault: the desk's Bitwarden client, its service, the right-click menu (P1)
+### D17 — Vault: the desk's Bitwarden client, its service, the right-click menu (P1) — **answered (2026-10-31)**
 
 **Context:** Joshua (2026-10-31) asked for a Bitwarden client of Sola's own
 ("Vault" / `sola-vault`), the browser's vault logic moved into a service, the
@@ -262,8 +262,11 @@ included.
 agents and the vault; who draws the right-click menu; apps that are not
 Sola's; the server; copying the code on fill; what "everything" covers.
 
-**Until decided:** nothing built; no vault value on the bus or the call plane
-(D3).
+**Answer (Joshua, 2026-10-31):** "All your recommendations sound good" —
+V1–V7 as proposed (memory-only unlock, locking on idle and the screen lock;
+agents never read a value; the shell draws the menu; foreign apps later;
+US / EU / self-hosted; the code copied on fill; everything but Send and
+account settings). Recorded in the spec.
 
 **Related:** `vault`, `desk-menu`, `browser` capabilities; D3.
 

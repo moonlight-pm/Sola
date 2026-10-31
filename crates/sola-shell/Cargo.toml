@@ -18,6 +18,8 @@ sola-call = { path = "../sola-call" }
 sola-core = { path = "../sola-core" }
 sola-kit = { path = "../sola-kit" }
 sola-assets = { path = "../sola-assets" }
+# The desk menu asks the vault (status, logins, deliver) on its socket.
+sola-vault-proto = { path = "../sola-vault-proto" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"

@@ -1,789 +1,207 @@
-//! Background vault worker — owns `VaultService` on a dedicated tokio thread.
+//! The browser as a client of `sola-vaultd`: requests off the iced
+//! thread, and the daemon's events.
+//!
+//! Each request runs on its own short connection, so a login's key
+//! derivation or a long sync never holds up a fill. Answers come back
+//! tagged with why chrome asked (`A`), on one channel the chrome drains
+//! when [`crate::chrome_wake`] wakes it. A second thread keeps a
+//! subscription open, and reconnects while the daemon is away.
 
+use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use sola_vault_proto::{self as proto, Event, Reply, Request, VaultError};
 
-use zeroize::Zeroize;
+/// The name the daemon knows this client by (its log, not its peer check).
+const CLIENT: &str = "sola-browser";
 
-use super::client::{
-    LoginOutcome, MatchSummary, TwoFactorKind, VaultError, VaultService,
-    VaultStatus,
-};
-use super::edit::ItemDraft;
-use super::item::{IdentityFillMaterial, ItemRecord, ItemSummary};
-use super::passkey::PasskeyCandidate;
+/// Waits between attempts to subscribe while the daemon is away.
+const RETRY_FIRST: Duration = Duration::from_secs(1);
+const RETRY_MAX: Duration = Duration::from_secs(10);
 
-/// Commands from chrome → vault worker.
-pub enum VaultCmd {
-    Login {
-        email: String,
-        password: String,
-    },
-    /// Complete 2FA / new-device verification.
-    LoginTwoFactor {
-        email: String,
-        password: String,
-        token: String,
-        kind: TwoFactorKind,
-    },
-    /// Re-send new-device / email 2FA code.
-    ResendEmailCode {
-        email: String,
-        password: String,
-        kind: TwoFactorKind,
-    },
-    Sync,
-    Matches {
-        url: String,
-    },
-    Fill {
-        id: String,
-    },
-    /// Decrypt + generate the current authenticator code.
-    FillTotp {
-        id: String,
-    },
-    /// Decrypt a card for page fill.
-    FillCard {
-        id: String,
-    },
-    /// All vault items for the unified panel (page URL ranks URI matches).
-    ListItems {
-        url: String,
-    },
-    /// Full decrypted record for the item view.
-    GetItem {
-        id: String,
-    },
-    /// Decrypt an identity for page fill.
-    FillIdentity {
-        id: String,
-    },
-    /// Persist a new login then return fill material.
-    CreateLogin {
-        name: String,
-        username: String,
-        password: String,
-        uri: String,
-    },
-    /// Save edits to an existing cipher.
-    UpdateItem {
-        draft: ItemDraft,
-    },
-    /// List passkeys for a WebAuthn get() RP so chrome can show a picker.
-    PasskeyList {
-        req_id: u64,
-        rp_id: String,
-        /// The request's options (allowCredentials narrows the list).
-        public_key_json: String,
-    },
-    /// WebAuthn get() — sign with a vault passkey the user selected.
-    PasskeyAssert {
-        /// Page request id (for JS resolve).
-        req_id: u64,
-        origin: String,
-        /// Serialized `publicKey` options (challenge etc. base64url).
-        public_key_json: String,
-        /// Cipher id chosen in the passkey picker (required).
-        cipher_id: String,
-    },
-    /// WebAuthn create() — register a vault passkey.
-    PasskeyRegister {
-        req_id: u64,
-        origin: String,
-        public_key_json: String,
-        /// Existing login to attach to. `None` creates a new personal login.
-        cipher_id: Option<String>,
-    },
-    /// Master-password re-prompt check (nothing leaves the machine).
-    VerifyMasterPassword {
-        password: String,
-    },
-    /// Wipe tokens, keys, and the on-disk session.
-    Logout,
-    Quit,
+/// What the vault said, for chrome.
+#[derive(Debug)]
+pub enum VaultEvent<A> {
+    /// The answer to one [`VaultHandle::ask`], with its tag.
+    Answer(A, Result<Reply, VaultError>),
+    /// Pushed by the daemon (never a secret).
+    Daemon(Event),
+    /// The subscription is up (`true`), or the daemon went away.
+    Connected(bool),
 }
 
-/// Events from vault worker → chrome.
-#[derive(Debug, Clone)]
-pub enum VaultEvent {
-    Status(VaultStatus),
-    LoginOk {
-        email: String,
-    },
-    /// Unlocked from a persisted session (do not open the panel).
-    SessionRestored {
-        email: String,
-    },
-    LoggedOut,
-    /// Re-prompt answer: `Err` when it could not be checked.
-    MasterPasswordChecked(Result<bool, String>),
-    /// Email OTP (new device) or authenticator TOTP required.
-    LoginNeedsTwoFactor {
-        email: String,
-        kinds: Vec<TwoFactorKind>,
-        preferred: TwoFactorKind,
-        email_hint: Option<String>,
-        /// True if we successfully asked the server to email a code.
-        email_sent: bool,
-    },
-    LoginFailed {
-        message: String,
-    },
-    EmailCodeSent,
-    EmailCodeFailed {
-        message: String,
-    },
-    SyncOk {
-        full: bool,
-    },
-    SyncFailed {
-        message: String,
-    },
-    Matches(Vec<MatchSummary>),
-    Items {
-        list: Vec<ItemSummary>,
-        /// Ciphers that failed to decrypt (an org key that did not load).
-        unreadable: usize,
-    },
-    ItemReady(ItemRecord),
-    /// Cipher saved after an edit.
-    ItemUpdated(ItemRecord),
-    IdentityFillReady(IdentityFillMaterial),
-    TotpFillReady {
-        code: String,
-    },
-    FillReady {
-        username: Option<String>,
-        password: Option<String>,
-        /// The login's websites: iframes they match may be filled too.
-        uris: Vec<crate::engine::SiteUri>,
-    },
-    CardFillReady {
-        cardholder_name: Option<String>,
-        number: Option<String>,
-        exp_month: Option<String>,
-        exp_year: Option<String>,
-        code: Option<String>,
-        brand: Option<String>,
-    },
-    /// New login is on the server — fill the page (same payload as FillReady).
-    Created {
-        id: Option<String>,
-        username: Option<String>,
-        password: Option<String>,
-    },
-    /// Passkeys available for a pending WebAuthn get().
-    PasskeyCandidates {
-        req_id: u64,
-        candidates: Vec<PasskeyCandidate>,
-    },
-    /// Passkey assertion for the page polyfill (`req_id` matches intercept).
-    PasskeyReady {
-        req_id: u64,
-        ok: bool,
-        /// On ok: assertion JSON string; on err: error message.
-        payload: String,
-    },
-    Error {
-        message: String,
-    },
+/// Chrome's end: ask, and drain what came back.
+pub struct VaultHandle<A> {
+    tx: Sender<VaultEvent<A>>,
+    rx: Mutex<Receiver<VaultEvent<A>>>,
 }
 
-/// Handle held by `App` for the vault worker.
-pub struct VaultHandle {
-    cmd_tx: UnboundedSender<VaultCmd>,
-    event_rx: Arc<Mutex<Receiver<VaultEvent>>>,
-}
-
-impl VaultHandle {
+impl<A: Send + 'static> VaultHandle<A> {
+    /// Start the events thread. Nothing connects until it runs.
     pub fn spawn() -> Self {
-        let (cmd_tx, cmd_rx) = unbounded_channel::<VaultCmd>();
-        let (event_tx, event_rx) = mpsc::channel::<VaultEvent>();
-
-        thread::Builder::new()
-            .name("sola-vault".into())
-            .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("vault tokio runtime");
-                rt.block_on(worker_loop(cmd_rx, event_tx));
-            })
-            .expect("spawn sola-vault thread");
-
+        let (tx, rx) = mpsc::channel();
+        let events = tx.clone();
+        if let Err(e) = thread::Builder::new()
+            .name("sola-vault-events".into())
+            .spawn(move || events_loop(events))
+        {
+            tracing::error!(error = %e, "vault: could not start the events thread");
+        }
         Self {
-            cmd_tx,
-            event_rx: Arc::new(Mutex::new(event_rx)),
+            tx,
+            rx: Mutex::new(rx),
         }
     }
 
-    pub fn send(&self, cmd: VaultCmd) {
-        if let Err(e) = self.cmd_tx.send(cmd) {
-            tracing::error!(error = %e, "vault: cmd channel closed");
+    /// Send `req` on a connection of its own; the answer comes back as
+    /// [`VaultEvent::Answer`] with `tag`.
+    pub fn ask(&self, tag: A, req: Request) {
+        let tx = self.tx.clone();
+        let spawned = thread::Builder::new()
+            .name("sola-vault-ask".into())
+            .spawn(move || {
+                let answer = proto::call(CLIENT, req);
+                emit(&tx, VaultEvent::Answer(tag, answer));
+            });
+        if let Err(e) = spawned {
+            tracing::error!(error = %e, "vault: could not start a request thread");
         }
     }
 
-    pub fn try_recv(&self) -> Option<VaultEvent> {
-        match self.event_rx.lock().ok()?.try_recv() {
+    pub fn try_recv(&self) -> Option<VaultEvent<A>> {
+        match self.rx.lock().ok()?.try_recv() {
             Ok(ev) => Some(ev),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                tracing::error!("vault: event channel disconnected");
-                None
-            }
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => None,
         }
     }
 }
 
-impl Drop for VaultHandle {
-    fn drop(&mut self) {
-        let _ = self.cmd_tx.send(VaultCmd::Quit);
-    }
-}
-
-fn emit(event_tx: &Sender<VaultEvent>, ev: VaultEvent) {
-    let _ = event_tx.send(ev);
+fn emit<A>(tx: &Sender<VaultEvent<A>>, ev: VaultEvent<A>) -> bool {
+    let sent = tx.send(ev).is_ok();
     crate::chrome_wake::wake();
+    sent
 }
 
-async fn finish_authenticated(
-    svc: &mut VaultService,
-    event_tx: &Sender<VaultEvent>,
-    email: String,
-) {
-    emit(
-        &event_tx,
-        VaultEvent::LoginOk {
-            email: email.clone(),
-        },
-    );
-    // Status before sync so chrome knows unlocked when SyncOk arrives
-    // (match picker requests on SyncOk).
-    emit(&event_tx, VaultEvent::Status(svc.status()));
-    match svc.sync().await {
-        Ok(full) => {
-            emit(&event_tx, VaultEvent::SyncOk { full });
+/// Subscribe, forward events until the daemon goes away, wait, again.
+/// Ends when chrome drops its handle.
+fn events_loop<A>(tx: Sender<VaultEvent<A>>) {
+    let mut up: Option<bool> = None;
+    let mut wait = RETRY_FIRST;
+    loop {
+        match proto::subscribe(CLIENT) {
+            Ok(events) => {
+                wait = RETRY_FIRST;
+                up = Some(true);
+                tracing::info!("vault: subscribed to the daemon");
+                if !emit(&tx, VaultEvent::Connected(true)) {
+                    return;
+                }
+                for ev in events {
+                    if !emit(&tx, VaultEvent::Daemon(ev)) {
+                        return;
+                    }
+                }
+                tracing::info!("vault: the daemon closed its events");
+            }
+            Err(e) => {
+                if up != Some(false) {
+                    tracing::info!(error = %e, "vault: the daemon is not reachable");
+                }
+            }
         }
-        Err(e) => {
-            emit(
-                &event_tx,
-                VaultEvent::SyncFailed {
-                    message: e.to_string(),
-                },
-            );
+        if up != Some(false) {
+            up = Some(false);
+            if !emit(&tx, VaultEvent::Connected(false)) {
+                return;
+            }
         }
-    }
-    emit(&event_tx, VaultEvent::Status(svc.status()));
-}
-
-async fn handle_login_outcome(
-    svc: &mut VaultService,
-    event_tx: &Sender<VaultEvent>,
-    email: String,
-    outcome: LoginOutcome,
-) {
-    match outcome {
-        LoginOutcome::Authenticated { .. } => {
-            finish_authenticated(svc, event_tx, email).await;
-        }
-        LoginOutcome::NeedsTwoFactor {
-            kinds,
-            preferred,
-            email_hint,
-            email_sent,
-        } => {
-            tracing::info!(
-                ?preferred,
-                email_sent,
-                n_kinds = kinds.len(),
-                "vault: login needs second factor"
-            );
-            emit(
-                &event_tx,
-                VaultEvent::LoginNeedsTwoFactor {
-                    email,
-                    kinds,
-                    preferred,
-                    email_hint,
-                    email_sent,
-                },
-            );
-            emit(&event_tx, VaultEvent::Status(svc.status()));
-        }
+        thread::sleep(wait);
+        wait = (wait * 2).min(RETRY_MAX);
     }
 }
 
-async fn worker_loop(mut cmd_rx: UnboundedReceiver<VaultCmd>, event_tx: Sender<VaultEvent>) {
-    let mut svc = VaultService::new();
-    match svc.try_restore().await {
-        Ok(true) => {
-            let email = svc.status().email.clone().unwrap_or_default();
-            emit(&event_tx, VaultEvent::Status(svc.status()));
-            emit(&event_tx, VaultEvent::SessionRestored { email });
-            match svc.sync().await {
-                Ok(full) => emit(&event_tx, VaultEvent::SyncOk { full }),
-                Err(e) => emit(
-                    &event_tx,
-                    VaultEvent::SyncFailed {
-                        message: e.to_string(),
-                    },
+#[cfg(test)]
+mod tests {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::time::Instant;
+
+    use sola_vault_proto::{Envelope, Response, Status};
+
+    use super::*;
+
+    /// A daemon that answers Hello and Status, and on Subscribe pushes
+    /// one ItemsChanged.
+    fn serve(conn: UnixStream) {
+        let mut out = conn.try_clone().unwrap();
+        for line in BufReader::new(conn).lines() {
+            let Ok(line) = line else { return };
+            let env: Envelope<Request> = serde_json::from_str(&line).unwrap();
+            let (reply, then) = match env.body {
+                Request::Hello { version, .. } => (Reply::Hello { version }, None),
+                Request::Status => (
+                    Reply::Status(Status {
+                        signed_in: true,
+                        email: "ana@example.com".into(),
+                        ..Status::default()
+                    }),
+                    None,
                 ),
-            }
-            emit(&event_tx, VaultEvent::Status(svc.status()));
-        }
-        Ok(false) => {
-            emit(&event_tx, VaultEvent::Status(svc.status()));
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "vault: session restore failed");
-            emit(&event_tx, VaultEvent::Status(svc.status()));
-        }
-    }
-    end_refused_session(&mut svc, &event_tx);
-
-    // Sleeps until chrome sends something (no polling).
-    while let Some(cmd) = cmd_rx.recv().await {
-        let quit = matches!(cmd, VaultCmd::Quit);
-        handle_cmd(&mut svc, &event_tx, cmd).await;
-        if quit {
-            break;
-        }
-        end_refused_session(&mut svc, &event_tx);
-    }
-}
-
-/// Bitwarden refused the refresh token: log out and say so, instead of
-/// showing an unlocked vault whose every call fails.
-fn end_refused_session(svc: &mut VaultService, event_tx: &Sender<VaultEvent>) {
-    if !svc.take_session_ended() {
-        return;
-    }
-    svc.logout();
-    emit(event_tx, VaultEvent::LoggedOut);
-    emit(event_tx, VaultEvent::Status(svc.status()));
-    emit(
-        event_tx,
-        VaultEvent::Error {
-            message: VaultError::SessionEnded.to_string(),
-        },
-    );
-}
-
-async fn handle_cmd(svc: &mut VaultService, event_tx: &Sender<VaultEvent>, cmd: VaultCmd) {
-    match cmd {
-        VaultCmd::Quit => {}
-        VaultCmd::VerifyMasterPassword { mut password } => {
-            let res = svc
-                .verify_master_password(&password)
-                .map_err(|e| e.to_string());
-            password.zeroize();
-            emit(event_tx, VaultEvent::MasterPasswordChecked(res));
-        }
-        VaultCmd::Logout => {
-            svc.logout();
-            emit(event_tx, VaultEvent::LoggedOut);
-            emit(event_tx, VaultEvent::Status(svc.status()));
-        }
-        VaultCmd::Login {
-            email,
-            mut password,
-        } => match svc.login(email.clone(), password.clone()).await {
-            Ok(outcome) => {
-                password.zeroize();
-                handle_login_outcome(svc, event_tx, email, outcome).await;
-            }
-            Err(e) => {
-                password.zeroize();
-                let message = e.to_string();
-                tracing::warn!(%message, "vault: login failed");
-                emit(event_tx, VaultEvent::LoginFailed { message });
-                emit(event_tx, VaultEvent::Status(svc.status()));
-            }
-        },
-        VaultCmd::LoginTwoFactor {
-            email,
-            mut password,
-            token,
-            kind,
-        } => {
-            match svc
-                .login_with_two_factor(email.clone(), password.clone(), token, kind)
-                .await
-            {
-                Ok(outcome) => {
-                    password.zeroize();
-                    handle_login_outcome(svc, event_tx, email, outcome).await;
-                }
-                Err(e) => {
-                    password.zeroize();
-                    tracing::warn!(error = %e, "vault: 2FA login failed");
-                    emit(
-                        event_tx,
-                        VaultEvent::LoginFailed {
-                            message: e.to_string(),
-                        },
-                    );
-                    emit(event_tx, VaultEvent::Status(svc.status()));
-                }
-            }
-        }
-        VaultCmd::ResendEmailCode {
-            email,
-            mut password,
-            kind,
-        } => match svc.resend_otp(email, password.clone(), kind).await {
-            Ok(()) => {
-                password.zeroize();
-                tracing::info!(?kind, "vault: OTP resend ok");
-                emit(event_tx, VaultEvent::EmailCodeSent);
-            }
-            Err(e) => {
-                password.zeroize();
-                tracing::warn!(?kind, error = %e, "vault: OTP resend failed");
-                emit(
-                    event_tx,
-                    VaultEvent::EmailCodeFailed {
-                        message: e.to_string(),
-                    },
-                );
-            }
-        },
-        VaultCmd::Sync => match svc.sync().await {
-            Ok(full) => {
-                emit(event_tx, VaultEvent::SyncOk { full });
-                emit(event_tx, VaultEvent::Status(svc.status()));
-            }
-            Err(e) => {
-                emit(
-                    event_tx,
-                    VaultEvent::SyncFailed {
-                        message: e.to_string(),
-                    },
-                );
-            }
-        },
-        VaultCmd::Matches { url } => match svc.matches_for_url(&url).await {
-            Ok(m) => {
-                emit(event_tx, VaultEvent::Matches(m));
-            }
-            Err(e) => {
-                emit(
-                    event_tx,
-                    VaultEvent::Error {
-                        message: e.to_string(),
-                    },
-                );
-            }
-        },
-        VaultCmd::CreateLogin {
-            name,
-            username,
-            mut password,
-            uri,
-        } => {
-            let user = if username.trim().is_empty() {
-                None
-            } else {
-                Some(username)
+                Request::Subscribe => (
+                    Reply::Done,
+                    Some(Event::ItemsChanged {
+                        ids: vec!["x".into()],
+                    }),
+                ),
+                _ => (Reply::Done, None),
             };
-            let pass = if password.trim().is_empty() {
-                None
-            } else {
-                Some(password.clone())
+            let answer = Envelope {
+                id: env.id,
+                body: Response::Ok(reply),
             };
-            match svc
-                .create_login(name, user, pass, Some(uri).filter(|s| !s.trim().is_empty()))
-                .await
-            {
-                Ok((id, mut material)) => {
-                    if let Some(ref id) = id {
-                        crate::vault::VaultPrefs::touch_cipher(id);
-                    }
-                    if let Some(ref u) = material.username {
-                        crate::vault::VaultPrefs::save_last_username(u);
-                    }
-                    let username = material.username.take();
-                    let password = material.password.take();
-                    tracing::info!(id = id.as_deref(), "vault: created login");
-                    emit(
-                        event_tx,
-                        VaultEvent::Created {
-                            id,
-                            username,
-                            password,
-                        },
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "vault: create login failed");
-                    emit(
-                        event_tx,
-                        VaultEvent::Error {
-                            message: e.to_string(),
-                        },
-                    );
-                }
-            }
-            password.zeroize();
-        }
-        VaultCmd::FillTotp { id } => match svc.fill_totp(&id).await {
-            Ok(code) => {
-                crate::vault::VaultPrefs::touch_cipher(&id);
-                emit(event_tx, VaultEvent::TotpFillReady { code });
-            }
-            Err(e) => {
-                emit(
-                    event_tx,
-                    VaultEvent::Error {
-                        message: e.to_string(),
-                    },
-                );
-            }
-        },
-        VaultCmd::FillCard { id } => match svc.fill_card(&id).await {
-            Ok(mut material) => {
-                crate::vault::VaultPrefs::touch_cipher(&id);
-                let cardholder_name = material.cardholder_name.take();
-                let number = material.number.take();
-                let exp_month = material.exp_month.take();
-                let exp_year = material.exp_year.take();
-                let code = material.code.take();
-                let brand = material.brand.take();
-                emit(
-                    event_tx,
-                    VaultEvent::CardFillReady {
-                        cardholder_name,
-                        number,
-                        exp_month,
-                        exp_year,
-                        code,
-                        brand,
-                    },
-                );
-            }
-            Err(e) => {
-                emit(
-                    event_tx,
-                    VaultEvent::Error {
-                        message: e.to_string(),
-                    },
-                );
-            }
-        },
-        VaultCmd::ListItems { url } => match svc.list_items(&url).await {
-            Ok((list, unreadable)) => emit(event_tx, VaultEvent::Items { list, unreadable }),
-            Err(e) => emit(
-                event_tx,
-                VaultEvent::Error {
-                    message: e.to_string(),
-                },
-            ),
-        },
-        VaultCmd::GetItem { id } => match svc.get_item(&id).await {
-            Ok(item) => emit(event_tx, VaultEvent::ItemReady(item)),
-            Err(e) => emit(
-                event_tx,
-                VaultEvent::Error {
-                    message: e.to_string(),
-                },
-            ),
-        },
-        VaultCmd::UpdateItem { draft } => {
-            let id = draft.id.clone();
-            match svc.update_item(draft).await {
-                Ok(item) => {
-                    crate::vault::VaultPrefs::touch_cipher(&id);
-                    tracing::info!(%id, "vault: item updated");
-                    emit(event_tx, VaultEvent::ItemUpdated(item));
-                }
-                Err(e) => {
-                    tracing::warn!(%id, error = %e, "vault: update item failed");
-                    emit(
-                        event_tx,
-                        VaultEvent::Error {
-                            message: e.to_string(),
-                        },
-                    );
-                }
+            writeln!(out, "{}", serde_json::to_string(&answer).unwrap()).unwrap();
+            if let Some(ev) = then {
+                writeln!(out, "{}", serde_json::to_string(&ev).unwrap()).unwrap();
             }
         }
-        VaultCmd::FillIdentity { id } => match svc.fill_identity(&id).await {
-            Ok(material) => {
-                crate::vault::VaultPrefs::touch_cipher(&id);
-                emit(event_tx, VaultEvent::IdentityFillReady(material));
+    }
+
+    #[test]
+    fn asks_the_daemon_and_hears_its_events() {
+        let dir = std::env::temp_dir().join(format!("sola-vault-worker-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // SAFETY: no other test in this crate reads XDG_RUNTIME_DIR.
+        unsafe { std::env::set_var("XDG_RUNTIME_DIR", &dir) };
+        let socket = proto::socket_path();
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).unwrap();
+        thread::spawn(move || {
+            for conn in listener.incoming().flatten() {
+                thread::spawn(move || serve(conn));
             }
-            Err(e) => emit(
-                event_tx,
-                VaultEvent::Error {
-                    message: e.to_string(),
-                },
-            ),
-        },
-        VaultCmd::Fill { id } => match svc.fill_fields(&id).await {
-            Ok(mut material) => {
-                crate::vault::VaultPrefs::touch_cipher(&id);
-                if let Some(ref u) = material.username {
-                    crate::vault::VaultPrefs::save_last_username(u);
+        });
+
+        let vault: VaultHandle<u32> = VaultHandle::spawn();
+        vault.ask(7, Request::Status);
+        let (mut connected, mut changed, mut answered) = (false, false, false);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !(connected && changed && answered) && Instant::now() < deadline {
+            match vault.try_recv() {
+                Some(VaultEvent::Connected(true)) => connected = true,
+                Some(VaultEvent::Daemon(Event::ItemsChanged { ids })) => {
+                    changed = ids == ["x"];
                 }
-                let username = material.username.take();
-                let password = material.password.take();
-                let uris = std::mem::take(&mut material.uris);
-                emit(
-                    event_tx,
-                    VaultEvent::FillReady {
-                        username,
-                        password,
-                        uris,
-                    },
-                );
-            }
-            Err(e) => {
-                emit(
-                    event_tx,
-                    VaultEvent::Error {
-                        message: e.to_string(),
-                    },
-                );
-            }
-        },
-        VaultCmd::PasskeyList {
-            req_id,
-            rp_id,
-            public_key_json,
-        } => {
-            match super::passkey::list_candidates(svc, &rp_id, &public_key_json).await {
-                Ok(candidates) => {
-                    tracing::info!(
-                        req_id,
-                        %rp_id,
-                        n = candidates.len(),
-                        "vault: passkey candidates"
-                    );
-                    emit(
-                        event_tx,
-                        VaultEvent::PasskeyCandidates { req_id, candidates },
-                    );
+                Some(VaultEvent::Answer(7, Ok(Reply::Status(s)))) => {
+                    answered = s.signed_in && s.email == "ana@example.com";
                 }
-                Err(e) => {
-                    tracing::warn!(req_id, error = %e, "vault: passkey list failed");
-                    emit(
-                        event_tx,
-                        VaultEvent::PasskeyReady {
-                            req_id,
-                            ok: false,
-                            payload: e.to_string(),
-                        },
-                    );
-                }
+                Some(other) => panic!("unexpected {other:?}"),
+                None => thread::sleep(Duration::from_millis(10)),
             }
         }
-        VaultCmd::PasskeyAssert {
-            req_id,
-            origin,
-            public_key_json,
-            cipher_id,
-        } => {
-            match super::passkey::authenticate(
-                &svc,
-                &origin,
-                &public_key_json,
-                Some(cipher_id.clone()),
-            )
-            .await
-            {
-                Ok(assertion) => {
-                    crate::vault::VaultPrefs::touch_cipher(&cipher_id);
-                    let payload = serde_json::to_string(&assertion)
-                        .unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
-                    tracing::info!(req_id, %origin, %cipher_id, "vault: passkey assertion ok");
-                    emit(
-                        event_tx,
-                        VaultEvent::PasskeyReady {
-                            req_id,
-                            ok: true,
-                            payload,
-                        },
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(req_id, error = %e, "vault: passkey assertion failed");
-                    emit(
-                        event_tx,
-                        VaultEvent::PasskeyReady {
-                            req_id,
-                            ok: false,
-                            payload: e.to_string(),
-                        },
-                    );
-                }
-            }
-        }
-        VaultCmd::PasskeyRegister {
-            req_id,
-            origin,
-            public_key_json,
-            cipher_id,
-        } => {
-            match super::passkey::register(svc, &origin, &public_key_json, cipher_id.clone())
-                .await
-            {
-                Ok((attestation, ctx)) => match svc.persist_encryption_context(ctx).await {
-                    Ok(id) => {
-                        if let Some(ref id) = id {
-                            crate::vault::VaultPrefs::touch_cipher(id);
-                        }
-                        let payload = serde_json::to_string(&attestation)
-                            .unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
-                        tracing::info!(
-                            req_id,
-                            %origin,
-                            cipher_id = id.as_deref().unwrap_or("-"),
-                            attached = cipher_id.is_some(),
-                            "vault: passkey register ok"
-                        );
-                        emit(
-                            event_tx,
-                            VaultEvent::PasskeyReady {
-                                req_id,
-                                ok: true,
-                                payload,
-                            },
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            req_id,
-                            error = %e,
-                            "vault: passkey register persist failed"
-                        );
-                        emit(
-                            event_tx,
-                            VaultEvent::PasskeyReady {
-                                req_id,
-                                ok: false,
-                                payload: format!(
-                                    "Could not save the passkey to Bitwarden: {e}"
-                                ),
-                            },
-                        );
-                    }
-                },
-                Err(e) => {
-                    tracing::warn!(req_id, error = %e, "vault: passkey register failed");
-                    emit(
-                        event_tx,
-                        VaultEvent::PasskeyReady {
-                            req_id,
-                            ok: false,
-                            payload: e.to_string(),
-                        },
-                    );
-                }
-            }
-        }
+        let _ = std::fs::remove_file(&socket);
+        let _ = std::fs::remove_dir(&dir);
+        assert!(connected && changed && answered, "{connected} {changed} {answered}");
     }
 }

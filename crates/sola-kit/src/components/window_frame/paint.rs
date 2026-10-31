@@ -7,7 +7,7 @@ use iced::{Background, Border, Color, Rectangle, Theme};
 
 use super::RADIUS;
 use crate::components::float_clip;
-use crate::components::style::{alpha, lift_in_hue, mix_white};
+use crate::components::style::{alpha, lift_in_hue};
 
 /// Classic close light (`#FF5F57`), lit only on the focused window.
 pub(crate) const CLOSE_RED: Color = Color::from_rgb(1.0, 0.372_5, 0.341_2);
@@ -40,6 +40,7 @@ pub(super) fn colors(theme: &Theme, focused: bool) -> Colors {
     let ink = p.background.base.text;
     let ink_dim = alpha(ink, 0.55);
     let ink_faint = alpha(ink, 0.38);
+    let sheet = crate::components::menu_sheet::colors(theme);
     Colors {
         face,
         bar: if focused {
@@ -74,10 +75,10 @@ pub(super) fn colors(theme: &Theme, focused: bool) -> Colors {
         } else {
             alpha(Color::WHITE, 0.2)
         },
-        sheet: raised,
-        sheet_edge: mix_white(raised, 0.1),
-        hot: alpha(p.primary.base.color, 0.14),
-        sep: alpha(Color::WHITE, 0.07),
+        sheet: sheet.sheet,
+        sheet_edge: sheet.edge,
+        hot: sheet.hot,
+        sep: sheet.sep,
     }
 }
 

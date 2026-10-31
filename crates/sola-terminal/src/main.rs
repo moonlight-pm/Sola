@@ -24,7 +24,7 @@ use sola_kit::fonts;
 use sola_kit::tabs::TabWindows;
 use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
 
-use sola_terminal::{emulator, extkeys, input, links, perf, pty, state, term_view, tmux};
+use sola_terminal::{desk, emulator, extkeys, input, links, perf, pty, state, term_view, tmux};
 
 mod instance;
 mod menu;
@@ -175,6 +175,8 @@ struct App {
     /// folded here and flushed at [`WHEEL_MIN_INTERVAL`] so TUIs don't full-
     /// repaint on every iced wheel sample.
     wheel_burst: HashMap<String, WheelBurst>,
+    /// The desk menu open on a pane.
+    desk: desk::PaneMenu,
 }
 
 /// Accumulated mouse-mode wheel reports awaiting a paced flush.
@@ -235,6 +237,16 @@ enum Msg {
     TitleDrag(window::Id),
     TitleResize(window::Id, window::Direction),
     TitleClose(window::Id),
+    /// A right-click on a pane (PaneId, the point in its window): the desk
+    /// menu.
+    DeskMenu(String, iced::Point),
+    /// The desk menu's Paste: the clipboard's text for the pane.
+    DeskPaste(String, Option<String>),
+    /// A vault value redeemed for the pane: typed into its session.
+    DeskInsert(
+        String,
+        Result<sola_kit::desk_menu::Secret, sola_kit::desk_menu::VaultError>,
+    ),
 }
 
 /// Full topic set once the iced bus pump can receive sticky replay.
@@ -281,6 +293,7 @@ impl App {
             keys_held_mods: keyboard::Modifiers::empty(),
             float: sola_kit::FloatState::new(APP_ID),
             wheel_burst: HashMap::new(),
+            desk: desk::PaneMenu::default(),
         };
         // After the first update the bus subscription is live; expand to
         // session topics so sticky replay is not dropped.
@@ -351,12 +364,14 @@ impl App {
             Msg::SubscribeSessions => {
                 // Expand kinds for reconnect too (kit only remembers the
                 // last set for bus restart recovery).
-                sola_kit::app::set_bus_kinds(SESSION_TOPICS);
+                // With the kit's own kinds (the desk menu's picks).
+                let kinds = sola_kit::app::with_kit_kinds(SESSION_TOPICS);
+                sola_kit::app::set_bus_kinds(kinds);
                 // Stickies replay synchronously on subscribe. Anything
                 // arriving after this window is not our last run's.
                 self.startup_replay_until = Instant::now() + Duration::from_secs(2);
                 if let Ok(mut client) = bus().lock() {
-                    if let Err(e) = client.subscribe(SESSION_TOPICS) {
+                    if let Err(e) = client.subscribe(kinds) {
                         tracing::warn!("SubscribeSessions failed: {e}");
                     } else {
                         tracing::info!("subscribed TerminalSession (sticky tab replay)");
@@ -439,6 +454,32 @@ impl App {
             Msg::WheelToPty(pane, bytes) => self.on_wheel_to_pty(pane, bytes),
             Msg::FlushWheel(pane) => self.flush_wheel(&pane),
             Msg::Pasted(text) => self.on_pasted(text),
+            Msg::DeskMenu(pane, at) => {
+                let task = self.update(Msg::PaneFocused(pane.clone()));
+                if let Some(rt) = self.tabs.pane_runtime(&pane) {
+                    self.desk.open(&pane, at, &rt.emulator.term());
+                }
+                task
+            }
+            Msg::DeskPaste(pane, text) => {
+                if let (Some(text), Some(rt)) = (text, self.tabs.pane_runtime(&pane)) {
+                    let mode = { *rt.emulator.term().lock().mode() };
+                    rt.backend.write(&input::paste(&text, mode));
+                }
+                Task::none()
+            }
+            Msg::DeskInsert(pane, value) => {
+                match (value, self.tabs.pane_runtime(&pane)) {
+                    // As typed, not a bracketed paste: a password prompt
+                    // takes keys.
+                    (Ok(value), Some(rt)) => rt.backend.write(value.as_str().as_bytes()),
+                    (Ok(_), None) => tracing::warn!(%pane, "desk menu: the pane went away"),
+                    (Err(e), _) => {
+                        tracing::warn!(%pane, code = ?e.code, "desk menu: the vault value did not come")
+                    }
+                }
+                Task::none()
+            }
             Msg::SplitDividerPress(split_id) => {
                 self.dragging_split = Some(split_id);
                 Task::none()
@@ -626,6 +667,10 @@ impl App {
                     on_wheel_pty: Box::new({
                         let pid = pane_id.to_string();
                         move |bytes| Msg::WheelToPty(pid.clone(), bytes)
+                    }),
+                    on_desk_menu: Box::new({
+                        let pid = pane_id.to_string();
+                        move |at| Msg::DeskMenu(pid.clone(), at)
                     }),
                 };
                 canvas(view).width(Length::Fill).height(Length::Fill).into()
@@ -1104,6 +1149,11 @@ impl App {
             return iced::exit();
         }
 
+        // The desk menu's answer for a pane.
+        if let Some((pane, pick)) = self.desk.answer(m) {
+            return self.on_desk_pick(pane, pick);
+        }
+
         // 3. Dispatch by topic.
         match Topic::parse(m) {
             Some(Topic::TerminalSession(s)) => {
@@ -1506,6 +1556,28 @@ impl App {
             self.persist_tab(&tab_id);
         }
         Task::none()
+    }
+
+    /// What was picked in a pane's desk menu.
+    fn on_desk_pick(&mut self, pane: String, pick: sola_kit::desk_menu::DeskPick) -> Task<Msg> {
+        use sola_kit::desk_menu::{self as desk_menu, DeskPick};
+        match pick {
+            DeskPick::Action(id) if id == desk::COPY => {
+                let Some(rt) = self.tabs.pane_runtime(&pane) else {
+                    return Task::none();
+                };
+                match rt.emulator.term().lock().selection_to_string() {
+                    Some(s) if !s.is_empty() => desk_menu::copy(s),
+                    _ => Task::none(),
+                }
+            }
+            DeskPick::Action(id) if id == desk::PASTE => {
+                desk_menu::paste_task().map(move |text| Msg::DeskPaste(pane.clone(), text))
+            }
+            DeskPick::VaultInsert { ticket } => desk_menu::redeem_task(ticket)
+                .map(move |value| Msg::DeskInsert(pane.clone(), value)),
+            _ => Task::none(),
+        }
     }
 
     /// Handle a menu action (also the path for shortcuts — click and chord

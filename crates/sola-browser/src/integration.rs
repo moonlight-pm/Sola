@@ -87,6 +87,8 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::OutputGeometry,
     // Light or dark for the pages (`Appearance.light`).
     TopicKind::Appearance,
+    // What was picked in a page's right-click menu (the shell draws it).
+    TopicKind::DeskMenuPick,
 ];
 
 /// The "Browser" app-menu published to the shell at startup. Each entry is
@@ -316,6 +318,10 @@ pub fn handle_bus<E: Engine>(
             }
             Task::none()
         }
+        Some(Topic::DeskMenuPick(_)) => match sola_kit::desk_menu::pick_of(&message) {
+            Some(pick) => app.on_desk_pick(pick),
+            None => Task::none(),
+        },
         Some(Topic::NotificationActivate(a)) if a.app_id == app_id => {
             if let Some(id) = a.tab_id {
                 let tid = crate::engine::TabId(id);

@@ -16,28 +16,13 @@ path = "src/main.rs"
 path = "src/lib.rs"
 
 [features]
-default = ["bitwarden"]
-# First-party Bitwarden PM client (sdk-internal). Official cloud + chrome login.
-bitwarden = [
-    "dep:bitwarden-pm",
-    "dep:bitwarden-core",
-    "dep:bitwarden-vault",
-    "dep:bitwarden-sync",
-    "dep:bitwarden-state",
-    "dep:bitwarden-api-api",
-    "dep:bitwarden-crypto",
-    "dep:bitwarden-crypto-sync-handler",
-    "dep:bitwarden-fido",
-    "dep:async-trait",
-    "dep:thiserror",
+default = ["vault"]
+# The vault's client: the panel, page fill and passkeys, asking
+# sola-vaultd on its socket. No Bitwarden SDK in the browser.
+vault = [
+    "dep:sola-vault-proto",
     "dep:zeroize",
     "dep:url",
-    "dep:serde_qs",
-    "dep:sha2",
-    "dep:getrandom",
-    "dep:chrono",
-    "dep:hmac",
-    "dep:sha1",
     "dep:public-suffix",
     "dep:regex",
 ]
@@ -67,30 +52,14 @@ wgpu = { version = "27", features = ["vulkan-portability"] }
 # Do NOT enable `accelerated_osr`.
 cef = "156.2.0"
 
-# Bitwarden Password Manager SDK (internal; pin rev). License ignored for dogfood.
-bitwarden-pm = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
-bitwarden-core = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", features = ["internal"], optional = true }
-bitwarden-vault = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
-bitwarden-sync = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
-bitwarden-state = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
-bitwarden-api-api = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
-bitwarden-crypto = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
-bitwarden-crypto-sync-handler = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
-bitwarden-fido = { git = "https://github.com/bitwarden/sdk-internal", rev = "2c940917dca13c62640709f5584f069ccb6369e6", optional = true }
-async-trait = { version = "0.1", optional = true }
-thiserror = { version = "2", optional = true }
+# The vault's socket protocol (types, requests, a blocking client).
+sola-vault-proto = { path = "../sola-vault-proto", optional = true }
 zeroize = { version = "1", optional = true }
 url = { version = "2", optional = true }
-# Page images for Use as Desktop Background (and the vault's API calls).
+# Page images for Use as Desktop Background.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-serde_qs = { version = "0.13", optional = true }
-sha2 = { version = "0.10", optional = true }
-getrandom = { version = "0.2", optional = true }
-chrono = { version = "0.4", optional = true }
-hmac = { version = "0.12", optional = true }
-sha1 = { version = "0.10", optional = true }
-# Vault URI matching: the public suffix list passkey-rs already ships (same
-# rev as bitwarden-fido's), and the linear-time regex for stored patterns.
+# Vault URI matching (which frames a fill reaches): the public suffix list
+# passkey-rs ships, and the linear-time regex for stored patterns.
 public-suffix = { git = "https://github.com/bitwarden/passkey-rs", rev = "043279e92e2eb5f509bf87eb7fa50987fd377e32", optional = true }
 regex = { version = "1", optional = true }
 

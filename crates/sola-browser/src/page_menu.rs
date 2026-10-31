@@ -1,47 +1,103 @@
-//! Pure builders for the page context menu and back/forward history list.
+//! Pure builders for the page's right-click menu — the desk menu the
+//! shell draws (`docs/specs/2026-10-31-sola-vault-design.md`) — and the
+//! back/forward history list.
+//!
+//! The page supplies its own rows (link, picture, navigation, the
+//! inspector), which Edit rows apply, and what was clicked; the shell adds
+//! Edit and the vault's rows and sends back the pick.
+
+use sola_bus::topics::{DeskEdit, DeskMenuContext, DeskMenuItem};
+use sola_core::{KeyChord, KeyCode};
 
 use crate::engine::{HistoryEntry, PageContext};
 use crate::util;
 
-/// One row in the page (right-click) menu.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The ids the page's rows go out with and come back by.
+pub mod ids {
+    pub const BACKGROUND: &str = "page.background";
+    pub const OPEN_LINK: &str = "page.open-link";
+    pub const COPY_LINK: &str = "page.copy-link";
+    pub const BACK: &str = "page.back";
+    pub const FORWARD: &str = "page.forward";
+    pub const RELOAD: &str = "page.reload";
+    pub const INSPECT: &str = "page.inspect";
+    pub const DEVTOOLS: &str = "page.devtools";
+    pub const WRAP: &str = "page.wrap";
+}
+
+/// One of the page's own rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageMenuKind {
     /// A picture: make it the desktop's background.
     UseAsBackground,
     OpenLink,
     CopyLink,
-    Copy,
-    Cut,
-    Paste,
     Back,
     Forward,
     Reload,
-    DevTools,
     InspectElement,
+    DevTools,
+    /// The page becomes its own app.
+    Wrap,
     Separator,
 }
 
-/// Browser-standard page menu: link / selection / edit, then nav.
-pub fn page_menu_kinds(ctx: &PageContext) -> Vec<PageMenuKind> {
+impl PageMenuKind {
+    /// The row's id and label (`None` for a separator).
+    pub fn id_label(self) -> Option<(&'static str, &'static str)> {
+        Some(match self {
+            Self::UseAsBackground => (ids::BACKGROUND, "Use as Desktop Background"),
+            Self::OpenLink => (ids::OPEN_LINK, "Open Link in New Window"),
+            Self::CopyLink => (ids::COPY_LINK, "Copy Link"),
+            Self::Back => (ids::BACK, "Back"),
+            Self::Forward => (ids::FORWARD, "Forward"),
+            Self::Reload => (ids::RELOAD, "Reload"),
+            Self::InspectElement => (ids::INSPECT, "Inspect Element"),
+            Self::DevTools => (ids::DEVTOOLS, "Developer Tools"),
+            Self::Wrap => (ids::WRAP, "Wrap This Page…"),
+            Self::Separator => return None,
+        })
+    }
+
+    /// The row a pick names.
+    pub fn from_id(id: &str) -> Option<Self> {
+        [
+            Self::UseAsBackground,
+            Self::OpenLink,
+            Self::CopyLink,
+            Self::Back,
+            Self::Forward,
+            Self::Reload,
+            Self::InspectElement,
+            Self::DevTools,
+            Self::Wrap,
+        ]
+        .into_iter()
+        .find(|k| k.id_label().is_some_and(|(i, _)| i == id))
+    }
+
+    /// The key the browser's own menu gives the same action.
+    fn shortcut(self) -> Option<KeyChord> {
+        match self {
+            Self::Back => Some(KeyCode::LEFT.meta()),
+            Self::Forward => Some(KeyCode::RIGHT.meta()),
+            Self::Reload => Some(KeyCode::R.meta()),
+            Self::DevTools => Some(KeyCode::I.meta().alt()),
+            _ => None,
+        }
+    }
+}
+
+/// The page's rows: picture, link, then navigation and the inspector.
+/// Cut, Copy and Paste are the shell's Edit rows ([`desk_edit`]).
+pub fn page_menu_kinds(ctx: &PageContext, wrappable: bool) -> Vec<PageMenuKind> {
     let mut rows = Vec::new();
-    let has_link = ctx.link_url.as_deref().is_some_and(|u| !u.is_empty());
     if ctx.image && ctx.src_url.as_deref().is_some_and(|u| !u.is_empty()) {
         rows.push(PageMenuKind::UseAsBackground);
-        rows.push(PageMenuKind::Separator);
     }
-    let has_sel = ctx.selection.as_deref().is_some_and(|s| !s.is_empty());
-    if has_link {
+    if ctx.link_url.as_deref().is_some_and(|u| !u.is_empty()) {
         rows.push(PageMenuKind::OpenLink);
         rows.push(PageMenuKind::CopyLink);
-    }
-    if ctx.editable {
-        if has_sel {
-            rows.push(PageMenuKind::Cut);
-            rows.push(PageMenuKind::Copy);
-        }
-        rows.push(PageMenuKind::Paste);
-    } else if has_sel {
-        rows.push(PageMenuKind::Copy);
     }
     if !rows.is_empty() {
         rows.push(PageMenuKind::Separator);
@@ -50,9 +106,96 @@ pub fn page_menu_kinds(ctx: &PageContext) -> Vec<PageMenuKind> {
     rows.push(PageMenuKind::Forward);
     rows.push(PageMenuKind::Reload);
     rows.push(PageMenuKind::Separator);
-    rows.push(PageMenuKind::DevTools);
     rows.push(PageMenuKind::InspectElement);
+    rows.push(PageMenuKind::DevTools);
+    if wrappable {
+        rows.push(PageMenuKind::Separator);
+        rows.push(PageMenuKind::Wrap);
+    }
     rows
+}
+
+/// The page's rows as the desk menu carries them.
+pub fn desk_items(ctx: &PageContext, wrappable: bool) -> Vec<DeskMenuItem> {
+    page_menu_kinds(ctx, wrappable)
+        .into_iter()
+        .map(|kind| match kind.id_label() {
+            None => DeskMenuItem::Separator,
+            Some((id, label)) => DeskMenuItem::Action {
+                id: id.into(),
+                label: label.into(),
+                shortcut: kind.shortcut(),
+                enabled: match kind {
+                    PageMenuKind::Back => ctx.can_go_back,
+                    PageMenuKind::Forward => ctx.can_go_forward,
+                    _ => true,
+                },
+            },
+        })
+        .collect()
+}
+
+fn has_selection(ctx: &PageContext) -> bool {
+    ctx.selection.as_deref().is_some_and(|s| !s.is_empty())
+}
+
+/// The Edit rows that apply where the click landed: Cut only with a
+/// selection in a field, Paste and Select All only in a field, and no
+/// Cut or Copy out of a password field.
+pub fn desk_edit(ctx: &PageContext) -> Vec<DeskEdit> {
+    let sel = has_selection(ctx) && !ctx.secret;
+    let mut edit = Vec::new();
+    if ctx.editable && sel {
+        edit.push(DeskEdit::Cut);
+    }
+    if sel {
+        edit.push(DeskEdit::Copy);
+    }
+    if ctx.editable {
+        edit.push(DeskEdit::Paste);
+        edit.push(DeskEdit::SelectAll);
+    }
+    edit
+}
+
+/// What was clicked, for the shell (never the text): `site` is the
+/// page's address, for the vault's logins.
+pub fn desk_context(ctx: &PageContext, secret: bool, site: Option<String>) -> DeskMenuContext {
+    DeskMenuContext {
+        editable: ctx.editable,
+        secret: ctx.editable && secret,
+        selection: has_selection(ctx),
+        site,
+    }
+}
+
+/// A password field, as far as the context menu tells: CEF gives no
+/// field type, but Chromium neither copies from a password field nor
+/// shows its text — a selection there reads as bullets and offers no
+/// Copy. Without a selection there is no telling (`false`).
+pub fn looks_secret(editable: bool, selection: Option<&str>, can_copy: bool) -> bool {
+    let Some(sel) = selection.filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    editable && (!can_copy || sel.chars().all(|c| matches!(c, '•' | '●')))
+}
+
+/// A page's host, for a log line (never its path or query).
+pub fn menu_host(url: &str) -> &str {
+    let rest = url.split_once("://").map_or("", |(_, r)| r);
+    let auth = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+    auth.rsplit_once('@').map_or(auth, |(_, h)| h)
+}
+
+/// The page's address as the desk menu may carry it: scheme, host and
+/// path — no query or fragment (they hold one-time codes); `None` for a
+/// page with no web address.
+pub fn menu_site(url: &str) -> Option<String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return None;
+    }
+    let end = url.find(['?', '#']).unwrap_or(url.len());
+    Some(url[..end].to_string())
 }
 
 /// History entries on one side of the current page, closest first.
@@ -193,68 +336,129 @@ mod tests {
         }
     }
 
-    #[test]
-    fn page_menu_plain_has_nav() {
-        let rows = page_menu_kinds(&ctx());
-        assert_eq!(
-            rows,
-            vec![
-                PageMenuKind::Back,
-                PageMenuKind::Forward,
-                PageMenuKind::Reload,
-                PageMenuKind::Separator,
-                PageMenuKind::DevTools,
-                PageMenuKind::InspectElement,
-            ]
-        );
+    fn kinds(rows: &[DeskMenuItem]) -> Vec<String> {
+        rows.iter()
+            .map(|r| match r {
+                DeskMenuItem::Action { id, .. } => id.clone(),
+                DeskMenuItem::Separator => "-".into(),
+                DeskMenuItem::Submenu { label, .. } => label.clone(),
+            })
+            .collect()
     }
 
     #[test]
-    fn page_menu_link_and_selection() {
-        let rows = page_menu_kinds(&PageContext {
+    fn a_plain_page_has_navigation_and_the_inspector() {
+        let rows = desk_items(&ctx(), false);
+        assert_eq!(
+            kinds(&rows),
+            [ids::BACK, ids::FORWARD, ids::RELOAD, "-", ids::INSPECT, ids::DEVTOOLS]
+        );
+        // No history: Back and Forward are there, greyed.
+        assert!(matches!(&rows[0], DeskMenuItem::Action { enabled: false, .. }));
+        assert!(desk_edit(&ctx()).is_empty());
+    }
+
+    #[test]
+    fn a_link_with_a_selection() {
+        let c = PageContext {
             link_url: Some("https://ex/a".into()),
             selection: Some("hi".into()),
+            can_go_back: true,
             ..ctx()
-        });
+        };
+        let rows = desk_items(&c, true);
         assert_eq!(
-            rows,
-            vec![
-                PageMenuKind::OpenLink,
-                PageMenuKind::CopyLink,
-                PageMenuKind::Copy,
-                PageMenuKind::Separator,
-                PageMenuKind::Back,
-                PageMenuKind::Forward,
-                PageMenuKind::Reload,
-                PageMenuKind::Separator,
-                PageMenuKind::DevTools,
-                PageMenuKind::InspectElement,
+            kinds(&rows),
+            [
+                ids::OPEN_LINK,
+                ids::COPY_LINK,
+                "-",
+                ids::BACK,
+                ids::FORWARD,
+                ids::RELOAD,
+                "-",
+                ids::INSPECT,
+                ids::DEVTOOLS,
+                "-",
+                ids::WRAP
             ]
         );
+        assert!(matches!(&rows[3], DeskMenuItem::Action { enabled: true, .. }));
+        // Copy only: not in a field.
+        assert_eq!(desk_edit(&c), [DeskEdit::Copy]);
     }
 
     #[test]
     fn a_picture_offers_the_desktop_background_first() {
-        let rows = page_menu_kinds(&PageContext {
-            image: true,
-            src_url: Some("https://ex/a.jpg".into()),
-            link_url: Some("https://ex/big.jpg".into()),
-            ..ctx()
-        });
-        assert_eq!(&rows[..3], &[PageMenuKind::UseAsBackground, PageMenuKind::Separator, PageMenuKind::OpenLink]);
+        let rows = page_menu_kinds(
+            &PageContext {
+                image: true,
+                src_url: Some("https://ex/a.jpg".into()),
+                link_url: Some("https://ex/big.jpg".into()),
+                ..ctx()
+            },
+            false,
+        );
+        assert_eq!(&rows[..2], &[PageMenuKind::UseAsBackground, PageMenuKind::OpenLink]);
         // No source (a canvas, a blob it cannot name): no row.
-        let rows = page_menu_kinds(&PageContext { image: true, ..ctx() });
+        let rows = page_menu_kinds(&PageContext { image: true, ..ctx() }, false);
         assert!(!rows.contains(&PageMenuKind::UseAsBackground));
     }
 
     #[test]
-    fn page_menu_editable_without_selection() {
-        let rows = page_menu_kinds(&PageContext {
+    fn edit_rows_follow_the_field() {
+        let field = PageContext {
             editable: true,
             ..ctx()
-        });
-        assert!(rows.contains(&PageMenuKind::Paste));
-        assert!(!rows.contains(&PageMenuKind::Cut));
+        };
+        assert_eq!(desk_edit(&field), [DeskEdit::Paste, DeskEdit::SelectAll]);
+        let selected = PageContext {
+            selection: Some("x".into()),
+            ..field.clone()
+        };
+        assert_eq!(
+            desk_edit(&selected),
+            [DeskEdit::Cut, DeskEdit::Copy, DeskEdit::Paste, DeskEdit::SelectAll]
+        );
+        let c = desk_context(&selected, true, Some("https://a.com/login".into()));
+        assert!(c.editable && c.secret && c.selection);
+        let secret = PageContext {
+            secret: true,
+            ..selected.clone()
+        };
+        assert_eq!(desk_edit(&secret), [DeskEdit::Paste, DeskEdit::SelectAll]);
+        // Secret only means something in a field.
+        assert!(!desk_context(&ctx(), true, None).secret);
+    }
+
+    #[test]
+    fn rows_come_back_by_id() {
+        for k in page_menu_kinds(&PageContext { image: true, src_url: Some("x".into()), link_url: Some("y".into()), ..ctx() }, true) {
+            if let Some((id, _)) = k.id_label() {
+                assert_eq!(PageMenuKind::from_id(id), Some(k));
+            }
+        }
+        assert_eq!(PageMenuKind::from_id("nope"), None);
+    }
+
+    #[test]
+    fn a_password_field_shows_itself_only_with_a_selection() {
+        assert!(looks_secret(true, Some("•••••"), true));
+        assert!(looks_secret(true, Some("hunter2"), false));
+        assert!(!looks_secret(true, Some("hunter2"), true));
+        assert!(!looks_secret(true, None, false));
+        assert!(!looks_secret(false, Some("•••"), false));
+    }
+
+    #[test]
+    fn the_site_leaves_its_query_behind() {
+        assert_eq!(
+            menu_site("https://a.com/cb?code=SECRET#x").as_deref(),
+            Some("https://a.com/cb")
+        );
+        assert_eq!(menu_site("about:blank"), None);
+        assert_eq!(menu_host("https://u:p@a.com:8443/x?y"), "a.com:8443");
+        assert_eq!(menu_host("about:blank"), "");
     }
 
     #[test]

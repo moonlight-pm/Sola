@@ -156,6 +156,10 @@ pub struct PageContext {
     /// Background.
     #[serde(default)]
     pub image: bool,
+    /// The field looks like a password field, as far as CEF lets the
+    /// browser tell ([`crate::page_menu::looks_secret`]).
+    #[serde(default)]
+    pub secret: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
