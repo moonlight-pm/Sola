@@ -1826,8 +1826,8 @@ fn inject_page_scripts(frame: Option<&mut cef::Frame>) {
     {
         // Every frame — Google sign-in (accounts.google.com iframe) and
         // Gemini Exchange 2FA both call WebAuthn off the top-level page.
-        let url = cef_string_userfree_display(&frame.url());
-        tracing::info!(%url, main = frame.is_main() != 0, "webauthn: inject frame");
+        let host = crate::vault::log_host(&cef_string_userfree_display(&frame.url()));
+        tracing::debug!(%host, main = frame.is_main() != 0, "webauthn: inject frame");
         let code: cef::CefString = crate::vault::inject_webauthn_intercept_script().into();
         frame.execute_java_script(Some(&code), None, 0);
     }

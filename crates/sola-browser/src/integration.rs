@@ -41,10 +41,14 @@ pub const ACTION_BACK: &str = "back";
 pub const ACTION_FORWARD: &str = "forward";
 pub const ACTION_QUIT: &str = "quit";
 pub const ACTION_DEVTOOLS: &str = "devtools";
-pub const ACTION_EDIT_CUT: &str = "edit-cut";
-pub const ACTION_EDIT_COPY: &str = "edit-copy";
-pub const ACTION_EDIT_PASTE: &str = "edit-paste";
-pub const ACTION_EDIT_SELECT_ALL: &str = "edit-select-all";
+// Edit ids are the kit's shared ones (`sola_kit::keys::COMMON_ACTIONS`):
+// an app id on a shared key loses the key, and the shell stops grabbing it.
+pub const ACTION_EDIT_UNDO: &str = "undo";
+pub const ACTION_EDIT_REDO: &str = "redo";
+pub const ACTION_EDIT_CUT: &str = "cut";
+pub const ACTION_EDIT_COPY: &str = "copy";
+pub const ACTION_EDIT_PASTE: &str = "paste";
+pub const ACTION_EDIT_SELECT_ALL: &str = "select_all";
 pub const ACTION_FIND: &str = "find";
 pub const ACTION_FIND_NEXT: &str = "find-next";
 pub const ACTION_FIND_PREV: &str = "find-prev";
@@ -107,11 +111,12 @@ pub const MENU_ITEMS: [(&str, &str, KeyChord); 10] = [
 
 /// The "Edit" app-menu published alongside "Browser". Meta-bound so the
 /// shell grabs them globally and routes `Topic::MenuAction` back; the
-/// browser then routes each to the focused surface (web content or URL bar).
-/// Undo/Redo are intentionally omitted — in a browser they only act on the
-/// editable text field that currently has focus, which is too narrow to earn
-/// a top-level menu slot here.
-pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 7] = [
+/// browser then routes each to the focused surface (web content, the URL
+/// bar, the vault panel). The page view swallows a raw ⌘C/X/V/A/Z, so a
+/// key the shell does not grab does nothing. Undo / Redo act on the page.
+pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 9] = [
+    (ACTION_EDIT_UNDO, "Undo", KeyCode::Z.meta()),
+    (ACTION_EDIT_REDO, "Redo", KeyCode::Z.meta_shift()),
     (ACTION_EDIT_CUT, "Cut", KeyCode::X.meta()),
     (ACTION_EDIT_COPY, "Copy", KeyCode::C.meta()),
     (ACTION_EDIT_PASTE, "Paste", KeyCode::V.meta()),
@@ -160,6 +165,20 @@ fn menu_from_items(label: &str, items: &[(&str, &str, KeyChord)]) -> MenuDefinit
             })
             .collect(),
     }
+}
+
+/// Each menu item's id and key, to compare a menu with what the keybinding
+/// rules leave of it.
+#[cfg(test)]
+pub(crate) fn menu_keys(menu: &AppMenuPayload) -> Vec<(String, Option<KeyChord>)> {
+    menu.menus
+        .iter()
+        .flat_map(|m| &m.items)
+        .filter_map(|i| match i {
+            MenuItem::Action { id, shortcut, .. } => Some((id.clone(), *shortcut)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Stable widget id for the chrome URL field, so the `Focus URL` action can
@@ -236,6 +255,8 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_QUIT => BrowserIntent::Quit,
         ACTION_WRAP_PAGE => BrowserIntent::WrapPage,
         ACTION_DEVTOOLS => BrowserIntent::ShowDevTools,
+        ACTION_EDIT_UNDO => BrowserIntent::Edit(EditCmd::Undo),
+        ACTION_EDIT_REDO => BrowserIntent::Edit(EditCmd::Redo),
         ACTION_EDIT_CUT => BrowserIntent::Edit(EditCmd::Cut),
         ACTION_EDIT_COPY => BrowserIntent::Edit(EditCmd::Copy),
         ACTION_EDIT_PASTE => BrowserIntent::Edit(EditCmd::Paste),
@@ -315,7 +336,8 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             Task::none()
         }
         BrowserIntent::NewBlankTab => {
-            app.open_tab(BLANK_URL.to_string(), true);
+            let tab = app.open_tab(BLANK_URL.to_string(), true);
+            app.url_bar_on_focus = Some(tab);
             // Empty the URL bar and move keyboard focus to it so the user can
             // type a URL or search immediately. The blank tab's "about:blank"
             // is suppressed from the field (see `Msg::Tick`); seeding
@@ -494,15 +516,33 @@ mod tests {
             intent_for_menu_action(ACTION_EDIT_SELECT_ALL),
             BrowserIntent::Edit(EditCmd::SelectAll)
         );
+        assert_eq!(
+            intent_for_menu_action(ACTION_EDIT_UNDO),
+            BrowserIntent::Edit(EditCmd::Undo)
+        );
+        assert_eq!(
+            intent_for_menu_action(ACTION_EDIT_REDO),
+            BrowserIntent::Edit(EditCmd::Redo)
+        );
+    }
+
+    /// Every key on the browser's menus survives the keybinding rules: an
+    /// item that clashed with a shared key would lose it, and the shell
+    /// would stop grabbing it (⌘V then reached nothing).
+    #[test]
+    fn menu_keys_survive_the_shared_keys() {
+        let menu = browser_app_menu("sola-browser");
+        assert_eq!(menu_keys(&sola_kit::keys::apply(&menu)), menu_keys(&menu));
     }
 
     #[test]
     fn edit_menu_items_cover_all_actions() {
-        // Undo/Redo are intentionally absent (see EDIT_MENU_ITEMS).
         let ids: Vec<&str> = EDIT_MENU_ITEMS.iter().map(|(id, _, _)| *id).collect();
         assert_eq!(
             ids,
             vec![
+                ACTION_EDIT_UNDO,
+                ACTION_EDIT_REDO,
                 ACTION_EDIT_CUT,
                 ACTION_EDIT_COPY,
                 ACTION_EDIT_PASTE,

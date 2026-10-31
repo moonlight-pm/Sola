@@ -113,10 +113,10 @@ pub fn app_menu(app: &Application) -> AppMenuPayload {
         MenuItem::Divider,
         action(ACTION_QUIT, format!("Quit {}", app.label), Some(KeyCode::Q.meta())),
     ];
-    // Cut, Copy, Paste, Select All: a web app has no find bar.
+    // Undo through Select All: a web app has no find bar.
     let edit = EDIT_MENU_ITEMS
         .iter()
-        .take(4)
+        .take(6)
         .map(|(id, label, chord)| action(id, (*label).into(), Some(*chord)))
         .collect();
     AppMenuPayload {
@@ -679,6 +679,8 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(ids, ["edit-cut", "edit-copy", "edit-paste", "edit-select-all"]);
+        assert_eq!(ids, ["undo", "redo", "cut", "copy", "paste", "select_all"]);
+        let kept = integration::menu_keys(&sola_kit::keys::apply(&menu));
+        assert_eq!(kept, integration::menu_keys(&menu));
     }
 }

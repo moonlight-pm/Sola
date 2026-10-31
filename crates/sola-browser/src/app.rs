@@ -545,6 +545,10 @@ pub struct App<E: Engine> {
     /// typing in the bar; cleared when a press lands in the web view.
     /// Best-effort heuristic — see the design spec's documented edge case.
     pub url_bar_focused: bool,
+    /// A new blank page (⌘T, a launch) whose URL bar takes the keys once
+    /// its window has keyboard focus: the window does not exist yet when
+    /// the page opens, so a focus then lands nowhere.
+    pub(crate) url_bar_on_focus: Option<TabId>,
     /// Ignore the LeftPressed focus query from the click that entered edit.
     url_bar_activating: bool,
     visits: crate::visit_history::VisitHistory,
@@ -757,6 +761,7 @@ impl<E: Engine> App<E> {
             window_id: None,
             app_id,
             url_bar_focused: false,
+            url_bar_on_focus: None,
             url_bar_activating: false,
             visits: crate::visit_history::VisitHistory::load(),
             omnibox_sel: None,
@@ -918,6 +923,7 @@ impl<E: Engine> App<E> {
         } else {
             self.omnibox_sel = None;
             self.omnibox_armed = false;
+            self.url_bar_on_focus = None;
         }
     }
 
@@ -1632,12 +1638,21 @@ impl<E: Engine> App<E> {
         match event {
             WE::Focused => {
                 self.windows.focused = Some(window);
-                if let Some(tab) = self.windows.tab_of(window) {
-                    if tab != self.cached_active {
-                        self.focus_switch = true;
-                        self.switch_active_tab(tab);
-                        self.persist_session();
-                    }
+                let Some(tab) = self.windows.tab_of(window) else {
+                    return Task::none();
+                };
+                if tab != self.cached_active {
+                    self.focus_switch = true;
+                    self.switch_active_tab(tab);
+                    self.persist_session();
+                }
+                if self.url_bar_on_focus == Some(tab) && tab == self.cached_active {
+                    self.url_bar_on_focus = None;
+                    self.set_url_bar_focused(true);
+                    return Task::batch([
+                        crate::integration::focus_url_bar(),
+                        crate::integration::select_url_bar(),
+                    ]);
                 }
                 Task::none()
             }
