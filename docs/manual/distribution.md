@@ -9,8 +9,8 @@ only by applications started after it.
 
 ## The fonts on Oath
 
-`pkg:sola` needs Oath's font packages, so they are present wherever Sola
-is:
+Sola's packages need Oath's font packages, so they are present wherever
+Sola is:
 
 | Package | Families |
 |---------|----------|

@@ -164,6 +164,11 @@ from master or `next`, with the guard; a desk restart is asked for.
    make it); the `pkg:sola-<app>` packages Release B does make.
 5. Sola published the split from master@92815a65 (2026-10-31, from
    novus; `pkg:sola` 7a03048c5a39 and 12 more, entries with their
-   source handed to Oath) → Oath pins it in one commit → Release B (`oath update --confirm --reboot`, Joshua's call).
-   `sola-make` sets `source` with each pin (`oath set --from-json`) —
+   source handed to Oath) → Oath pinned it (c8bb350) → **Release B**
+   (desk output dd0f847aa9c9), published 2026-10-31: canto updated and
+   rebooted into it, novus updated. `svc:sola-sessions` made by hand on
+   each. Found on novus: the publish's `oath build` had left the ten new
+   names `present: false`, which the update would not flip — `oath rm`
+   of the never-applied objects let it make them new.
+6. `sola-make` sets `source` with each pin (`oath set --from-json`) —
    done 2026-10-31, once Release A's `oath` was on every machine.
