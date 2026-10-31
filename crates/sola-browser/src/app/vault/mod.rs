@@ -57,8 +57,6 @@ pub(crate) enum Ask {
     /// The site's logins a `create()` could go onto.
     PasskeyLogins { req: u64 },
     PasskeySign { req: u64 },
-    /// A desk-menu delivery for the page in `tab`.
-    Redeem { tab: TabId },
 }
 
 impl Ask {
@@ -84,7 +82,6 @@ impl Ask {
             Self::PasskeyList { .. } => "passkey_list",
             Self::PasskeyLogins { .. } => "passkey_logins",
             Self::PasskeySign { .. } => "passkey_sign",
-            Self::Redeem { .. } => "redeem",
         }
     }
 }

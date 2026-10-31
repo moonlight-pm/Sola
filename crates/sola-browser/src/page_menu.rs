@@ -140,9 +140,10 @@ fn has_selection(ctx: &PageContext) -> bool {
 }
 
 /// The Edit rows that apply where the click landed: Cut only with a
-/// selection in a field, Paste and Select All only in a field.
+/// selection in a field, Paste and Select All only in a field, and no
+/// Cut or Copy out of a password field.
 pub fn desk_edit(ctx: &PageContext) -> Vec<DeskEdit> {
-    let sel = has_selection(ctx);
+    let sel = has_selection(ctx) && !ctx.secret;
     let mut edit = Vec::new();
     if ctx.editable && sel {
         edit.push(DeskEdit::Cut);
@@ -421,6 +422,11 @@ mod tests {
         );
         let c = desk_context(&selected, true, Some("https://a.com/login".into()));
         assert!(c.editable && c.secret && c.selection);
+        let secret = PageContext {
+            secret: true,
+            ..selected.clone()
+        };
+        assert_eq!(desk_edit(&secret), [DeskEdit::Paste, DeskEdit::SelectAll]);
         // Secret only means something in a field.
         assert!(!desk_context(&ctx(), true, None).secret);
     }

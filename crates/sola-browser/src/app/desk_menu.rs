@@ -1,13 +1,14 @@
 //! A right-click in a page opens the desk menu: the shell draws it
-//! (`docs/specs/2026-10-31-sola-vault-design.md`, P6). The browser sends
-//! what was clicked and the page's own rows; the shell adds Edit and the
-//! vault's rows, and sends back the pick for this process and token.
+//! (`docs/specs/2026-10-31-sola-vault-design.md`, P6) and the kit's
+//! [`sola_kit::desk_menu`] carries it. The browser sends what was clicked
+//! and the page's own rows; the shell adds Edit and the vault's rows, and
+//! sends back the pick for this process and token.
 //!
 //! Chrome's own fields (the location bar, the vault sheet) get theirs
 //! from the kit's text input; this is the page's.
 
 use iced::Task;
-use sola_bus::topics::{DeskEdit, DeskMenuOpen, DeskMenuPick, DeskPick, Topic};
+use sola_kit::desk_menu::{self, DeskEdit, DeskMenuPick, DeskPick, Secret, VaultError};
 
 use super::{App, Msg, webapps};
 use crate::engine::{Cmd, EditCmd, Engine, PageContext, TabId};
@@ -18,15 +19,6 @@ pub(crate) struct OpenMenu {
     token: u64,
     tab: TabId,
     ctx: PageContext,
-}
-
-/// Tokens start from the clock, so a restarted browser does not take a
-/// pick meant for its last run.
-pub(crate) fn first_token() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(1)
 }
 
 impl<E: Engine> App<E> {
@@ -44,24 +36,10 @@ impl<E: Engine> App<E> {
             .map(|t| t.url.clone())
             .unwrap_or_default();
         let wrappable = !self.webapps.tabs.contains_key(&tab) && webapps::can_wrap(&url);
-        self.desk_token = self.desk_token.wrapping_add(1);
-        let token = self.desk_token;
-        let at = super::last_cursor_point();
-        let open = DeskMenuOpen {
-            app_id: self
-                .webapps
-                .tabs
-                .get(&tab)
-                .cloned()
-                .unwrap_or_else(|| self.app_id.to_string()),
-            pid: std::process::id(),
-            token,
-            x: at.x.round() as i32,
-            y: at.y.round() as i32,
-            context: page_menu::desk_context(&ctx, ctx.secret, page_menu::menu_site(&url)),
-            items: page_menu::desk_items(&ctx, wrappable),
-            edit: page_menu::desk_edit(&ctx),
-        };
+        let token = desk_menu::next_token();
+        // Where the kit's frame saw the right press; CEF reports the menu
+        // after a round trip, so fall back to the last pointer position.
+        let at = desk_menu::pointer().unwrap_or_else(super::last_cursor_point);
         tracing::info!(
             tab = tab.0,
             token,
@@ -70,20 +48,20 @@ impl<E: Engine> App<E> {
             host = %page_menu::menu_host(&url),
             "page right-click → desk menu"
         );
-        let sent = sola_kit::app::try_bus()
-            .and_then(|bus| bus.lock().ok())
-            .is_some_and(|mut bus| bus.emit(Topic::DeskMenuOpen(open)).is_ok());
-        if !sent {
-            tracing::warn!("desk menu: the bus is not connected — no menu");
-        }
+        desk_menu::open(
+            token,
+            at.x,
+            at.y,
+            page_menu::desk_context(&ctx, ctx.secret, page_menu::menu_site(&url)),
+            page_menu::desk_items(&ctx, wrappable),
+            page_menu::desk_edit(&ctx),
+        );
         self.desk_menu = Some(OpenMenu { token, tab, ctx });
     }
 
-    /// The shell's answer, if it is for our menu.
+    /// The shell's answer (for this process), if it is for the page's
+    /// menu — a kit field's picks are the kit's.
     pub(crate) fn on_desk_pick(&mut self, pick: DeskMenuPick) -> Task<Msg> {
-        if pick.pid != std::process::id() {
-            return Task::none();
-        }
         let Some(menu) = self.desk_menu.take_if(|m| m.token == pick.token) else {
             tracing::debug!(token = pick.token, "desk menu: a pick for a menu no longer up");
             return Task::none();
@@ -97,35 +75,56 @@ impl<E: Engine> App<E> {
                     Task::none()
                 }
             },
-            DeskPick::Edit(edit) => {
-                if menu.tab != self.cached_active {
-                    self.switch_active_tab(menu.tab);
-                }
-                self.edit_page(match edit {
-                    DeskEdit::Cut => EditCmd::Cut,
-                    DeskEdit::Copy => EditCmd::Copy,
-                    DeskEdit::Paste => EditCmd::Paste,
-                    DeskEdit::SelectAll => EditCmd::SelectAll,
-                })
-            }
+            DeskPick::Edit(edit) => self.desk_edit(edit, menu),
             DeskPick::VaultInsert { ticket } => self.desk_vault_insert(menu.tab, ticket),
             DeskPick::VaultFill { item } => self.desk_vault_fill(menu.tab, item),
         }
     }
 
-    #[cfg(feature = "vault")]
-    fn desk_vault_insert(&mut self, tab: TabId, ticket: String) -> Task<Msg> {
-        tracing::info!(tab = tab.0, "desk menu: a vault value for the page");
-        self.vault.ask(
-            super::vault::Ask::Redeem { tab },
-            sola_vault_proto::Request::Redeem { ticket },
-        );
-        Task::none()
+    /// An Edit row into the page it was opened on. Copy and Cut take the
+    /// selection CEF reported with the click, onto the clipboard from the
+    /// compositor's side (the pick can land before the window has the
+    /// keyboard back).
+    fn desk_edit(&mut self, edit: DeskEdit, menu: OpenMenu) -> Task<Msg> {
+        if menu.tab != self.cached_active {
+            self.switch_active_tab(menu.tab);
+        }
+        let selection = menu.ctx.selection.filter(|s| !s.is_empty());
+        match (edit, selection) {
+            (DeskEdit::Copy, Some(text)) => desk_menu::copy(text),
+            (DeskEdit::Cut, Some(text)) => {
+                let _ = self.cmd_tx.send(Cmd::Target {
+                    tab: menu.tab,
+                    cmd: Box::new(Cmd::Edit(EditCmd::Cut)),
+                });
+                desk_menu::copy(text)
+            }
+            (DeskEdit::Copy, None) => self.edit_page(EditCmd::Copy),
+            (DeskEdit::Cut, None) => self.edit_page(EditCmd::Cut),
+            (DeskEdit::Paste, _) => self.edit_page(EditCmd::Paste),
+            (DeskEdit::SelectAll, _) => self.edit_page(EditCmd::SelectAll),
+        }
     }
 
-    #[cfg(not(feature = "vault"))]
-    fn desk_vault_insert(&mut self, _tab: TabId, _ticket: String) -> Task<Msg> {
-        Task::none()
+    /// A vault value for the page's field: redeemed on the vault's socket
+    /// (only this process can), then inserted at the caret.
+    fn desk_vault_insert(&mut self, tab: TabId, ticket: String) -> Task<Msg> {
+        tracing::info!(tab = tab.0, "desk menu: a vault value for the page");
+        desk_menu::redeem_task(ticket).map(move |r| Msg::DeskRedeemed(tab, r))
+    }
+
+    /// The redeemed value goes in at the page's caret — never through the
+    /// clipboard; the [`Secret`] is cleared when it drops here.
+    pub(crate) fn desk_redeemed(&mut self, tab: TabId, value: Result<Secret, VaultError>) {
+        match value {
+            Ok(secret) => {
+                let _ = self.cmd_tx.send(Cmd::Target {
+                    tab,
+                    cmd: Box::new(Cmd::PasteText(secret.as_str().to_string())),
+                });
+            }
+            Err(e) => tracing::warn!(code = ?e.code, "desk menu: the vault value could not be redeemed"),
+        }
     }
 
     #[cfg(feature = "vault")]
@@ -164,7 +163,8 @@ impl<E: Engine> App<E> {
             }
             PageMenuKind::CopyLink => {
                 match crate::util::usable_clipboard_text(ctx.link_url) {
-                    Some(t) => iced::clipboard::write(t),
+                    // The pick can land before the window has the keyboard back.
+                    Some(t) => desk_menu::copy(t),
                     None => Task::none(),
                 }
             }

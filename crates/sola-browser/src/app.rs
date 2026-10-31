@@ -160,6 +160,8 @@ pub enum Msg {
     },
     /// Result of an `iced::clipboard::read` kicked off by a URL-bar paste.
     UrlPasted(Option<String>),
+    /// A desk-menu vault value for the page in this tab, redeemed.
+    DeskRedeemed(TabId, Result<sola_kit::desk_menu::Secret, sola_kit::desk_menu::VaultError>),
     /// Result of an `iced::clipboard::read` for paste into page content.
     PagePasted(Option<String>),
     /// Compositor clipboard probe for page paste (image or text).
@@ -300,8 +302,6 @@ pub struct App<E: Engine> {
     context_menu: Option<(iced::Point, CtxTarget)>,
     /// The page's desk menu while the shell has it up.
     desk_menu: Option<desk_menu::OpenMenu>,
-    /// The last desk menu's token.
-    desk_token: u64,
     /// Use as Desktop Background, while it runs.
     wallpaper: Option<wallpaper::Lightbox>,
     /// The output's size (`Topic::OutputGeometry`): the shape a desktop
@@ -423,7 +423,6 @@ impl<E: Engine> App<E> {
             agent: crate::agent::AgentState::default(),
             context_menu: None,
             desk_menu: None,
-            desk_token: desk_menu::first_token(),
             wallpaper: None,
             screen_size: None,
             pages_light: None,
@@ -1457,6 +1456,7 @@ impl<E: Engine> App<E> {
                 // Restore: smithay receive can drop the original offer.
                 return iced::clipboard::write(s);
             }
+            Msg::DeskRedeemed(tab, value) => self.desk_redeemed(tab, value),
             Msg::PageOffer(offer) => {
                 use sola_kit::clipboard::Offer;
                 return match offer {

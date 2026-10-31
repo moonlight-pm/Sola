@@ -10,7 +10,7 @@ use zeroize::Zeroize;
 use super::view::id;
 use super::{AfterFill, Ask, Generated, RepromptFor, Screen, TwoStep};
 use crate::app::{App, Msg};
-use crate::engine::{Cmd, Engine};
+use crate::engine::Engine;
 use crate::vault::{VaultEvent, log_host};
 
 /// A new login's fill: how long to wait for the page to say whether it
@@ -276,16 +276,6 @@ impl<E: Engine> App<E> {
             (Ask::PasskeySign { req }, Reply::Credential { json }) => {
                 self.passkey_answered(req, Ok(json))
             }
-            (Ask::Redeem { tab }, Reply::Value(mut value)) => {
-                // At the caret of the page's focused field, never through
-                // the clipboard.
-                let text = std::mem::take(&mut value);
-                let _ = self.cmd_tx.send(Cmd::Target {
-                    tab,
-                    cmd: Box::new(Cmd::PasteText(text)),
-                });
-                value.zeroize();
-            }
             (ask, reply) => {
                 tracing::warn!(ask = ask.name(), reply = reply_name(&reply), "vault: unexpected answer");
                 self.vault.busy = false;
@@ -333,7 +323,6 @@ impl<E: Engine> App<E> {
             Ask::PasskeyList { req } => self.passkey_candidates_failed(req, e.message),
             Ask::PasskeyLogins { .. } => v.site_logins_loading = false,
             Ask::PasskeySign { req } => self.passkey_answered(req, Err(e.message)),
-            Ask::Redeem { .. } => {}
             _ => v.error = Some(e.message),
         }
         Task::none()

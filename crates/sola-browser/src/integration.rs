@@ -318,7 +318,10 @@ pub fn handle_bus<E: Engine>(
             }
             Task::none()
         }
-        Some(Topic::DeskMenuPick(pick)) => app.on_desk_pick(pick),
+        Some(Topic::DeskMenuPick(_)) => match sola_kit::desk_menu::pick_of(&message) {
+            Some(pick) => app.on_desk_pick(pick),
+            None => Task::none(),
+        },
         Some(Topic::NotificationActivate(a)) if a.app_id == app_id => {
             if let Some(id) = a.tab_id {
                 let tid = crate::engine::TabId(id);
