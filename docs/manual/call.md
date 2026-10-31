@@ -220,13 +220,13 @@ right rail is the live catalog.
 | Owner | Process | Present | Methods |
 |---|---|---|---|
 | `compositor` | `sola-river` | Whole session | `screenshot`, `sample`, `cursor`, `windows`, `input.click`, `input.press`, `input.release`, `input.move`, `input.scroll`, `input.key` |
-| `session` | `sola-session` | Whole session | `launch`, `close` |
+| `desk` | `sola-session` | Whole session | `launch`, `close` |
 | `bots` | `sola-botsd` | While `sola-botsd` runs | `list`, `poll`, `new`, `setup`, `send`, `transcript`, `rm`, `cancel` |
-| `projects` | `sola-projects` | While **Projects** runs; it quits when its last project window closes | `ps`, `project.list`, `window.navigate`, `project.open`, `project.close`, `tab.list`, `tab.spawn`, `tab.rm`, `tab.select`, `tab.set`, `tab.exec`, `pane.list`, `pane.send`, `pane.read`, `pane.wait`, `whoami` |
+| `projects` | `sola-projects` | While **Projects** runs; it quits when its last project window closes | `ps`, `project.list`, `window.navigate`, `project.open`, `project.close`, `session.list`, `session.new`, `session.end`, `session.select`, `session.set`, `session.exec`, `pane.list`, `pane.send`, `pane.read`, `pane.wait`, `whoami` |
 | `browser` | `sola-browser` | While the **Browser** runs | `tabs`, `tab.open`, `tab.close`, `tab.focus`, `goto`, `back`, `forward`, `reload`, `stop`, `find.page`, `snapshot`, `find`, `click`, `hover`, `key`, `scroll`, `type`, `fill`, `get`, `links`, `select`, `wait`, `screenshot` |
 | `design` | `sola-design` | While **Design** runs | `project.list`, `project.add`, `project.remove`, `open`, `canvas.new`, `canvas.close`, `status`, `share`, `share.rotate`, `selection`, `view`, `wait`, `reload`, `screenshot`, `pdf`, `inspect` |
 
-The compositor and session owners belong to services PID 1 keeps running.
+The compositor and desk owners belong to services PID 1 keeps running.
 `sola-botsd` ships with Sola, but Oath runs no service for it, so `bots`
 is present only while you run it. The other three exist only while their
 application runs; the plane does not start it for you. Every method and
@@ -236,7 +236,7 @@ flag is in [solactl](solactl.md).
 
 `solactl` has two kinds of call commands.
 
-- **Compiled commands**, `compositor` and `session`, are parsed by
+- **Compiled commands**, `compositor` and `desk`, are parsed by
   `solactl` itself: fixed flags, defaults, and `--help` that works with
   nothing running. `solactl` builds the params and invokes the method.
 - **Live-owner commands**, `projects`, `browser`, `bots`, `design`, and
@@ -251,7 +251,7 @@ value, a bare word for the next required argument not yet given, or a
 single JSON object instead of flags. Values are converted by `type`, and
 `path` values are made absolute against your working directory. It adds a
 little context of its own: in a Projects pane, `whoami` and
-`tab.spawn` get your pane from `$SOLA_PANE_ID` (and `whoami` your
+`session.new` get your pane from `$SOLA_PANE_ID` (and `whoami` your
 checkout from `$SOLA_WS_PATH`); `design canvas.new` without `--path` uses
 your working directory.
 

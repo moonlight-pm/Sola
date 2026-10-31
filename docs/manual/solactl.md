@@ -21,8 +21,8 @@ solactl compositor input key CHORD [-t SECS]
 solactl compositor input press [X Y] [-b left|right|middle] [-t SECS]
 solactl compositor input release [X Y] [-b left|right|middle] [-t SECS]
 solactl compositor input drag X1 Y1 X2 Y2 [-b …] [-s STEPS] [-t SECS]
-solactl session launch APP_ID [-c COMMAND] [-t SECS]
-solactl session close APP_ID [-t SECS]
+solactl desk launch APP_ID [-c COMMAND] [-t SECS]
+solactl desk close APP_ID [-t SECS]
 solactl projects [METHOD [ARGS…]]
 solactl browser [METHOD [ARGS…]]
 solactl bots [METHOD [ARGS…]]
@@ -40,7 +40,7 @@ solactl help [COMMAND…]
 
 | Command | Goes through | Needs |
 |---|---|---|
-| `compositor`, `session` | Call plane; flags compiled into `solactl` | `sola-call` and the owner; `--help` needs nothing |
+| `compositor`, `desk` | Call plane; flags compiled into `solactl` | `sola-call` and the owner; `--help` needs nothing |
 | `projects`, `browser`, `bots`, `design`, any other name | Call plane; flags read from the owner's advertised methods | `sola-call` and the owner, also for help |
 | `mcp` | Call plane | `sola-call`; tools appear as owners do |
 | `emit`, `background` | Bus | `sola-bus` (the picture is drawn by `sola-river`) |
@@ -65,8 +65,8 @@ not an error.
 | Status | Meaning |
 |---|---|
 | 0 | Success; also `media` with no player to act on |
-| 1 | The owner or the host answered with an error. This includes `timeout`, and `<owner> is not running` for `compositor` and `session`. Also any failure of `compositor input drag` |
-| 2 | Usage error in a compiled command (`compositor`, `session`, `mcp`, `logs`, `emit`, `open`, `background`, `media`): a missing or bad argument or an unknown subcommand; usage is printed |
+| 1 | The owner or the host answered with an error. This includes `timeout`, and `<owner> is not running` for `compositor` and `desk`. Also any failure of `compositor input drag` |
+| 2 | Usage error in a compiled command (`compositor`, `desk`, `mcp`, `logs`, `emit`, `open`, `background`, `media`): a missing or bad argument or an unknown subcommand; usage is printed |
 | 3 | Local failure: `sola-call` unreachable, a live owner not in the catalog, an unknown method, a flag error, a `SOLA_BOT=1` refusal, a bad chord, or a failed `logs`, `emit`, `open`, `background`, or `media` |
 
 In a compiled command a negative value must be joined to its flag:
@@ -80,7 +80,7 @@ flags are the other way round: they take a negative number written apart
 | Situation | stderr | Status |
 |---|---|---|
 | `sola-call` not running | `solactl: call host is not running (<socket path>)` | 3 |
-| `compositor` or `session` owner not connected | `solactl: compositor is not running` | 1 |
+| `compositor` or `desk` owner not connected | `solactl: compositor is not running` | 1 |
 | Live owner not in the catalog (also for its method list and `--help`) | `solactl: <name> is not running` | 3 |
 | Method not advertised | `solactl: <owner> has no method <method>` | 3 |
 | Owner did not answer by the deadline, or exited during the call | `solactl: timeout` | 1 |
@@ -97,8 +97,8 @@ misspelt command reports `<name> is not running`.
 | `SOLA_BUS_PATH` | `emit`, `background` | Bus socket. Default `$XDG_RUNTIME_DIR/sola-bus` |
 | `XDG_RUNTIME_DIR` | call commands, `mcp`, `emit`, `background` | Directory of the default sockets. When it is unset or empty (an SSH login on Oath sets none): `/run/user/<uid>` if that directory exists, else `/tmp` |
 | `SOLA_BOT` | `compositor`, `browser`, `mcp` | `1`, `true`, `TRUE`, or `yes` turns on the [bot rules](#bot-rules) |
-| `SOLA_PANE_ID` | `projects whoami`, `projects tab.spawn` | Default `--pane` and `--parent`. Projects sets it in each session |
-| `SOLA_WS_PATH` | `projects whoami` | Default `--path`. Projects sets it in each pane to the tab's checkout path |
+| `SOLA_PANE_ID` | `projects whoami`, `projects session.new` | Default `--pane` and `--parent`. Projects sets it in each session |
+| `SOLA_WS_PATH` | `projects whoami` | Default `--path`. Projects sets it in each pane to the session's checkout path |
 | `HOME` | path arguments, `open`, `logs` | `~` expansion; default location of `chrome.sock` and, on Oath, of the logs |
 | `SOLA_LOG_DIR` | `logs` | Log directory. Default `$XDG_STATE_HOME/sola` on Oath (`~/.local/state/sola` when that is unset or not absolute), else `/opt/sola/log` |
 | `SOLA_BIN_DIR` | `open` | Where Sola's programs are. Default `/bin` on Oath, else `/opt/sola/bin` |
@@ -127,7 +127,7 @@ sections below list each owner's methods as they are advertised today.
 | Owner | App id | Process | Present | Section |
 |---|---|---|---|---|
 | `compositor` | `sola-river` | `sola-river` | Whole session | [Compositor](#compositor-solactl-compositor) |
-| `session` | `sola-session` | `sola-session` | Whole session | [Session](#session-solactl-session) |
+| `desk` | `sola-session` | `sola-session` | Whole session | [Desk](#desk-solactl-desk) |
 | `bots` | `sola-botsd` | `sola-botsd` | While the daemon runs | [Bots](#bots-solactl-bots) |
 | `projects` | `sola-projects` | `sola-projects` | While **Projects** is open | [Projects](#projects-solactl-projects) |
 | `browser` | `sola-browser` | `sola-browser` | While the **Browser** is open | [Browser](#browser-solactl-browser) |
@@ -138,7 +138,7 @@ the Shell have none. The Shell's desktop workspaces have no `solactl`
 command; `solactl workspaces` is read as an owner name and fails with
 `workspaces is not running` (status 3).
 
-`compositor` and `session` have compiled commands, but they are live
+`compositor` and `desk` have compiled commands, but they are live
 owners too, so their app ids reach them through the generic parser:
 `solactl sola-river cursor --visible false` (see
 [Methods with no compiled flags](#methods-with-no-compiled-flags)).
@@ -206,7 +206,7 @@ Other arguments are sent as typed.
 
 - `projects whoami` without `--pane` or `--path` sends `$SOLA_PANE_ID`
   and `$SOLA_WS_PATH`.
-- `projects tab.spawn` without `--parent` sends `$SOLA_PANE_ID`.
+- `projects session.new` without `--parent` sends `$SOLA_PANE_ID`.
 - `design canvas.new` without `--path` sends your working directory.
 
 ### Bot rules
@@ -332,9 +332,9 @@ sent to it by app id or over MCP (`compositor_input_key`) is refused with
 solactl sola-river input.key '{"chord":{"keycode":23,"meta":true,"alt":false,"ctrl":false,"shift":false}}'
 ```
 
-## Session (`solactl session`)
+## Desk (`solactl desk`)
 
-Owner `session`, process `sola-session`, present for the whole session
+Owner `desk`, process `sola-session`, present for the whole session
 ([Session manager](session.md)). The flags are compiled into `solactl`.
 
 | Command | Flags | Reply |
@@ -505,7 +505,7 @@ Any computer's Projects can open any computer's sessions: two computers
 can watch and type in the same session. Its size follows the computer
 that typed last. **Closing a window detaches**: that computer stops
 watching and the session keeps running, as it does when Projects quits.
-**Project → End Session…** (or `tab.rm`) ends a session — its tmux is
+**Project → End Session…** (or `session.end`) ends a session — its tmux is
 killed where it runs, for every computer watching; it asks first while
 its agent is working or waiting. A session whose shell exits shows
 **Start new shell**.
@@ -518,8 +518,8 @@ New Session… (⌘T) starts one in the focused session's project, on its
 computer, in a window of its own. Closing the last window quits Projects;
 started with nothing to open, Projects waits 20 seconds for a call (the
 launcher's `window.navigate`), then quits. Projects was called Workspaces; `solactl
-workspaces` and the `workspace.*` methods are gone. The verbs still say
-`tab`: a tab is a session.
+workspaces` and the `workspace.*` methods are gone. The `tab.*` methods
+and `--tab` were renamed `session.*` and `--session` on 2026-10-31.
 
 ```text
 solactl projects                           # list methods
@@ -529,15 +529,15 @@ solactl projects window.navigate                         # a window to pick a pr
 solactl projects project.open --path ~/Projects/Sola    # its sessions here
 solactl projects project.open --host <computer> --path /home/<user>/Projects/Sola [--session ws-main]
 solactl projects project.close --project Sola   # its windows close; sessions run on
-solactl projects tab.list [--project Sola]
-solactl projects tab.spawn --project Sola [--name review] [--title 'fix login'] \
+solactl projects session.list [--project Sola]
+solactl projects session.new --project Sola [--name review] [--title 'fix login'] \
     [--agent grok|codex|claude] [--prompt '…' | --prompt-file FILE] [--parent …] [--select]
-solactl projects tab.set --tab review [--name …] [--title 'fix login']
-solactl projects tab.exec --tab review [--agent grok|codex|claude] \
+solactl projects session.set --session review [--name …] [--title 'fix login']
+solactl projects session.exec --session review [--agent grok|codex|claude] \
     [--prompt '…' | --prompt-file FILE]
-solactl projects tab.select --tab review
-solactl projects tab.rm --tab review        # end it, for every computer
-solactl projects pane.list [--tab review]
+solactl projects session.select --session review
+solactl projects session.end --session review        # end it, for every computer
+solactl projects pane.list [--session review]
 solactl projects pane.send --text 'follow up' --enter [--pane review]
 solactl projects pane.read [--pane review] [--lines 40]
 solactl projects pane.wait [--pane review] [--status done] [--timeout 300] [--fresh]
@@ -546,12 +546,12 @@ solactl projects whoami                    # from a Projects pane; or --pane / -
 
 | Short | Long | Methods |
 |---|---|---|
-| `-p` | `--project` | `project.close`, `tab.list`, `tab.spawn` |
+| `-p` | `--project` | `project.close`, `session.list`, `session.new` |
 | `-p` | `--path` | `project.open` |
-| `-n` | `--name` | `tab.spawn`, `tab.set` |
-| `-a` | `--agent` | `tab.spawn`, `tab.exec` |
-| `-s` | `--select` | `tab.spawn` |
-| `-t` | `--tab` | `tab.rm`, `tab.select`, `tab.set`, `tab.exec`, `pane.list` |
+| `-n` | `--name` | `session.new`, `session.set` |
+| `-a` | `--agent` | `session.new`, `session.exec` |
+| `-s` | `--select` | `session.new` |
+| `-s` | `--session` | `session.end`, `session.select`, `session.set`, `session.exec`, `pane.list` |
 | `-t` | `--text` | `pane.send` |
 | `-e` | `--enter` | `pane.send` |
 | `-l` | `--lines` | `pane.read` |
@@ -559,18 +559,18 @@ solactl projects whoami                    # from a Projects pane; or --pane / -
 | `-f` | `--fresh` | `pane.wait` |
 
 Required arguments: `--path` on `project.open`; `project.close
---project`; `tab.spawn --project`; `--tab` on `tab.rm`, `tab.select`,
-`tab.set`, `tab.exec`; `pane.send --text`. `--tab` on `pane.list` and
+--project`; `session.new --project`; `--session` on `session.end`, `session.select`,
+`session.set`, `session.exec`; `pane.send --text`. `--session` on `pane.list` and
 `--pane` on `pane.send`, `pane.read`, and `pane.wait` default to the
-focused session. `tab.list` without `--project` lists every session open
+focused session. `session.list` without `--project` lists every session open
 here.
 
-Deadlines: `project.open` 15 s; `tab.spawn` and `tab.exec` 60 s;
+Deadlines: `project.open` 15 s; `session.new` and `session.exec` 60 s;
 `pane.wait` 302 s, or its `--timeout` plus 2 s; the rest 8 s.
 
 Errors name what went wrong: `<path> is not a folder of ~/Projects` for
 `project.open`, `a session '<name>' is already open in this project`, and
-`no tab selected` when a default has nothing to fall back on.
+`no session selected` when a default has nothing to fall back on.
 
 ### Open
 
@@ -592,7 +592,7 @@ before those existed is placed by the folder its pane is in.
 
 ### Start
 
-`tab.spawn` starts a session in the project's folder, on the project's
+`session.new` starts a session in the project's folder, on the project's
 computer, in a window of its own. `--name` is its name, unique among the
 project's sessions open here (default: the next number, `2`, `3`, …);
 `--title` is its label (default: the name). The reply is the new session:
@@ -614,8 +614,8 @@ entries by script file name and rewrites them in place (status message
 "Sola Projects status"). Its catalog, last status, and hook scripts live
 in `~/.config/sola/projects/`.
 
-`tab.set` sets a session's `--name` and `--title`; its id and its tmux
-stay. Target a session by id, name, path, or label. `tab.select` brings
+`session.set` sets a session's `--name` and `--title`; its id and its tmux
+stay. Target a session by id, name, path, or label. `session.select` brings
 its window up and replies `{"id", "selected": true}`.
 
 ### Sessions on another computer
@@ -641,7 +641,7 @@ marks, islands, desk cards and `pane.wait` work on every computer that has
 the session open, whichever one started it; looking at or answering an
 island on one lets it go on all. The first link installs the same agent
 hooks there (Claude's `settings.json`, Codex's `hooks.json`, Grok's
-`sola-status.json`; scripts in `~/.config/sola/remote/`). `pane.send`, `pane.read` and `tab.exec` reach
+`sola-status.json`; scripts in `~/.config/sola/remote/`). `pane.send`, `pane.read` and `session.exec` reach
 its panes; a lost session whose Grok or Claude transcript is still there
 resumes.
 
@@ -659,23 +659,23 @@ need a key or an agent that logs you in, and tmux and base64 there.
 
 ### Lists and sessions
 
-`tab.list` replies `{"tabs": […]}`; `ps` replies `{"projects",
-"selected"}` with each project's sessions under `projects[].tabs[]`. A
+`session.list` replies `{"sessions": […]}`; `ps` replies `{"projects",
+"selected"}` with each project's sessions under `projects[].sessions[]`. A
 session has `id`, `name`, `title`, `label`, `path`, `kind`, `parent`,
 `status`, `agent`, and `project`, plus `host` on another computer; in
-`ps` and the `tab.set` reply it also says `selected`. A project has `id`,
+`ps` and the `session.set` reply it also says `selected`. A project has `id`,
 `name`, `root`, and `host` on another computer. `project.list` replies
 `{"projects": […]}`, those with a session open here, each with `open`.
 
-`whoami` replies `pane`, `tab` (id), `tab_name`, `project`,
-`project_name`, `path`, `kind`, `status`, `agent`, and `session_id`.
-`tab.exec` replies `{"tab", "pane", "started", "sent"}`: `started` when it
+`whoami` replies `pane`, `session` (id), `session_name`, `project`,
+`project_name`, `path`, `kind`, `status`, `agent`, and `agent_session`.
+`session.exec` replies `{"session", "pane", "started", "sent"}`: `started` when it
 launched the agent, `sent` when it pasted the prompt into one already
 running. `kind` is `main` (the project's main session), `folder` (the main
 session of a non-git project), or `root` (any other).
 
-`pane.list` and `whoami` include `session_id` when that pane's Grok or
-Claude owner session is known.
+`pane.list` and `whoami` include `agent_session`, the pane's Grok or
+Claude session id, when it is known.
 
 ### After a reboot
 
@@ -686,14 +686,14 @@ recorded there whose tmux is gone is made again, in its folder, with its
 agent resumed (`claude --resume`, `grok -r`) when its transcript is still
 there, else a shell: when Projects starts, when any computer's Projects
 connects to that computer, and at boot (`sola-projects --restore`). Ending
-a session (End Session…, `tab.rm`), or its shell exiting, removes its
+a session (End Session…, `session.end`), or its shell exiting, removes its
 record.
 
 ### Panes
 
-`pane.send` and `tab.exec --prompt` **paste** into the live agent (tmux
+`pane.send` and `session.exec --prompt` **paste** into the live agent (tmux
 bracketed paste), so a multiline brief does not submit on the first
-newline and a long prompt is not truncated. `tab.exec` then presses
+newline and a long prompt is not truncated. `session.exec` then presses
 Enter; `pane.send` does only with `--enter`. A failed paste returns the
 tmux error, not a bare `send failed`.
 
@@ -709,7 +709,7 @@ onto that status. It replies `{"pane", "status"}`, or fails with
 
 ### End
 
-`tab.rm` ends a session: its tmux is killed where it runs, for every
+`session.end` ends a session: its tmux is killed where it runs, for every
 computer watching it, and its window here closes. It replies
 `{"ok": true}` first, then ends it on the next tick, so a call from
 inside that session can finish instead of hanging; the kill runs off the

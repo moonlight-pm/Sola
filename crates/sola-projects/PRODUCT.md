@@ -50,7 +50,7 @@ becoming this product.
 ## Capabilities and Constraints
 
 **In:** projects, tabs (main / worktree / root / folder), agent-aware panes,
-spawn sibling (UI: name only, selects the new tab in its project's window; `solactl projects tab.spawn`
+spawn sibling (UI: name only, selects the new tab in its project's window; `solactl projects session.new`
 is background unless `--select`; can pass `--agent grok|codex|claude` + `--prompt` /
 `--prompt-file`; exec/send is a tmux paste then Enter), kit pane splits, Grok,
 Codex, and Claude hooks + OSC 9999 + process-tree presence, quiet `×N` rolled up across Grok,

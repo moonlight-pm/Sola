@@ -67,7 +67,7 @@ pub fn pane_json(
         "id": id,
         "status": status_str(status),
         "agent": agent,
-        "session_id": session_id,
+        "agent_session": session_id,
     })
 }
 
@@ -533,13 +533,13 @@ mod tests {
     }
 
     #[test]
-    fn pane_json_includes_session_id() {
+    fn pane_json_includes_agent_session() {
         let v = pane_json("p", AgentStatus::Done, Some("grok"), Some("sid-a"));
         assert_eq!(v["id"], "p");
-        assert_eq!(v["session_id"], "sid-a");
+        assert_eq!(v["agent_session"], "sid-a");
         assert_eq!(v["agent"], "grok");
         let empty = pane_json("p", AgentStatus::Idle, None, None);
-        assert!(empty["session_id"].is_null());
+        assert!(empty["agent_session"].is_null());
     }
 
     #[test]

@@ -12,7 +12,7 @@ description: >
 # Sync project (worktrees ↔ master)
 
 Run from the **project-root** Grok (master checkout). This project only.
-Leave git worktrees and Projects tabs in place. Do not `--select`. Do not
+Leave git worktrees and Projects sessions in place. Do not `--select`. Do not
 install. Do not push `master` unless the user asked.
 
 Load [`sola-projects-cli`](../sola-projects-cli/SKILL.md) for exec/wait
@@ -59,19 +59,20 @@ Unique commits already on the branch do **not** need a checkpoint.
 
 If not needed: skip 1a.
 
-If needed: `tab.exec --tab SLUG --prompt-file` with a brief that
+If needed: `session.exec --session SESSION --prompt-file` (the session
+working in it) with a brief that
 says, in this order:
 
 1. Load and run `/checkpoint` **only if** there is something to checkpoint
    (dirty tree, uncommitted docs drift, or branch ahead of its upstream
    that should be pushed). If already clean and docs match code: reply
    `checkpoint clean — nothing to do` and stop.
-2. Do not merge to master. Do not remove the worktree or tab. Do not install.
+2. Do not merge to master. Do not remove the worktree or end the session. Do not install.
 
 Then:
 
 ```bash
-solactl projects pane.wait --pane SLUG --status done --timeout 600 --fresh
+solactl projects pane.wait --pane SESSION --status done --timeout 600 --fresh
 ```
 
 `--fresh` waits for a transition onto `done` after the brief. If exec fails
@@ -100,21 +101,21 @@ git merge --no-ff BRANCH
 
 Only after Pass 1 finished for **every** target.
 
-For each target, `tab.exec --prompt-file`:
+For each target, `session.exec --session SESSION --prompt-file`:
 
 - `git merge master` (expect fast-forward; unique work is already on master).
 - If `CURRENT.md` / `docs/capabilities.md` conflict, keep master's combined
   dashboard.
-- Do not remove the worktree or tab. Do not install.
+- Do not remove the worktree or end the session. Do not install.
 
 Then wait until that checkout’s `HEAD` is an ancestor of `master` (or is
 `master`) **and** the pane is not still `working` on the brief. Prefer
-`pane.wait --pane SLUG --status done --timeout 300 --fresh`. If `--fresh`
+`pane.wait --pane SESSION --status done --timeout 300 --fresh`. If `--fresh`
 misses the transition, poll `pane.list` + `git rev-parse HEAD`.
 
-### Exec failed / no tab
+### Exec failed / no session
 
-Retry `tab.exec` once. If it still fails (app down, no tab, dead
+Retry `session.exec` once. If it still fails (app down, no session, dead
 tmux): do **not** `--select` and do **not** paste with raw tmux. Merge
 from here and note it.
 

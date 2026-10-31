@@ -161,7 +161,7 @@ docs/
   cleanup after merge. When asked: from the root checkout (never from
   inside it), `git worktree remove .worktrees/<slug>`, then
   `git branch -d <branch>` if it is merged (never `-D` unasked).
-- Ending a session (Project → End Session…, `solactl projects tab.rm`)
+- Ending a session (Project → End Session…, `solactl projects session.end`)
   never touches worktrees; closing its window does not end it.
 
 ### Installing

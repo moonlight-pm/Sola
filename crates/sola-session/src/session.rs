@@ -728,9 +728,9 @@ pub fn run() {
 
     connect_and_subscribe(&mut session.bus);
     session.call_rx = Some(sola_call::start_provider(
-        sola_call::methods::OWNER_SESSION,
+        sola_call::methods::OWNER_DESK,
         "sola-session",
-        sola_call::methods::session_methods(),
+        sola_call::methods::desk_methods(),
     ));
 
     // Relaunch last session's apps (once, before the steady-state loop).
