@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use sola_bus::topics::{KeyAction, KeyActions, Keybindings, Zone};
+use sola_bus::topics::{KeyAction, KeyActions, Keybindings, Zone, ZoneLayout};
 use sola_core::{KeyChord, KeyCode};
 use sola_kit::keys::{self, Binding, SYSTEM};
 
@@ -58,12 +58,22 @@ pub struct SysAction {
 }
 
 fn sys(act: Act, id: &str, group: &'static str, label: &str, default: KeyChord) -> SysAction {
+    sys_opt(act, id, group, label, Some(default))
+}
+
+fn sys_opt(
+    act: Act,
+    id: &str,
+    group: &'static str,
+    label: &str,
+    default: Option<KeyChord>,
+) -> SysAction {
     SysAction {
         act,
         id: id.to_string(),
         group,
         label: label.to_string(),
-        default: Some(default),
+        default,
     }
 }
 
@@ -80,16 +90,32 @@ pub const WORKSPACE_KEYS: [KeyCode; 9] = [
     KeyCode::KEY_9,
 ];
 
-/// The zone actions: Move to each zone, with its default key.
-pub fn zone_actions() -> Vec<SysAction> {
-    let kp = |k: KeyCode| k.meta();
-    vec![
-        sys(Act::Zone(Zone::Fullscreen), "zone.full", "Zones", "Move to Full", kp(KeyCode::KP_0)),
-        sys(Act::Zone(Zone::Left), "zone.left", "Zones", "Move to Left", kp(KeyCode::KP_4)),
-        sys(Act::Zone(Zone::Right), "zone.right", "Zones", "Move to Right", kp(KeyCode::KP_6)),
-        sys(Act::Zone(Zone::Cinema), "zone.cinema", "Zones", "Move to Cinema", kp(KeyCode::KP_ENTER)),
-        sys(Act::Zone(Zone::Float), "zone.float", "Zones", "Float", kp(KeyCode::KP_MULTIPLY)),
-    ]
+/// The zone actions: move the focused tab to each zone of `layout` (Full,
+/// the grid's, Cinema), or float it. Today's keys are the defaults: the
+/// default layout's two columns on KP4 and KP6; a zone added later has
+/// none until you give it one.
+pub fn zone_actions(layout: &ZoneLayout) -> Vec<SysAction> {
+    let kp = |k: KeyCode| Some(k.meta());
+    let mut all = vec![sys_opt(Act::Zone(Zone::Fullscreen), "zone.full", "Zones", "Move to Full", kp(KeyCode::KP_0))];
+    for z in &layout.zones {
+        let default = match z.id {
+            1 => kp(KeyCode::KP_4),
+            2 => kp(KeyCode::KP_6),
+            _ => None,
+        };
+        all.push(sys_opt(
+            Act::Zone(Zone::Grid(z.id)),
+            &format!("zone.{}", z.id),
+            "Zones",
+            &format!("Move to {}", layout.label(z.id)),
+            default,
+        ));
+    }
+    all.extend([
+        sys_opt(Act::Zone(Zone::Cinema), "zone.cinema", "Zones", "Move to Cinema", kp(KeyCode::KP_ENTER)),
+        sys_opt(Act::Zone(Zone::Float), "zone.float", "Zones", "Float", kp(KeyCode::KP_MULTIPLY)),
+    ]);
+    all
 }
 
 /// Every system action, in the order Settings and Super+K list them.
@@ -157,7 +183,7 @@ pub struct Bindings {
 
 impl Default for Bindings {
     fn default() -> Self {
-        Self::new(system_actions(zone_actions()))
+        Self::new(system_actions(zone_actions(&ZoneLayout::default())))
     }
 }
 
@@ -271,7 +297,7 @@ mod tests {
         let b = Bindings::default();
         assert_eq!(b.act_for(&KeyCode::SPACE.meta()), Some(Act::Launcher));
         assert_eq!(b.act_for(&KeyCode::KEY_3.meta().ctrl()), Some(Act::SendToWorkspace(2)));
-        assert_eq!(b.act_for(&KeyCode::KP_4.meta()), Some(Act::Zone(Zone::Left)));
+        assert_eq!(b.act_for(&KeyCode::KP_4.meta()), Some(Act::Zone(Zone::Grid(1))));
         assert_eq!(b.key(Act::Lock), Some(KeyCode::L.meta()));
     }
 
@@ -291,7 +317,7 @@ mod tests {
 
     #[test]
     fn ids_are_unique() {
-        let all = system_actions(zone_actions());
+        let all = system_actions(zone_actions(&ZoneLayout::default()));
         for (i, a) in all.iter().enumerate() {
             assert!(all[i + 1..].iter().all(|o| o.id != a.id), "{} twice", a.id);
         }

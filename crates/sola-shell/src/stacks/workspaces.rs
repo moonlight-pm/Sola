@@ -86,7 +86,7 @@ impl Stacks {
     pub fn add_workspace(&mut self, name: &str) -> usize {
         let id = self.fresh_id();
         let at = self.showing + 1;
-        self.desks.insert(at, Desk::new(id, name));
+        self.desks.insert(at, Desk::new(id, name, &self.layout.zones()));
         self.showing = at;
         at
     }

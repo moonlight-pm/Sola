@@ -177,7 +177,7 @@ mod tests {
         );
         assert!(
             rows.iter()
-                .any(|r| matches!(r.action, ShortcutAction::System(Act::Zone(Zone::Left))))
+                .any(|r| matches!(r.action, ShortcutAction::System(Act::Zone(Zone::Grid(1)))))
         );
         assert!(
             rows.iter()

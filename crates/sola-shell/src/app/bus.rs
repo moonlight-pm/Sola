@@ -51,6 +51,14 @@ impl Shell {
                 Task::none()
             }
             Topic::KeyCapture(_) => self.on_key_capture(message.sticky),
+            Topic::ZoneLayout(l) => {
+                self.on_zone_layout(message.sticky.then_some(l));
+                Task::none()
+            }
+            Topic::FullscreenRequest(r) => {
+                self.on_fullscreen_request(r);
+                Task::none()
+            }
             Topic::OutputGeometry(g) => {
                 self.on_output_geometry(g);
                 Task::none()
@@ -1424,13 +1432,9 @@ impl Shell {
                 tiled: self
                     .tabs
                     .zone_of(w.window_id)
-                    .is_some_and(|z| crate::stacks::TILED.contains(&z))
+                    .is_some_and(|z| matches!(z, Zone::Fullscreen | Zone::Grid(_)))
                     && !self.zoning.is_floating(w.window_id),
-                cinema: self
-                    .tabs
-                    .desk_of(w.window_id)
-                    .and_then(|d| self.tabs.cinema_on(d))
-                    == Some(w.window_id),
+                cinema: self.tabs.zone_of(w.window_id) == Some(Zone::Cinema),
                 rim: self.menus.get_menu(&w.app_id).is_none(),
             })
             .collect();

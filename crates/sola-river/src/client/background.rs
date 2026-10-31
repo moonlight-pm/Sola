@@ -1,7 +1,8 @@
 //! The background picture (`Topic::Background`): a shell surface at the
 //! bottom of the render list, the output's size, showing the picture
 //! scaled to fill it (centre-cropped). Without one the ground is the
-//! compositor's black, as before.
+//! compositor's black, as before — and under a fullscreen window (Cinema),
+//! so nothing of the desk shows through a game.
 //!
 //! The picture is decoded and scaled off the event loop (a 20 MP JPEG
 //! takes a while) and kept, so `corners.rs` can paint a foreign tile's
@@ -167,10 +168,14 @@ pub fn poll(state: &mut AppData) {
 }
 
 /// Run during every render sequence: show the ground, or take it away.
+/// While a fullscreen window (Cinema) is drawn the picture goes: what
+/// shows around or through it is the compositor's black.
 pub fn sync_on_render(state: &mut AppData) {
     let generation = state.background.generation;
-    if state.background.ground.is_none() {
-        state.background.shown = None;
+    if state.background.ground.is_none() || fullscreen_drawn(state) {
+        if state.background.shown.take().is_some() {
+            info!("background: away under a fullscreen window");
+        }
         return;
     }
     let position = state.output_origin.unwrap_or((0, 0));
@@ -188,6 +193,14 @@ pub fn sync_on_render(state: &mut AppData) {
         Ok(shown) => state.background.shown = Some(shown),
         Err(e) => warn!(%e, "background: show"),
     }
+}
+
+/// Whether a window in the composition is fullscreen (a Cinema tab).
+fn fullscreen_drawn(state: &AppData) -> bool {
+    state
+        .last_composition
+        .iter()
+        .any(|id| state.currently_fullscreen.contains(id))
 }
 
 /// The shown picture's memory, for the idle fade's overlay (`fade.rs`),

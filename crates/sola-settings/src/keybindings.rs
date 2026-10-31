@@ -44,6 +44,8 @@ pub enum KeysMsg {
     Move,
     Remove,
     Reset,
+    /// A zone's row: zone keys are set on the Zones page.
+    OpenZones,
 }
 
 impl KeysState {
@@ -190,6 +192,7 @@ pub fn update(msg: KeysMsg, state: &mut KeysState) -> Task<KeysMsg> {
                 assign(state, &owner, &action, None);
             }
         }
+        KeysMsg::OpenZones => {}
         KeysMsg::Reset => {
             if let Some((owner, action)) = state.open.clone() {
                 keys::reset(&mut state.keys, &owner, &action);
@@ -239,7 +242,7 @@ pub fn leave(state: &mut KeysState) {
 
 fn chip<'a>(chord: Option<KeyChord>) -> Element<'a, KeysMsg> {
     match chord {
-        Some(c) => text(c.display()).font(fonts::mono()).size(13).into(),
+        Some(c) => text(c.display()).font(fonts::ui()).size(13).into(),
         None => kit_text::body("No key").style(kit_text::muted).into(),
     }
 }
@@ -293,12 +296,19 @@ fn row<'a>(state: &'a KeysState, b: &Binding) -> Vec<Element<'a, KeysMsg>> {
         (None, true) => "Changed".to_string(),
         (None, false) => String::new(),
     };
+    // Zone keys are set where the zones are drawn.
+    let zone = b.owner == SYSTEM && b.group == "Zones";
+    let press = if zone {
+        KeysMsg::OpenZones
+    } else {
+        KeysMsg::Toggle(b.owner.clone(), b.action.clone())
+    };
     let mut out: Vec<Element<'a, KeysMsg>> = vec![
         page::item(b.label.clone())
-            .subtitle(subtitle)
+            .subtitle(if zone && subtitle.is_empty() { "Set on the Zones page".to_string() } else { subtitle })
             .trailing(chip(b.key))
             .open(open)
-            .on_press(KeysMsg::Toggle(b.owner.clone(), b.action.clone()))
+            .on_press(press)
             .into(),
     ];
     if open {

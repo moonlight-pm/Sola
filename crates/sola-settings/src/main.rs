@@ -37,12 +37,14 @@ mod mail_discover;
 mod mail_from_api;
 mod page;
 mod procfs;
+mod zones;
 
 use appearance::{AppearanceMsg, AppearanceState};
 use login::{LoginMsg, LoginState};
 use applications::{AppsMsg, AppsState};
 use calendar::{CalMsg, CalendarState};
 use keybindings::{KeysMsg, KeysState};
+use zones::{ZonesMsg, ZonesState};
 use mail::{MailMsg, MailState};
 
 pub(crate) const APP_ID: &str = "sola-settings";
@@ -80,6 +82,7 @@ enum Panel {
     Login,
     Mail,
     Calendar,
+    Zones,
     Keybindings,
 }
 
@@ -110,6 +113,8 @@ struct App {
     appearance: AppearanceState,
     /// Every action's key (Settings → Keybindings).
     keys: KeysState,
+    /// The zone layout (Settings → Zones).
+    zones: ZonesState,
     /// Float tracker + iced window id for CSD while floating.
     float: sola_kit::FloatState,
     window_id: Option<iced::window::Id>,
@@ -130,6 +135,7 @@ impl Default for App {
             login_ui: LoginState::default(),
             appearance: AppearanceState::default(),
             keys: KeysState::default(),
+            zones: ZonesState::default(),
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
         }
@@ -146,6 +152,7 @@ enum Msg {
     Appearance(AppearanceMsg),
     Login(LoginMsg),
     Keys(KeysMsg),
+    Zones(ZonesMsg),
     WindowReady(Option<iced::window::Id>),
     TitleDrag,
     TitleResize(iced::window::Direction),
@@ -185,6 +192,7 @@ impl App {
 
                 if is_self_quit(&message, APP_ID) {
                     keybindings::leave(&mut self.keys);
+                    zones::leave(&mut self.zones);
                     return iced::exit();
                 }
 
@@ -243,12 +251,21 @@ impl App {
                     Some(Topic::Keybindings(k)) => {
                         self.keys.keys = if message.sticky { k } else { Default::default() };
                     }
+                    Some(Topic::ZoneLayout(l)) => {
+                        self.zones.layout = message.sticky.then_some(l);
+                    }
+                    Some(Topic::OutputGeometry(g)) => {
+                        self.zones.output = Some((g.width, g.height));
+                    }
                     _ => {}
                 }
             }
             Msg::SelectPanel(p) => {
                 if p != Panel::Keybindings {
                     keybindings::leave(&mut self.keys);
+                }
+                if p != Panel::Zones {
+                    zones::leave(&mut self.zones);
                 }
                 self.panel = p;
                 if p == Panel::Login {
@@ -259,7 +276,13 @@ impl App {
                 }
             }
             Msg::Login(m) => return login::update(m, &mut self.login_ui).map(Msg::Login),
+            Msg::Keys(KeysMsg::OpenZones) => {
+                return self.update(Msg::SelectPanel(Panel::Zones));
+            }
             Msg::Keys(m) => return keybindings::update(m, &mut self.keys).map(Msg::Keys),
+            Msg::Zones(m) => {
+                return zones::update(m, &mut self.zones, &mut self.keys).map(Msg::Zones);
+            }
             Msg::Apps(m) => {
                 return applications::update(m, &mut self.applications, &mut self.apps_ui)
                     .map(Msg::Apps);
@@ -279,6 +302,7 @@ impl App {
             Msg::TitleResize(dir) => return sola_kit::drag_resize(self.window_id, dir),
             Msg::TitleClose => {
                 keybindings::leave(&mut self.keys);
+                zones::leave(&mut self.zones);
                 sola_kit::close_app(APP_ID);
             }
             Msg::ClipboardPasted(text) => {
@@ -361,6 +385,8 @@ impl App {
                     .active(self.panel == Panel::Mail),
                 SidebarItem::new("Calendar", Msg::SelectPanel(Panel::Calendar))
                     .active(self.panel == Panel::Calendar),
+                SidebarItem::new("Zones", Msg::SelectPanel(Panel::Zones))
+                    .active(self.panel == Panel::Zones),
                 SidebarItem::new("Keybindings", Msg::SelectPanel(Panel::Keybindings))
                     .active(self.panel == Panel::Keybindings),
             ],
@@ -372,6 +398,7 @@ impl App {
             Panel::Login => "Login",
             Panel::Mail => "Mail",
             Panel::Calendar => "Calendar",
+            Panel::Zones => "Zones",
             Panel::Keybindings => "Keybindings",
         };
 
@@ -419,6 +446,14 @@ impl App {
             .padding(Padding::new(page_pad))
             .height(Length::Fill)
             .into(),
+            Panel::Zones => column![
+                kit_text::heading(title_text),
+                zones::view(&self.zones, &self.keys).map(Msg::Zones),
+            ]
+            .spacing(page_pad)
+            .padding(Padding::new(page_pad))
+            .height(Length::Fill)
+            .into(),
             Panel::Keybindings => column![
                 kit_text::heading(title_text),
                 keybindings::view(&self.keys).map(Msg::Keys),
@@ -455,6 +490,10 @@ impl App {
         let bus = bus_subscription().map(Msg::BusMessage);
         if self.keys.capturing() {
             let keys = keybindings::capture_keys().map(|(p, m)| Msg::Keys(KeysMsg::Pressed(p, m)));
+            return Subscription::batch([bus, keys]);
+        }
+        if self.zones.keying() || self.zones.choosing() {
+            let keys = keybindings::capture_keys().map(|(p, m)| Msg::Zones(ZonesMsg::Pressed(p, m)));
             return Subscription::batch([bus, keys]);
         }
         bus

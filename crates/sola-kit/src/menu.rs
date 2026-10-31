@@ -90,16 +90,16 @@ pub const WINDOW_MENU_LABEL: &str = "Window";
 pub const ACTION_HIDE: &str = "window.hide";
 pub const ACTION_CYCLE: &str = "window.cycle";
 pub const ACTION_FLOAT: &str = "window.float";
-pub const ACTION_LEFT: &str = "window.left";
-pub const ACTION_RIGHT: &str = "window.right";
-pub const ACTION_TOP: &str = "window.top";
-pub const ACTION_BOTTOM: &str = "window.bottom";
-pub const ACTION_TOP_MIDDLE: &str = "window.top-middle";
-pub const ACTION_BOTTOM_MIDDLE: &str = "window.bottom-middle";
-pub const ACTION_FULL_MIDDLE: &str = "window.full-middle";
-pub const ACTION_MIDDLE_RIGHT: &str = "window.middle-right";
 pub const ACTION_FULLSCREEN: &str = "window.fullscreen";
 pub const ACTION_CINEMA: &str = "window.cinema";
+/// A grid zone's item: `window.zone.<id>` (the layout's zones are the
+/// shell's; it adds their items to the menus it draws).
+pub const ACTION_GRID_PREFIX: &str = "window.zone.";
+
+/// The Window menu item id that moves a tab to grid zone `id`.
+pub fn grid_action_id(id: u32) -> String {
+    format!("{ACTION_GRID_PREFIX}{id}")
+}
 
 /// Compositor action the shell handles instead of forwarding `MenuAction`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,56 +159,6 @@ pub const WINDOW_MENU_ENTRIES: &[WindowMenuEntry] = &[
     ),
     WindowMenuEntry::Divider,
     item(
-        ACTION_LEFT,
-        "Left",
-        kp(KeyCode::KP_4),
-        WindowAction::Zone(Zone::Left),
-    ),
-    item(
-        ACTION_RIGHT,
-        "Right",
-        kp(KeyCode::KP_6),
-        WindowAction::Zone(Zone::Right),
-    ),
-    item(
-        ACTION_TOP,
-        "Top",
-        kp(KeyCode::KP_EQUAL),
-        WindowAction::Zone(Zone::Top),
-    ),
-    item(
-        ACTION_BOTTOM,
-        "Bottom",
-        kp(KeyCode::KP_DECIMAL),
-        WindowAction::Zone(Zone::Bottom),
-    ),
-    WindowMenuEntry::Divider,
-    item(
-        ACTION_TOP_MIDDLE,
-        "Top Middle",
-        kp(KeyCode::KP_8),
-        WindowAction::Zone(Zone::TopMiddle),
-    ),
-    item(
-        ACTION_FULL_MIDDLE,
-        "Full Middle",
-        kp(KeyCode::KP_5),
-        WindowAction::Zone(Zone::FullMiddle),
-    ),
-    item(
-        ACTION_BOTTOM_MIDDLE,
-        "Bottom Middle",
-        kp(KeyCode::KP_2),
-        WindowAction::Zone(Zone::BottomMiddle),
-    ),
-    item(
-        ACTION_MIDDLE_RIGHT,
-        "Middle Right",
-        kp(KeyCode::KP_ADD),
-        WindowAction::Zone(Zone::MiddleRight),
-    ),
-    WindowMenuEntry::Divider,
-    item(
         ACTION_FULLSCREEN,
         "Full",
         kp(KeyCode::KP_0),
@@ -255,6 +205,9 @@ pub fn window_menu() -> MenuDefinition {
 /// Map a menu action id to a compositor window action. `None` means the
 /// id is not a kit Window item (forward to the app).
 pub fn parse_window_action(id: &str) -> Option<WindowAction> {
+    if let Some(n) = id.strip_prefix(ACTION_GRID_PREFIX) {
+        return n.parse().ok().map(|n| WindowAction::Zone(Zone::Grid(n)));
+    }
     WINDOW_MENU_ENTRIES.iter().find_map(|entry| match entry {
         WindowMenuEntry::Item(i) if i.id == id => Some(i.action),
         _ => None,
@@ -276,42 +229,20 @@ pub fn ensure_window_menu(mut payload: AppMenuPayload) -> AppMenuPayload {
 mod tests {
     use super::*;
 
-    fn zone_action_id(zone: Zone) -> &'static str {
-        // Exhaustive: a new Zone variant fails to compile until the Window
-        // menu names it.
-        match zone {
-            Zone::Left => ACTION_LEFT,
-            Zone::Right => ACTION_RIGHT,
-            Zone::Top => ACTION_TOP,
-            Zone::Bottom => ACTION_BOTTOM,
-            Zone::TopMiddle => ACTION_TOP_MIDDLE,
-            Zone::BottomMiddle => ACTION_BOTTOM_MIDDLE,
-            Zone::FullMiddle => ACTION_FULL_MIDDLE,
-            Zone::MiddleRight => ACTION_MIDDLE_RIGHT,
-            Zone::Fullscreen => ACTION_FULLSCREEN,
-            Zone::Cinema => ACTION_CINEMA,
-            Zone::Float => ACTION_FLOAT,
-        }
-    }
-
     #[test]
     fn window_menu_covers_every_zone() {
-        for zone in [
-            Zone::Left,
-            Zone::Right,
-            Zone::Top,
-            Zone::Bottom,
-            Zone::TopMiddle,
-            Zone::BottomMiddle,
-            Zone::FullMiddle,
-            Zone::MiddleRight,
-            Zone::Fullscreen,
-            Zone::Cinema,
-            Zone::Float,
+        for (id, zone) in [
+            (ACTION_FULLSCREEN, Zone::Fullscreen),
+            (ACTION_CINEMA, Zone::Cinema),
+            (ACTION_FLOAT, Zone::Float),
         ] {
-            let id = zone_action_id(zone);
             assert_eq!(parse_window_action(id), Some(WindowAction::Zone(zone)));
         }
+        assert_eq!(
+            parse_window_action(&grid_action_id(3)),
+            Some(WindowAction::Zone(Zone::Grid(3)))
+        );
+        assert_eq!(parse_window_action("window.zone.x"), None);
     }
 
     #[test]
