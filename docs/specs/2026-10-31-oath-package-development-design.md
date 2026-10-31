@@ -70,9 +70,12 @@ release tools.
    or method, never a changed one). An overlay pins only the packages
    whose tree changed (reproducible builds: an untouched app builds to the
    same hash and does not move).
-6. **Overlays are visible.** `oath get`, `oath diff` and `oath update`
-   name packages whose source is not the profile's release ("`pkg:sola`
-   is `sessions-anywhere@0d99e340`; update replaces it").
+6. **Overlays are visible, and a release replaces them.** `oath get`,
+   `oath diff` and `oath update` name packages whose pin is not the
+   release's ("`pkg:sola` is `sessions-anywhere@0d99e340`; update replaces
+   it"); `oath update --keep pkg:X` keeps one (Joshua, 2026-10-31: replace,
+   not survive-with-`--take`). An update also makes objects new to the
+   profile.
 7. **Try a leaf app without an overlay**: run it from the build tree until
    its next restart (`cargo make run <app>` for Sola).
 
@@ -131,10 +134,21 @@ from master or `next`, with the guard; a desk restart is asked for.
 | Memories | "merge master before a Design install" and "install every iteration" → the guard and `next` |
 | Oath `AGENTS.md`, `oath-docs` | Oath's session |
 
-## Order
+## Order and state
 
-1. Spec (this), brief Oath.
-2. `sola-make`: provenance (sidecar), guard, publish check, changed-only
-   pins. Skills, docs, memories.
-3. Split `pkg:sola` with Oath (plans, desk profile, migration).
-4. `source=` on pins once `oath` takes it; pattern 6 is Oath's.
+1. Spec (this), brief Oath — done. Joshua's answers to Oath's questions
+   (2026-10-31): keep `pkg:sola` as the core; `oath update` makes objects
+   new to the profile; it replaces overlays (named, `--keep`); Oath keeps
+   committing to master; publish refuses off a pushed master, no override.
+2. `sola-make` — done on branch `oath-packages`: provenance (sidecar, in
+   Oath's `pkg.source` shape), the guard (`--force`), changed-only pins,
+   publish only from a pushed master. Skills (`oath-packages`, `checkpoint`,
+   `cleanup` — on novus, canto and buccina), Sola's `AGENTS.md`,
+   `sync-project`, `sola-progress-docs`, memories — done.
+3. The split in `sola-make` — done (`pkg:sola` core + 10 app packages,
+   staged); an overlay makes the new packages (`oath new`). Not yet applied
+   anywhere; the manual's package column changes when it ships.
+4. Oath: `pkg.source`, overlays shown, the update changes, its publish
+   guard → Release A. Then Sola publishes the split from master, Oath pins
+   it and enables `svc:sola-sessions` → Release B (`oath update --confirm
+   --reboot`). Then `sola-make` sets `source=` with each pin.
