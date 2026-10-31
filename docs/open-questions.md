@@ -247,6 +247,28 @@ session open). Recorded in the spec's D16.
 
 ---
 
+### D17 — Vault: the desk's Bitwarden client, its service, the right-click menu (P1)
+
+**Context:** Joshua (2026-10-31) asked for a Bitwarden client of Sola's own
+("Vault" / `sola-vault`), the browser's vault logic moved into a service, the
+vault reaching other apps, and a desktop-level right-click menu with standard
+items (pasting from vault items, copy) and apps' own. Draft:
+[vault](specs/2026-10-31-sola-vault-design.md). Found while drafting: the
+browser's `vault-session.json` holds the decrypted user key, encrypted with
+`~/.config/sola/key` — both readable by any process running as you, agents
+included.
+
+**Ask:** the spec's V1–V7 — how long an unlock lasts and what stays on disk;
+agents and the vault; who draws the right-click menu; apps that are not
+Sola's; the server; copying the code on fill; what "everything" covers.
+
+**Until decided:** nothing built; no vault value on the bus or the call plane
+(D3).
+
+**Related:** `vault`, `desk-menu`, `browser` capabilities; D3.
+
+---
+
 ## Open technical questions
 
 ### T1 — Agent pin UI surface — **closed (2026-08-28)**
