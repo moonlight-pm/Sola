@@ -12,7 +12,8 @@
 //! Utilities' `Score` does — the share of the picture its hue family
 //! covers, and how vivid it is. A mean over a whole picture drifts to grey
 //! (the dark sky of a space picture thins every color in it); a cell's
-//! mean is the color its pixels share.
+//! mean is the color its pixels share. A picture of fewer than three
+//! colors is filled out with their complements.
 //!
 //! Colors are worked in OKLab / OKLCH (Björn Ottosson), where lightness
 //! and chroma are perceptual, so a tint reads the same strength in every
@@ -39,6 +40,9 @@ pub struct Scheme {
 
 /// The most schemes a picture offers.
 pub const MAX_VARIATIONS: usize = 4;
+/// The fewest a picture with a color offers: one of fewer colors is
+/// filled out with complements.
+const MIN_VARIATIONS: usize = 3;
 /// Pixels below this chroma are grey: they count for no color.
 const GREY: f32 = 0.02;
 /// The cells the pixels are counted in (hue degrees, chroma, lightness):
@@ -66,6 +70,9 @@ const WEIGHT_VIVID: f32 = 132.0;
 /// [`HUES_APART`]) only until there are [`MAX_VARIATIONS`].
 const HUES_APART_FIRST: f32 = 90.0;
 const HUES_APART: f32 = 30.0;
+/// A complement is kept at least this far in hue from every scheme before
+/// it: a split complement sits [`HUES_APART`] from the complement.
+const COMPLEMENT_APART: f32 = 25.0;
 /// The strongest tint a surface takes at full strength (OKLCH chroma); up
 /// to it, the picture's color's own chroma.
 const TINT_MAX: f32 = 0.08;
@@ -128,18 +135,21 @@ impl Scheme {
 
     /// The picture's schemes, one per color it is made of (at most
     /// [`MAX_VARIATIONS`], the best first, as far apart in hue as they
-    /// can be): each tints with its color and takes the best color apart
-    /// from it as the accent. A grey picture gives one, grey.
+    /// can be), filled out to [`MIN_VARIATIONS`] with complements (see
+    /// [`complements`]): each tints with its color and takes the best of
+    /// the picture's colors apart from it as the accent. A grey picture
+    /// gives one, grey.
     pub fn variations(rgb: &[u8]) -> Vec<Self> {
         let pixels: Vec<Lch> = rgb
             .chunks_exact(3)
             .map(|p| Lch::from_srgb8(p[0], p[1], p[2]))
             .collect();
         let sources = sources(&pixels);
-        let chosen = apart(&sources);
+        let mut chosen = apart(&sources);
         if chosen.is_empty() {
             return vec![Self::grey()];
         }
+        complements(&mut chosen);
         chosen
             .into_iter()
             .map(|tint| {
@@ -509,6 +519,31 @@ fn apart(sources: &[Source]) -> Vec<Source> {
     }
 }
 
+/// Fill `chosen` (the picture's colors, best first) out to
+/// [`MIN_VARIATIONS`] with colors turned in hue from them, at their
+/// lightness and chroma: each one's complement (180°), best first, then the
+/// best one's split complements (150° either way) — each at least
+/// [`COMPLEMENT_APART`] from every color before it.
+fn complements(chosen: &mut Vec<Source>) {
+    let turn = |s: &Source, by: f32| Source {
+        color: Lch::new(s.color.l, s.color.c, (s.color.h + by).rem_euclid(360.0)),
+        score: 0.0,
+    };
+    let mut turned: Vec<Source> = chosen.iter().map(|s| turn(s, 180.0)).collect();
+    turned.extend([turn(&chosen[0], 150.0), turn(&chosen[0], -150.0)]);
+    for s in turned {
+        if chosen.len() >= MIN_VARIATIONS {
+            break;
+        }
+        if chosen
+            .iter()
+            .all(|c| hue_apart(c.color.h, s.color.h) >= COMPLEMENT_APART)
+        {
+            chosen.push(s);
+        }
+    }
+}
+
 /// The most chroma among the picture's pixels in `hue`'s family.
 fn peak_chroma(pixels: &[Lch], hue: f32) -> f32 {
     pixels
@@ -786,6 +821,30 @@ mod tests {
         assert_eq!(v[1].name(), "Blue");
         let [base, raised, accent] = v[1].preview(0.6);
         assert!(base.starts_with('#') && raised.len() == 7 && accent.len() == 7);
+    }
+
+    #[test]
+    fn a_picture_of_one_color_is_filled_out_with_complements() {
+        let v = Scheme::variations(&fill([30, 60, 160], 100));
+        assert_eq!(v.len(), MIN_VARIATIONS, "{v:?}");
+        let blue = v[0].tint_hue;
+        assert!(hue_apart(v[1].tint_hue, blue + 180.0) < 0.1, "complement: {v:?}");
+        assert!(hue_apart(v[2].tint_hue, blue + 150.0) < 0.1, "split: {v:?}");
+        // As colorful as the picture's color, and accented with it.
+        assert_eq!(v[1].tint_chroma, v[0].tint_chroma);
+        assert!(hue_apart(v[1].accent_hue, blue) < 0.1, "{v:?}");
+        assert!(hue_apart(v[2].accent_hue, blue) < 0.1, "{v:?}");
+        assert_eq!(v[1].name(), "Gold");
+    }
+
+    #[test]
+    fn a_picture_of_two_colors_takes_the_best_ones_complement() {
+        // Teal most, some violet.
+        let mut px = fill([20, 110, 120], 300);
+        px.extend(fill([110, 60, 170], 100));
+        let v = Scheme::variations(&px);
+        assert_eq!(v.len(), MIN_VARIATIONS, "{v:?}");
+        assert!(hue_apart(v[2].tint_hue, v[0].tint_hue + 180.0) < 0.1, "{v:?}");
     }
 
     #[test]

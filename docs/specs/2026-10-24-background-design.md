@@ -197,6 +197,29 @@ to be dull."
   Hanrahan, *Modeling How People Extract Color Themes from Images* (CHI
   2013): people pick salient, diverse colors, not the most frequent.
 
+### Complements (2026-10-30)
+
+**Asked (Joshua, on novus):** "We should enhance it to also provide
+complementary colors so we can try to get at least 3 theme choices per
+picture." A picture mostly of one hue (rain on a blue window, a teal
+painting) offered one scheme, and Settings shows no cards for one.
+
+- **A picture with a color offers at least three schemes**
+  (`Scheme::variations`): its own colors first, as before, then colors
+  turned in hue from them at their lightness and chroma — each one's
+  **complement** (180°), best first, then the best one's **split
+  complements** (150° either way) — each at least 25° from every scheme
+  before it (a split complement sits 30° from the complement). A grey
+  picture still offers one, Grey.
+- A complement takes the best of the picture's own colors at least 60°
+  from it as its accent, as every scheme does — so a complement scheme is
+  accented with the picture's color. Its card's swatch is the complement
+  itself. They come after the picture's own, so a saved `variation` index
+  still names the same scheme.
+- **Measured** (96 px samples): the rain picture Blue → Blue / Amber /
+  Ember; the teal painting Sky → Sky / Ember / Rose; a teal and green
+  picture Teal / Green → Teal / Green / Rose.
+
 ### Custom colors and highlights (2026-10-24)
 
 **Asked (Joshua):** "allow in that same place some options for the user to
