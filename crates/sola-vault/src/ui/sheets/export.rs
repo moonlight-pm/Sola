@@ -249,7 +249,7 @@ impl App {
         sheet_sized(
             head(
                 None,
-                widgets::glyph_plate("lucide/download", PlateSize::Small),
+                Some(widgets::glyph_plate("lucide/download", PlateSize::Small)),
                 "Export the vault".into(),
                 "Items in folders, without attachments".into(),
             ),

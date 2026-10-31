@@ -174,7 +174,7 @@ impl App {
         sheet_sized(
             head(
                 None,
-                widgets::glyph_plate("lucide/settings", PlateSize::Small),
+                Some(widgets::glyph_plate("lucide/settings", PlateSize::Small)),
                 "Vault Settings".into(),
                 String::new(),
             ),

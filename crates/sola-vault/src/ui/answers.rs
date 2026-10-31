@@ -93,6 +93,13 @@ impl App {
                 self.after_write(None)
             }
             (Ask::Favorite(id) | Ask::Move(id), _) => self.after_write(Some(id)),
+            (Ask::Share(id), _) => {
+                self.toast_list_change("Moved to the organization");
+                Task::batch([
+                    self.after_write(Some(id)),
+                    self.ask(Ask::Collections, Request::Collections),
+                ])
+            }
             (Ask::CreateFolder | Ask::RenameFolder, _) => {
                 self.sheet = None;
                 self.ask(Ask::Folders, Request::Folders)
@@ -107,7 +114,10 @@ impl App {
                     self.ask(Ask::List, Request::List { url: None }),
                 ])
             }
-            (Ask::Sync, _) => self.ask(Ask::Status, Request::Status),
+            (Ask::Sync, _) => Task::batch([
+                self.ask(Ask::Status, Request::Status),
+                self.ask(Ask::List, Request::List { url: None }),
+            ]),
             (Ask::Lock | Ask::Logout, _) => self.ask(Ask::Status, Request::Status),
             (Ask::SetSettings, _) => Task::none(),
             (Ask::Generate, Reply::Generated(value)) => {
@@ -165,6 +175,14 @@ impl App {
                     });
                 }
                 Task::none()
+            }
+            Ask::Share(_) => {
+                if let Some(sheets::Sheet::Share(x)) = self.sheet.as_mut() {
+                    x.busy = false;
+                    x.error = Some(e.message);
+                    return Task::none();
+                }
+                self.show_toast(e.message)
             }
             Ask::CreateFolder | Ask::RenameFolder | Ask::DeleteFolder(_) => {
                 if let Some(sheets::Sheet::Folder(f)) = self.sheet.as_mut() {

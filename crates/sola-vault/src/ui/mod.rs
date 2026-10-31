@@ -51,7 +51,7 @@ pub use ask::Ask;
 use copy::CopyWhat;
 use edit::EditForm;
 use fields::{Field, Text};
-use sheets::{ExportMsg, GenMsg, SetMsg, Sheet};
+use sheets::{ExportMsg, GenMsg, SetMsg, ShareMsg, Sheet};
 use signin::{ServerChoice, SignIn, Unlock};
 
 /// How long a row says "Copied".
@@ -133,6 +133,8 @@ pub enum Msg {
     OpenSettings,
     AskMove,
     MoveTo(Option<String>),
+    AskShare,
+    Share(ShareMsg),
     NewFolder,
     RenameFolder(String),
     AskDeleteFolder(String),
@@ -208,6 +210,8 @@ pub struct App {
     window_id: Option<iced::window::Id>,
 
     link: LinkState,
+    /// The service is there but would not let Vault in: why.
+    refused: Option<String>,
     status: Option<Status>,
     settings: Settings,
 
@@ -254,6 +258,7 @@ impl App {
             float: sola_kit::FloatState::new(APP_ID),
             window_id: None,
             link: LinkState::Connecting,
+            refused: None,
             status: None,
             settings: Settings::default(),
             signin: SignIn::default(),
@@ -503,6 +508,8 @@ impl App {
             Msg::OpenSettings => self.open_settings(),
             Msg::AskMove => self.ask_move(),
             Msg::MoveTo(folder) => self.move_to(folder),
+            Msg::AskShare => self.ask_share(),
+            Msg::Share(m) => self.on_share(m),
             Msg::NewFolder => self.new_folder(),
             Msg::RenameFolder(id) => self.rename_folder(id),
             Msg::AskDeleteFolder(id) => self.ask_delete_folder(id),
@@ -540,16 +547,18 @@ impl App {
         match link {
             Link::Up => {
                 self.link = LinkState::Up;
+                self.refused = None;
                 Task::batch([
                     self.ask(Ask::Status, Request::Status),
                     self.ask(Ask::Settings, Request::Settings),
                 ])
             }
-            Link::Down => {
+            Link::Down { refused } => {
                 if self.link != LinkState::Down {
                     tracing::info!("vault service away; showing the waiting card");
                 }
                 self.link = LinkState::Down;
+                self.refused = refused;
                 self.status = None;
                 self.forget_vault();
                 Task::none()
@@ -590,7 +599,8 @@ impl App {
     fn apply_status(&mut self, s: Status) -> Task<Msg> {
         let before = self.status.as_ref().map(|o| (o.signed_in, o.unlocked));
         let after = (s.signed_in, s.unlocked);
-        if self.signin.email.is_empty() && !s.email.is_empty() && !s.signed_in {
+        // A login waiting for its second step (Vault reopened meanwhile).
+        if self.signin.email.is_empty() && s.two_factor_pending {
             self.signin.email = s.email.clone();
         }
         self.status = Some(s);
@@ -601,7 +611,11 @@ impl App {
             (true, true) => {
                 self.signin.clear_secrets();
                 self.unlock = Unlock::default();
-                Task::batch([self.load_vault(), self.ask(Ask::Settings, Request::Settings)])
+                Task::batch([
+                    self.load_vault(),
+                    self.ask(Ask::Settings, Request::Settings),
+                    Field::Search.focus(),
+                ])
             }
             (true, false) => {
                 self.forget_vault();

@@ -34,6 +34,7 @@ pub const COPY_CODE: &str = "copy_code";
 pub const FAVORITE: &str = "favorite";
 pub const CLONE: &str = "clone";
 pub const MOVE_TO_FOLDER: &str = "move_to_folder";
+pub const MOVE_TO_ORG: &str = "move_to_org";
 pub const TRASH: &str = "trash";
 
 pub const SORT_NAME: &str = "sort_name";
@@ -93,6 +94,7 @@ pub fn app_menu(app_id: &str, sort: Sort) -> AppMenuPayload {
                     item(FAVORITE, "Favorite", None),
                     item(CLONE, "Clone", None),
                     item(MOVE_TO_FOLDER, "Move to Folder…", None),
+                    item(MOVE_TO_ORG, "Move to Organization…", None),
                     MenuItem::Divider,
                     item(TRASH, "Move to Trash", None),
                 ],

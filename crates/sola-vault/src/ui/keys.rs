@@ -120,6 +120,7 @@ impl App {
             menus::FAVORITE => self.toggle_favorite(),
             menus::CLONE => self.clone_item(),
             menus::MOVE_TO_FOLDER => self.ask_move(),
+            menus::MOVE_TO_ORG => self.ask_share(),
             menus::TRASH => self.trash(),
             menus::SORT_NAME => self.update(Msg::SortBy(Sort::Name)),
             menus::SORT_RECENT => self.update(Msg::SortBy(Sort::Recent)),

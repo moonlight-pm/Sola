@@ -160,9 +160,11 @@ impl App {
                 .into(),
             (None, None) => text("…").font(fonts::mono()).size(15).into(),
         };
+        let copied = self.just_copied("generated").then(crate::ui::record::copied_mark);
         let result = container(
             row![
                 container(value).width(Length::Fill),
+                row(copied),
                 widgets::tool("lucide/refresh-cw", "Make another", Some(Msg::Generator(GenMsg::Again))),
                 widgets::tool(
                     "lucide/copy",
@@ -220,7 +222,7 @@ impl App {
                 ),
                 setting(
                     "Between words",
-                    text_input("", &o.separator)
+                    text_input("", &o.separator).size(13)
                         .on_input(|s| Msg::Generator(GenMsg::Separator(s)))
                         .font(fonts::mono())
                         .width(Length::Fixed(56.0))
@@ -254,7 +256,7 @@ impl App {
         sheet_sized(
             head(
                 None,
-                widgets::glyph_plate("lucide/dices", PlateSize::Small),
+                Some(widgets::glyph_plate("lucide/dices", PlateSize::Small)),
                 "Generator".into(),
                 describe(o),
             ),
@@ -292,6 +294,8 @@ fn stepper<'a>(slider: impl Into<Element<'a, Msg>>, value: String) -> Element<'a
     row![
         container(slider.into()).width(Length::Fixed(150.0)),
         text(value)
+            .font(fonts::ui())
+            .size(13)
             .width(Length::Fixed(28.0))
             .style(|t: &Theme| text::Style {
                 color: Some(style::ink2(t)),

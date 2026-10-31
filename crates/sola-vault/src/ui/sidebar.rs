@@ -20,8 +20,7 @@ impl App {
                 self.place(Section::All, "All items", "lucide/vault"),
                 self.place(Section::Favorites, "Favorites", "lucide/star"),
             ]),
-            SidebarSection::new(
-                "Kinds",
+            SidebarSection::unlabeled(
                 self.listed_kinds()
                     .into_iter()
                     .map(|k| self.place(Section::Kind(k), Section::kind_label(k), kind_icon(k)))

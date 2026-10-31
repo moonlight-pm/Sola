@@ -145,12 +145,16 @@ impl App {
                 MenuItem::action("Delete Forever…", Msg::AskDeleteForever),
             ]
         } else {
-            vec![
+            let mut items = vec![
                 MenuItem::action("Clone", Msg::Clone),
                 MenuItem::action("Move to Folder…", Msg::AskMove),
-                MenuItem::separator(),
-                MenuItem::action("Move to Trash", Msg::Trash),
-            ]
+            ];
+            if self.can_share() {
+                items.push(MenuItem::action("Move to Organization…", Msg::AskShare));
+            }
+            items.push(MenuItem::separator());
+            items.push(MenuItem::action("Move to Trash", Msg::Trash));
+            items
         };
         popover_anchored(trigger, context_menu::menu(items), Msg::Popup(None))
             .placement(Placement::Below)
@@ -511,7 +515,7 @@ fn label_text<'a>(label: String, copied: bool) -> Element<'a, Msg> {
         .into()
 }
 
-fn copied_mark<'a>() -> Element<'a, Msg> {
+pub(super) fn copied_mark<'a>() -> Element<'a, Msg> {
     container(
         row![
             widgets::glyph("lucide/check", 12.0, |t: &Theme| t

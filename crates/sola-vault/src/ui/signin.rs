@@ -8,7 +8,7 @@ use iced::widget::{Space, button, column, container, row, stack, text};
 use iced::{Alignment, Element, Length, Padding, Task, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::select::{SelectOption, select};
-use sola_kit::components::style::{SPACE_LG, SPACE_SM, SPACE_XS};
+use sola_kit::components::style::{PAD_CONTROL, SPACE_LG, SPACE_SM, SPACE_XS};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::text_input::{self as kit_input, text_input};
 use sola_kit::fonts;
@@ -330,10 +330,21 @@ impl App {
     }
 
     fn view_away(&self) -> Element<'_, Msg> {
+        if let Some(why) = &self.refused {
+            return sheet(
+                head(
+                    None,
+                    Some(widgets::glyph_plate("lucide/lock", PlateSize::Small)),
+                    "The vault service didn't let Vault in".into(),
+                    "It lets in Sola's own programs only.".into(),
+                ),
+                lead_text(why.clone()),
+            );
+        }
         sheet(
             head(
                 None,
-                widgets::glyph_plate("lucide/lock", PlateSize::Small),
+                Some(widgets::glyph_plate("lucide/lock", PlateSize::Small)),
                 "The vault service isn't running".into(),
                 "Vault connects by itself once it starts.".into(),
             ),
@@ -350,10 +361,11 @@ impl App {
     fn view_sign_in(&self) -> Element<'_, Msg> {
         let s = &self.signin;
         let email = labeled_input(
-            text_input("Email address", &s.email)
+            text_input("Email address", &s.email).size(13)
                 .id(Field::Email.id())
                 .on_input(|v| Msg::Input(Field::Email, Zeroizing::new(v)))
-                .on_submit(Msg::Submit(Field::Email)),
+                .on_submit(Msg::Submit(Field::Email))
+                .style(field_style(s.error_under(Under::Email).is_some())),
             s.error_under(Under::Email),
         );
         let password = labeled_input(
@@ -388,7 +400,7 @@ impl App {
         .spacing(SPACE_SM);
         if s.server == ServerChoice::SelfHosted {
             server = server.push(
-                text_input("https://vault.example.com", &s.url)
+                text_input("https://vault.example.com", &s.url).size(13)
                     .id(Field::ServerUrl.id())
                     .on_input(|v| Msg::Input(Field::ServerUrl, Zeroizing::new(v)))
                     .on_submit(Msg::Submit(Field::ServerUrl))
@@ -407,7 +419,7 @@ impl App {
             body = body.push(error_caption(e));
         }
         body = body.push(
-            text("Two-step login, emergency access and your account's settings live on the web vault.")
+            text("Your account's settings, two-step setup and emergency access live on the web vault.")
                 .font(fonts::ui())
                 .size(11)
                 .style(|t: &Theme| text::Style { color: Some(style::ink3(t)) }),
@@ -415,7 +427,7 @@ impl App {
         sheet(
             head(
                 None,
-                widgets::glyph_plate("lucide/key-round", PlateSize::Small),
+                Some(widgets::glyph_plate("lucide/key-round", PlateSize::Small)),
                 "Vault".into(),
                 "Sign in to Bitwarden".into(),
             ),
@@ -485,7 +497,7 @@ impl App {
         sheet(
             head(
                 Some(Msg::BackToSignIn),
-                Space::new().into(),
+                None,
                 title.into(),
                 email,
             ),
@@ -582,7 +594,7 @@ impl App {
         sheet(
             head(
                 None,
-                widgets::glyph_plate("lucide/lock", PlateSize::Small),
+                Some(widgets::glyph_plate("lucide/lock", PlateSize::Small)),
                 "Bitwarden".into(),
                 sub,
             ),
@@ -652,7 +664,7 @@ pub fn card_style(theme: &Theme) -> container::Style {
 /// A card's head: back, a plate, a title over a line.
 pub fn head<'a>(
     back: Option<Msg>,
-    plate: Element<'a, Msg>,
+    plate: Option<Element<'a, Msg>>,
     title: String,
     sub: String,
 ) -> Element<'a, Msg> {
@@ -661,7 +673,9 @@ pub fn head<'a>(
     if let Some(b) = back {
         r = r.push(widgets::tool("lucide/chevron-left", "Back", Some(b)));
     }
-    r = r.push(plate);
+    if let Some(p) = plate {
+        r = r.push(p);
+    }
     let mut who = column![
         text(title).font(fonts::ui_medium()).size(13).wrapping(text::Wrapping::None)
     ]
@@ -707,7 +721,7 @@ pub fn secret_input<'a>(
     on_reveal: Msg,
 ) -> Element<'a, Msg> {
     let f = field.clone();
-    let input = text_input(placeholder, value)
+    let input = text_input(placeholder, value).size(13)
         .id(field.id())
         .secure(!reveal)
         .on_input(move |v| Msg::Input(f.clone(), Zeroizing::new(v)))
@@ -763,10 +777,18 @@ pub fn lead_text<'a>(s: String) -> Element<'a, Msg> {
 
 /// The one primary of a card, full width.
 pub fn primary<'a>(label: &'a str, on_press: Option<Msg>) -> Element<'a, Msg> {
-    kit_btn::labeled(label, kit_btn::primary)
-        .width(Length::Fill)
-        .on_press_maybe(on_press)
-        .into()
+    button(
+        text(label)
+            .font(fonts::ui())
+            .size(13)
+            .width(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Center),
+    )
+    .padding(PAD_CONTROL)
+    .width(Length::Fill)
+    .style(kit_btn::primary)
+    .on_press_maybe(on_press)
+    .into()
 }
 
 /// "Not you? **Use another account**", centred.

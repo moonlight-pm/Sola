@@ -5,6 +5,7 @@
 mod export;
 mod generator;
 mod settings;
+mod share;
 
 use iced::widget::{Space, button, column, container, mouse_area, opaque, row, text};
 use iced::{Alignment, Element, Length, Padding};
@@ -17,6 +18,7 @@ use zeroize::Zeroizing;
 pub use export::{ExportMsg, ExportSheet};
 pub use generator::{GenMsg, GenSheet, GenTarget};
 pub use settings::SetMsg;
+pub use share::{ShareMsg, ShareSheet};
 
 use super::fields::Field;
 use super::signin::{field_style, head, labeled_input, lead_text, sheet};
@@ -29,6 +31,7 @@ pub enum Sheet {
     Export(ExportSheet),
     Folder(FolderSheet),
     MoveTo,
+    Share(ShareSheet),
     Confirm(Confirm),
 }
 
@@ -56,6 +59,7 @@ impl App {
             Sheet::Export(x) => self.view_export(x),
             Sheet::Folder(f) => view_folder(f),
             Sheet::MoveTo => self.view_move(),
+            Sheet::Share(x) => self.view_share(x),
             Sheet::Confirm(c) => self.view_confirm(c),
         };
         // A click on the dim closes the sheet; one on the card does not.
@@ -116,7 +120,7 @@ impl App {
         sheet(
             head(
                 None,
-                widgets::glyph_plate("lucide/folder", PlateSize::Small),
+                Some(widgets::glyph_plate("lucide/folder", PlateSize::Small)),
                 "Move to folder".into(),
                 name,
             ),
@@ -166,7 +170,7 @@ impl App {
         sheet(
             head(
                 None,
-                widgets::glyph_plate("lucide/triangle-alert", PlateSize::Small),
+                Some(widgets::glyph_plate("lucide/triangle-alert", PlateSize::Small)),
                 title,
                 String::new(),
             ),
@@ -177,7 +181,7 @@ impl App {
 
 fn view_folder(f: &FolderSheet) -> Element<'_, Msg> {
     let title = if f.id.is_some() { "Rename folder" } else { "New folder" };
-    let field = text_input("Name", &f.name)
+    let field = text_input("Name", &f.name).size(13)
         .id(Field::FolderName.id())
         .on_input(|v| Msg::Input(Field::FolderName, Zeroizing::new(v)))
         .on_submit(Msg::Submit(Field::FolderName))
@@ -202,7 +206,7 @@ fn view_folder(f: &FolderSheet) -> Element<'_, Msg> {
     sheet(
         head(
             None,
-            widgets::glyph_plate("lucide/folder", PlateSize::Small),
+            Some(widgets::glyph_plate("lucide/folder", PlateSize::Small)),
             title.into(),
             String::new(),
         ),

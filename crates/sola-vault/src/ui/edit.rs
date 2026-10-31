@@ -142,7 +142,12 @@ impl App {
     pub(super) fn cancel_edit(&mut self) -> Task<Msg> {
         self.popup = None;
         if let Some(form) = self.edit.as_mut() {
-            if form_dirty(form) && !form.confirm_discard {
+            // Asked already: Escape again keeps editing.
+            if form.confirm_discard {
+                form.confirm_discard = false;
+                return Task::none();
+            }
+            if form_dirty(form) {
                 form.confirm_discard = true;
                 return Task::none();
             }
@@ -281,7 +286,7 @@ impl App {
         let mut main: Vec<Element<'a, Msg>> = vec![labeled(
             "Name",
             d.name_changed() && d.base.is_some(),
-            text_input("Name", &d.name)
+            text_input("Name", &d.name).size(13)
                 .id(Field::Name.id())
                 .on_input(|v| Msg::Input(Field::Name, Zeroizing::new(v)))
                 .on_submit(Msg::Save)
@@ -331,7 +336,7 @@ impl App {
         let key = r.key.clone();
         let shown = !r.hidden || form.reveal.contains(&r.key);
         let mono = r.hidden || matches!(r.key.as_str(), "totp" | "number" | "code");
-        let mut input = text_input("", &r.value)
+        let mut input = text_input("", &r.value).size(13)
             .id(Field::Row(key.clone()).id())
             .secure(!shown)
             .on_input(move |v| Msg::Input(Field::Row(key.clone()), Zeroizing::new(v)))
@@ -387,7 +392,7 @@ impl App {
             col = col.push(
                 row![
                     mark(model::uri_changed(d, i) && d.base.is_some()),
-                    text_input("example.com", &u.value)
+                    text_input("example.com", &u.value).size(13)
                         .id(Field::Uri(i).id())
                         .on_input(move |v| Msg::Input(Field::Uri(i), Zeroizing::new(v)))
                         .on_submit(Msg::Save)
@@ -412,11 +417,11 @@ impl App {
             let shown = !c.hidden || form.reveal.contains(&key);
             let mut r = row![
                 mark(model::custom_changed(d, i) && d.base.is_some()),
-                text_input("Name", &c.name)
+                text_input("Name", &c.name).size(13)
                     .id(Field::CustomName(i).id())
                     .on_input(move |v| Msg::Input(Field::CustomName(i), Zeroizing::new(v)))
                     .width(Length::FillPortion(2)),
-                text_input("Value", &c.value)
+                text_input("Value", &c.value).size(13)
                     .id(Field::CustomValue(i).id())
                     .secure(!shown)
                     .on_input(move |v| Msg::Input(Field::CustomValue(i), Zeroizing::new(v)))

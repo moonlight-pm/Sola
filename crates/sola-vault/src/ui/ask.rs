@@ -36,6 +36,7 @@ pub enum Ask {
     Delete(String),
     Favorite(String),
     Move(String),
+    Share(String),
     CreateFolder,
     RenameFolder,
     DeleteFolder(String),

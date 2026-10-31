@@ -100,7 +100,7 @@ impl App {
             }
             Field::Otp => {
                 if let Some(step) = self.signin.two_step.as_mut() {
-                    step.code = Zeroizing::new(otp::accept(&value));
+                    step.code = Zeroizing::new(otp::accept(&step.code, &value));
                     step.error = None;
                 }
             }

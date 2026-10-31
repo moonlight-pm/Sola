@@ -8,7 +8,7 @@ use std::time::Duration;
 use iced::Subscription;
 use iced::futures::Stream;
 use iced::futures::channel::mpsc;
-use sola_vault_proto::{Event, subscribe};
+use sola_vault_proto::{ErrorCode, Event, subscribe};
 
 use super::CLIENT;
 
@@ -18,8 +18,9 @@ const RETRY: Duration = Duration::from_secs(2);
 pub enum Link {
     /// Connected: ask for the status now.
     Up,
-    /// The daemon is not running (or just went away).
-    Down,
+    /// The daemon is not running (or just went away). `refused`: it is,
+    /// but would not let Vault in (its peer check), and says why.
+    Down { refused: Option<String> },
     Event(Event),
 }
 
@@ -41,11 +42,13 @@ fn stream() -> impl Stream<Item = Link> {
 fn follow(tx: mpsc::UnboundedSender<Link>) {
     // `None` until the first try: the first failure is said too.
     let mut up: Option<bool> = None;
+    let mut refused: Option<String> = None;
     loop {
         match subscribe(CLIENT) {
             Ok(events) => {
                 tracing::info!("following the vault service's events");
                 up = Some(true);
+                refused = None;
                 if tx.unbounded_send(Link::Up).is_err() {
                     return;
                 }
@@ -57,14 +60,20 @@ fn follow(tx: mpsc::UnboundedSender<Link>) {
                 tracing::warn!("the vault service's events ended");
             }
             Err(e) => {
-                if up != Some(false) {
-                    tracing::info!(reason = %e, "the vault service is not reachable; retrying");
+                let why = (e.code != ErrorCode::Unavailable).then(|| e.message.clone());
+                if up != Some(false) || why != refused {
+                    tracing::info!(reason = %e, code = ?e.code, "the vault service is not reachable; retrying");
+                    up = None;
+                    refused = why;
                 }
             }
         }
         if up != Some(false) {
             up = Some(false);
-            if tx.unbounded_send(Link::Down).is_err() {
+            let down = Link::Down {
+                refused: refused.clone(),
+            };
+            if tx.unbounded_send(down).is_err() {
                 return;
             }
         }
