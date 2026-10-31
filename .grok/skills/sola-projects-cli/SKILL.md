@@ -45,6 +45,7 @@ pane.
 | when it's done / report back | `pane.wait --pane N --status done` (`--fresh` if it may be done already) |
 | show me / switch to *name* | `tab.select --tab N` |
 | open *project* (on *host*) | `project.open --path ~/Projects/P [--host H]` — opens its running sessions there, else a new main one |
+| a window to pick a project in (what the launcher's Projects opens) | `window.navigate` — opens in front and takes focus: only when asked |
 | rename that session | `tab.set --tab N --name '…'` and/or `--title '…'` |
 | end that session | `tab.rm --tab N` (kills it where it runs; worktrees stay) |
 | close the project's windows here | `project.close --project P` (its sessions keep running) |

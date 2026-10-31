@@ -2,7 +2,8 @@
 
 **Date:** 2026-10-30  
 **Status:** **approved for implementation** (Joshua, 2026-10-30: "Your recommendations on the rest … Go ahead and get it started"). D16 answered.  
-**Branch:** `next` (Projects on Oath)  
+**Implementation (2026-10-31):** slices 1, 2 and 4 on master and in Oath Release B (novus and canto rebooted into it; `svc:sola-sessions` brought their sessions back at boot). Slice 3 not doing; slice 5 (`tab.*` → `session.*`) not done. The launcher's chooser (slice 1) is now Projects' navigator window (`window.navigate`, 2026-10-31).  
+**Branch:** master (built on `next`, merged)  
 **Supersedes, when approved:** parts of the [Projects freeze](2026-08-13-sola-agent-terminal-design.md) (the 2026-10-28 "another computer" and "closing one closes it" headers; the in-window tab bar of 2026-10-21) and the [CLI freeze](2026-08-18-workspaces-cli-design.md) (`tab.*` → `session.*`).
 
 Joshua (2026-10-30): "what i'd like to be able to do, really, is connect from
