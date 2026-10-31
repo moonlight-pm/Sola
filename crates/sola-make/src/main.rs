@@ -117,10 +117,15 @@ enum OathAction {
         #[arg(long)]
         debug: bool,
     },
-    /// Stage, store, pin and apply them (needs the owner's go-ahead).
+    /// Stage, store, pin and apply the ones that changed (needs the
+    /// owner's go-ahead). Refuses to drop work that is live here and this
+    /// tree lacks.
     Apply {
         #[arg(long)]
         debug: bool,
+        /// Apply anyway, dropping that work (the owner said so).
+        #[arg(long)]
+        force: bool,
     },
     /// Build each from a plan in `oath build`'s sandbox and upload packs,
     /// plans and sources to Oath's origin (needs the owner's go-ahead).
@@ -292,7 +297,7 @@ fn main() {
         },
         Commands::Oath { action } => match action {
             OathAction::Stage { debug } => oath::run(oath::Action::Stage, !debug),
-            OathAction::Apply { debug } => oath::run(oath::Action::Apply, !debug),
+            OathAction::Apply { debug, force } => oath::run(oath::Action::Apply { force }, !debug),
             OathAction::Publish { local } => oath::run(oath::Action::Publish { local }, true),
         },
     }

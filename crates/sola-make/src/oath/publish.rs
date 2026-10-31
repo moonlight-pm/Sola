@@ -39,6 +39,9 @@ pub fn publish(local: bool) -> Result<(), String> {
     if dirty {
         return Err("commit first: a published source is the committed tree".into());
     }
+    if !local {
+        released_from_master()?;
+    }
     let version = format!("{}+g{rev}", env!("CARGO_PKG_VERSION"));
     let work = Path::new(WORK);
     let _ = fs::remove_dir_all(work);
@@ -230,6 +233,33 @@ fn upload(origin: &Origin, key: &str, file: &Path) -> Result<(), String> {
         return Err(format!("{key}: uploaded, but {} does not serve it", origin::PUBLIC));
     }
     println!("[publish] {key}");
+    Ok(())
+}
+
+/// A release comes from master only: this checkout on master, and master
+/// pushed (`HEAD == origin/master`), so every machine's packages are work
+/// everyone has (the `oath-packages` skill).
+fn released_from_master() -> Result<(), String> {
+    let out = |args: &[&str]| {
+        Command::new("git")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    let branch = out(&["branch", "--show-current"]).unwrap_or_default();
+    if branch != "master" {
+        return Err(format!(
+            "publish from master (this is {}): merge the work to master and push it first",
+            if branch.is_empty() { "a detached HEAD" } else { &branch }
+        ));
+    }
+    let head = out(&["rev-parse", "HEAD"]).unwrap_or_default();
+    let pushed = out(&["rev-parse", "origin/master"]).unwrap_or_default();
+    if head != pushed {
+        return Err("push master first: a release is what origin/master has".into());
+    }
     Ok(())
 }
 
