@@ -47,6 +47,28 @@ impl Server {
         }
     }
 
+    /// Why a sign-in form can't use this server, for a person: a
+    /// self-hosted address must be `https://` with a host (the service
+    /// refuses anything else, plain `http://` included). `None` when it
+    /// can.
+    pub fn address_problem(&self) -> Option<&'static str> {
+        let Self::SelfHosted { url } = self else {
+            return None;
+        };
+        let url = url.trim();
+        if url.is_empty() {
+            return Some("Enter the server's address, like https://vault.example.com.");
+        }
+        let host = url
+            .get(..8)
+            .filter(|scheme| scheme.eq_ignore_ascii_case("https://"))
+            .map(|_| url[8..].split(['/', '?', '#']).next().unwrap_or(""));
+        match host {
+            Some(h) if !h.is_empty() && !h.contains(char::is_whitespace) => None,
+            _ => Some("The server must be an https:// address."),
+        }
+    }
+
     /// A short name: `bitwarden.com`, `bitwarden.eu`, the host.
     pub fn label(&self) -> String {
         match self {
@@ -549,5 +571,23 @@ impl Default for Settings {
             clipboard_clear_secs: 30,
             copy_code_on_fill: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Server;
+
+    #[test]
+    fn a_self_hosted_server_must_be_https() {
+        let at = |url: &str| Server::SelfHosted { url: url.into() }.address_problem();
+        assert_eq!(at("https://vault.example.com"), None);
+        assert_eq!(at(" HTTPS://vault.example.com/ "), None);
+        assert!(at("").unwrap().starts_with("Enter the server's address"));
+        assert_eq!(at("http://vault.lan"), Some("The server must be an https:// address."));
+        assert!(at("vault.example.com").is_some());
+        assert!(at("https://").is_some());
+        assert!(at("https:///path").is_some());
+        assert_eq!(Server::Us.address_problem(), None);
     }
 }
