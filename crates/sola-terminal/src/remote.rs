@@ -223,7 +223,7 @@ fn attach_script(
     let stamp: String = opts
         .iter()
         .enumerate()
-        .map(|(i, (k, _))| format!("{t} set-option -t ={session} {k} \"$o{i}\"; "))
+        .map(|(i, (k, _))| format!("{t} set-option -t ={session}: {k} \"$o{i}\"; "))
         .collect();
     let decode = decode.trim_end_matches("; ").to_string();
     [
@@ -293,7 +293,7 @@ mod tests {
         assert!(ssh::is_quotable(&s), "{s}");
         assert!(s.contains("exec tmux -L \"$L\" -f \"$c\" attach-session -t =sws-ws-novus-sola"));
         assert!(s.contains("new-session -d -s sws-ws-novus-sola -c \"$d\" -e \"SOLA_PANE_ID=$e0\" -e \"SOLA_WS_PATH=$e1\""));
-        assert!(s.contains("set-option -t =sws-ws-novus-sola @sola-name \"$o1\""));
+        assert!(s.contains("set-option -t =sws-ws-novus-sola: @sola-name \"$o1\""));
         assert!(!s.contains("set-environment"), "an existing session's env is its own: {s}");
     }
 
@@ -329,7 +329,7 @@ mod tests {
         assert_eq!(conf, TMUX_CONF);
         let said = String::from_utf8_lossy(&out.stdout);
         assert!(said.contains("new-session -d -s s -c /a dir/it's -e K=v w echo 'it'\\''s'"), "{said}");
-        assert!(said.contains("set-option -t =s @o p q"), "{said}");
+        assert!(said.contains("set-option -t =s: @o p q"), "{said}");
         assert!(said.contains("attach-session -t =s"), "{said}");
         let _ = std::fs::remove_dir_all(&home);
     }

@@ -62,8 +62,9 @@ fn script() -> String {
     ];
     let mut s = String::new();
     for socket in sockets {
+        // Double quotes: an ssh script holds no `'` ([`ssh::is_quotable`]).
         s.push_str(&format!(
-            "tmux -L {socket} list-sessions -F '{FORMAT}' 2>/dev/null; "
+            "tmux -L {socket} list-sessions -F \"{FORMAT}\" 2>/dev/null; "
         ));
     }
     s.push_str("true");
@@ -127,9 +128,10 @@ pub fn options(project: &Path, name: &str, title: Option<&str>, kind: &str) -> V
     ]
 }
 
-/// Set `opts` on local session `session` (`=name`).
+/// Set `opts` on local session `session`. `set-option` takes a pane
+/// target, so the exact session is `=name:`.
 pub fn stamp(session: &str, opts: &[(String, String)]) {
-    let target = format!("={session}");
+    let target = format!("={session}:");
     let mut cmd = sola_terminal::tmux::tmux_cmd();
     for (i, (k, v)) in opts.iter().enumerate() {
         if i > 0 {
@@ -147,6 +149,11 @@ pub fn stamp(session: &str, opts: &[(String, String)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_listing_goes_over_ssh_whole() {
+        assert!(ssh::is_quotable(&script()), "{}", script());
+    }
 
     #[test]
     fn a_listing_says_each_sessions_project() {
