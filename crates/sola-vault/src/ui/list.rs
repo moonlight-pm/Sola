@@ -65,8 +65,14 @@ impl App {
     }
 
     fn list_empty(&self) -> Element<'_, Msg> {
+        let unsynced = self
+            .status
+            .as_ref()
+            .is_some_and(|s| s.sync_error.is_some() && s.synced_at.is_none());
         let (title, line) = if !self.loaded {
             ("Opening the vault…", String::new())
+        } else if unsynced {
+            ("Not synced yet", "The items show once Bitwarden answers.".into())
         } else if !self.query.trim().is_empty() {
             ("Nothing matches", format!("“{}” in {}", self.query.trim(), self.section_title()))
         } else {
@@ -89,16 +95,16 @@ impl App {
             .into()
     }
 
-    /// "Couldn't reach Bitwarden. These are the items from 10:42." with Retry.
+    /// "Couldn't reach Bitwarden. These are the items from 10:42." with
+    /// Retry — or "No items until it syncs." when none were ever synced.
     fn sync_warning(&self) -> Option<Element<'_, Msg>> {
         let s = self.status.as_ref()?;
         let error = s.sync_error.as_deref()?;
         let from = s
             .synced_at
             .and_then(when::from_unix)
-            .map(|at| format!(" These are the items from {}.", when::last_synced(at, when::today())))
-            .unwrap_or_default();
-        let line = format!("{}{from}", sentence(error));
+            .map(|at| when::last_synced(at, when::today()));
+        let line = warning_line(error, from.as_deref());
         Some(
             container(
                 row![
@@ -170,6 +176,15 @@ fn list_row<'a>(item: &'a ItemSummary, selected: bool) -> Element<'a, Msg> {
         .into()
 }
 
+/// The failed sync's line: the daemon's message, then what the list
+/// holds — the items from the sync at `from`, or none at all.
+fn warning_line(error: &str, from: Option<&str>) -> String {
+    match from {
+        Some(at) => format!("{} These are the items from {at}.", sentence(error)),
+        None => format!("{} No items until it syncs.", sentence(error)),
+    }
+}
+
 /// The daemon's message as a sentence (a full stop at its end).
 fn sentence(s: &str) -> String {
     let t = s.trim();
@@ -182,11 +197,23 @@ fn sentence(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::sentence;
+    use super::{sentence, warning_line};
 
     #[test]
     fn messages_end_as_sentences() {
         assert_eq!(sentence("Couldn't reach Bitwarden"), "Couldn't reach Bitwarden.");
         assert_eq!(sentence("Timed out."), "Timed out.");
+    }
+
+    #[test]
+    fn a_failed_sync_says_what_the_list_holds() {
+        assert_eq!(
+            warning_line("Couldn't reach Bitwarden", Some("10:42")),
+            "Couldn't reach Bitwarden. These are the items from 10:42."
+        );
+        assert_eq!(
+            warning_line("Couldn't reach Bitwarden", None),
+            "Couldn't reach Bitwarden. No items until it syncs."
+        );
     }
 }

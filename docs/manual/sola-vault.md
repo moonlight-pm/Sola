@@ -112,7 +112,9 @@ The vault's key is kept in the service's memory only, never on disk.
   vault is locked. Your master password unlocks it, in Vault, in Browser's
   panel, or through **Unlock Vault…** in the right-click menu, which brings
   Vault forward. The unlock itself needs no network; the sync after it
-  does.
+  does. Without one, the vault shows the items from the last sync, which
+  the service keeps on disk ([Files](#files)), with the sync's error and
+  **Retry**.
 - **Lock after** (Vault → Settings; 1 hour by default) locks it when idle.
   With the desk's idle fade on (Settings → Appearance → Idle, on by
   default), idle means no input on the desk: the vault locks that long
@@ -133,10 +135,11 @@ and **Unlock**. **Use another account** on that card signs the account
 out at once, without asking.
 
 Signing out is more than locking. **Vault → Sign Out…** asks first; then
-the service forgets the account on this computer, keeping only its email
-for the form. Signing in again needs the master password and the second
-step. When Bitwarden refuses to renew the session, the service signs out
-the same way and Vault shows the sign-in card.
+the service forgets the account on this computer, and the last sync it
+kept, keeping only its email for the form. Signing in again needs the
+master password and the second step. When Bitwarden refuses to renew the
+session, the service signs out the same way and Vault shows the sign-in
+card.
 
 ## The window
 
@@ -179,8 +182,9 @@ never its password. Return opens the first match; Escape clears the
 search. ↑ and ↓ walk the list.
 
 When the last sync failed, a line at the top of the list says why and
-when the items are from, with **Retry**. Items an organization's key could
-not open are counted at the foot of **All items**.
+when the items are from, with **Retry**; when there is no sync to show
+yet, it says there are no items until it syncs. Items an organization's
+key could not open are counted at the foot of **All items**.
 
 ### The record
 
@@ -383,13 +387,15 @@ is ⌘⇧L because ⌘L locks the screen.
 | `…/vault/prefs.json` | The device id Bitwarden knows this computer by, the last email, and when each item (by id) was last used. Nothing secret |
 | `…/vault/settings.json` | Vault → Settings: lock after, lock with the screen, the clipboard time, copying the code on fill |
 | `…/vault/session.json` | The signed-in account, as Bitwarden's own clients keep a locked account: the email and server, the access and refresh tokens, the key derivation's settings and salt, the user id, the account key as your master password wraps it, and the private key that account key encrypts. Age-encrypted with `~/.config/sola/key`, mode `0600`. **Sign Out** deletes it |
+| `…/vault/sync.json` | The last sync, as Bitwarden sent it: the items, folders, and collections, encrypted with the account key (and organizations' keys), and the organizations with their keys as the account key wraps them. Age-encrypted with `~/.config/sola/key` besides, mode `0600`. Written after every sync that works; read at an unlock; **Sign Out** deletes it |
 | `$XDG_RUNTIME_DIR/sola-vault.sock` | The service's socket |
 | `$XDG_RUNTIME_DIR/sola/vault.sock` | Vault's own: a second `sola-vault` hands its item to the open window here |
 
-Never on disk: your master password, the unwrapped account key, and the
-items. The items come from Bitwarden at each unlock and stay in the
-service's memory, encrypted as Bitwarden sends them, until the vault
-locks.
+Never on disk: your master password, the unwrapped account key, and any
+item in the clear. The items on disk are as Bitwarden sends them, and
+open only with the account key, which only your master password unwraps.
+At an unlock the service reads them from `sync.json`, then syncs; they
+stay in its memory until the vault locks.
 
 ## From Browser's vault
 
@@ -422,9 +428,10 @@ session, decrypted key and all, in
   or remove one.
 - SSH keys are stored and shown; Vault does not make them and does not
   serve them to `ssh`.
-- The items are not kept on disk, so an unlock while Bitwarden cannot be
-  reached opens an empty vault, with the sync's error and **Retry**,
-  until a sync works.
+- Until the service has synced once (after signing in, or the first
+  unlock after an update from a build that kept no `sync.json`), an
+  unlock while Bitwarden cannot be reached has no items to show; the
+  list says so until a sync works.
 - Nothing syncs on a timer.
 - **Edit → Undo** and **Redo** do nothing.
 - The sort order and the generator's options are not kept after Vault

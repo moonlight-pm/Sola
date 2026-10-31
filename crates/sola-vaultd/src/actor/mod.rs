@@ -21,7 +21,7 @@ use crate::peer::{Peer, Role};
 use crate::prefs::Prefs;
 use crate::tickets::Tickets;
 use crate::vault::errors::{Result, err, locked, signed_out};
-use crate::vault::{Session, VaultService, session};
+use crate::vault::{Session, VaultService, cache, session};
 
 /// How often the screen lock is looked for while the vault is open.
 const SCREEN_POLL: Duration = Duration::from_secs(3);
@@ -266,6 +266,9 @@ impl Vault {
             other => other,
         };
         self.tickets.clear();
+        // Locked, the vault holds no items it can read.
+        self.sync.items = 0;
+        self.sync.unreadable = 0;
     }
 
     /// Bitwarden refused the session's refresh token: the account must
@@ -287,6 +290,7 @@ impl Vault {
             self.prefs.remember_email(&self.dir, &email);
         }
         session::clear(&self.dir);
+        cache::clear(&self.dir);
         self.account = Account::SignedOut;
         self.pending = None;
         self.tickets.clear();
@@ -333,6 +337,7 @@ impl Vault {
         }
     }
 
+    /// Count the items the vault holds now (after an unlock or a sync).
     async fn recount(&mut self) {
         let Ok(svc) = self.svc() else { return };
         if let Ok(all) = svc.all().await {

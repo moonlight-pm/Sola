@@ -13,7 +13,7 @@ use bitwarden_core::{Client, ClientSettings, DeviceType, FromClient};
 use bitwarden_crypto::KeyStore;
 use bitwarden_crypto_sync_handler::CryptoSyncHandler;
 use bitwarden_pm::PasswordManagerClient;
-use bitwarden_sync::SyncClient;
+use bitwarden_sync::{SyncClient, SyncHandler};
 use bitwarden_vault::{Cipher, Folder, FolderSyncHandler};
 use sola_vault_proto::Server;
 
@@ -43,6 +43,9 @@ pub struct Built {
     pub ciphers: Arc<MemoryRepository<Cipher>>,
     pub folders: Arc<MemoryRepository<Folder>>,
     pub orgs: Arc<SyncOrgs>,
+    /// The handlers that fill the stores from a sync, in order: replayed
+    /// on a cached sync when an unlock cannot reach Bitwarden.
+    pub replay: Vec<Arc<dyn SyncHandler>>,
 }
 
 pub fn settings(server: &Server, device_id: &str) -> ClientSettings {
@@ -79,12 +82,18 @@ pub fn build(server: &Server, device_id: &str) -> Built {
     let pm = PasswordManagerClient(client);
     let sync = pm.sync();
     let orgs = Arc::new(SyncOrgs::default());
+    // Key management first (not replayed: the session holds the keys).
     sync.register_sync_handler(Arc::new(CryptoSyncHandler::new(pm.0.clone())));
-    sync.register_sync_handler(Arc::new(FolderSyncHandler::from_client(&pm.0)));
-    sync.register_sync_handler(Arc::new(CipherSyncHandler::from_client(&pm.0)));
-    // Org keys after ciphers are stored; decrypt happens later in get_all().
-    sync.register_sync_handler(Arc::new(OrgCryptoSyncHandler::new(pm.0.clone())));
-    sync.register_sync_handler(Arc::new(SyncOrgsHandler(orgs.clone())));
+    let replay: Vec<Arc<dyn SyncHandler>> = vec![
+        Arc::new(FolderSyncHandler::from_client(&pm.0)),
+        Arc::new(CipherSyncHandler::from_client(&pm.0)),
+        // Org keys after ciphers are stored; decrypt happens later in get_all().
+        Arc::new(OrgCryptoSyncHandler::new(pm.0.clone())),
+        Arc::new(SyncOrgsHandler(orgs.clone())),
+    ];
+    for handler in &replay {
+        sync.register_sync_handler(handler.clone());
+    }
     Built {
         pm,
         sync,
@@ -92,6 +101,7 @@ pub fn build(server: &Server, device_id: &str) -> Built {
         ciphers,
         folders,
         orgs,
+        replay,
     }
 }
 

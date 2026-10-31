@@ -363,8 +363,10 @@ first, with a count.
   right opens it. Anywhere else, a click or Return opens the item.
 - ↑ and ↓ choose a row; ↓ past the site's last login goes on into the
   whole vault. → opens the chosen item.
-- When the last sync failed, a line says so, with **Retry**. Opening the
-  panel syncs when the last sync is more than five minutes old.
+- When the last sync failed, a line says so, with **Retry**: the items
+  shown are the last sync's, or, when there is none to show, there are no
+  items until it syncs. Opening the panel syncs when the last sync is more
+  than five minutes old.
 
 The head names the page's site (or says **Vault**) and has **+** for a
 new login and **···**: **Sync now** with when it last synced, **New

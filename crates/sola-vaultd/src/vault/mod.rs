@@ -2,6 +2,7 @@
 //! passkey signing, the generator and export — by Bitwarden's SDK, on the
 //! socket's types (`sola_vault_proto`). Moved here from the browser.
 
+pub mod cache;
 mod card;
 mod client;
 mod convert;

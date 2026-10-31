@@ -148,9 +148,14 @@ impl Vault {
         };
         let device = self.prefs.device_id(&self.dir);
         let svc = VaultService::unlock(&self.dir, session, &device, password).await?;
+        // The last sync on disk first: without network, these are the
+        // items, from when they were synced.
+        self.sync.at = svc.load_cache().await;
+        self.sync.error = None;
         self.account = Account::Unlocked(Box::new(svc));
         self.next_screen_poll = Instant::now();
         self.idle.used(Instant::now());
+        self.recount().await;
         if let Err(e) = self.sync_now().await {
             tracing::warn!(error = %e, "vault: sync after unlock failed");
         }

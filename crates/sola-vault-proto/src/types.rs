@@ -69,11 +69,13 @@ pub struct Status {
     pub unlocked: bool,
     pub email: String,
     pub server: Server,
-    /// Unix seconds of the last sync that worked.
+    /// Unix seconds of the sync whose items the vault holds: the last
+    /// that worked, or, after an unlock without network, the one kept on
+    /// disk. `None` while unlocked: no items until it syncs.
     pub synced_at: Option<u64>,
     pub syncing: bool,
     pub sync_error: Option<String>,
-    /// Items (trash not counted).
+    /// Items (trash not counted); 0 while locked.
     pub items: u32,
     /// Items that could not be decrypted (an organization key that did
     /// not load).
