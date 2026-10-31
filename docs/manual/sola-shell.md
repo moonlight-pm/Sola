@@ -192,7 +192,12 @@ a mute button and its devices. Click a device to make it the default
   (**Disconnect**), the paired ones not connected (**Connect**), and
   **Add device**, which searches and lists named devices nearby (**Pair**)
   until **Done**. A device that needs a PIN or a passkey asks in the
-  panel.
+  panel. The Shell reaches BlueZ on the system bus, at
+  `DBUS_SYSTEM_BUS_ADDRESS` when it is set, else
+  `/run/dbus/system_bus_socket`. On Oath that is `svc:dbus-system`, and
+  BlueZ is `svc:bluetooth`; the `desk` profile has both, and a machine
+  installed before them adds them with `oath new` (Oath's manual,
+  Services).
 
 ## Agent islands
 
