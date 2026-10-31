@@ -210,17 +210,10 @@ pub fn write_open_temp(filename: &str, bytes: &[u8]) -> Result<PathBuf, String> 
     Ok(path)
 }
 
-/// Open a local file the same way `solactl open` does (paint for images,
-/// calendar for `.ics`, browser else).
+/// Open a local file with the app Sola keeps for its type, as
+/// `solactl open` does.
 pub fn open_path(path: &Path) {
-    let s = path.to_string_lossy();
-    if sola_core::open_image::looks_like_image(&s) {
-        sola_core::open_image_logged(&s);
-    } else if sola_core::open_calendar::looks_like_calendar(&s) {
-        sola_core::open_calendar_logged(&s);
-    } else {
-        sola_core::open_url_logged(&s);
-    }
+    sola_kit::open(&path.to_string_lossy());
 }
 
 #[cfg(test)]

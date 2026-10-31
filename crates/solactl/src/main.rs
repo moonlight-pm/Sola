@@ -87,7 +87,7 @@ enum Command {
         payload: String,
     },
 
-    /// Open a URL in sola-browser, or an image path in sola-paint.
+    /// Open a link or a file with the app Sola keeps for it (as xdg-open does).
     Open { target: String },
 
     /// The picture behind the windows: set one (Sola keeps a copy) or clear it.

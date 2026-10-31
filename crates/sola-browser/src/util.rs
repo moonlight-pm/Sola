@@ -215,6 +215,23 @@ pub fn normalize_url(s: &str) -> String {
     sola_core::omnibox::normalize_url(s)
 }
 
+/// Schemes the browser loads itself. A navigation to any other (`mailto:`,
+/// `claude-cli:`, `steam:`) goes to Sola's opener instead.
+const OWN_SCHEMES: &[&str] = &[
+    "http", "https", "file", "about", "data", "blob", "javascript", "view-source",
+    "chrome", "chrome-extension", "chrome-error", "devtools", "filesystem", "ws", "wss", "sola",
+];
+
+/// The scheme of `url` when the browser does not load it.
+pub fn outside_scheme(url: &str) -> Option<String> {
+    match sola_kit::sola_open::Target::parse(url, std::path::Path::new("/"))? {
+        sola_kit::sola_open::Target::Link { scheme, .. } => {
+            (!OWN_SCHEMES.contains(&scheme.as_str())).then_some(scheme)
+        }
+        sola_kit::sola_open::Target::File { .. } => None,
+    }
+}
+
 /// HTML for [`SCROLL_STRESS_URL`] (embedded asset).
 pub fn scroll_stress_html() -> &'static str {
     include_str!("../assets/scroll-stress.html")

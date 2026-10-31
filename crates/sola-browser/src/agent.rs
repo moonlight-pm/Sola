@@ -293,6 +293,20 @@ impl<E: Engine> App<E> {
     pub fn on_call(&mut self, inc: Incoming) -> Task<Msg> {
         match inc.method.as_str() {
             "wait" => self.cli_wait(inc),
+            sola_kit::sola_open::OPEN_METHOD => {
+                // A link or a page from Sola's opener: in front, as a
+                // handed-off URL is.
+                match sola_kit::opener::open_target(&inc) {
+                    Some(target) => {
+                        let url = crate::util::normalize_url(&target);
+                        tracing::info!(%url, "open: a link from Sola's opener");
+                        self.open_tab(url, true);
+                        inc.reply.ok(serde_json::json!({ "opened": true }));
+                    }
+                    None => inc.reply.err("open needs a target"),
+                }
+                Task::none()
+            }
             other => {
                 match self.dispatch_call(other, &inc.params) {
                     CallOut::Reply(Ok(v)) => inc.reply.ok(v),

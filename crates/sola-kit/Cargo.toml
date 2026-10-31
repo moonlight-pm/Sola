@@ -42,6 +42,7 @@ iced_graphics = "0.14"
 sola-bus = { path = "../sola-bus" }
 sola-call = { path = "../sola-call" }
 sola-core = { path = "../sola-core" }
+sola-open = { path = "../sola-open" }
 sola-assets = { path = "../sola-assets" }
 # The desk menu redeems a vault value for a field (`desk_menu`); no SDK.
 sola-vault-proto = { path = "../sola-vault-proto" }

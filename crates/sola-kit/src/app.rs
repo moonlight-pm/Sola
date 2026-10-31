@@ -100,6 +100,7 @@ pub struct BusSetup {
     connect_timeout: Duration,
     call_owner: Option<String>,
     call_methods: Vec<sola_call::MethodSpec>,
+    opens: Option<sola_open::claims::Claim>,
 }
 
 impl BusSetup {
@@ -111,7 +112,26 @@ impl BusSetup {
             connect_timeout: Duration::from_millis(250),
             call_owner: None,
             call_methods: Vec::new(),
+            opens: None,
         }
+    }
+
+    /// Claim the link schemes and file types this app opens
+    /// ([`sola_open::claims`]): the claim is recorded for Sola's opener, and
+    /// the app answers the `open` call (on its call owner, else one named
+    /// for its app id). Fold [`crate::call_subscription`] into the app and
+    /// take each `open` with [`crate::opener::open_target`]. Claiming never
+    /// makes the app the handler where another already is.
+    pub fn opens(mut self, claim: sola_open::claims::Claim) -> Self {
+        self.opens = Some(claim);
+        self
+    }
+
+    /// [`Self::opens`] for one of Sola's own apps: what Sola ships for it
+    /// ([`sola_open::claims::builtin`]); nothing for an app with none.
+    pub fn opens_own(mut self) -> Self {
+        self.opens = sola_open::claims::builtin_of(self.app_id);
+        self
     }
 
     /// Subscribe the bus client to the given topic kinds before
@@ -191,7 +211,7 @@ impl BusSetup {
     /// Connect, subscribe, publish the menu, and stash the client
     /// in the global slot. Panics if called twice in the same
     /// process — that's a setup-order bug.
-    pub fn install(self) {
+    pub fn install(mut self) {
         let mut client = BusClient::new();
         // Identity tags sticky `source` and re-identifies on bus reconnect
         // so the host roster is restored after a sola-bus restart.
@@ -221,6 +241,13 @@ impl BusSetup {
                 app_id: self.app_id.into(),
                 menus: self.app_menus,
             });
+        }
+        if let Some(claim) = &self.opens {
+            if let Err(e) = sola_open::claims::register(claim) {
+                tracing::warn!(app_id = self.app_id, error = %e, "could not record what this app opens");
+            }
+            self.call_methods.push(sola_open::open_method());
+            self.call_owner.get_or_insert_with(|| self.app_id.to_string());
         }
         if let Some(owner) = self.call_owner {
             crate::call::install_provider(owner, self.app_id.to_string(), self.call_methods);

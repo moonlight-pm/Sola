@@ -30,14 +30,46 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     }
     let cards: Vec<Element<'_, Msg>> = shell
         .notify
-        .live
+        .prompt
         .iter()
-        .map(|b| banner_card(shell, &b.n))
+        .map(|p| prompt_card(shell, p))
+        .chain(shell.notify.live.iter().map(|b| banner_card(shell, &b.n)))
         .collect();
     column(cards)
         .spacing(crate::notify::CARD_GAP as f32)
         .width(Length::Fill)
         .into()
+}
+
+/// An app asking to be the handler for a scheme or a type: **Keep** (the
+/// default) or **Use**. It stays until you answer.
+fn prompt_card<'a>(shell: &'a Shell, p: &'a crate::handlers::Prompt) -> Element<'a, Msg> {
+    let muted = shell.theme.extended_palette().secondary.base.text;
+    let source: Element<'_, Msg> = text("Default app")
+        .font(fonts::chrome())
+        .size(SOURCE_SIZE)
+        .style(move |_: &iced::Theme| iced::widget::text::Style { color: Some(muted) })
+        .into();
+    let title: Element<'_, Msg> = text(p.question())
+        .font(fonts::ui_medium())
+        .size(TITLE_SIZE)
+        .wrapping(Wrapping::Word)
+        .into();
+    let buttons = row![
+        kit_btn::labeled_sm(p.keep_label(), kit_btn::ghost).on_press(Msg::HandlerAnswer(false)),
+        kit_btn::labeled_sm(p.use_label(), kit_btn::primary).on_press(Msg::HandlerAnswer(true)),
+    ]
+    .spacing(SPACE_XS);
+    let copy = column![source, title, buttons].spacing(SPACE_SM);
+    popover(
+        row![icon("lucide/link", ICON), copy]
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Start)
+            .width(Length::Fill),
+    )
+    .padding(SPACE_MD)
+    .width(Length::Fill)
+    .into()
 }
 
 fn banner_card<'a>(shell: &'a Shell, n: &'a AppNotification) -> Element<'a, Msg> {

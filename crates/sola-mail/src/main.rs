@@ -1,6 +1,7 @@
 //! sola-mail — kit-native IMAP/SMTP client for Sola.
 
 mod bridge;
+mod mailto;
 mod protocol;
 mod snapshot;
 mod ui;
@@ -108,6 +109,8 @@ fn main() -> iced::Result {
                 item("prev", "Previous Message", Some(KeyCode::W.chord())),
             ],
         ))
+        // `mailto:` links from other apps and xdg-open (Sola's opener).
+        .opens_own()
         .install();
 
     iced::application(App::boot, App::update, App::view)

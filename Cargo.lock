@@ -8496,6 +8496,7 @@ dependencies = [
  "sola-bus",
  "sola-call",
  "sola-core",
+ "sola-open",
  "sola-vault-proto",
  "tracing",
  "ttf-parser",
@@ -8611,11 +8612,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-open"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sola-bus",
+ "sola-call",
+ "sola-core",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "sola-paint"
 version = "0.1.0"
 dependencies = [
  "iced",
  "image",
+ "serde_json",
  "sola-bus",
  "sola-core",
  "sola-kit",
@@ -8841,6 +8856,7 @@ dependencies = [
  "sola-bus",
  "sola-call",
  "sola-core",
+ "sola-open",
  "zbus",
 ]
 

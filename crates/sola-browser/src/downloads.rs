@@ -249,26 +249,15 @@ fn fill_from_event(e: &mut DownloadEntry, ev: &DownloadEvent) {
     }
 }
 
-/// Open a completed file with the host default app. Returns `false` if the
-/// path is missing or `xdg-open` could not spawn.
+/// Open a completed file with the app Sola keeps for its type. Returns
+/// `false` if the path is missing; a type nothing opens is logged.
 pub fn open_file(path: &Path) -> bool {
     if !path.is_file() {
         tracing::warn!(path = %path.display(), "download: file missing");
         return false;
     }
-    match std::process::Command::new("xdg-open")
-        .arg(path)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
-        Ok(_) => true,
-        Err(e) => {
-            tracing::warn!(path = %path.display(), error = %e, "download: xdg-open failed");
-            false
-        }
-    }
+    sola_kit::open(&path.display().to_string());
+    true
 }
 
 /// `~/Downloads`, created on demand.

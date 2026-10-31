@@ -87,6 +87,7 @@ crates/
   sola/                # Process manager (binary entry point)
   sola-bus/            # IPC bus host + client library
   sola-call/           # Call host + client (request/reply; not the bus)
+  sola-open/           # Opening links and files (handlers, xdg-open)
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
   sola-kit/            # Iced app kit (a library)
   sola-assets/         # Vendored icon/asset bundles

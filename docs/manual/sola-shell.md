@@ -586,6 +586,14 @@ Calendar's reminders are the exception: they stay until you click or
 dismiss them (up to six). A notification that updates an earlier one
 (the same tag) replaces it rather than stacking.
 
+An app that asks to open a kind of link or file in place of the app
+that does now gets a card above the others, **Default app**: "Open
+mailto: links with *App* instead of *Mail*?", with **Keep Mail** and
+**Use *App***. It stays until you answer; only **Use** changes it
+([Opening links and files](session.md#opening-links-and-files)). An app
+that already opens it, or does not claim it, gets no card; a newer
+request replaces one still waiting.
+
 The bell in the top row appears while anything is missed, with the
 count, in the accent until you open its panel. The panel, **Notifications**,
 groups the missed items by app, newest first:

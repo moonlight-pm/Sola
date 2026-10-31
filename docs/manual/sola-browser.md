@@ -74,7 +74,7 @@ to another browser.
 
 | From | What happens |
 |------|--------------|
-| A link clicked in Terminal, Projects, Mail, Calendar, or Bots | `sola_core::open_url`: the address goes to the running Browser over `chrome.sock`; with none running, `/bin/sola-browser --open <url>` has the session start the Browser and hands it the address, so the Browser is tracked and comes back when the desk restarts |
+| A link clicked in Terminal, Projects, Mail, Calendar, or Bots; `xdg-open` from any program | Sola's opener ([Opening links and files](session.md#opening-links-and-files)): a web link goes to Browser's `open` call, and with Browser not running the session starts it first, so it is tracked and comes back when the desk restarts |
 | `solactl open <url>` | The same; an image path goes to Paint and an `.ics` file to Calendar instead |
 | The launcher's Browser field | The same |
 | Bus `OpenUrl` | A running Browser opens the page; the shell starts Browser only when it is not running |
@@ -85,8 +85,10 @@ or relative to the program that opens it) is opened as a `file://` URL.
 `SOLA_BROWSER` names another binary to start. If the binary is missing,
 the open fails.
 
-Sola's Oath packages carry no `.desktop` files, so `xdg-open` is not set
-up to hand web pages to Browser.
+On Oath `/bin/xdg-open` is Sola's opener, so a program that opens a web
+page with `xdg-open` reaches Browser. A link in a page to a scheme Browser
+does not load (`mailto:`, `claude-cli:`) goes to the app Sola keeps for it
+when you clicked it, and nowhere without a click.
 
 ## Profiles
 
@@ -283,7 +285,8 @@ The **download** button (right of the vault) is always in the top bar.
   line grows on it. The panel does not open by itself.
 - Click the button for the list. Long names shorten in the middle. Rows
   in progress show the percentage and **Cancel**. Finished rows open the
-  file in its default application (`xdg-open`). A failed row says why (no
+  file in the app Sola keeps for its type (Paint for an image, Browser for a
+  PDF); a type nothing claims does not open. A failed row says why (no
   space, timed out, incomplete, network error, and so on). **×** removes
   the row from the list only; the file stays.
 - After a download finishes, the button stays accent until you open the

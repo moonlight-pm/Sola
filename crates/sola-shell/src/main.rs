@@ -12,6 +12,7 @@ mod app;
 pub mod audio;
 pub mod bluetooth;
 mod builtins;
+mod handlers;
 pub mod calendar;
 pub mod chrome;
 pub mod components;
