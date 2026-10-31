@@ -248,8 +248,12 @@ application that has no window with that app id and is not already
 tracked, once, with its stored command. A stored entry for an application
 that has since been renamed launches under the new name (`sola-workspaces`
 runs as `sola-projects`). After a fresh start everything on the list
-opens. After a restart of `sola-session` alone, the applications are
-still open and nothing is launched: the listed ones that have windows
+opens. At boot no compositor may answer yet: then the listed applications
+wait, as those that went with their display do, and start once one has
+answered for 2 s (`session restore: no compositor yet`). Started with no
+display, an application such as Steam would exit and leave the list.
+After a restart of `sola-session` alone, the applications are still open
+and nothing is launched: the listed ones that have windows
 stay on the list (`keeping the saved apps already running`) until their
 windows have been gone for 3 s.
 
@@ -312,16 +316,21 @@ window: choosing it brings that application's last-used window forward
 launch opens a new window. Choosing Projects lists your projects
 ([Shell](sola-shell.md)). Choosing Browser asks for an address or a search
 and opens it as a new page through `open_url` ([URLs](#urls)); when no
-Browser is running, that starts the Browser outside `sola-session`, which
-then does not track it or restore it. Other ways in
+Browser is running, `sola-session` starts it. Other ways in
 (`solactl desk launch`, opening a file) still reach the application's
 own single-instance handling.
 
 ## Opening URLs and files
 
-Opening a URL, an image, or a calendar file does not go through
-`sola-session`. Every Sola component that opens one uses the same
-functions in `sola-core`, and they start the target application directly.
+Every Sola component that opens a URL, an image, or a calendar file uses
+the same functions in `sola-core`. They hand the target to the running
+application. When it is not running they start `<app> --open <target>`,
+which asks `sola-session` to start the application (as a `LaunchApp` with
+its plain command), waits up to 20 s for it, and hands the target over.
+The application then runs inside the session: it is tracked, and it comes
+back when the desk restarts. With no bus to ask through, or no
+application up within the 20 s, the `--open` process becomes the
+application itself, outside the session.
 
 ### URLs
 
@@ -333,8 +342,9 @@ functions in `sola-core`, and they start the target application directly.
 2. If the Browser is running, writes the URL to its socket,
    `~/.local/share/sola/browser/chrome.sock` (under `$XDG_DATA_HOME` when
    that is set). The Browser opens it as a new page, in front.
-3. Otherwise starts `/bin/sola-browser <url>` in the background, or the
-   binary that `SOLA_BROWSER` names.
+3. Otherwise starts `/bin/sola-browser --open <url>` in the background, or
+   the binary that `SOLA_BROWSER` names. The session starts the Browser,
+   and the URL goes to it over `chrome.sock`.
 
 There is no fallback to another browser. If the binary is missing, the
 open fails.
@@ -349,16 +359,19 @@ page with `activate`; when the Browser is not running, the shell calls
 `sola_core::open_image` treats a path, or a `file://` URL, ending in
 `.png`, `.jpg`, `.jpeg`, `.jpe`, `.gif`, `.webp`, `.bmp`, `.tif`,
 `.tiff`, or `.tga` (any case) as an image. It starts
-`/bin/sola-paint <path>`, or the binary that `SOLA_PAINT` names. A running
-Paint receives the path from the new process and opens it in a window of
-its own ([Paint](sola-paint.md)).
+`/bin/sola-paint --open <path>`, or the binary that `SOLA_PAINT` names. A
+running Paint receives the path from the new process and opens it in a
+window of its own ([Paint](sola-paint.md)). With none running, the new
+process waits for the session's Paint to show its first window before it
+hands the path over.
 
 ### Calendar files
 
 `sola_core::open_calendar` treats a path, or a `file://` URL, ending in
 `.ics`, `.ical`, or `.icalendar` (any case) as a calendar file. It starts
-`/bin/sola-calendar <path>`; a running Calendar receives the path and
-drafts the event ([Calendar](sola-calendar.md)).
+`/bin/sola-calendar --open <path>`; a running Calendar, or the one the
+session starts, receives the path and drafts the event
+([Calendar](sola-calendar.md)).
 
 ### solactl open
 
@@ -424,10 +437,9 @@ solactl logs app-sola-mail --follow
 - Matching between catalog, launch, windows, and `CloseApp` is by exact
   app id.
 - A restart of `sola-session` loses track of the applications it started.
-- Applications opened through `open_url`, `open_image`, `open_calendar`, a
-  terminal, or another program are not tracked and are not restored. That
-  includes a Browser started from the launcher's Browser field, or by a
-  link, while no Browser was running.
+- Applications started from a terminal or by another program (not through
+  `sola-session` or `open_url`, `open_image`, `open_calendar`) are not
+  tracked and are not restored.
 - Restore starts one process per application with its launch command. It
   does not restore a second copy launched with a different command.
 - There is no autostart list besides session restore.

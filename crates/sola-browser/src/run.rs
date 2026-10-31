@@ -245,10 +245,18 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
         // child) before chrome.sock handoff — the live chrome has another cwd.
         .map(|a| crate::util::normalize_url(&a));
 
-    // A web app's launch with no browser up starts the browser through the
-    // session, as itself, and hands it the app.
-    if let Some(app_id) = launch_app.as_deref() {
-        if !crate::instance::chrome_is_live() && crate::instance::start_browser_for_app(app_id) {
+    // A web app's launch, or an opener's (`--open <url>`: a link, the
+    // launcher's Browser field, `solactl open`), with no browser up starts
+    // the browser through the session, as itself, and hands it the app or
+    // the URL.
+    if !crate::instance::chrome_is_live() {
+        if let Some(app_id) = launch_app.as_deref() {
+            if crate::instance::start_browser_then(|| crate::instance::handoff_app(app_id)) {
+                return ExitCode::SUCCESS;
+            }
+        } else if sola_core::opener::is_open_launch()
+            && crate::instance::start_browser_then(|| crate::instance::handoff(argv.as_deref()))
+        {
             return ExitCode::SUCCESS;
         }
     }
