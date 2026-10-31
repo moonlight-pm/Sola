@@ -3,6 +3,7 @@
 //! Default: highest-resolution mode whose pixel aspect matches the
 //! panel's physical mm (so a stacked 2560×2880@30 HDMI wins over
 //! 4K@60 16:9). If physical size is unknown, highest-resolution ≥60Hz.
+//! "60Hz" means ≥59Hz: VESA 60Hz modes report 59.94–59.997.
 //!
 //! Virtio-gpu advertises a long CVT list (1080p, 4K, …). Picking the
 //! largest makes a QEMU window balloon past the host `xres`/`yres`.
@@ -30,8 +31,10 @@ use crate::protocol::wlr_output_management_unstable_v1::{
     zwlr_output_mode_v1::{self, ZwlrOutputModeV1},
 };
 
-/// Hz * 1000 — wlr-output-management's refresh rate unit.
-const MIN_REFRESH_MHZ: i32 = 60_000;
+/// Hz * 1000 — wlr-output-management's refresh rate unit. A 4K panel's
+/// "60Hz" is often 59.997 or 59.94; a 60.000 cutoff dropped it for 1080p.
+/// 59Hz still leaves out the 30/24Hz and half-rate modes.
+const MIN_REFRESH_MHZ: i32 = 59_000;
 
 #[derive(Clone, Default)]
 pub struct OutputModeInfo {
@@ -479,6 +482,19 @@ mod tests {
         ];
         let i = pick_mode(&modes, ModePick::Max, None).unwrap();
         assert_eq!((modes[i].width, modes[i].height), (3840, 2160));
+    }
+
+    #[test]
+    fn max_counts_59_997hz_as_60() {
+        let modes = [
+            mode(3840, 2160, 59_997, true),
+            mode(1920, 1080, 60_000, false),
+            mode(3840, 2160, 30_000, false),
+        ];
+        for phys in [None, Some((600, 340))] {
+            let i = pick_mode(&modes, ModePick::Max, phys).unwrap();
+            assert_eq!(modes[i].refresh_mhz, 59_997);
+        }
     }
 
     #[test]

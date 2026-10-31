@@ -419,6 +419,9 @@ every enabled output (`wlr-output-management`):
 2. When the panel reports no physical size, or no mode matches it, the
    largest mode at 60 Hz or more.
 
+A mode at 59 Hz or more counts as 60 Hz: many displays report their 60 Hz
+modes as 59.94 or 59.997 Hz.
+
 Two variables in `sola-river`'s environment change the choice:
 
 | Variable | Effect |
