@@ -23,16 +23,44 @@ use sola_core::{KeyChord, KeyCode};
 /// This process's latest published menus.
 static APP_MENU: RwLock<Option<AppMenuPayload>> = RwLock::new(None);
 
+/// Menus published for other app ids (a web app's), as declared, so they
+/// follow your key changes too.
+static HOSTED: RwLock<Vec<AppMenuPayload>> = RwLock::new(Vec::new());
+
 /// Publish this app's menus: kept for its titlebars and sent to the shell.
 /// Call again whenever they change.
 pub fn publish(payload: AppMenuPayload) {
     remember(payload.clone());
+    send(&payload);
+}
+
+/// Send `payload` with every item's key now (`crate::keys::apply`), and
+/// declare its app's keyed actions and the shared ones to Settings
+/// (`Topic::KeyActions`).
+fn send(payload: &AppMenuPayload) {
     let Some(bus) = crate::app::try_bus() else {
         return;
     };
     if let Ok(mut bus) = bus.lock() {
-        if let Err(e) = bus.emit(Topic::SetAppMenu(payload)) {
+        if let Err(e) = bus.emit(Topic::SetAppMenu(crate::keys::apply(payload))) {
             tracing::warn!("publish app menu failed: {e}");
+        }
+        let _ = bus.emit(Topic::KeyActions(crate::keys::declaration(payload)));
+        let _ = bus.emit(Topic::KeyActions(crate::keys::common_declaration()));
+    }
+}
+
+/// Send every menu this process published again, with its keys now (your
+/// key changes, or the shell's, arrived).
+pub(crate) fn republish() {
+    let own = APP_MENU.read().unwrap_or_else(|p| p.into_inner()).clone();
+    let hosted = HOSTED.read().unwrap_or_else(|p| p.into_inner()).clone();
+    let Some(bus) = crate::app::try_bus() else {
+        return;
+    };
+    if let Ok(mut bus) = bus.lock() {
+        for payload in own.iter().chain(hosted.iter()) {
+            let _ = bus.emit(Topic::SetAppMenu(crate::keys::apply(payload)));
         }
     }
 }
@@ -42,14 +70,12 @@ pub fn publish(payload: AppMenuPayload) {
 /// those windows pass theirs to their titlebars
 /// ([`WindowFrame::menus`](crate::components::window_frame::WindowFrame::menus)).
 pub fn publish_for(payload: AppMenuPayload) {
-    let Some(bus) = crate::app::try_bus() else {
-        return;
-    };
-    if let Ok(mut bus) = bus.lock() {
-        if let Err(e) = bus.emit(Topic::SetAppMenu(payload)) {
-            tracing::warn!("publish hosted app menu failed: {e}");
-        }
+    {
+        let mut hosted = HOSTED.write().unwrap_or_else(|p| p.into_inner());
+        hosted.retain(|p| p.app_id != payload.app_id);
+        hosted.push(payload.clone());
     }
+    send(&payload);
 }
 
 /// Keep `payload` for the titlebars without sending it.
@@ -62,7 +88,8 @@ pub(crate) fn remember(payload: AppMenuPayload) {
 /// until the app publishes.
 pub fn current() -> Option<AppMenuPayload> {
     let slot = APP_MENU.read().unwrap_or_else(|p| p.into_inner());
-    slot.clone().map(ensure_window_menu)
+    slot.as_ref()
+        .map(|p| ensure_window_menu(crate::keys::apply(p)))
 }
 
 /// Act on a titlebar menu choice. Window items are the shell's (it acts on

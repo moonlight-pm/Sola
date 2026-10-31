@@ -162,11 +162,18 @@ pub fn update(msg: KeysMsg, state: &mut KeysState) -> Task<KeysMsg> {
             let Some((owner, action)) = state.open.clone() else {
                 return Task::none();
             };
-            if owner == SYSTEM && !chord.meta {
-                state.note = Some(format!(
-                    "{} has no Super: a system key needs it, so it never takes a key apps type with.",
-                    chord.display()
-                ));
+            if needs_super(state, &owner, &action) && !chord.meta {
+                state.note = Some(if owner == SYSTEM {
+                    format!(
+                        "{} has no Super: a system key needs it, so it never takes a key apps type with.",
+                        chord.display()
+                    )
+                } else {
+                    format!(
+                        "{} has no Super: the Shell hands an app its menu keys only with Super.",
+                        chord.display()
+                    )
+                });
                 return Task::none();
             }
             take(state, &owner, &action, chord);
@@ -202,6 +209,23 @@ pub fn update(msg: KeysMsg, state: &mut KeysState) -> Task<KeysMsg> {
         }
     }
     Task::none()
+}
+
+/// Whether `owner`'s `action` takes only keys with Super: every system
+/// key, and an app's menu keys (the Shell grabs and hands those over),
+/// except actions whose own default has none (keys the app reads itself,
+/// as Mail's letters).
+fn needs_super(state: &KeysState, owner: &str, action: &str) -> bool {
+    if owner == SYSTEM {
+        return true;
+    }
+    state
+        .decls
+        .iter()
+        .find(|d| d.owner == owner)
+        .and_then(|d| d.actions.iter().find(|a| a.id == action))
+        .and_then(|a| a.default)
+        .is_none_or(|d| d.meta)
 }
 
 /// Give the open row `chord`, or ask first when another action holds it.
@@ -319,7 +343,7 @@ fn row<'a>(state: &'a KeysState, b: &Binding) -> Vec<Element<'a, KeysMsg>> {
 
 fn editor<'a>(state: &'a KeysState, b: &Binding) -> Element<'a, KeysMsg> {
     if state.capturing {
-        let hint = if b.owner == SYSTEM {
+        let hint = if needs_super(state, &b.owner, &b.action) {
             "Press the new key, with Super. Esc cancels."
         } else {
             "Press the new key. Esc cancels."

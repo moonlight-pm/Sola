@@ -195,24 +195,23 @@ impl BusSetup {
         client.connect_blocking(self.connect_timeout);
         tracing::info!(app_id = self.app_id, "bus connected");
         if let Some(kinds) = self.subscribe {
+            // The kit follows your key changes for the app's menus
+            // (`crate::keys`), whatever the app asked for.
+            let kinds = with_key_kinds(kinds);
             set_bus_kinds(kinds);
             if let Err(e) = client.subscribe(kinds) {
                 tracing::warn!("bus subscribe failed: {e}");
             }
         }
-        if !self.app_menus.is_empty() {
-            let payload = AppMenuPayload {
-                app_id: self.app_id.into(),
-                menus: self.app_menus,
-            };
-            crate::menu::remember(payload.clone());
-            if let Err(e) = client.emit(Topic::SetAppMenu(payload)) {
-                tracing::warn!(app_id = self.app_id, "publish app menu failed: {e}");
-            }
-        }
         BUS.set(Arc::new(Mutex::new(client)))
             .map_err(|_| ())
             .expect("sola_kit::BusSetup::install called twice");
+        if !self.app_menus.is_empty() {
+            crate::menu::publish(AppMenuPayload {
+                app_id: self.app_id.into(),
+                menus: self.app_menus,
+            });
+        }
         if let Some(owner) = self.call_owner {
             crate::call::install_provider(owner, self.app_id.to_string(), self.call_methods);
         }
@@ -453,6 +452,18 @@ fn install_bus_stream_tx(tx: iced::futures::channel::mpsc::UnboundedSender<Arc<M
     }
 }
 
+/// `kinds` and the two the kit's keys need (`KeyActions`, `Keybindings`),
+/// for the life of the process.
+fn with_key_kinds(kinds: &'static [TopicKind]) -> &'static [TopicKind] {
+    let extra = [TopicKind::KeyActions, TopicKind::Keybindings];
+    if extra.iter().all(|k| kinds.contains(k)) {
+        return kinds;
+    }
+    let mut all = kinds.to_vec();
+    all.extend(extra.iter().filter(|k| !kinds.contains(k)));
+    Box::leak(all.into_boxed_slice())
+}
+
 fn ensure_bus_poller() {
     if BUS_POLLER_STARTED.swap(true, Ordering::AcqRel) {
         return;
@@ -500,7 +511,12 @@ fn ensure_bus_poller() {
                 }
             };
             match next {
-                Some(msg) => forward_or_buffer(Arc::new(msg)),
+                Some(msg) => {
+                    if crate::keys::observe(&msg) {
+                        crate::menu::republish();
+                    }
+                    forward_or_buffer(Arc::new(msg))
+                }
                 None => std::thread::sleep(Duration::from_millis(8)),
             }
         }

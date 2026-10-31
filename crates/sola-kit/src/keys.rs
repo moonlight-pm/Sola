@@ -11,9 +11,13 @@
 //! other an app's. Two different apps never clash — only the focused one
 //! gets the key.
 
+use std::collections::HashMap;
+use std::sync::RwLock;
+
 use iced::keyboard::Modifiers;
 use iced::keyboard::key::{Code, Physical};
-use sola_bus::topics::{KeyActions, KeyOverride, Keybindings};
+use sola_bus::Message;
+use sola_bus::topics::{AppMenuPayload, KeyAction, KeyActions, KeyOverride, Keybindings, MenuItem, Topic};
 use sola_core::{KeyChord, KeyCode};
 
 /// The shell's actions (zones included).
@@ -137,6 +141,187 @@ pub fn set(
 pub fn reset(keys: &mut Keybindings, owner: &str, action: &str) {
     keys.overrides
         .retain(|o| !(o.owner == owner && o.action == action));
+}
+
+/// The kit's shared actions ("Every app" in Settings): one key for the
+/// same menu item id in every app. Quit is not among them: it is the
+/// system's Close App (Super+Q), whose key every Quit item shows.
+pub const COMMON_ACTIONS: &[(&str, &str, &str, KeyChord)] = &[
+    ("undo", "Undo", "Edit", KeyCode::Z.meta()),
+    ("redo", "Redo", "Edit", KeyCode::Z.meta_shift()),
+    ("cut", "Cut", "Edit", KeyCode::X.meta()),
+    ("copy", "Copy", "Edit", KeyCode::C.meta()),
+    ("paste", "Paste", "Edit", KeyCode::V.meta()),
+    ("select_all", "Select All", "Edit", KeyCode::A.meta()),
+    ("find", "Find", "Edit", KeyCode::F.meta()),
+];
+
+/// The shared actions' declaration (`Topic::KeyActions`, owner `common`).
+pub fn common_declaration() -> KeyActions {
+    KeyActions {
+        owner: COMMON.to_string(),
+        label: "Every App".to_string(),
+        actions: COMMON_ACTIONS
+            .iter()
+            .map(|(id, label, group, key)| KeyAction {
+                id: (*id).to_string(),
+                label: (*label).to_string(),
+                group: (*group).to_string(),
+                default: Some(*key),
+            })
+            .collect(),
+    }
+}
+
+/// The system action a menu item is, if any: the Window menu's items, and
+/// Quit (Close App).
+fn system_id(item: &str) -> Option<String> {
+    use crate::menu::{WindowAction, parse_window_action};
+    if item == crate::app::QUIT_ACTION_ID {
+        return Some("close-app".into());
+    }
+    Some(match parse_window_action(item)? {
+        WindowAction::Hide => "hide".into(),
+        WindowAction::Cycle => "tab.next".into(),
+        WindowAction::Zone(sola_bus::topics::Zone::Fullscreen) => "zone.full".into(),
+        WindowAction::Zone(sola_bus::topics::Zone::Cinema) => "zone.cinema".into(),
+        WindowAction::Zone(sola_bus::topics::Zone::Float) => "zone.float".into(),
+        WindowAction::Zone(sola_bus::topics::Zone::Grid(id)) => format!("zone.{id}"),
+    })
+}
+
+/// The shell's app id: its own menus (the flower) are system actions.
+const SHELL_APP_ID: &str = "sola-shell";
+
+/// Who owns a menu item of `app_id`'s: the system, the kit, or the app.
+fn owner_of<'a>(app_id: &'a str, item: &str) -> (std::borrow::Cow<'a, str>, String) {
+    if app_id == SHELL_APP_ID {
+        return (SYSTEM.into(), item.to_string());
+    }
+    if let Some(id) = system_id(item) {
+        return (SYSTEM.into(), id);
+    }
+    if COMMON_ACTIONS.iter().any(|(id, ..)| *id == item) {
+        return (COMMON.into(), item.to_string());
+    }
+    (app_id.into(), item.to_string())
+}
+
+/// An app's own actions, from its menus: every item with a default key
+/// that is neither the system's nor a shared one.
+pub fn declaration(payload: &AppMenuPayload) -> KeyActions {
+    let mut actions: Vec<KeyAction> = Vec::new();
+    for menu in &payload.menus {
+        for item in &menu.items {
+            let MenuItem::Action {
+                id,
+                label,
+                shortcut: Some(key),
+                ..
+            } = item
+            else {
+                continue;
+            };
+            let (owner, _) = owner_of(&payload.app_id, id);
+            if owner != payload.app_id.as_str() || actions.iter().any(|a| a.id == *id) {
+                continue;
+            }
+            actions.push(KeyAction {
+                id: id.clone(),
+                label: label.clone(),
+                group: menu.label.clone(),
+                default: Some(*key),
+            });
+        }
+    }
+    KeyActions {
+        owner: payload.app_id.clone(),
+        label: payload
+            .menus
+            .first()
+            .map_or_else(|| payload.app_id.clone(), |m| m.label.clone()),
+        actions,
+    }
+}
+
+/// What this process knows of everyone's actions and your overrides,
+/// from the bus ([`observe`]).
+#[derive(Default)]
+struct Known {
+    decls: HashMap<String, KeyActions>,
+    overrides: Keybindings,
+}
+
+static KNOWN: RwLock<Option<Known>> = RwLock::new(None);
+
+/// Learn keys from a bus message (the kit's poller shows it every one).
+/// Returns whether any key may have changed.
+pub(crate) fn observe(message: &Message) -> bool {
+    // By name first: every message passes here.
+    if !matches!(message.topic.as_str(), "KeyActions" | "Keybindings") {
+        return false;
+    }
+    let topic = match Topic::parse(message) {
+        Some(t @ (Topic::KeyActions(_) | Topic::Keybindings(_))) => t,
+        _ => return false,
+    };
+    let mut known = KNOWN.write().unwrap_or_else(|p| p.into_inner());
+    let known = known.get_or_insert_with(Known::default);
+    match topic {
+        Topic::KeyActions(d) if message.sticky => {
+            if known.decls.get(&d.owner) == Some(&d) {
+                return false;
+            }
+            known.decls.insert(d.owner.clone(), d);
+        }
+        Topic::KeyActions(d) => {
+            known.decls.remove(&d.owner);
+        }
+        Topic::Keybindings(k) => {
+            let k = if message.sticky { k } else { Keybindings::default() };
+            if known.overrides == k {
+                return false;
+            }
+            known.overrides = k;
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// `payload`'s menus with every item's key now: your changes, and none
+/// where another action holds it (the system wins over an app).
+pub fn apply(payload: &AppMenuPayload) -> AppMenuPayload {
+    let known = KNOWN.read().unwrap_or_else(|p| p.into_inner());
+    let empty = Known::default();
+    let known = known.as_ref().unwrap_or(&empty);
+    let mut decls: Vec<KeyActions> = known
+        .decls
+        .values()
+        .filter(|d| d.owner == SYSTEM)
+        .cloned()
+        .collect();
+    decls.push(common_declaration());
+    decls.push(declaration(payload));
+    let bindings = resolve(&decls, &known.overrides);
+    let has_system = decls.iter().any(|d| d.owner == SYSTEM);
+    let mut out = payload.clone();
+    for menu in &mut out.menus {
+        for item in &mut menu.items {
+            let MenuItem::Action { id, shortcut, .. } = item else {
+                continue;
+            };
+            let (owner, action) = owner_of(&payload.app_id, id);
+            // Before the shell's keys are known, a system item keeps its own.
+            if owner == SYSTEM && !has_system {
+                continue;
+            }
+            if bindings.iter().any(|b| b.owner == owner && b.action == action) {
+                *shortcut = key_of(&bindings, &owner, &action);
+            }
+        }
+    }
+    out
 }
 
 /// A key pressed in an iced window, as a binding's key. `None` for a
@@ -309,6 +494,40 @@ mod tests {
         assert!(b.iter().all(|b| b.key == Some(KeyCode::N.meta())));
         assert!(holder(&b, "sola-paint", "open", KeyCode::N.meta()).is_none());
         assert!(holder(&b, COMMON, "new", KeyCode::N.meta()).is_some());
+    }
+
+    #[test]
+    fn an_app_declares_its_own_keyed_items_only() {
+        use sola_bus::topics::MenuDefinition;
+        let item = |id: &str, key: Option<KeyChord>| MenuItem::Action {
+            id: id.into(),
+            label: id.into(),
+            shortcut: key,
+            disabled: false,
+            checked: false,
+        };
+        let payload = AppMenuPayload {
+            app_id: "sola-mail".into(),
+            menus: vec![
+                MenuDefinition {
+                    label: "Mail".into(),
+                    items: vec![
+                        item("compose", Some(KeyCode::N.meta())),
+                        item("about", None),
+                        item(crate::app::QUIT_ACTION_ID, Some(KeyCode::Q.meta())),
+                    ],
+                },
+                MenuDefinition {
+                    label: "Edit".into(),
+                    items: vec![item("copy", Some(KeyCode::C.meta()))],
+                },
+                crate::menu::window_menu(),
+            ],
+        };
+        let d = declaration(&payload);
+        assert_eq!(d.label, "Mail");
+        let ids: Vec<&str> = d.actions.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, ["compose"]);
     }
 
     #[test]
