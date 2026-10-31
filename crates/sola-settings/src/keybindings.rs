@@ -296,7 +296,7 @@ pub fn view(state: &KeysState) -> Element<'_, KeysMsg> {
                 .filter(|b| b.group == g)
                 .flat_map(|b| row(state, b))
                 .collect();
-            let title = if g.is_empty() {
+            let title = if g.is_empty() || g == decl.label {
                 decl.label.clone()
             } else if decl.owner == SYSTEM {
                 g.clone()

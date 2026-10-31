@@ -25,7 +25,10 @@ These are the default keys. Every one of them can be changed in
 **Settings → Keybindings**, which lists each action with its key; a key
 that another action holds is offered to move, never shared. A system key
 always includes Super. The zone keys are set in **Settings → Zones**
-([Zones](#zones)).
+([Zones](#zones)). The same page lists the apps' menu keys: the ones
+every app shares (Undo, Cut, Copy, Paste, Select All, Find), then each
+running app's own; two apps may use the same key, but no app a system
+key.
 
 | Chord | Action |
 |-------|--------|
@@ -403,9 +406,9 @@ shortcuts work on them as on any window.
 
 An app's last menu is the **Window** menu (an app can replace it). It
 holds **Hide** (Super+H), **Cycle Windows** (Super+Backtick),
-**Float**, **Full** and **Cinema**, so each of those keys also has a
-mouse path; the grid's zones are reached by their keys (Super+K lists
-them). The Shell acts on the focused window.
+**Float**, the grid's zones (named by their place), **Full** and
+**Cinema**, each with its key now, so each of those keys also has a mouse
+path. The Shell acts on the focused window.
 
 ## Launcher
 

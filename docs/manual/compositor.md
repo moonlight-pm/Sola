@@ -256,7 +256,7 @@ floats again.
 
 The keypad keys work with NumLock on or off: the shell registers the
 keysyms of both states. Each kit window's titlebar **Window** menu offers
-Float, Full and Cinema too ([Shell § Window menu](sola-shell.md#window-menu)).
+every zone too ([Shell § Window menu](sola-shell.md#window-menu)).
 Every key is changeable (Settings → Keybindings; zone keys in Settings →
 Zones).
 

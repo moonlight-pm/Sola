@@ -59,18 +59,16 @@ pub fn effective_app_menu(cache: &MenuCache, app_id: &str, label: &str) -> AppMe
     sola_kit::menu::ensure_window_menu(base)
 }
 
-/// Give a Window menu the layout's grid zones (after Float) and every
-/// item its key now: what the kit's fixed list cannot know.
+/// Give a Window menu the layout's grid zones (`sola_kit::menu::
+/// fill_window_menu`) and every item its key now (`crate::bindings`).
 pub fn fill_window_menu(
     menu: &mut MenuDefinition,
     layout: &sola_bus::topics::ZoneLayout,
     keys: &crate::bindings::Bindings,
 ) {
     use crate::bindings::Act;
-    use sola_bus::topics::Zone;
-    use sola_kit::menu::{WindowAction, grid_action_id, parse_window_action};
-    menu.items
-        .retain(|item| !matches!(item, MenuItem::Action { id, .. } if parse_window_action(id).is_some_and(|a| matches!(a, WindowAction::Zone(Zone::Grid(_))))));
+    use sola_kit::menu::{WindowAction, parse_window_action};
+    sola_kit::menu::fill_window_menu(menu, layout);
     for item in &mut menu.items {
         if let MenuItem::Action { id, shortcut, .. } = item {
             let act = match parse_window_action(id) {
@@ -81,27 +79,6 @@ pub fn fill_window_menu(
             };
             *shortcut = keys.key(act);
         }
-    }
-    let at = menu
-        .items
-        .iter()
-        .position(|item| matches!(item, MenuItem::Action { id, .. } if id == sola_kit::menu::ACTION_FLOAT))
-        .map_or(menu.items.len(), |i| i + 1);
-    let grid: Vec<MenuItem> = layout
-        .zones
-        .iter()
-        .map(|z| MenuItem::Action {
-            id: grid_action_id(z.id),
-            label: layout.label(z.id),
-            shortcut: keys.key(Act::Zone(Zone::Grid(z.id))),
-            disabled: false,
-            checked: false,
-        })
-        .collect();
-    if !grid.is_empty() {
-        let mut block = vec![MenuItem::Divider];
-        block.extend(grid);
-        menu.items.splice(at..at, block);
     }
 }
 

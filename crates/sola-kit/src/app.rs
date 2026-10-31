@@ -452,10 +452,10 @@ fn install_bus_stream_tx(tx: iced::futures::channel::mpsc::UnboundedSender<Arc<M
     }
 }
 
-/// `kinds` and the two the kit's keys need (`KeyActions`, `Keybindings`),
-/// for the life of the process.
+/// `kinds` and the ones the kit's menus need (`KeyActions`, `Keybindings`,
+/// `ZoneLayout`), for the life of the process.
 fn with_key_kinds(kinds: &'static [TopicKind]) -> &'static [TopicKind] {
-    let extra = [TopicKind::KeyActions, TopicKind::Keybindings];
+    let extra = [TopicKind::KeyActions, TopicKind::Keybindings, TopicKind::ZoneLayout];
     if extra.iter().all(|k| kinds.contains(k)) {
         return kinds;
     }
@@ -515,6 +515,7 @@ fn ensure_bus_poller() {
                     if crate::keys::observe(&msg) {
                         crate::menu::republish();
                     }
+                    crate::menu::observe(&msg);
                     forward_or_buffer(Arc::new(msg))
                 }
                 None => std::thread::sleep(Duration::from_millis(8)),

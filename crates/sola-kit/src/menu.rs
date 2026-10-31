@@ -17,7 +17,7 @@
 
 use std::sync::RwLock;
 
-use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, Zone};
+use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, Zone, ZoneLayout};
 use sola_core::{KeyChord, KeyCode};
 
 /// This process's latest published menus.
@@ -26,6 +26,53 @@ static APP_MENU: RwLock<Option<AppMenuPayload>> = RwLock::new(None);
 /// Menus published for other app ids (a web app's), as declared, so they
 /// follow your key changes too.
 static HOSTED: RwLock<Vec<AppMenuPayload>> = RwLock::new(Vec::new());
+
+/// The zone layout (`Topic::ZoneLayout`), for the Window menu's grid
+/// zones. `None`: the default.
+static LAYOUT: RwLock<Option<ZoneLayout>> = RwLock::new(None);
+
+/// [`current`]'s answer until something it reads changes.
+static CURRENT: RwLock<Option<AppMenuPayload>> = RwLock::new(None);
+
+/// Learn the zone layout from a bus message (the kit's poller shows it
+/// every one).
+pub(crate) fn observe(message: &sola_bus::Message) {
+    if message.topic != "ZoneLayout" {
+        return;
+    }
+    if let Some(Topic::ZoneLayout(l)) = Topic::parse(message) {
+        *LAYOUT.write().unwrap_or_else(|p| p.into_inner()) = message.sticky.then_some(l);
+        forget_current();
+    }
+}
+
+/// Give a Window menu the layout's grid zones, after Float, named by
+/// their place ("Column 1"); their keys come with the rest
+/// (`crate::keys::apply`, or the shell's own table).
+pub fn fill_window_menu(menu: &mut MenuDefinition, layout: &ZoneLayout) {
+    menu.items.retain(|item| {
+        !matches!(item, MenuItem::Action { id, .. } if id.starts_with(ACTION_GRID_PREFIX))
+    });
+    let at = menu
+        .items
+        .iter()
+        .position(|item| matches!(item, MenuItem::Action { id, .. } if id == ACTION_FLOAT))
+        .map_or(menu.items.len(), |i| i + 1);
+    let mut block = Vec::new();
+    for z in &layout.zones {
+        block.push(MenuItem::Action {
+            id: grid_action_id(z.id),
+            label: layout.label(z.id),
+            shortcut: None,
+            disabled: false,
+            checked: false,
+        });
+    }
+    if !block.is_empty() {
+        block.insert(0, MenuItem::Divider);
+        menu.items.splice(at..at, block);
+    }
+}
 
 /// Publish this app's menus: kept for its titlebars and sent to the shell.
 /// Call again whenever they change.
@@ -53,6 +100,7 @@ fn send(payload: &AppMenuPayload) {
 /// Send every menu this process published again, with its keys now (your
 /// key changes, or the shell's, arrived).
 pub(crate) fn republish() {
+    forget_current();
     let own = APP_MENU.read().unwrap_or_else(|p| p.into_inner()).clone();
     let hosted = HOSTED.read().unwrap_or_else(|p| p.into_inner()).clone();
     let Some(bus) = crate::app::try_bus() else {
@@ -80,16 +128,41 @@ pub fn publish_for(payload: AppMenuPayload) {
 
 /// Keep `payload` for the titlebars without sending it.
 pub(crate) fn remember(payload: AppMenuPayload) {
-    let mut slot = APP_MENU.write().unwrap_or_else(|p| p.into_inner());
-    *slot = Some(payload);
+    *APP_MENU.write().unwrap_or_else(|p| p.into_inner()) = Some(payload);
+    forget_current();
 }
 
 /// The menus this app's titlebars show, the Window menu last. `None`
 /// until the app publishes.
 pub fn current() -> Option<AppMenuPayload> {
-    let slot = APP_MENU.read().unwrap_or_else(|p| p.into_inner());
-    slot.as_ref()
-        .map(|p| ensure_window_menu(crate::keys::apply(p)))
+    if let Some(p) = CURRENT.read().unwrap_or_else(|p| p.into_inner()).as_ref() {
+        return Some(p.clone());
+    }
+    let declared = APP_MENU.read().unwrap_or_else(|p| p.into_inner()).clone()?;
+    let prepared = prepare(declared);
+    *CURRENT.write().unwrap_or_else(|p| p.into_inner()) = Some(prepared.clone());
+    Some(prepared)
+}
+
+/// What a titlebar shows of `payload`: the Window menu (added when it has
+/// none) with the layout's grid zones, and every item's key now.
+pub fn prepare(payload: AppMenuPayload) -> AppMenuPayload {
+    let mut payload = ensure_window_menu(payload);
+    let layout = LAYOUT
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .unwrap_or_default();
+    if let Some(menu) = payload.menus.iter_mut().find(|m| m.label == WINDOW_MENU_LABEL) {
+        fill_window_menu(menu, &layout);
+    }
+    crate::keys::apply(&payload)
+}
+
+/// [`current`] made again on its next call (the menus, the keys or the
+/// layout changed).
+fn forget_current() {
+    *CURRENT.write().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
 /// Act on a titlebar menu choice. Window items are the shell's (it acts on
