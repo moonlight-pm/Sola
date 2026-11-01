@@ -13,7 +13,7 @@ pub const SHADOW: f32 = 12.0;
 /// A submenu overlaps its parent's edge by this much.
 const OVERLAP: f32 = 4.0;
 /// Kept clear at the output's edges.
-const EDGE: f32 = crate::zoning::GAP as f32;
+pub const EDGE: f32 = crate::zoning::GAP as f32;
 /// The widest a sheet grows for a long name.
 pub const MAX_W: f32 = 340.0;
 /// The search column's width, and its field's row above the results.
@@ -56,10 +56,10 @@ pub fn row_top(rows: &[Row], index: usize, search: bool) -> f32 {
     PAD + field + rows[..index.min(rows.len())].iter().map(row_h).sum::<f32>()
 }
 
-/// The search column's height: its field and room for every result it
-/// shows, so typing never resizes the overlay.
-pub fn search_height() -> f32 {
-    2.0 * PAD + FIELD_H + super::vault::FOUND_MAX as f32 * ROW_H
+/// The search column's height: its field and room for the `results` it
+/// shows at most, so typing never resizes the overlay.
+pub fn search_height(results: usize) -> f32 {
+    2.0 * PAD + FIELD_H + results as f32 * ROW_H
 }
 
 /// A sheet's width: its widest row, at least [`MIN_W`], at most

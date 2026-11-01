@@ -6,11 +6,16 @@
 //! by Oath's login service (`sola_core::login`). Started by the shell (Super+L,
 //! the idle fade, the desk's start); see `docs/specs/2026-10-29-secure-access-design.md`.
 //!
+//! The bus hears `ScreenLock` when the lock holds and when this process
+//! unlocks it, never when it dies locked (`bus`): `sola-vaultd` locks the
+//! vault on it.
+//!
 //! Exit: 0 unlocked (or another sola-lock already holds the lock); 2 no
 //! password set, nothing to lock with; 3 no login service; 1 the lock
 //! failed.
 
 mod app;
+mod bus;
 mod draw;
 mod keys;
 mod picture;

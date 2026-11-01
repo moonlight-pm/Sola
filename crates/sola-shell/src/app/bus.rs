@@ -158,6 +158,11 @@ impl Shell {
                 self.on_mail_status(s, message.sticky);
                 Task::none()
             }
+            Topic::VaultState(v) => {
+                // Retracted (the service gone): nothing to lock.
+                self.vault_unlocked = message.sticky && v.unlocked;
+                Task::none()
+            }
             Topic::CalendarAgenda(a) => {
                 self.calendar_agenda = message.sticky.then_some(a);
                 Task::none()

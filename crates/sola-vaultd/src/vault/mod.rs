@@ -9,6 +9,7 @@ mod convert;
 mod edit;
 pub mod errors;
 pub mod export;
+pub mod fields;
 pub mod folders;
 pub mod generate;
 mod identity;

@@ -784,6 +784,18 @@ pub fn paste(text: &str, mode: TermMode) -> Vec<u8> {
     }
 }
 
+/// A vault value for the pane (the desk menu): as typed when it is one
+/// line, since a password prompt takes keys, not a paste; with a line
+/// break (an item's notes), as a [`paste`], bracketed when the program
+/// asked, so its lines do not run one by one as commands.
+pub fn vault_value(text: &str, mode: TermMode) -> std::borrow::Cow<'_, [u8]> {
+    if text.contains(['\n', '\r']) {
+        paste(text, mode).into()
+    } else {
+        text.as_bytes().into()
+    }
+}
+
 // ── mouse SGR ─────────────────────────────────────────────────────────────
 
 /// Encode a mouse event as an SGR sequence: `ESC [ < b ; col ; row M/m`.
@@ -1666,6 +1678,14 @@ mod tests {
         // \n → \r in both bracketed and plain modes.
         let result = paste("foo\nbar", TermMode::empty());
         assert_eq!(result, b"foo\rbar".to_vec());
+    }
+
+    #[test]
+    fn a_vault_value_is_typed_unless_it_has_lines() {
+        let mode = TermMode::BRACKETED_PASTE;
+        assert_eq!(&*vault_value("hunter2", mode), b"hunter2");
+        assert_eq!(&*vault_value("a\nb", mode), b"\x1b[200~a\rb\x1b[201~");
+        assert_eq!(&*vault_value("a\nb", TermMode::empty()), b"a\rb");
     }
 
     #[test]

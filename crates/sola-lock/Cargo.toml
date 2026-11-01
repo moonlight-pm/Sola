@@ -10,6 +10,8 @@ path = "src/main.rs"
 
 [dependencies]
 sola-core = { path = "../sola-core" }
+# `ScreenLock` on the bus, for the vault.
+sola-bus = { path = "../sola-bus" }
 # Lock surfaces: iced / winit cannot make them, so the lock draws itself.
 smithay-client-toolkit = { version = "0.19", default-features = false, features = ["calloop"] }
 wayland-client = "0.31"

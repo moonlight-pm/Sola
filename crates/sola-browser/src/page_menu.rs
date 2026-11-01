@@ -153,9 +153,10 @@ fn has_selection(ctx: &PageContext) -> bool {
 
 /// The Edit rows that apply where the click landed: Cut only with a
 /// selection in a field, Paste and Select All only in a field, and no
-/// Cut or Copy out of a password field.
+/// Cut or Copy out of a field Chromium will not copy from (a password
+/// field).
 pub fn desk_edit(ctx: &PageContext) -> Vec<DeskEdit> {
-    let sel = has_selection(ctx) && !ctx.secret;
+    let sel = has_selection(ctx) && (!ctx.editable || ctx.can_copy);
     let mut edit = Vec::new();
     if ctx.editable && sel {
         edit.push(DeskEdit::Cut);
@@ -171,25 +172,15 @@ pub fn desk_edit(ctx: &PageContext) -> Vec<DeskEdit> {
 }
 
 /// What was clicked, for the shell (never the text): `site` is the
-/// page's address, for the vault's logins.
-pub fn desk_context(ctx: &PageContext, secret: bool, site: Option<String>) -> DeskMenuContext {
+/// page's address, for the vault's logins. Never `secret`: the vault's
+/// rows are the same in every field.
+pub fn desk_context(ctx: &PageContext, site: Option<String>) -> DeskMenuContext {
     DeskMenuContext {
         editable: ctx.editable,
-        secret: ctx.editable && secret,
+        secret: false,
         selection: has_selection(ctx),
         site,
     }
-}
-
-/// A password field, as far as the context menu tells: CEF gives no
-/// field type, but Chromium neither copies from a password field nor
-/// shows its text — a selection there reads as bullets and offers no
-/// Copy. Without a selection there is no telling (`false`).
-pub fn looks_secret(editable: bool, selection: Option<&str>, can_copy: bool) -> bool {
-    let Some(sel) = selection.filter(|s| !s.is_empty()) else {
-        return false;
-    };
-    editable && (!can_copy || sel.chars().all(|c| matches!(c, '•' | '●')))
 }
 
 /// A page's host, for a log line (never its path or query).
@@ -441,21 +432,27 @@ mod tests {
         assert_eq!(desk_edit(&field), [DeskEdit::Paste, DeskEdit::SelectAll]);
         let selected = PageContext {
             selection: Some("x".into()),
+            can_copy: true,
             ..field.clone()
         };
         assert_eq!(
             desk_edit(&selected),
             [DeskEdit::Cut, DeskEdit::Copy, DeskEdit::Paste, DeskEdit::SelectAll]
         );
-        let c = desk_context(&selected, true, Some("https://a.com/login".into()));
-        assert!(c.editable && c.secret && c.selection);
-        let secret = PageContext {
-            secret: true,
+        let c = desk_context(&selected, Some("https://a.com/login".into()));
+        assert!(c.editable && !c.secret && c.selection);
+        // A password field: Chromium will not copy out of it.
+        let password = PageContext {
+            can_copy: false,
             ..selected.clone()
         };
-        assert_eq!(desk_edit(&secret), [DeskEdit::Paste, DeskEdit::SelectAll]);
-        // Secret only means something in a field.
-        assert!(!desk_context(&ctx(), true, None).secret);
+        assert_eq!(desk_edit(&password), [DeskEdit::Paste, DeskEdit::SelectAll]);
+        // Page text: Copy.
+        let text = PageContext {
+            selection: Some("x".into()),
+            ..ctx()
+        };
+        assert_eq!(desk_edit(&text), [DeskEdit::Copy]);
     }
 
     #[test]
@@ -466,15 +463,6 @@ mod tests {
             }
         }
         assert_eq!(PageMenuKind::from_id("nope"), None);
-    }
-
-    #[test]
-    fn a_password_field_shows_itself_only_with_a_selection() {
-        assert!(looks_secret(true, Some("•••••"), true));
-        assert!(looks_secret(true, Some("hunter2"), false));
-        assert!(!looks_secret(true, Some("hunter2"), true));
-        assert!(!looks_secret(true, None, false));
-        assert!(!looks_secret(false, Some("•••"), false));
     }
 
     #[test]

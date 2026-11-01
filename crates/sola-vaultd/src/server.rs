@@ -278,6 +278,7 @@ fn method(req: &Request) -> &'static str {
         Request::Get { .. } => "get",
         Request::Code { .. } => "code",
         Request::FillMaterial { .. } => "fill_material",
+        Request::Fields { .. } => "fields",
         Request::Deliver { .. } => "deliver",
         Request::Redeem { .. } => "redeem",
         Request::Export { .. } => "export",

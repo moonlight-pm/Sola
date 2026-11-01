@@ -133,6 +133,7 @@ Click it again, press Escape, or click a window to close the panel.
 | Settings… | Brings Settings forward, or starts it |
 | Keyboard Shortcuts | Opens the shortcuts overlay (Super+K) |
 | Lock Screen | Locks the screen (Super+L; [Security](security.md#locking)) |
+| Lock Vault | Locks the vault at once ([Vault](sola-vault.md#locking)); there only while the vault is unlocked |
 | Exit Sola | Ends the desktop session (`Shutdown` on the bus); on Oath the console then has the screen, and `oath desk` brings the desk back |
 | Restart Computer | Restarts the machine |
 | Shut Down | Powers the machine off |
@@ -496,29 +497,45 @@ From the top, a hairline between groups:
 | Locked | **Unlock Vault…**, which brings Vault forward; right-click again once it is unlocked |
 | Unlocked | On a page, the page's logins first, each with its username at the right; then **Search vault…** |
 
-A login opens its values:
+An item opens its values: every value it has, each under its label, in
+the order its record in Vault shows them. Every field you can type in
+gets them all, a password field too.
 
 - **Fill**, on a page and for the page's own logins only: the whole
   login into the page, as Browser's vault panel fills it
   ([Filling a page](sola-browser.md#filling-a-page)).
-- **Username**, **Password**, and **One-time code** (when the login has
-  one). In a password field, only **Password** and **One-time code**.
-- A login that asks for your master password shows these dimmed, under
-  them **Asks for your master password**, and **Open in Vault…**, which
-  brings Vault forward on the login.
+- A login: **Username**, **Password**, and **One-time code** (the code
+  at that moment, when the login has one), then each **Website**.
+- A card: **Cardholder**, **Brand**, **Number**, **Expiration**
+  (`MM/YY`), and **Security code**. An identity: its name, username,
+  company, numbers, email, phone, and address, a line each. A bank
+  account, a driver's license, or a passport: each of its fields. An SSH
+  key: **Fingerprint** and **Public key**, never its private key.
+- Then the item's custom fields, hidden ones too, by their names, and
+  **Notes**.
+- The column says **Reading the item…** until the vault service has
+  said which values the item has (the Shell asks it when the column
+  opens), or why it could not.
+- An item that asks for your master password shows its values dimmed,
+  under them **Asks for your master password**, and **Open in Vault…**,
+  which brings Vault forward on the item.
 
-**Search vault…** turns the column into a search field over your logins:
-type, and up to eight matches show, the most recently used first. ↓ or a
-click moves into them, and → or Return opens one's values: no **Fill**,
-since a match can be any site's. ← in an empty field goes back to the
-vault's rows. Only logins are searched.
+**Search vault…** turns the column into a search field over every item,
+of every kind: type, and the matches show, the most recently used first,
+as many as fit on the screen up to sixteen (never fewer than eight). ↓
+or a click moves into them, and → or Return opens one's values: no
+**Fill**, since a match can be any site's. ← in an empty field goes back
+to the vault's rows. Items in the trash are not searched.
 
 ### Vault values
 
 A value you pick goes straight in, never through the clipboard: into a
 text field at the caret, replacing any selection; into a page at its
 caret; into a Terminal or Projects pane typed as keys, with no Return
-after, so a `sudo` or `ssh` password prompt takes it.
+after, so a `sudo` or `ssh` password prompt takes it. A value of more
+than one line (notes) goes into a pane as a paste, bracketed when the
+program there asks for it, so its lines do not run as commands one by
+one.
 
 On its way, only the vault service and that one application see the
 value. The Shell asks the service to deliver the item's field to the
@@ -526,8 +543,8 @@ application's process; the service keeps the value against a one-time
 ticket that only that process can collect, for up to a minute; the Shell
 sends the application the ticket on the bus; and the application collects
 the value from the service's socket and puts it in. The Shell itself sees
-item names and usernames, never a value
-([Who may use it](sola-vault.md#who-may-use-it)).
+item names, usernames, and the labels of an item's values, never a
+value ([Who may use it](sola-vault.md#who-may-use-it)).
 
 The service refuses a value from an item that asks for the master
 password, or from one in the trash, and the top row says why ("Vault:

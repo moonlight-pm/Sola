@@ -122,11 +122,13 @@ The vault's key is kept in the service's memory only, never on disk.
   the fade off, the time counts from the last time Vault, Browser, or the
   right-click menu used the vault. **Never** leaves locking to the screen
   lock and to restarts.
-- **Lock when the screen locks** (on by default) locks it within a few
-  seconds of the lock screen coming up
-  ([Security](security.md#locking)).
-- **Vault → Lock** (⌘⇧L), the lock in Vault's foot, and
-  `solactl vault lock` lock it at once.
+- **Lock when the screen locks** (on by default) locks it as the lock
+  screen comes up: `sola-lock` says so on the bus (`ScreenLock`), and the
+  service locks on it ([Security](security.md#locking)).
+- **Vault → Lock** (⌘⇧L), the lock in Vault's foot, **Lock Vault** in
+  the Shell's flower menu (there while the vault is unlocked;
+  [Shell](sola-shell.md#flower-menu)), and `solactl vault lock` lock it
+  at once.
 
 Locking drops the key, the synced items, and any value waiting to be
 delivered. The window goes back to the unlock card: the account's email
@@ -274,8 +276,8 @@ place of its record: **Master password** and **Continue**. Once you give
 it, the item stays open to you until the vault locks or Vault quits.
 Browser's panel asks the same before it opens or fills such an item. The
 right-click menu cannot ask, so it puts none of such an item's values into
-a field; the top row says "Vault: This item asks for your master password
-— open it in Vault."
+a field; it shows them dimmed, with **Open in Vault…**
+([Shell](sola-shell.md#the-right-click-menu)).
 
 ### Copying
 

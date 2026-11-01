@@ -217,13 +217,14 @@ not show. The page's rows come first:
 
 Then the Edit rows: **Cut** with a selection in a field, **Copy** with a
 selection, and **Paste** and **Select All** in a field; never Cut or Copy
-out of a password field. In a field, **Vault ▸** offers the page's logins
-first: **Fill** fills the whole login as the vault panel does, and
-**Username**, **Password**, and **One-time code** go in at the field's
-caret. Chromium does not say which fields are passwords: Browser tells
-one only when something in it is selected (it reads as dots), so in an
-empty password field Vault ▸ offers the username too. The Shell gets the
-page's address without its query or fragment, to find its logins.
+out of a field Chromium will not copy from (a password field). In a
+field, **Vault ▸** offers the page's logins first: **Fill** fills the
+whole login as the vault panel does, and each of the login's values
+(**Username**, **Password**, **One-time code**, and the rest) goes in at
+the field's caret. **Search vault…** finds any item, and its values go in
+the same way. Every field gets the same rows, a password field too
+([Shell](sola-shell.md#the-right-click-menu)). The Shell gets the page's
+address without its query or fragment, to find its logins.
 
 Browser's own fields (the location bar, the vault panel's fields) get the
 menu every Sola text field gets.
@@ -332,9 +333,11 @@ shows, and does the page's part, the fills and passkeys. Signing in,
 unlocking, and locking are the vault's, not Browser's: unlock it here and
 Vault and the right-click menu are unlocked too.
 
-The button is a lock while the vault is locked, signed out, or its
-service is not running; a key while it is unlocked; a fingerprint while a
-site waits for a passkey. It stays pressed while the panel is up. A click
+The button shows the vault's state: a key in full ink while the vault
+is unlocked; the key dimmed with a small lock on its corner while it is
+locked; the key dimmed alone while you are signed out or the service is
+not running; a fingerprint while a site waits for a passkey. It stays
+pressed while the panel is up. A click
 on the page closes the panel; a sign-in, a two-step code, or an unsaved
 edit waits there for the next open.
 

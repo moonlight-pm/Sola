@@ -52,7 +52,6 @@ impl<E: Engine> App<E> {
             tab = tab.0,
             token,
             editable = ctx.editable,
-            secret = ctx.secret,
             host = %page_menu::menu_host(&url),
             "page right-click → desk menu"
         );
@@ -60,7 +59,7 @@ impl<E: Engine> App<E> {
             token,
             at.x,
             at.y,
-            page_menu::desk_context(&ctx, ctx.secret, page_menu::menu_site(&url)),
+            page_menu::desk_context(&ctx, page_menu::menu_site(&url)),
             page_menu::desk_items(&ctx, window),
             page_menu::desk_edit(&ctx),
         );
