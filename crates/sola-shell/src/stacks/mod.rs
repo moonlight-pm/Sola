@@ -51,9 +51,6 @@ const GHOST_GRACE: Duration = Duration::from_secs(30);
 /// How long the saved layout waits for the session to restore its apps.
 const RESTORE_GRACE: Duration = Duration::from_secs(120);
 
-/// How long after one of an app's windows took a remembered place by the
-/// app's id its other new windows follow it there ([`Stacks::place_near`]).
-const FOLLOW_GRACE: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tab {
@@ -90,11 +87,11 @@ pub struct Stacks {
     /// Places of windows that just left.
     ghosts: Vec<(Slot, Instant)>,
     /// Apps one of whose windows took a remembered place by the app's id
-    /// (no tab key): that window, and when. A window of the app that finds
-    /// no place of its own joins it ([`FOLLOW_GRACE`]): Steam maps a
-    /// short-lived window first, which takes Steam's place, and its main
-    /// window after.
-    came_back: HashMap<String, (u32, Instant)>,
+    /// (no tab key): that window. While it is open and the saved layout is
+    /// being restored, a window of the app that finds no place of its own
+    /// joins it: Steam maps a short-lived window first, which takes
+    /// Steam's place, and its main window after.
+    came_back: HashMap<String, u32>,
     /// Saved index of each restored window, so windows that come back in
     /// any order still line up as saved.
     ranks: HashMap<u32, usize>,
@@ -170,9 +167,9 @@ impl Stacks {
 
     /// Place a new window. In order: the place its key just left, its
     /// key's saved place (for a tab with neither, its app's), beside a
-    /// window of its app that just took its app's place (a window with no
-    /// tab key, within [`FOLLOW_GRACE`]: on that workspace, in that zone or
-    /// Floating), Floating for `floats`, else the showing workspace's
+    /// window of its app that took its app's place (a window with no tab
+    /// key, while the layout is restored: on that workspace, in that zone
+    /// or Floating), Floating for `floats`, else the showing workspace's
     /// landing zone (shown): Full
     /// while it is up or nothing is tiled, else the last focused half. In
     /// the bar it goes right after the focused tab, whatever that tab's
@@ -218,13 +215,13 @@ impl Stacks {
             let by_app = *k == app_id;
             if let Some(slot) = self.claim_ghost(k, now) {
                 if by_app {
-                    self.came_back.insert(app_id.to_string(), (window_id, now));
+                    self.came_back.insert(app_id.to_string(), window_id);
                 }
                 return self.insert_slot(tab(slot.zone), &slot, None);
             }
             if let Some(slot) = self.claim_restore(k, now) {
                 if by_app {
-                    self.came_back.insert(app_id.to_string(), (window_id, now));
+                    self.came_back.insert(app_id.to_string(), window_id);
                 }
                 let at = slot.at;
                 return self.insert_slot(tab(slot.zone), &slot, Some(at));
@@ -298,11 +295,13 @@ impl Stacks {
 
     /// Put `tab` (a window with no place of its own) beside the window of
     /// its app that came back by the app's id, while that one is open and
-    /// within [`FOLLOW_GRACE`]: on its workspace, right after it in the
-    /// bar, in its zone (Floating for `floats`), shown there.
+    /// the saved layout is still being restored: on its workspace, right
+    /// after it in the bar, in its zone (Floating for `floats`), shown
+    /// there.
     fn follow(&mut self, mut tab: Tab, floats: bool, now: Instant) -> Option<Placed> {
-        let &(leader, since) = self.came_back.get(&tab.app_id)?;
-        let d = self.desk_of(leader).filter(|_| now < since + FOLLOW_GRACE);
+        let &leader = self.came_back.get(&tab.app_id)?;
+        let restoring = self.restore_until.is_some_and(|until| now < until);
+        let d = self.desk_of(leader).filter(|_| restoring);
         let Some(d) = d else {
             self.came_back.remove(&tab.app_id);
             return None;

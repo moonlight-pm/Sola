@@ -271,6 +271,10 @@ pub fn handle_manage_start(state: &mut AppData) {
         }
     }
     state.pending.manage_dirty = false;
+    // The sizes given, written once a sequence is not part of a drag.
+    if state.op.is_none() {
+        state.window_ids.flush();
+    }
     // `pending.manage` was drained above; no separate clear needed.
 
     // While a layer surface holds exclusive focus (e.g. sola-kvm edge

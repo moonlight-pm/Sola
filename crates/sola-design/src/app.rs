@@ -694,9 +694,7 @@ impl App {
             .iter()
             .map(|id| self.open_window(id, *id != front))
             .collect();
-        // One after another, as announced: the shell pairs a process's new
-        // windows with its tabs by order (`sola_kit::tabs::in_order`).
-        tasks.into_iter().reduce(Task::chain).unwrap_or_else(Task::none)
+        Task::batch(tasks)
     }
 
     /// Open project `project`'s window, or bring it up when it is open. A

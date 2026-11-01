@@ -505,8 +505,9 @@ Pages are told whether you prefer light or dark (`prefers-color-scheme`):
 both looks shows the one you chose; one with a single look is unchanged.
 Pages that load after a change follow it at once; one already open
 follows it when it is next on screen. Web apps follow it too. Design's
-boards do not. The pages a desk start brings back wait for it (up to a
-second and a half) before they load, so a site that reads it only once,
+boards do not. The pages a desk start brings back wait for it (or for the
+bus to say it has replayed everything it holds, when none is saved) before
+they load, so a site that reads it only once,
 as it loads, comes up in the right one. The browser's own chrome wears
 the desk's theme, light or dark.
 

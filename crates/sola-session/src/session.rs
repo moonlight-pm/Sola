@@ -78,10 +78,6 @@ pub struct Session {
     owners: Owners,
     /// The last live window list.
     windows: Vec<Window>,
-    /// When the apps were last checked for a moved package
-    /// ([`refresh`]), and when this process started.
-    checked_at: Option<Instant>,
-    started_at: Instant,
     /// Apps stopped for a new program, by app id: their command, to start
     /// again once they exit.
     relaunch: HashMap<String, String>,
@@ -104,8 +100,6 @@ impl Session {
             foreign: HashMap::new(),
             owners: Owners::default(),
             windows: Vec::new(),
-            checked_at: None,
-            started_at: Instant::now(),
             relaunch: HashMap::new(),
             moving: Vec::new(),
         }
@@ -365,6 +359,10 @@ impl Session {
             Topic::LaunchApp(p) => self.launch(p),
             Topic::CloseApp(app_id) => self.close(&app_id),
             Topic::CloseWindow(window_id) => self.close_foreign_window(window_id),
+            Topic::PackagesMoved(packages) => {
+                info!(?packages, "packages moved: checking the apps' programs");
+                self.refresh_moved();
+            }
             Topic::Shutdown => {
                 self.shutdown_all_apps();
                 std::process::exit(0);
@@ -474,7 +472,6 @@ impl Session {
         self.settle_adopted();
         self.bring_back_lost();
         self.step_foreign();
-        self.refresh_moved();
         self.step_moving();
     }
 
@@ -816,6 +813,8 @@ const SESSION_TOPICS: &[TopicKind] = &[
     // current-window list (to skip apps already running).
     TopicKind::SessionApps,
     TopicKind::Windows,
+    // An apply moved packages: apps on an old program start again.
+    TopicKind::PackagesMoved,
 ];
 
 fn connect_and_subscribe(bus: &mut BusClient) {
@@ -836,8 +835,10 @@ pub fn run() {
         sola_call::methods::desk_methods(),
     ));
 
-    // Relaunch last session's apps (once, before the steady-state loop).
+    // Relaunch last session's apps (once, before the steady-state loop),
+    // and start again those found running on an old program.
     session.restore_session();
+    session.refresh_moved();
 
     let poll = Duration::from_millis(500);
     loop {

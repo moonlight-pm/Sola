@@ -376,6 +376,9 @@ pub struct Shell {
     /// Each tab's own icon (a page's favicon), by tab key: its row shows it
     /// in place of the app's.
     pub tab_icons: HashMap<String, String>,
+    /// The tab each window names (`Topic::WindowTab`), by window id: its
+    /// tab's token, which pairing goes by first.
+    pub window_tabs: HashMap<u32, String>,
     /// Agent sessions' islands in the top row and the card open.
     pub agents: crate::agents::AgentIslands,
     /// The theme's colors following the background picture.
@@ -584,6 +587,7 @@ impl Shell {
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
             tab_icons: HashMap::new(),
+            window_tabs: HashMap::new(),
             agents: Default::default(),
             adapt: Default::default(),
             pictures: Default::default(),
@@ -3177,6 +3181,7 @@ mod pending_launch_tests {
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
             tab_icons: HashMap::new(),
+            window_tabs: HashMap::new(),
             agents: Default::default(),
             adapt: Default::default(),
             pictures: Default::default(),
@@ -3320,6 +3325,7 @@ mod hide_tests {
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
             tab_icons: HashMap::new(),
+            window_tabs: HashMap::new(),
             agents: Default::default(),
             adapt: Default::default(),
             pictures: Default::default(),

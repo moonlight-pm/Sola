@@ -4,7 +4,12 @@
 //! program changed is stopped and started again here, and the others —
 //! and apps that aren't Sola's, a game among them — keep running. Their
 //! windows come back to the places they left (the shell keeps a closed
-//! window's place for 30 s).
+//! window's place for 30 s, and pairs each tab window by the tab it
+//! names).
+//!
+//! Checked when the session manager starts (an apply that moved
+//! `pkg:sola` restarted it) and when an apply says it moved packages
+//! (`Topic::PackagesMoved`, from `cargo make oath apply`).
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -15,13 +20,8 @@ use tracing::{info, warn};
 use super::{Session, stop_app_record};
 use crate::{moved, tag};
 
-/// How often the running apps are checked.
-pub(super) const CHECK_EVERY: Duration = Duration::from_secs(2);
-/// How long after the session manager starts before the first check: a
-/// desk restart restarts the shell too, and it places and pairs the kept
-/// windows first (an app restarted under it while it does lands anywhere).
-const SETTLE: Duration = Duration::from_secs(10);
-/// How long an app this process did not start has to exit after SIGTERM.
+/// How long an app this process did not start has to exit after SIGTERM
+/// (then SIGKILL, as a quit escalates).
 const EXIT_GRACE: Duration = Duration::from_secs(10);
 
 /// An app this process did not start (found running at its start), asked
@@ -39,12 +39,6 @@ impl Session {
     /// once it has exited ([`Self::relaunch_moved`], [`Self::step_moving`]).
     pub(super) fn refresh_moved(&mut self) {
         let now = Instant::now();
-        if now.duration_since(self.started_at) < SETTLE
-            || self.checked_at.is_some_and(|t| now.duration_since(t) < CHECK_EVERY)
-        {
-            return;
-        }
-        self.checked_at = Some(now);
         let mut stopped = Vec::new();
         for r in self.children.values_mut().flatten() {
             // A scope's process is systemd-run, not the app.

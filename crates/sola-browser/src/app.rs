@@ -75,9 +75,6 @@ pub(crate) fn key_button_inset() -> f32 {
 
 /// How long the copy-URL glyph stays on the check after a successful copy.
 const COPY_URL_FLASH: Duration = Duration::from_millis(1200);
-/// How long restored pages wait for `Appearance` (light or dark) before
-/// opening without it: the bus hands it over as it connects.
-const SCHEME_WAIT: Duration = Duration::from_millis(1500);
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -178,9 +175,6 @@ pub enum Msg {
     /// Compositor clipboard probe for page paste (image or text).
     PageOffer(sola_kit::clipboard::Offer),
     WindowReady(Option<iced::window::Id>),
-    /// No `Appearance` came within [`SCHEME_WAIT`] of the window: open the
-    /// restored pages without it.
-    SchemeWaited,
     /// A page window opened, resized, gained focus, or was asked to close.
     PageWindow(iced::window::Id, iced::window::Event),
     /// A task finished with nothing to do (a page window opened or closed).
@@ -327,8 +321,12 @@ pub struct App<E: Engine> {
     pages_light: Option<bool>,
     /// The window is up but the restored pages wait for `pages_light`: a
     /// page that reads `prefers-color-scheme` once as it loads would keep
-    /// the light it was born with ([`Self::open_restored`]).
+    /// the light it was born with ([`Self::open_restored`]). Until
+    /// `Appearance` comes, or the bus says it has replayed everything
+    /// (`Topic::Replayed`: there is none).
     scheme_wait: bool,
+    /// The bus has replayed what it holds (`Topic::Replayed`).
+    replayed: bool,
     nav_hold: Option<NavHold>,
     page_menus: PageMenusHandle,
     /// Float tracker + iced window id for CSD while floating.
@@ -450,6 +448,7 @@ impl<E: Engine> App<E> {
             screen_size: None,
             pages_light: None,
             scheme_wait: false,
+            replayed: false,
             nav_hold: None,
             page_menus,
             float: sola_kit::FloatState::new(app_id),
@@ -783,7 +782,6 @@ impl<E: Engine> App<E> {
     /// and show the active page when it changed from outside its window.
     fn sync_windows(&mut self) -> Task<Msg> {
         let mut tasks = Vec::new();
-        let mut opens = Vec::new();
         let ids: Vec<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
         for id in &ids {
             if !self.windows.has(*id) && !self.webapps.holds(*id) {
@@ -791,11 +789,13 @@ impl<E: Engine> App<E> {
                 let background = *id != self.cached_active;
                 // A web app's page opens as the app.
                 let app_id = self.window_app_id(*id);
-                opens.push(self.windows.open(&app_id, *id, &page_id, background));
+                tasks.push(
+                    self.windows
+                        .open(&app_id, *id, &page_id, background)
+                        .map(|_| Msg::Noop),
+                );
             }
         }
-        // One after another, as announced: the shell pairs by order.
-        tasks.push(sola_kit::tabs::in_order(opens).map(|_| Msg::Noop));
         for id in self.windows.open_tabs() {
             if !ids.contains(&id) {
                 tasks.push(self.windows.close(id).map(|_| Msg::Noop));
@@ -868,20 +868,12 @@ impl<E: Engine> App<E> {
                 self.window_id = id;
                 // Iced is connected; open the restored pages once they can
                 // be told light or dark.
-                if self.pages_light.is_none() {
+                let bus_up = sola_kit::app::bus().lock().is_ok_and(|b| b.is_connected());
+                if self.pages_light.is_none() && !self.replayed && bus_up {
                     self.scheme_wait = true;
-                    return Task::perform(tokio::time::sleep(SCHEME_WAIT), |_| Msg::SchemeWaited);
+                    return Task::none();
                 }
                 return self.open_restored();
-            }
-            Msg::SchemeWaited => {
-                if self.scheme_wait {
-                    tracing::warn!(
-                        wait_ms = SCHEME_WAIT.as_millis() as u64,
-                        "no Appearance yet: restored pages open without light or dark"
-                    );
-                    return self.open_restored();
-                }
             }
             Msg::TitleDrag => return sola_kit::drag(self.windows.window_of(self.cached_active)),
             Msg::TitleResize(dir) => {
@@ -1371,6 +1363,13 @@ impl<E: Engine> App<E> {
                 match Topic::parse(&message) {
                     Some(Topic::OutputGeometry(g)) if g.width > 0 && g.height > 0 => {
                         self.screen_size = Some((g.width as u32, g.height as u32));
+                    }
+                    Some(Topic::Replayed) => {
+                        self.replayed = true;
+                        if self.scheme_wait {
+                            tracing::info!("no Appearance saved: restored pages open without light or dark");
+                            restored = self.open_restored();
+                        }
                     }
                     Some(Topic::Appearance(look)) if self.pages_light != Some(look.light) => {
                         self.pages_light = Some(look.light);

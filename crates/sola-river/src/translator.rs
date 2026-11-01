@@ -16,6 +16,22 @@ pub fn emit_windows(state: &mut AppData) {
     windows.retain(|w| !state.unidentified.contains(&w.window_id));
     debug!(count = windows.len(), "emitting Windows");
     state.bus.emit(Topic::Windows(windows));
+    emit_window_tabs(state);
+}
+
+/// Tell the shell, once each, which tab a told window is
+/// (`Topic::WindowTab`); `crate::client::window::drop_window` retracts it.
+fn emit_window_tabs(state: &mut AppData) {
+    let new: Vec<(u32, String)> = state
+        .registry
+        .tabs()
+        .filter(|(id, _)| !state.unidentified.contains(id) && !state.tabs_told.contains(id))
+        .map(|(id, tab)| (id, tab.to_string()))
+        .collect();
+    for (window_id, tab) in new {
+        state.tabs_told.insert(window_id);
+        let _ = state.bus.emit(Topic::WindowTab(sola_bus::topics::WindowTab { window_id, tab }));
+    }
 }
 
 /// Emit the window's current rectangle as the sticky `Topic::WindowGeometry`.

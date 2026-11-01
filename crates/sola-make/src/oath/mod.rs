@@ -127,7 +127,29 @@ fn apply(staged: &[Staged], force: bool) -> Result<(), String> {
     let ids: Vec<String> = moves.iter().map(|(id, ..)| id.clone()).collect();
     catalog::apply(&ids)?;
     println!("[oath] applied {} from {}", ids.join(" "), me.short());
+    tell_desk(&ids);
     Ok(())
+}
+
+/// Tell the running desk which packages moved (`Topic::PackagesMoved`):
+/// the session manager starts again each app on an old program. Not when
+/// `pkg:sola` moved — the bus and the session manager restart, and it
+/// checks as it starts. Through the `solactl` just staged, which knows the
+/// topic whatever the desk runs.
+fn tell_desk(ids: &[String]) {
+    if ids.iter().any(|id| id == "pkg:sola") {
+        return;
+    }
+    let solactl = std::path::Path::new(stage::STAGE_ROOT).join("sola/bin/solactl");
+    let payload = serde_json::to_string(ids).unwrap_or_else(|_| "[]".into());
+    match std::process::Command::new(&solactl)
+        .args(["emit", "PackagesMoved", &payload])
+        .status()
+    {
+        Ok(s) if s.success() => println!("[oath] told the desk: {payload}"),
+        Ok(s) => eprintln!("[oath] telling the desk failed ({s}): reopen moved apps by hand"),
+        Err(e) => eprintln!("[oath] {}: {e}: reopen moved apps by hand", solactl.display()),
+    }
 }
 
 /// The packages about to move whose live pin this repo made at a commit

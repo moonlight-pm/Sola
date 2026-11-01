@@ -375,4 +375,7 @@ fn handle_subscribe(id: ClientId, kinds: Vec<TopicKind>, state: &SharedState) {
             let _ = tx.try_send(evt);
         }
     }
+
+    // On the same channel after the replay: the client has all of it.
+    let _ = tx.try_send(sola_bus::topics::Topic::Replayed.to_message());
 }

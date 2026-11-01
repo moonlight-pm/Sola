@@ -99,6 +99,22 @@ impl Shell {
                 self.on_window_parent(p, message.sticky);
                 Task::none()
             }
+            Topic::WindowTab(t) => {
+                // The tab this window names (sola-river): pair by it.
+                if message.sticky {
+                    self.window_tabs.insert(t.window_id, t.tab);
+                } else {
+                    self.window_tabs.remove(&t.window_id);
+                }
+                if self.pair_tabs(std::time::Instant::now()) {
+                    self.sync_floats();
+                    self.keep_focus_on_screen();
+                    self.emit_all_frames();
+                    self.emit_composition();
+                }
+                self.persist_tabs();
+                Task::none()
+            }
             Topic::TabLayout(l) => {
                 self.on_tab_layout(l);
                 Task::none()
@@ -629,15 +645,18 @@ impl Shell {
     /// apps which window each tab is (`TabWindow`), and remember placed
     /// windows by their tab's key. True when one moved to a saved place.
     fn pair_tabs(&mut self, now: std::time::Instant) -> bool {
-        let candidates: Vec<(u32, String, u32)> = self
+        let candidates: Vec<(u32, String, u32, Option<String>)> = self
             .known_windows
             .iter()
             .filter(|w| w.app_id != Self::APP_ID && self.tabs.parent_of(w.window_id).is_none())
-            .filter_map(|w| Some((w.window_id, w.app_id.clone(), w.pid?)))
+            .filter_map(|w| {
+                let tab = self.window_tabs.get(&w.window_id).cloned();
+                Some((w.window_id, w.app_id.clone(), w.pid?, tab))
+            })
             .collect();
         let refs: Vec<crate::pairing::Candidate<'_>> = candidates
             .iter()
-            .map(|(w, a, p)| (*w, a.as_str(), *p))
+            .map(|(w, a, p, t)| (*w, a.as_str(), *p, t.as_deref()))
             .collect();
         let mut moved = false;
         for (window_id, key) in self.pairing.pair(&refs) {

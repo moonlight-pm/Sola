@@ -325,6 +325,12 @@ fn take_back_id(state: &mut AppData, minted: u32, identifier: &str) {
 pub(crate) fn drop_window(state: &mut AppData, window_id: u32) {
     state.window_ids.forget(window_id);
     state.unidentified.remove(&window_id);
+    if state.tabs_told.remove(&window_id) {
+        let _ = state.bus.retract(Topic::WindowTab(sola_bus::topics::WindowTab {
+            window_id,
+            tab: String::new(),
+        }));
+    }
     // River asserts in Window.destroy() that no seat is still focused
     // on the window. Queue clear_focus so the next manage_start sends
     // it before we destroy the proxy.

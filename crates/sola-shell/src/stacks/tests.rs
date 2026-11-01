@@ -838,8 +838,8 @@ fn an_app_s_later_windows_follow_the_one_that_came_back() {
     s.remove(1, t + Duration::from_secs(20));
     s.place(4, "steam", "steam", false, false, t + Duration::from_secs(25));
     assert_eq!(s.workspace_of(4), Some("games"));
-    // Long after, a new Steam window opens where you are.
-    s.place(5, "steam", "steam", false, false, t + FOLLOW_GRACE + Duration::from_secs(30));
+    // Once the layout is restored, a new Steam window opens where you are.
+    s.place(5, "steam", "steam", false, false, t + RESTORE_GRACE + Duration::from_secs(30));
     assert_eq!(s.workspace_of(5), Some("main"));
 }
 

@@ -28,6 +28,9 @@ pub struct WindowRegistry {
 
 pub struct Entry {
     pub app_id: Option<String>,
+    /// The tab a kit app's window is, from its Wayland app id
+    /// (`sola_bus::topics::split_app_id`).
+    pub tab: Option<String>,
     pub title: Option<String>,
     /// Max-size dimensions hint from `river_window_v1.dimensions_hint`.
     /// Used to center unzoned windows; `0` means "no preference".
@@ -78,6 +81,7 @@ impl WindowRegistry {
             self.next_id,
             Entry {
                 app_id: None,
+                tab: None,
                 title: None,
                 max_size: (0, 0),
                 pid: None,
@@ -99,14 +103,25 @@ impl WindowRegistry {
         self.by_id.get(&id)
     }
 
+    /// Each window that names its tab, and the tab's token.
+    pub fn tabs(&self) -> impl Iterator<Item = (u32, &str)> {
+        self.by_id
+            .iter()
+            .filter_map(|(id, e)| e.tab.as_deref().map(|t| (*id, t)))
+    }
+
     /// Look up the app_id for a window, if known.
     pub fn app_id_for(&self, id: u32) -> Option<&str> {
         self.by_id.get(&id).and_then(|e| e.app_id.as_deref())
     }
 
+    /// The window's Wayland app id: its app id, and the tab token a kit
+    /// tab window adds (`<app_id>#<token>`), apart.
     pub fn set_app_id(&mut self, id: u32, value: String) {
         if let Some(e) = self.by_id.get_mut(&id) {
-            e.app_id = Some(value);
+            let (app, tab) = sola_bus::topics::split_app_id(&value);
+            e.tab = tab.map(str::to_string);
+            e.app_id = Some(app.to_string());
         }
     }
 

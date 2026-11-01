@@ -145,10 +145,12 @@ and the new session manager reopens them. An application does not restart
 itself: its program is in the store directory it started from, which
 never changes, so an application started before an apply runs the old
 program until it is opened again. The session manager does that for each
-of Sola's applications whose program changed: every 2 seconds it compares
-the program each one runs (`/proc/<pid>/exe`) with the one its command
-names now (`/bin/sola-mail`, through its links), stops one that differs,
-and starts it again; its windows come back to their places. An
+of Sola's applications whose program changed: as it starts, and when an
+apply says it moved packages (`PackagesMoved` on the bus, from `cargo make
+oath apply` when `pkg:sola` did not move), it compares the program each one
+runs (`/proc/<pid>/exe`) with the one its command names now
+(`/bin/sola-mail`, through its links), stops one that differs, and starts
+it again; its windows come back to their places. An
 application that isn't Sola's is never restarted for it. `sudo oath undo` takes an apply back the same
 way, restarting the same services on the previous programs.
 

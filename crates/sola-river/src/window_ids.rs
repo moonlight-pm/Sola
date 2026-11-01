@@ -30,16 +30,12 @@ struct Saved {
     sizes: HashMap<String, (i32, i32)>,
 }
 
-/// Sizes are written at most this often (a drag resizes every frame).
-const SIZE_FLUSH: std::time::Duration = std::time::Duration::from_secs(1);
-
 #[derive(Default)]
 pub struct WindowIds {
     path: Option<PathBuf>,
     saved: Saved,
-    /// A size changed since the last write, and when that was.
+    /// A size changed since the last write.
     dirty: bool,
-    flushed: Option<std::time::Instant>,
 }
 
 impl WindowIds {
@@ -93,13 +89,12 @@ impl WindowIds {
         }
     }
 
-    /// Write the sizes noted since the last write, at most every
-    /// [`SIZE_FLUSH`].
+    /// Write the sizes noted since the last write (at the end of a manage
+    /// sequence that is not part of a drag; a drag's when it ends).
     pub fn flush(&mut self) {
-        if !self.dirty || self.flushed.is_some_and(|t| t.elapsed() < SIZE_FLUSH) {
-            return;
+        if self.dirty {
+            self.save();
         }
-        self.save();
     }
 
     /// The window `id` closed.
@@ -122,7 +117,6 @@ impl WindowIds {
 
     fn save(&mut self) {
         self.dirty = false;
-        self.flushed = Some(std::time::Instant::now());
         let Some(path) = &self.path else {
             return;
         };

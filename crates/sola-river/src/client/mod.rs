@@ -65,6 +65,8 @@ pub struct AppData {
     /// New windows River has not named yet (`identifier` comes after their
     /// app id and title): not in `Windows` until then.
     pub unidentified: std::collections::HashSet<u32>,
+    /// Windows whose tab the shell has been told (`Topic::WindowTab`).
+    pub tabs_told: std::collections::HashSet<u32>,
     pub pending: PendingUpdate,
     pub chords: ChordRegistry,
     pub bus: BusClient,
@@ -248,6 +250,7 @@ impl AppData {
             registry: WindowRegistry::new(),
             window_ids: crate::window_ids::WindowIds::default(),
             unidentified: std::collections::HashSet::new(),
+            tabs_told: std::collections::HashSet::new(),
             pending: PendingUpdate::default(),
             chords: ChordRegistry::default(),
             bus,
@@ -350,7 +353,6 @@ pub fn connect(
 /// and if pending is dirty, asks River to start a new manage cycle via
 /// `manage_dirty`.
 pub fn bus_tick(state: &mut AppData) {
-    state.window_ids.flush();
     // sola-bus holds sticky topics only in memory. A bus restart wipes
     // OutputGeometry / Windows; if we stay connected without re-emitting,
     // a late shell (or a shell that also restarted for the install) never

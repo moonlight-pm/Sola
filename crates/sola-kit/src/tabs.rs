@@ -86,6 +86,13 @@ impl TabWindows {
         settings.exit_on_close_request = false;
         self.opened += 1;
         let key = format!("{app_id}/{id}");
+        // The window names its tab in its Wayland app id; sola-river takes
+        // it off and tells the shell, which pairs the two exactly.
+        settings.platform_specific.application_id = format!(
+            "{app_id}{}{}",
+            sola_bus::topics::TAB_TOKEN_SEP,
+            sola_bus::topics::tab_token(&key)
+        );
         announce(&tab(&key, app_id, self.opened, None, background, None));
         let (wid, task) = window::open(settings);
         self.windows.insert(
@@ -230,16 +237,6 @@ impl TabWindows {
     pub fn is_empty(&self) -> bool {
         self.windows.is_empty()
     }
-}
-
-/// Open several tabs' windows one after another, in the order their tabs
-/// were announced ([`TabWindows::open`]). The shell pairs a process's new
-/// windows with its tabs by order — sola-river numbers windows as they are
-/// created — and a batch of `window::open` tasks creates them in any order,
-/// putting tabs on each other's windows (a page then thinks it is hidden
-/// and stops painting).
-pub fn in_order(opens: Vec<Task<window::Id>>) -> Task<window::Id> {
-    opens.into_iter().reduce(Task::chain).unwrap_or_else(Task::none)
 }
 
 fn tab(

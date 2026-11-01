@@ -398,7 +398,8 @@ impl Dispatch<ExtForeignToplevelHandleV1, ()> for AppData {
                     slot.identifier = id;
                 }
                 if let Some(app) = slot.pending_app_id.take() {
-                    slot.app_id = Some(app);
+                    // Without a kit tab window's token, as the bus has it.
+                    slot.app_id = Some(sola_bus::topics::split_app_id(&app).0.to_string());
                 }
                 if let Some(title) = slot.pending_title.take() {
                     slot.title = Some(title);

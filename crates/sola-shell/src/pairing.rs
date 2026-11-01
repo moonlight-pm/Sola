@@ -12,8 +12,18 @@
 //! Once paired, the app announces the tab again with its window's id, so a
 //! restarted shell (every window already up, tabs replaying one at a time)
 //! pairs those directly. Only tabs without a live id pair by order.
+//!
+//! A kit app's window names its tab outright: the token of its key in its
+//! Wayland app id (`sola_bus::topics::tab_token`), which sola-river takes
+//! off and publishes as `Window.tab`. Such a window pairs with that tab
+//! and no other — whatever came first, in whatever order windows were made,
+//! and whatever it was paired with before (an app restarted under the same
+//! keys while its old windows were still up). Order and named ids are for
+//! windows without a token.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+
+use sola_bus::topics::tab_token;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Announced {
@@ -27,8 +37,8 @@ pub struct Announced {
     pub background: bool,
 }
 
-/// A window that could be a tab: `(window_id, app_id, pid)`.
-pub type Candidate<'a> = (u32, &'a str, u32);
+/// A window that could be a tab: `(window_id, app_id, pid, tab token)`.
+pub type Candidate<'a> = (u32, &'a str, u32, Option<&'a str>);
 
 #[derive(Default)]
 pub struct Pairing {
@@ -91,6 +101,25 @@ impl Pairing {
     /// order. Returns the new pairs `(window_id, key)`.
     pub fn pair(&mut self, windows: &[Candidate<'_>]) -> Vec<(u32, String)> {
         let mut new = Vec::new();
+        // Told: the window names its tab (its process's and app's).
+        let by_token: HashMap<String, &Announced> =
+            self.tabs.values().map(|t| (tab_token(&t.key), t)).collect();
+        let told: Vec<(u32, String)> = windows
+            .iter()
+            .filter_map(|&(w, app, pid, tab)| {
+                let t = by_token.get(tab?)?;
+                (t.app_id == app && t.pid == pid && self.paired.get(&w) != Some(&t.key))
+                    .then(|| (w, t.key.clone()))
+            })
+            .collect();
+        for (w, key) in told {
+            self.paired.retain(|_, k| *k != key);
+            self.paired.insert(w, key.clone());
+            new.push((w, key));
+        }
+        // A window with a token waits for its own tab; the rest pair below.
+        let windows: Vec<Candidate<'_>> = windows.iter().copied().filter(|c| c.3.is_none()).collect();
+        let windows = windows.as_slice();
         // Named: the window is up, the process and app match, and it is free.
         let named: Vec<(u32, String)> = self
             .tabs
@@ -100,7 +129,7 @@ impl Pairing {
                 let w = t.window_id?;
                 let live = windows
                     .iter()
-                    .any(|&(id, app, pid)| id == w && app == t.app_id && pid == t.pid);
+                    .any(|&(id, app, pid, _)| id == w && app == t.app_id && pid == t.pid);
                 (live && !self.paired.contains_key(&w)).then(|| (w, t.key.clone()))
             })
             .collect();
@@ -118,12 +147,12 @@ impl Pairing {
         for t in self.tabs.values().filter(|t| !taken.contains(t.key.as_str())) {
             let named_live = t
                 .window_id
-                .is_some_and(|w| windows.iter().any(|&(id, _, _)| id == w));
+                .is_some_and(|w| windows.iter().any(|&(id, _, _, _)| id == w));
             if !named_live {
                 by_app.entry((t.pid, t.app_id.as_str())).or_default().0.push(t);
             }
         }
-        for &(wid, app_id, pid) in windows {
+        for &(wid, app_id, pid, _) in windows {
             if self.paired.contains_key(&wid) {
                 continue;
             }
@@ -172,7 +201,7 @@ mod tests {
     #[test]
     fn a_restarted_shell_pairs_named_tabs_whatever_order_they_replay() {
         let mut p = Pairing::default();
-        let wins = [(9, "sola-terminal", 7), (14, "sola-terminal", 7)];
+        let wins = [(9, "sola-terminal", 7, None), (14, "sola-terminal", 7, None)];
         // The newer tab replays first; by order it would take window 9.
         p.announce(named("t/new", 7, 3, 14));
         assert_eq!(p.pair(&wins), vec![(14, "t/new".into())]);
@@ -185,14 +214,14 @@ mod tests {
         let mut p = Pairing::default();
         // sola-river restarted: the named window 40 is no more.
         p.announce(named("t/a", 7, 1, 40));
-        assert_eq!(p.pair(&[(3, "sola-terminal", 7)]), vec![(3, "t/a".into())]);
+        assert_eq!(p.pair(&[(3, "sola-terminal", 7, None)]), vec![(3, "t/a".into())]);
     }
 
     #[test]
     fn pairs_by_process_and_order_whatever_arrives_first() {
         let mut p = Pairing::default();
         // Windows first: nothing to pair yet.
-        let wins = [(12, "sola-terminal", 7), (10, "sola-terminal", 7)];
+        let wins = [(12, "sola-terminal", 7, None), (10, "sola-terminal", 7, None)];
         assert!(p.pair(&wins).is_empty());
         p.announce(tab("t/b", 7, 2));
         p.announce(tab("t/a", 7, 1));
@@ -209,7 +238,7 @@ mod tests {
         let mut p = Pairing::default();
         p.announce(tab("t/a", 7, 1));
         p.announce(tab("t/x", 8, 1));
-        let wins = [(3, "sola-browser", 7), (4, "sola-terminal", 8), (5, "sola-terminal", 7)];
+        let wins = [(3, "sola-browser", 7, None), (4, "sola-terminal", 8, None), (5, "sola-terminal", 7, None)];
         let mut new = p.pair(&wins);
         new.sort();
         assert_eq!(new, vec![(4, "t/x".into()), (5, "t/a".into())]);
@@ -228,7 +257,7 @@ mod tests {
             app_id: "web-1".into(),
             ..tab("web-1/main", 7, 2)
         });
-        let wins = [(20, "web-1", 7), (21, "sola-browser", 7)];
+        let wins = [(20, "web-1", 7, None), (21, "sola-browser", 7, None)];
         let mut new = p.pair(&wins);
         new.sort();
         assert_eq!(
@@ -241,17 +270,79 @@ mod tests {
     fn pairs_hold_while_both_live() {
         let mut p = Pairing::default();
         p.announce(tab("t/a", 7, 1));
-        p.pair(&[(10, "sola-terminal", 7)]);
+        p.pair(&[(10, "sola-terminal", 7, None)]);
         // A second tab and window later; the first pair does not move.
         p.announce(tab("t/b", 7, 2));
-        let new = p.pair(&[(10, "sola-terminal", 7), (11, "sola-terminal", 7)]);
+        let new = p.pair(&[(10, "sola-terminal", 7, None), (11, "sola-terminal", 7, None)]);
         assert_eq!(new, vec![(11, "t/b".into())]);
         assert_eq!(p.window_closed(10), Some("t/a".into()));
         // The closed window's tab does not pair with the next window.
         p.announce(tab("t/c", 7, 3));
-        let new = p.pair(&[(11, "sola-terminal", 7), (12, "sola-terminal", 7)]);
+        let new = p.pair(&[(11, "sola-terminal", 7, None), (12, "sola-terminal", 7, None)]);
         assert_eq!(new, vec![(12, "t/c".into())]);
         assert_eq!(p.retract("t/b"), Some(11));
         assert_eq!(p.key_of(11), None);
+    }
+
+    fn told(key: &str, pid: u32, window_id: u32) -> (u32, &'static str, u32, Option<String>) {
+        (window_id, "sola-browser", pid, Some(tab_token(key)))
+    }
+
+    fn browser(key: &str, pid: u32, seq: u32) -> Announced {
+        Announced {
+            app_id: "sola-browser".into(),
+            ..tab(key, pid, seq)
+        }
+    }
+
+    /// Today's failure: windows made in another order than their tabs, and
+    /// a tab naming a window that is now another's. Each window says which
+    /// tab it is, so each pairs with its own.
+    #[test]
+    fn a_window_that_names_its_tab_pairs_with_it_whatever_the_order() {
+        let mut p = Pairing::default();
+        for (i, k) in ["b/1", "b/2", "b/3"].iter().enumerate() {
+            p.announce(Announced {
+                window_id: Some(11), // stale: another window has this id now
+                ..browser(k, 7, i as u32 + 1)
+            });
+        }
+        let wins = [told("b/3", 7, 10), told("b/1", 7, 11), told("b/2", 7, 12)];
+        let refs: Vec<Candidate<'_>> = wins.iter().map(|(w, a, p, t)| (*w, *a, *p, t.as_deref())).collect();
+        let mut new = p.pair(&refs);
+        new.sort();
+        assert_eq!(new, vec![(10, "b/3".into()), (11, "b/1".into()), (12, "b/2".into())]);
+        assert!(p.pair(&refs).is_empty(), "nothing new the second time");
+    }
+
+    /// The app restarted while its old windows were still up: the new
+    /// process's windows take the tabs (same keys), the old ones let go.
+    #[test]
+    fn a_restarted_app_takes_its_tabs_from_its_old_windows() {
+        let mut p = Pairing::default();
+        p.announce(browser("b/1", 7, 1));
+        let old = [told("b/1", 7, 20)];
+        let refs: Vec<Candidate<'_>> = old.iter().map(|(w, a, p, t)| (*w, *a, *p, t.as_deref())).collect();
+        assert_eq!(p.pair(&refs), vec![(20, "b/1".into())]);
+        // Process 8 announces the same tab; its window comes while 20 is up.
+        p.announce(browser("b/1", 8, 1));
+        let both = [told("b/1", 7, 20), told("b/1", 8, 30)];
+        let refs: Vec<Candidate<'_>> = both.iter().map(|(w, a, p, t)| (*w, *a, *p, t.as_deref())).collect();
+        assert_eq!(p.pair(&refs), vec![(30, "b/1".into())]);
+        assert_eq!(p.key_of(30), Some("b/1"));
+        assert_eq!(p.key_of(20), None);
+    }
+
+    /// A window with a token waits for its own tab: it is not paired by
+    /// order with another of its process's tabs.
+    #[test]
+    fn a_window_with_a_token_waits_for_its_tab() {
+        let mut p = Pairing::default();
+        p.announce(browser("b/1", 7, 1));
+        let wins = [told("b/2", 7, 10)];
+        let refs: Vec<Candidate<'_>> = wins.iter().map(|(w, a, p, t)| (*w, *a, *p, t.as_deref())).collect();
+        assert!(p.pair(&refs).is_empty());
+        p.announce(browser("b/2", 7, 2));
+        assert_eq!(p.pair(&refs), vec![(10, "b/2".into())]);
     }
 }
