@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Bar groups</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="../foundation/foundation.css">
+<script src="../foundation/foundation.js"></script>
+<style>
+  /* novus's theme (~/.config/sola/theme/current.yaml, 2026-11-01): the
+   * colors adapted from its background. */
+  :root {
+    --bg-primary: #000e13;
+    --bg-secondary: #00191f;
+    --bg-hover: #00242c;
+    --highlight: #0e3b45;
+    --text-primary: #e2eff3;
+    --text-secondary: #8a979a;
+    --text-tertiary: #6a7679;
+    --accent: #47d8f8;
+    --warning: #e8b84a;
+    --chrome: color-mix(in srgb, var(--bg-secondary) 90%, var(--bg-primary));
+    --tb-fill: var(--bg-secondary);
+    --ink: var(--text-primary);
+    --ink-2: var(--text-secondary);
+    --ink-3: var(--text-tertiary);
+    --ink-dim: color-mix(in srgb, var(--text-primary) 55%, transparent);
+    --tabbar-rim: color-mix(in srgb, white 12%, var(--bg-secondary));
+    --row-shown: color-mix(in srgb, white 5%, var(--bg-secondary));
+    --row-hover: color-mix(in srgb, white 7%, var(--bg-secondary));
+    --hairline: #ffffff14;
+    --ground: #02090c;
+    /* The kit's pocket today: the column inset 12% (sidebar group_well_fill). */
+    --pocket: color-mix(in srgb, black 12%, var(--bg-secondary));
+    --pocket-rim: #ffffff0f;
+  }
+  body.board { background: var(--bg-primary); }
+
+  .ways { display: grid; grid-template-columns: repeat(6, 260px); gap: 44px; align-items: start; }
+  .picked { display: grid; grid-template-columns: 260px 1fr; gap: 48px; align-items: start; }
+  .picked .stage { width: 260px; height: 1010px; }
+  .picked .tabbar { left: 10px; top: 10px; width: 240px; bottom: 10px; }
+  .ways .stage { width: 260px; height: 1010px; }
+  .ways .tabbar { left: 10px; top: 10px; width: 240px; bottom: 10px; }
+  .ways .sample h4 { display: flex; gap: 10px; align-items: baseline; }
+  .ways .sample h4 .n { font: 500 13px/1 var(--f-spec); color: var(--accent); }
+
+  /* A web app's face: a stand-in for its own icon. */
+  .face { width: 14px; height: 14px; border-radius: 4px; display: grid; place-items: center;
+    font: 700 9px/1 var(--f-chrome); color: #fff; }
+  /* The host chip (kit SidebarTag: the computer's prompt hue). */
+  .chip { margin-left: auto; flex-shrink: 0; font: 500 10.5px/1 var(--f-chrome); padding: 3px 6px 4px;
+    border-radius: 9px; }
+  .chip--buccina { color: #93b8ee; background: #3f78d238; }
+  .chip--novus { color: #e996cc; background: #c0429a38; }
+  /* With a detail the title keeps its width and the detail clips first
+   * (kit item_text_block). */
+  .tabbar__row .title { overflow: hidden; text-overflow: ellipsis; }
+  .tabbar__row .title.has-detail { flex-shrink: 0; }
+  .tabbar__row .detail { color: var(--ink-3); margin-left: -4px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .tabbar__row { color: color-mix(in srgb, var(--text-primary) 70%, transparent); }
+  .tabbar__row.is-shown { color: color-mix(in srgb, var(--text-primary) 70%, transparent); }
+
+  /* ── Today, as applied: the header inside the pocket with the app's
+   * icon, the header and its rows both in from the pocket's edge. */
+  .v-today .grp { background: var(--pocket); box-shadow: inset 0 0 0 1px var(--pocket-rim);
+    border-radius: 6px; padding: 4px; margin: 6px 0; }
+  .v-today .grp__head { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px;
+    font-weight: 500; color: var(--ink); }
+
+  /* Every way below: no icon on the header; the header's name sits where a
+   * loose row's icon does (10 in); the group's windows are indented 14. */
+  .way .grp__rows .tabbar__row { margin-left: 14px; }
+
+  /* A · Caption: the header a small caps label, a breath above it. */
+  .v-a .grp { margin-top: 10px; }
+  .v-a .grp + .tabbar__row, .v-a .grp + .grp { margin-top: 6px; }
+  .v-a .grp__head { height: 26px; display: flex; align-items: flex-end; padding: 0 10px 6px;
+    font: 600 10.5px/1 var(--f-chrome); letter-spacing: 1.1px; text-transform: uppercase; color: var(--ink-2); }
+
+  /* B · Title and rule: the header in full ink, semibold; a hairline
+   * across the bar above every group and above what follows it. */
+  .v-b .grp { border-top: 1px solid var(--hairline); margin-top: 6px; padding-top: 4px; }
+  .v-b .grp + .tabbar__row { margin-top: 11px; }
+  .v-b .grp + .tabbar__row::before { content: ""; position: absolute; left: 0; right: 0; top: -6px;
+    height: 1px; background: var(--hairline); }
+  .v-b .grp__head { height: 30px; display: flex; align-items: center; padding: 0 10px;
+    font-weight: 600; color: var(--ink); }
+
+  /* C · A well under the header: the header flush on the bar, its windows
+   * in an inset well that starts at the indent. */
+  .v-c .grp { margin-top: 6px; }
+  .v-c .grp__head { height: 28px; display: flex; align-items: center; padding: 0 10px;
+    font-weight: 600; color: var(--ink); }
+  .v-c .grp__rows { margin: 0 0 6px 10px; padding: 3px; border-radius: 6px; background: var(--pocket);
+    box-shadow: inset 0 0 0 1px var(--pocket-rim); }
+  .v-c .grp__rows .tabbar__row { margin-left: 0; }
+
+  /* D · Spine: the header in full ink; a thin line from it down the
+   * group's windows, like a tree. */
+  .v-d .grp { margin-top: 6px; }
+  .v-d .grp__head { height: 28px; display: flex; align-items: center; padding: 0 10px;
+    font-weight: 600; color: var(--ink); }
+  .v-d .grp__rows { position: relative; margin-bottom: 4px; }
+  .v-d .grp__rows::before { content: ""; position: absolute; left: 13px; top: 0; bottom: 10px;
+    width: 1px; background: color-mix(in srgb, var(--text-primary) 16%, transparent); }
+  .v-d .grp__rows .tabbar__row { margin-left: 18px; }
+
+  /* E · Band: the whole group lifted as one block (header and windows),
+   * the header semibold, the windows indented inside it. */
+  .v-e .grp { margin: 6px -4px; padding: 2px 4px 4px; border-radius: 8px;
+    background: color-mix(in srgb, white 4%, var(--bg-secondary)); }
+  .v-e .grp__head { height: 30px; display: flex; align-items: center; padding: 0 10px;
+    font-weight: 600; color: var(--ink); }
+  .v-e .tabbar__row.is-shown { background: color-mix(in srgb, white 9%, var(--bg-secondary)); }
+
+  .rules { max-width: 1100px; }
+</style>
+</head>
+<body class="board">
+  <div class="head">
+    <div class="head__row"><span class="head__num">BAR</span><div class="head__title">App groups</div></div>
+    <div class="head__lead">The bar keeps each per-document app's windows together: Browser pages, Projects, Terminal, Paint, Design. Joshua, 2026-11-01: "Remove the icon from group rows. You indented group rows. Rather, indent their children. Group titles or the groups themselves should be more distinct." Today's bar first, then five ways. Every way drops the header's icon, puts its name where a loose row's icon sits, and indents the windows; they differ in what sets a group apart. Same windows, same states, novus's theme, 1:1.</div>
+  </div>
+
+  <div class="section">
+    <div class="label">Today and five ways · 1:1</div>
+    <div class="ways" id="ways"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Picked · A, loose rows first · 1:1</div>
+    <div class="picked"><div id="picked"></div><div class="facts" id="pickedFacts"></div></div>
+  </div>
+
+  <div class="section rules">
+    <div class="label">What every way keeps</div>
+    <div class="facts">
+      <span>Header</span><span>The app's name, no icon, no count, no chevron. It does not fold; a click does nothing; drag it to move the group.</span>
+      <span>Indent</span><span>The header's name starts 10 in, where a loose row's icon starts. The group's windows sit 14 further in, pill and all.</span>
+      <span>Rows</span><span>Unchanged: 32 tall, the app's icon (or a working ring / waiting diamond), the title. The focused window is the highlight pill; a shown one is lifted 5%; the rest at 70% ink.</span>
+      <span>Loose rows</span><span>Every other window (Mail, Settings, web apps, Steam): a row of its own, flush; in the pick, above every group.</span>
+      <span>Hidden</span><span>An app hidden with Super+H says <i>hidden</i> once, on its header.</span>
+    </div>
+  </div>
+
+<script>
+  const face = (c, l) => `<span class="face" style="background:${c}">${l}</span>`;
+  const BAR = [
+    { row: { ic: "settings", t: "Settings" } },
+    { row: { ic: "mail", t: "Mail" } },
+    { row: { face: face("#2f7d4f", "W"), t: "Wicket" } },
+    { row: { face: face("#1db954", "S"), t: "Spotify" } },
+    { row: { face: face("#4a154b", "#"), t: "Slack" } },
+    { row: { face: face("#f38020", "C"), t: "Cloudflare" } },
+    { group: "Projects", ic: "folder", rows: [
+      { ic: "folder", t: "Oath", host: "buccina" },
+      { ic: "folder", t: "Sola", host: "novus" },
+      { ic: "folder", t: "Sola", d: "signal-research", host: "novus" },
+      { m: "ring", t: "Sola", d: "sidebar-groups", host: "novus", shown: true },
+      { m: "diamond", t: "Wicket", host: "novus" },
+    ] },
+    { row: { ic: "gamepad", t: "Steam", focus: true } },
+    { group: "Browser", ic: "globe", rows: [
+      { ic: "globe", t: "A Moist Window with Raindrops" },
+      { ic: "globe", t: "Queue - Radarr", bright: true },
+      { ic: "globe", t: "Classic Halloween Movies for Kids" },
+      { ic: "globe", t: "Battle.net and WoW Linux Support" },
+      { ic: "globe", t: "Psyop Cinema | Posts | Patreon" },
+    ] },
+    { group: "Design", ic: "palette", rows: [{ ic: "palette", t: "Sola" }] },
+    { group: "Terminal", ic: "terminal", rows: [
+      { ic: "terminal", t: "Sola", hover: true },
+      { ic: "terminal", t: "Hub" },
+    ] },
+  ];
+
+  const row = (r) => {
+    const cls = ["tabbar__row", r.focus && "is-focus", r.shown && "is-shown", r.bright && "is-bright", r.hover && "is-hover"].filter(Boolean).join(" ");
+    const lead = r.m ? mark[r.m](12) : r.face ? r.face : icon(r.ic, 14);
+    const host = r.host ? `<span class="chip chip--${r.host}">${r.host}</span>` : "";
+    const stop = r.hover ? `<span class="stop"></span>` : "";
+    return `<div class="${cls}"><span class="lead">${lead}</span><span class="title${r.d ? " has-detail" : ""}">${r.t}</span>${r.d ? `<span class="detail">${r.d}</span>` : ""}${host}${stop}</div>`;
+  };
+  const bar = (way, withIcon, data = BAR) => {
+    const body = data.map((b) => b.row ? row(b.row)
+      : `<div class="grp"><div class="grp__head">${withIcon ? `<span class="lead">${icon(b.ic, 14)}</span>` : ""}<span>${b.group}</span></div><div class="grp__rows">${b.rows.map(row).join("")}</div></div>`).join("");
+    const head = `<div class="tabbar__head">Main${icon("chevD", 12, "currentColor", 2).replace('class="ic"', 'class="ic chev"')}</div>`;
+    return `<div class="stage"><div class="tabbar v-${way}${withIcon ? "" : " way"}">${head}${body}</div></div>`;
+  };
+
+  const WAYS = [
+    ["today", "Today", "As applied: the header inside its pocket with the app's icon, header and windows both in from the pocket's edge. The pocket is close to the bar's own fill, so groups read weakly.", true],
+    ["a", "A · Caption", "The header a small caps label in secondary ink, a breath above each group. Quiet, like the old zone labels; the groups read by their names and the indent alone."],
+    ["b", "B · Title and rule", "The header in full ink, semibold. A hairline across the bar above each group and above the loose rows after one: the bar reads as sections."],
+    ["c", "C · Well under the header", "The header flush on the bar, semibold; the windows in an inset well that starts at the indent. The well marks the group; the name sits above it."],
+    ["d", "D · Spine", "The header semibold; a thin line runs from under its name down the group's windows, like a tree. No fills: membership by line and indent."],
+    ["e", "E · Band", "The whole group — header and windows — lifted as one block, the header semibold, the windows indented inside. The group is the unit; loose rows stay on the bar."],
+  ];
+  document.getElementById("ways").innerHTML = WAYS.map(([way, title, text, withIcon]) =>
+    `<div class="sample">${bar(way, withIcon)}<h4>${title}</h4><p>${text}</p></div>`).join("");
+
+  /* Picked (Joshua, 2026-11-01): A, and "all 'loose' (singleton) apps go
+   * at the top". */
+  const LOOSE_FIRST = [...BAR.filter((b) => b.row), ...BAR.filter((b) => b.group)];
+  document.getElementById("picked").innerHTML = bar("a", false, LOOSE_FIRST);
+  document.getElementById("pickedFacts").innerHTML = [
+    ["Order", "Every loose row first (Mail, Settings, web apps, Steam, games), then the groups. A loose row drags among the loose rows, a group among the groups."],
+    ["Caption", "The app's name in small capitals, semibold 10.5, the secondary ink; 18 of air above it, 6 below; its text where a loose row's icon starts. No icon, no fill, no fold."],
+    ["Members", "Each of the group's windows 14 in, pill and all."],
+    ["New windows", "After its opener in its group, else the group's end (an emptied group's place, when it left one). The first of a group after the group holding focus, or the top of the groups from a loose row. A loose window after a loose opener, else at the end of the loose rows."],
+  ].map(([k, v]) => `<span>${k}</span><span>${v}</span>`).join("");
+
+  finish();
+</script>
+</body>
+</html>
