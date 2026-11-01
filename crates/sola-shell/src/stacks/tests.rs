@@ -861,3 +861,42 @@ fn an_app_on_two_workspaces_comes_back_to_both() {
     on.sort();
     assert_eq!(on, vec!["games", "main"]);
 }
+
+/// A restarted shell with the apps kept: every window is up before the
+/// saved layout loads, and the tabs pair after, one by one in any order.
+/// Each window ends where it was saved, in the saved order.
+#[test]
+fn kept_windows_go_back_to_their_places_after_a_shell_restart() {
+    let t = Instant::now();
+    let saved = layout_of(
+        // Loose rows first, then the groups: Terminal's before Browser's.
+        vec![
+            ("main", LEFT, vec!["sola-mail"], Some(0)),
+            ("main", RIGHT, vec!["sola-settings", "sola-terminal/t1"], Some(1)),
+            ("main", LEFT, vec!["sola-browser/p1", "sola-browser/p2"], None),
+            ("main", RIGHT, vec!["sola-browser/p3"], None),
+        ],
+        &[("main", "Main")],
+        "main",
+    );
+    let mut s = Stacks::new();
+    // The window list comes first: no places yet.
+    for (w, app) in [(1, "sola-settings"), (2, "sola-browser"), (3, "sola-browser"), (4, "sola-mail"), (5, "sola-terminal"), (6, "sola-browser")] {
+        s.place(w, app, app, false, true, t);
+    }
+    // The layout loads; the windows are placed again, by app id (not paired).
+    s.load(&saved, t);
+    s.clear();
+    for (w, app) in [(1, "sola-settings"), (2, "sola-browser"), (3, "sola-browser"), (4, "sola-mail"), (5, "sola-terminal"), (6, "sola-browser")] {
+        s.place(w, app, app, false, true, t);
+    }
+    // The tabs pair (named ids), in no particular order.
+    s.set_key(6, "sola-browser/p2", t);
+    s.set_key(5, "sola-terminal/t1", t);
+    s.set_key(2, "sola-browser/p3", t);
+    s.set_key(3, "sola-browser/p1", t);
+    let l = s.layout(t);
+    let zones: Vec<(Zone, Vec<String>)> = l.zones.iter().map(|z| (z.zone, z.apps.clone())).collect();
+    let want: Vec<(Zone, Vec<String>)> = saved.zones.iter().map(|z| (z.zone, z.apps.clone())).collect();
+    assert_eq!(zones, want);
+}
