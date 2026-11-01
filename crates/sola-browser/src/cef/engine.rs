@@ -4416,13 +4416,24 @@ cef::wrap_download_image_callback! {
     impl DownloadImageCallback {
         fn on_download_image_finished(
             &self,
-            _image_url: Option<&cef::CefString>,
+            image_url: Option<&cef::CefString>,
             http_status_code: ::std::os::raw::c_int,
             image: Option<&mut cef::Image>,
         ) {
             let state = cef_state();
             state.pending_favicon.borrow_mut().remove(&self.tab_id);
             let png = image.and_then(image_png_bytes).unwrap_or_default();
+            // CEF decodes rasters only: an SVG favicon is drawn here.
+            let url = image_url.map(|u| u.to_string()).unwrap_or_default();
+            if png.is_empty() && http_status_code == 200 && crate::favicon_svg::is_svg(&url) {
+                if let Some(tx) = state.ipc_events.clone() {
+                    let tab_id = self.tab_id;
+                    crate::favicon_svg::fetch(url, move |png| {
+                        let _ = tx.send(crate::cef::ipc::FromEngine::Favicon { tab_id, png });
+                    });
+                }
+                return;
+            }
             tracing::info!(
                 tab_id = self.tab_id,
                 http_status_code,
