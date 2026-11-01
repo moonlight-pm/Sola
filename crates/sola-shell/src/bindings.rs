@@ -25,7 +25,7 @@ pub enum Act {
     /// The focused app's next window on this workspace (Super+\`).
     NextTab,
     PrevTab,
-    /// The next window under the pointer (Super+Tab).
+    /// The next window under the pointer (Super+CapsLock).
     NextHere,
     PrevHere,
     NextWorkspace,
@@ -138,27 +138,27 @@ pub fn system_actions(zones: Vec<SysAction>) -> Vec<SysAction> {
             "Previous Window of App",
             KeyCode::GRAVE.meta_shift(),
         ),
-        sys(Act::NextHere, "window.here.next", "Shell", "Next Window Here", KeyCode::TAB.meta()),
+        sys(Act::NextHere, "window.here.next", "Shell", "Next Window Here", KeyCode::CAPS_LOCK.meta()),
         sys(
             Act::PrevHere,
             "window.here.prev",
             "Shell",
             "Previous Window Here",
-            KeyCode::TAB.meta_shift(),
+            KeyCode::CAPS_LOCK.meta_shift(),
         ),
         sys(
             Act::NextWorkspace,
             "workspace.next",
             "Workspaces",
             "Next Workspace",
-            KeyCode::CAPS_LOCK.meta(),
+            KeyCode::TAB.meta(),
         ),
         sys(
             Act::PrevWorkspace,
             "workspace.prev",
             "Workspaces",
             "Previous Workspace",
-            KeyCode::CAPS_LOCK.meta_shift(),
+            KeyCode::TAB.meta_shift(),
         ),
     ];
     for (i, k) in WORKSPACE_KEYS.iter().enumerate() {
@@ -335,10 +335,10 @@ mod tests {
         assert_eq!(b.act_for(&KeyCode::KEY_3.meta().ctrl()), Some(Act::SendToWorkspace(2)));
         assert_eq!(b.act_for(&KeyCode::KP_4.meta()), Some(Act::Zone(Zone::Grid(1))));
         assert_eq!(b.key(Act::Lock), Some(KeyCode::L.meta()));
-        assert_eq!(b.act_for(&KeyCode::TAB.meta()), Some(Act::NextHere));
+        assert_eq!(b.act_for(&KeyCode::CAPS_LOCK.meta()), Some(Act::NextHere));
         assert_eq!(b.act_for(&KeyCode::GRAVE.meta()), Some(Act::NextTab));
-        assert_eq!(b.act_for(&KeyCode::CAPS_LOCK.meta()), Some(Act::NextWorkspace));
-        assert_eq!(b.act_for(&KeyCode::CAPS_LOCK.meta_shift()), Some(Act::PrevWorkspace));
+        assert_eq!(b.act_for(&KeyCode::TAB.meta()), Some(Act::NextWorkspace));
+        assert_eq!(b.act_for(&KeyCode::TAB.meta_shift()), Some(Act::PrevWorkspace));
     }
 
     #[test]

@@ -37,11 +37,11 @@ system key.
 | Super+H | Hide the focused app |
 | Super+L | Lock the screen (needs a password: [Security](security.md#locking)) |
 | Super+Q | Close the focused app: every window of it. One that isn't Sola's quits whole ([Session manager](session.md#applications-that-arent-solas)) |
-| Super+Tab | Show the next window in the zone under the pointer (Super+Shift+Tab: the previous) |
+| Super+CapsLock | Show the next window in the zone under the pointer (Super+Shift+CapsLock: the previous) |
 | Super+Backtick | Show the focused app's next window on this workspace (Super+Shift+Backtick: the previous) |
 | Super+1 … Super+9 | Show workspace 1 to 9 |
 | Super+Ctrl+1 … Super+Ctrl+9 | Send the focused window to workspace 1 to 9 |
-| Super+CapsLock | Next workspace (Super+Shift+CapsLock: the previous) |
+| Super+Tab | Next workspace (Super+Shift+Tab: the previous) |
 | Super+Keypad 0 | Move the focused window to Full |
 | Super+Keypad 4 | Move the focused window to the left column (the default layout's) |
 | Super+Keypad 6 | Move the focused window to the right column (the default layout's) |
@@ -61,9 +61,10 @@ one of its surfaces is open; otherwise it goes to the focused window.
 The keypad chords work with NumLock on or off. Sola turns NumLock on for
 each keyboard at session start, so the pad types digits; press NumLock to
 switch it to navigation keys. Caps Lock does nothing: it never locks and
-its light never comes on (Super+CapsLock is the workspace key).
+its light never comes on (Super+CapsLock steps the windows under the
+pointer).
 
-**Super+Tab** steps through the windows of the zone under the pointer —
+**Super+CapsLock** steps through the windows of the zone under the pointer —
 the zone of the window you see there — in their order in the bar,
 starting from that one. Over a floating window, it steps through the
 floating windows under the pointer. With the pointer over the bar, the
@@ -351,8 +352,8 @@ you are on is on screen. A fresh desk starts with one, **Main**.
   the same zone, at the end of its app's group there (at the end of that
   workspace's bar, when it has none), shown in its zone. You stay where
   you are.
-- **Super+CapsLock** and **Super+Shift+CapsLock** step through the
-  workspaces, wrapping.
+- **Super+Tab** and **Super+Shift+Tab** step through the workspaces,
+  wrapping.
 
 Showing a window that is on another workspace (from a notification, an
 agent island, Mail's chip) shows that workspace.

@@ -1,9 +1,9 @@
 //! Caps Lock does nothing on the desk (Joshua, 2026-11-01: "Caps lock as a
 //! function should be completely disabled. I don't want to see the caps
 //! lock light come on .. caps lock by itself should be a no-op for now");
-//! Super+CapsLock still shows the next workspace. Every keyboard gets the
-//! keymap River runs by default (US: the desk sets no XKB options) with the
-//! Caps key's lock action taken off (`keymaps/desk.xkb`): the key still
+//! Super+CapsLock still steps the windows under the pointer. Every keyboard
+//! gets the keymap River runs by default (US: the desk sets no XKB options)
+//! with the Caps key's lock action taken off (`keymaps/desk.xkb`): the key still
 //! sends `Caps_Lock`, so the binding matches, but it never locks and its
 //! light never comes on. Setting a keymap resets the keyboard's state, so
 //! NumLock goes back on after it. Should Caps Lock come on anyway (a

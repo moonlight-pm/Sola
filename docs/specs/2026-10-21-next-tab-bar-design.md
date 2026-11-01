@@ -688,10 +688,14 @@ are the apps themselves.
 - **Projects is one flat group.** A new session lands after the last row
   of its project (read from the window's title, `WindowLabel`, when the
   window has one when it maps).
-- **Keys:** Super+CapsLock / Super+Shift+CapsLock show the next /
-  previous workspace (was Super+Tab). Super+Tab / Super+Shift+Tab step
-  through the windows of the zone under the pointer — the zone of the
-  window on screen there; over a float, the floats under it — in bar
+- **Keys:** Super+Tab / Super+Shift+Tab show the next / previous
+  workspace; Super+CapsLock / Super+Shift+CapsLock step through the
+  windows of the zone under the pointer (**swapped 2026-11-01**, Joshua:
+  "swap the capslock and tab key shortcuts (super) ... so super tab is
+  workspaces, and super capslock is 'window here'"; they were the other
+  way round). Stepping goes through the windows of the zone under the
+  pointer — the zone of the window on screen there; over a float, the
+  floats under it — in bar
   order, wrapping, starting from the window on screen there (**amended
   2026-11-01**, Joshua: "only rotate between windows in the same zone
   under the cursor, not all windows under the cursor"; it first stepped
@@ -754,8 +758,8 @@ back after the chord, since River updates the keyboard's state after it
 has matched a key to a binding.) The key table (`sola_core::keys`) and
 the kit's iced key map gain Caps Lock, so it can be bound and captured in
 Settings → Keybindings. A chord carries the pointer's position
-(`ChordEvent.pointer`, from River's `pointer_position`), which Super+Tab
-reads.
+(`ChordEvent.pointer`, from River's `pointer_position`), which
+Super+CapsLock reads.
 
 ## Not in slice 1
 

@@ -1,6 +1,6 @@
 //! Stepping between windows by key (`docs/specs/2026-10-21-next-tab-bar-design.md`
-//! § App groups and keys): Super+Tab through the windows of the zone under
-//! the pointer, Super+\` through the focused app's windows on this
+//! § App groups and keys): Super+CapsLock through the windows of the zone
+//! under the pointer, Super+\` through the focused app's windows on this
 //! workspace. Both go in bar order, wrapping; neither walks the whole bar.
 
 use sola_bus::topics::Zone;
@@ -25,8 +25,8 @@ impl Shell {
         }
     }
 
-    /// Super+Tab / Super+Shift+Tab: the next (previous) window in the zone
-    /// under the pointer, from the one on screen there (Joshua, 2026-11-01:
+    /// Super+CapsLock / Super+Shift+CapsLock: the next (previous) window in
+    /// the zone under the pointer, from the one on screen there (Joshua, 2026-11-01:
     /// "only rotate between windows in the same zone under the cursor").
     /// Over a float, the floats under the pointer. With the pointer on no
     /// window (the bar, the top row, a gap), the focused window's zone.
@@ -45,7 +45,7 @@ impl Shell {
         }
     }
 
-    /// The zone Super+Tab steps, the window on screen there, and the spot:
+    /// The zone Super+CapsLock steps, the window on screen there, and the spot:
     /// the pointer when the chord came, when a window is on screen under
     /// it; else the middle of the focused window.
     fn zone_here(&self) -> Option<(Zone, Option<u32>, (i32, i32))> {

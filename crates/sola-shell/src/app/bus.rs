@@ -1272,7 +1272,7 @@ impl Shell {
     /// for the path from a floating app up to the menubar across another window.
     ///
     /// Only a pointer that moves leads focus. A still enter (the window under
-    /// a resting pointer changed: Super+Tab, a close, a new window) is just
+    /// a resting pointer changed: Super+CapsLock, a close, a new window) is just
     /// remembered; sola-river sends the enter again once the pointer moves,
     /// as it does when focus went elsewhere by keyboard.
     fn on_mouse_entered(&mut self, e: MouseEnteredPayload) -> Task<Msg> {

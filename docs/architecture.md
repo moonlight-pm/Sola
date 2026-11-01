@@ -255,7 +255,7 @@ desk's groups wait in their saved places with the saved index as their
 rank, so windows coming back in any order line up around them. The bar
 keeps every loose row before the groups; it draws a group as a kit
 `SidebarSection::caption` and drags with `reorder_within_sections` and
-`loose_first`. Super+Tab reads the pointer from the chord
+`loose_first`. Super+CapsLock reads the pointer from the chord
 (`ChordEvent.pointer`, sola-river's last `pointer_position`) and steps
 the windows of the zone on screen there (`app/cycle.rs`). sola-river
 gives every keyboard the desk's keymap, where Caps Lock does nothing

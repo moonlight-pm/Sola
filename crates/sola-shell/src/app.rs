@@ -220,7 +220,7 @@ pub enum Msg {
     /// workspace, in bar order (Super+` / Super+Shift+`).
     CycleApp { back: bool },
     /// Show the next (or previous) window whose place covers the pointer
-    /// (Super+Tab / Super+Shift+Tab).
+    /// (Super+CapsLock / Super+Shift+CapsLock).
     CycleHere { back: bool },
     /// A tab bar row was clicked: show that window in its zone.
     ShowTab(u32),
@@ -411,7 +411,7 @@ pub struct Shell {
     /// pointer is still on its window.
     pub pointer_window_id: Option<u32>,
     /// Where the pointer was when the last chord fired (sola-river's
-    /// `ChordEvent.pointer`): Super+Tab steps the windows under it.
+    /// `ChordEvent.pointer`): Super+CapsLock steps the windows under it.
     pub chord_pointer: Option<(i32, i32)>,
     /// Generation counter for the focus-follows-mouse dwell timer. Bumped on
     /// every enter/leave so a superseded `FocusHoverFire` is a no-op — gives
