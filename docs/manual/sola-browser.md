@@ -489,6 +489,15 @@ End, and the arrows). Composed input (dead keys, CJK) reaches the page,
 with the candidate window at the caret. `<select>` dropdowns open over
 the page.
 
+## Favicons
+
+Each page's row in the bar shows its favicon (the browser's globe until the
+page has one): the browser writes each page's latest favicon to
+`~/.cache/sola/browser/favicons/` and names it on the page's tab. A web
+app made before its page had a favicon (its icon the globe) takes the
+page's favicon as its icon once one comes, in the bar and the launcher;
+a web app with an icon keeps it.
+
 ## Light or dark
 
 Pages are told whether you prefer light or dark (`prefers-color-scheme`):

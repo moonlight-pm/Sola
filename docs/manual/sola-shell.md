@@ -258,7 +258,8 @@ the focused tab gets an island too.
 
 The bar lists every window on the workspace in one order of its own, not
 grouped by zone. Each row is the app's icon and the window's title (the
-app's name while it has none).
+app's name while it has none); a tab with an icon of its own — a browser
+page's favicon — shows that instead.
 
 The apps that open a window per document — Browser (its pages),
 Projects, Terminal, Paint and Design — keep their windows together in a

@@ -593,11 +593,20 @@ impl Shell {
     /// place may move to the tab's saved place.
     fn on_tab(&mut self, tab: sola_bus::topics::Tab, sticky: bool) {
         if !sticky {
+            self.tab_icons.remove(&tab.key);
             if let Some(wid) = self.pairing.retract(&tab.key) {
                 tracing::info!(window_id = wid, key = %tab.key, "tab closed");
                 retract_tab_window(tab.key);
             }
             return;
+        }
+        match &tab.icon {
+            Some(icon) => {
+                self.tab_icons.insert(tab.key.clone(), icon.clone());
+            }
+            None => {
+                self.tab_icons.remove(&tab.key);
+            }
         }
         self.pairing.announce(crate::pairing::Announced {
             key: tab.key,

@@ -196,6 +196,11 @@ pub struct Tab {
     /// Opened in the background (a ⌘-click): it joins its zone behind the
     /// tab shown there and does not take focus.
     pub background: bool,
+    /// The tab's own icon, a picture file (a browser page's favicon): the
+    /// shell's bar shows it in place of the app's. The app announces the
+    /// tab again when it changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// Which sola-river window a [`Tab`] is (shell → apps). Sticky, keyed by

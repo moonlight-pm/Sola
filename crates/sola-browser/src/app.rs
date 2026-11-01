@@ -4,6 +4,7 @@
 //! adds `App<E>`, its constructor, and all update/view/subscription methods.
 
 mod desk_menu;
+mod favicons;
 mod pages;
 #[cfg(feature = "vault")]
 mod vault;
@@ -301,6 +302,8 @@ pub struct App<E: Engine> {
     recently_closed: Vec<crate::session::ClosedTab>,
     /// Each page's stable id ([`crate::session::SessionTab::id`]).
     page_ids: HashMap<TabId, String>,
+    /// Each page's favicon file, named on its tab ([`favicons`]).
+    page_icons: HashMap<TabId, String>,
     /// Web apps: the pages hosted as their own apps ([`webapps`]).
     pub(crate) webapps: webapps::WebApps,
     /// Editable contents of the URL bar.
@@ -415,6 +418,8 @@ impl<E: Engine> App<E> {
         recently_closed: Vec<crate::session::ClosedTab>,
     ) -> Self {
         let page_menus = engine.page_menus_handle();
+        // The last run's page favicons: each page sends its own again.
+        favicons::clear();
         let mut app = Self {
             engine,
             windows: crate::page_windows::PageWindows::new(app_id, slot.clone()),
@@ -433,6 +438,7 @@ impl<E: Engine> App<E> {
             engine_tabs_seen: false,
             recently_closed,
             page_ids: HashMap::new(),
+            page_icons: HashMap::new(),
             webapps: webapps::WebApps::default(),
             url_field: String::new(),
             last_seen_url: String::new(),
@@ -796,6 +802,7 @@ impl<E: Engine> App<E> {
                 tasks.push(self.windows.close(id).map(|_| Msg::Noop));
             }
         }
+        self.sync_page_icons();
         for (id, shown) in self.windows.take_shown_changes() {
             let _ = self.cmd_tx.send(Cmd::ShowPage { id, shown });
         }
@@ -1173,6 +1180,7 @@ impl<E: Engine> App<E> {
                     self.remember_closed(id);
                 }
                 self.webapps.favicons.remove(&id);
+                self.forget_page_icon(id);
                 // If closing the active tab, pick a new active tab
                 // first so the engine never sees `active` pointing
                 // at a closed tab.
@@ -2049,17 +2057,6 @@ impl<E: Engine> App<E> {
                     }
                 }
             }
-        }
-    }
-
-    /// Page favicons were for the tab strip; with a window per page nothing
-    /// shows them yet, so they are dropped as they arrive.
-    /// Keep each page's latest favicon: a wrapped page's app icon.
-    fn drain_favicons(&mut self) {
-        let icons: Vec<crate::engine::FaviconIpc> =
-            self.engine.favicons_handle().lock().unwrap().drain(..).collect();
-        for icon in icons {
-            self.webapps.favicons.insert(icon.tab_id, icon.png);
         }
     }
 

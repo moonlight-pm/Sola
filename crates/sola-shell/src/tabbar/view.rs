@@ -141,14 +141,15 @@ fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab, in_group: bool) -> SidebarI
             .map(str::to_string)
             .unwrap_or_else(|| app_label(shell, &t.app_id)),
     };
-    let activity = shell
-        .pairing
-        .key_of(t.window_id)
-        .and_then(|key| shell.tab_activity.get(key))
-        .copied();
+    let key = shell.pairing.key_of(t.window_id);
+    let activity = key.and_then(|key| shell.tab_activity.get(key)).copied();
+    // The tab's own icon (a page's favicon), else its app's.
+    let face = key
+        .and_then(|key| shell.tab_icons.get(key))
+        .map_or_else(|| app_icon(shell, &t.app_id), String::as_str);
     let leading: Element<'_, Msg> = match mark(activity) {
         Some(indicator) => status_mark(indicator),
-        None => icon(app_icon(shell, &t.app_id), LEADING_SLOT as u16).into(),
+        None => icon(face, LEADING_SLOT as u16).into(),
     };
     // Every float is on screen; it is current while it has focus.
     let (current, showing) = if t.zone == Zone::Float {

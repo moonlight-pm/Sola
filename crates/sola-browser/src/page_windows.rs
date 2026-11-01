@@ -167,6 +167,13 @@ impl<E: Engine> PageWindows<E> {
         self.by_window.get(&window).copied()
     }
 
+    /// Page `tab`'s own icon on its row in the shell's bar (its favicon).
+    pub fn set_icon(&mut self, tab: TabId, icon: Option<String>) {
+        if let Some(window) = self.window_of(tab) {
+            self.tabs.set_icon(window, icon);
+        }
+    }
+
     pub fn window_of(&self, tab: TabId) -> Option<window::Id> {
         self.pages.get(&tab).map(|p| p.window)
     }

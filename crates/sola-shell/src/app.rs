@@ -373,6 +373,9 @@ pub struct Shell {
     /// What each tab is doing (`Topic::TabActivity`), by tab key: the
     /// mark on its bar row.
     pub tab_activity: HashMap<String, sola_bus::topics::Activity>,
+    /// Each tab's own icon (a page's favicon), by tab key: its row shows it
+    /// in place of the app's.
+    pub tab_icons: HashMap<String, String>,
     /// Agent sessions' islands in the top row and the card open.
     pub agents: crate::agents::AgentIslands,
     /// The theme's colors following the background picture.
@@ -580,6 +583,7 @@ impl Shell {
             tabs: Stacks::new(),
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
+            tab_icons: HashMap::new(),
             agents: Default::default(),
             adapt: Default::default(),
             pictures: Default::default(),
@@ -3172,6 +3176,7 @@ mod pending_launch_tests {
             tabs: Stacks::new(),
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
+            tab_icons: HashMap::new(),
             agents: Default::default(),
             adapt: Default::default(),
             pictures: Default::default(),
@@ -3314,6 +3319,7 @@ mod hide_tests {
             tabs: Stacks::new(),
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
+            tab_icons: HashMap::new(),
             agents: Default::default(),
             adapt: Default::default(),
             pictures: Default::default(),
