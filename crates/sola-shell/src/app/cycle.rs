@@ -1,5 +1,5 @@
 //! Stepping between windows by key (`docs/specs/2026-10-21-next-tab-bar-design.md`
-//! § App groups and keys): Super+Tab through the windows whose place covers
+//! § App groups and keys): Super+Tab through the windows of the zone under
 //! the pointer, Super+\` through the focused app's windows on this
 //! workspace. Both go in bar order, wrapping; neither walks the whole bar.
 
@@ -25,46 +25,39 @@ impl Shell {
         }
     }
 
-    /// Super+Tab / Super+Shift+Tab: the next (previous) window whose place
-    /// covers the pointer — any tiled zone there (Full and the half under
-    /// it, Cinema), the floats under it — from the one on screen there.
-    /// With the pointer on no window's place (the bar, the top row, a gap),
-    /// the focused window's spot.
+    /// Super+Tab / Super+Shift+Tab: the next (previous) window in the zone
+    /// under the pointer, from the one on screen there (Joshua, 2026-11-01:
+    /// "only rotate between windows in the same zone under the cursor").
+    /// Over a float, the floats under the pointer. With the pointer on no
+    /// window (the bar, the top row, a gap), the focused window's zone.
     pub(crate) fn step_here(&mut self, back: bool) {
-        let Some(spot) = self.spot() else {
+        let Some((zone, from, spot)) = self.zone_here() else {
             return;
         };
-        let here = self.windows_at(spot);
-        let from = self.on_screen_at(spot);
-        let next = self
-            .tabs
-            .step_among(from, back, &|t| here.contains(&t.window_id));
+        let next = self.tabs.step_among(from, back, &|t| {
+            t.zone == zone
+                && (zone != Zone::Float
+                    || self.place_of(t.window_id).is_some_and(|r| contains(r, spot)))
+        });
         if let Some(next) = next {
-            tracing::info!(?spot, ?from, to = next, back, windows = here.len(), "next window here");
+            tracing::info!(?zone, ?spot, ?from, to = next, back, "next window in the zone here");
             self.activate_window(next);
         }
     }
 
-    /// Where Super+Tab looks: the pointer when the chord came, when some
-    /// window's place covers it; else the middle of the focused window.
-    fn spot(&self) -> Option<(i32, i32)> {
-        if let Some(p) = self.chord_pointer.filter(|&p| !self.windows_at(p).is_empty()) {
-            return Some(p);
+    /// The zone Super+Tab steps, the window on screen there, and the spot:
+    /// the pointer when the chord came, when a window is on screen under
+    /// it; else the middle of the focused window.
+    fn zone_here(&self) -> Option<(Zone, Option<u32>, (i32, i32))> {
+        if let Some(p) = self.chord_pointer {
+            if let Some(w) = self.on_screen_at(p) {
+                return Some((self.tabs.zone_of(w)?, Some(w), p));
+            }
         }
         let w = self.focused_window_id?;
         let w = self.tabs.parent_of(w).unwrap_or(w);
         let (x, y, width, height) = self.place_of(w)?;
-        Some((x + width / 2, y + height / 2))
-    }
-
-    /// The showing workspace's windows whose place covers `point`.
-    fn windows_at(&self, point: (i32, i32)) -> Vec<u32> {
-        self.tabs
-            .bar()
-            .iter()
-            .filter(|t| self.place_of(t.window_id).is_some_and(|r| contains(r, point)))
-            .map(|t| t.window_id)
-            .collect()
+        Some((self.tabs.zone_of(w)?, Some(w), (x + width / 2, y + height / 2)))
     }
 
     /// The window on screen at `point`: the top float there, else what the

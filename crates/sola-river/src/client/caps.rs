@@ -1,95 +1,105 @@
-//! Caps Lock under a binding. Super+CapsLock shows the next workspace, but
-//! River updates the keyboard's state after it has matched a key to a
-//! binding, so the same press turns Caps Lock on (or, on its release, off).
-//! Put it back: note Caps Lock's state when the binding fires, and when
-//! River reports a change before the key is up or within [`SETTLE`] after,
-//! turn it back (`river_xkb_keyboard_v1.capslock_enable` / `_disable`).
+//! Caps Lock does nothing on the desk (Joshua, 2026-11-01: "Caps lock as a
+//! function should be completely disabled. I don't want to see the caps
+//! lock light come on .. caps lock by itself should be a no-op for now");
+//! Super+CapsLock still shows the next workspace. Every keyboard gets the
+//! keymap River runs by default (US: the desk sets no XKB options) with the
+//! Caps key's lock action taken off (`keymaps/desk.xkb`): the key still
+//! sends `Caps_Lock`, so the binding matches, but it never locks and its
+//! light never comes on. Setting a keymap resets the keyboard's state, so
+//! NumLock goes back on after it. Should Caps Lock come on anyway (a
+//! keyboard River could not give the keymap), it is turned off at once.
 
-use std::time::{Duration, Instant};
+use std::os::fd::AsFd;
 
-/// XKB `Caps_Lock`.
-pub const CAPS_LOCK: u32 = 0xFFE5;
+use tracing::{error, info};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 
-/// How long after the binding's release a change still counts as its own.
-const SETTLE: Duration = Duration::from_millis(400);
+use crate::client::AppData;
+use crate::protocol::river_xkb_config_v1::{
+    river_xkb_config_v1::{KeymapFormat, RiverXkbConfigV1},
+    river_xkb_keyboard_v1::RiverXkbKeyboardV1,
+    river_xkb_keymap_v1::{self, RiverXkbKeymapV1},
+};
+
+const KEYMAP: &str = include_str!("../../keymaps/desk.xkb");
 
 #[derive(Default)]
-pub struct CapsGuard {
-    /// Caps Lock as River last reported it.
-    on: Option<bool>,
-    /// While a Caps Lock binding is held (or just let go): Caps Lock's
-    /// state when it fired, and when it was let go.
-    hold: Option<(bool, Option<Instant>)>,
+pub struct DeskKeymap {
+    keymap: Option<RiverXkbKeymapV1>,
+    ready: bool,
+    failed: bool,
+    /// Keyboards that appeared before River built the keymap.
+    waiting: Vec<RiverXkbKeyboardV1>,
 }
 
-impl CapsGuard {
-    /// A binding on Caps Lock fired.
-    pub fn pressed(&mut self) {
-        self.hold = self.on.map(|on| (on, None));
-    }
-
-    /// That binding's key went up.
-    pub fn released(&mut self, now: Instant) {
-        if let Some((on, _)) = self.hold {
-            self.hold = Some((on, Some(now)));
+impl DeskKeymap {
+    /// A keyboard appeared: give it the desk's keymap, asking River to
+    /// build it the first time.
+    pub fn keyboard(
+        &mut self,
+        cfg: &RiverXkbConfigV1,
+        keyboard: &RiverXkbKeyboardV1,
+        qh: &QueueHandle<AppData>,
+    ) {
+        if self.failed {
+            return;
+        }
+        if self.ready {
+            if let Some(keymap) = &self.keymap {
+                set(keymap, keyboard);
+            }
+            return;
+        }
+        self.waiting.push(keyboard.clone());
+        if self.keymap.is_some() {
+            return;
+        }
+        match crate::client::virtual_keyboard::make_keymap_fd("sola-desk-keymap", KEYMAP) {
+            Ok((fd, _)) => {
+                self.keymap = Some(cfg.create_keymap(fd.as_fd(), KeymapFormat::TextV1, qh, ()));
+            }
+            Err(e) => {
+                error!(%e, "desk keymap: could not make its fd; Caps Lock keeps its lock");
+                self.failed = true;
+                self.waiting.clear();
+            }
         }
     }
 
-    /// River reported Caps Lock's state. Returns the state to put back
-    /// when the binding changed it.
-    pub fn reported(&mut self, on: bool, now: Instant) -> Option<bool> {
-        self.on = Some(on);
-        let (was, released) = self.hold?;
-        if released.is_some_and(|t| now > t + SETTLE) {
-            self.hold = None;
-            return None;
-        }
-        (on != was).then_some(was)
+    /// A keyboard went away.
+    pub fn removed(&mut self, keyboard: &RiverXkbKeyboardV1) {
+        self.waiting.retain(|k| k.id() != keyboard.id());
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+fn set(keymap: &RiverXkbKeymapV1, keyboard: &RiverXkbKeyboardV1) {
+    keyboard.set_keymap(keymap);
+    keyboard.numlock_enable();
+}
 
-    #[test]
-    fn a_press_that_locks_is_undone() {
-        let t = Instant::now();
-        let mut g = CapsGuard::default();
-        g.reported(false, t);
-        g.pressed();
-        assert_eq!(g.reported(true, t), Some(false));
-        // Our own put-back comes in as a report too.
-        assert_eq!(g.reported(false, t), None);
-        g.released(t);
-    }
-
-    #[test]
-    fn a_release_that_unlocks_is_undone() {
-        let t = Instant::now();
-        let mut g = CapsGuard::default();
-        g.reported(true, t);
-        g.pressed();
-        g.released(t);
-        assert_eq!(g.reported(false, t + Duration::from_millis(5)), Some(true));
-    }
-
-    #[test]
-    fn caps_lock_alone_later_is_left_alone() {
-        let t = Instant::now();
-        let mut g = CapsGuard::default();
-        g.reported(false, t);
-        g.pressed();
-        g.released(t);
-        assert_eq!(g.reported(true, t + Duration::from_secs(2)), None);
-        assert_eq!(g.reported(false, t + Duration::from_secs(3)), None);
-    }
-
-    #[test]
-    fn nothing_held_changes_nothing() {
-        let t = Instant::now();
-        let mut g = CapsGuard::default();
-        assert_eq!(g.reported(true, t), None);
-        assert_eq!(g.reported(false, t), None);
+impl Dispatch<RiverXkbKeymapV1, ()> for AppData {
+    fn event(
+        state: &mut Self,
+        keymap: &RiverXkbKeymapV1,
+        event: <RiverXkbKeymapV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let desk = &mut state.desk_keymap;
+        match event {
+            river_xkb_keymap_v1::Event::Success => {
+                desk.ready = true;
+                for keyboard in desk.waiting.drain(..) {
+                    set(keymap, &keyboard);
+                }
+                info!("desk keymap set: Caps Lock does nothing");
+            }
+            river_xkb_keymap_v1::Event::Failure { error_msg } => {
+                error!(%error_msg, "River refused the desk keymap; Caps Lock keeps its lock");
+                desk.failed = true;
+                desk.waiting.clear();
+            }
+        }
     }
 }

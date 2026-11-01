@@ -1,0 +1,16 @@
+xkb_keymap {
+  xkb_keycodes  { include "evdev+aliases(qwerty)" };
+  xkb_types     { include "complete" };
+  xkb_compat    { include "complete" };
+  xkb_symbols   {
+    include "pc+us+inet(evdev)"
+    // Caps Lock does nothing: it still sends Caps_Lock (Super+CapsLock is a
+    // binding) but never locks, so its light never comes on.
+    override key <CAPS> {
+      type= "ONE_LEVEL",
+      symbols[Group1]= [ Caps_Lock ],
+      actions[Group1]= [ NoAction() ]
+    };
+  };
+  xkb_geometry  { include "pc(pc105)" };
+};

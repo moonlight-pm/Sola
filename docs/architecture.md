@@ -256,9 +256,9 @@ rank, so windows coming back in any order line up around them. The bar
 draws a group as a kit `SidebarSection::pocket` and drags with
 `reorder_within_sections`. Super+Tab reads the pointer from the chord
 (`ChordEvent.pointer`, sola-river's last `pointer_position`) and steps
-the windows whose place covers it (`app/cycle.rs`); sola-river puts Caps
-Lock back after a Caps Lock binding (`client/caps.rs`, through
-`river_xkb_keyboard_v1`).
+the windows of the zone on screen there (`app/cycle.rs`). sola-river
+gives every keyboard the desk's keymap, where Caps Lock does nothing
+(`client/caps.rs`, `keymaps/desk.xkb`, through `river_xkb_config_v1`).
 
 **Zones (2026-10-31):** the content area is a grid of
 equal cells from the persistent `Topic::ZoneLayout` (Settings → Zones →

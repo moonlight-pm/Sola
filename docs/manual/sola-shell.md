@@ -37,7 +37,7 @@ system key.
 | Super+H | Hide the focused app |
 | Super+L | Lock the screen (needs a password: [Security](security.md#locking)) |
 | Super+Q | Close the focused app: every window of it. One that isn't Sola's quits whole ([Session manager](session.md#applications-that-arent-solas)) |
-| Super+Tab | Show the next window under the pointer (Super+Shift+Tab: the previous) |
+| Super+Tab | Show the next window in the zone under the pointer (Super+Shift+Tab: the previous) |
 | Super+Backtick | Show the focused app's next window on this workspace (Super+Shift+Backtick: the previous) |
 | Super+1 … Super+9 | Show workspace 1 to 9 |
 | Super+Ctrl+1 … Super+Ctrl+9 | Send the focused window to workspace 1 to 9 |
@@ -60,15 +60,14 @@ one of its surfaces is open; otherwise it goes to the focused window.
 
 The keypad chords work with NumLock on or off. Sola turns NumLock on for
 each keyboard at session start, so the pad types digits; press NumLock to
-switch it to navigation keys. Super+CapsLock leaves Caps Lock as it was.
+switch it to navigation keys. Caps Lock does nothing: it never locks and
+its light never comes on (Super+CapsLock is the workspace key).
 
-**Super+Tab** steps through every window whose place is under the
-pointer: the windows of the zone there, of Full (which covers every
-zone), of Cinema, and the floating windows under it — in their order in
-the bar, starting from the one you see there. Showing a Full window brings
-Full up, and a half's window brings the halves back. With the pointer
-over the bar, the top row or a gap, it steps through the windows at the
-focused window's place. **Super+Backtick** steps through the windows of
+**Super+Tab** steps through the windows of the zone under the pointer —
+the zone of the window you see there — in their order in the bar,
+starting from that one. Over a floating window, it steps through the
+floating windows under the pointer. With the pointer over the bar, the
+top row or a gap, it steps through the focused window's zone. **Super+Backtick** steps through the windows of
 the focused app on this workspace, in their order in the bar; the
 titlebar's Window → Cycle Windows does the same.
 

@@ -681,9 +681,13 @@ are the apps themselves.
   window has one when it maps).
 - **Keys:** Super+CapsLock / Super+Shift+CapsLock show the next /
   previous workspace (was Super+Tab). Super+Tab / Super+Shift+Tab step
-  through every window whose place covers the pointer — any zone (Full
-  and the half under it, Cinema), and the floats under it — in bar order,
-  wrapping, starting from the window on screen there. Super+\` /
+  through the windows of the zone under the pointer — the zone of the
+  window on screen there; over a float, the floats under it — in bar
+  order, wrapping, starting from the window on screen there (**amended
+  2026-11-01**, Joshua: "only rotate between windows in the same zone
+  under the cursor, not all windows under the cursor"; it first stepped
+  every window whose place covered the pointer, Full's with a half's).
+  With the pointer on no window, the focused window's zone. Super+\` /
   Super+Shift+\` step through the focused app's windows on the showing
   workspace in bar order (the titlebar's Window → Cycle Windows too). No
   key walks the whole bar.
@@ -721,12 +725,19 @@ are the apps themselves.
 
 ### Keys and Caps Lock
 
-River updates the keyboard's state (Caps Lock on or off) after it has
-matched the key to a binding, so Super+CapsLock would also turn Caps Lock
-on. sola-river puts it back: when the binding fires it notes Caps Lock's
-state, and turns it back through `river_xkb_keyboard_v1`
-(`capslock_enable` / `capslock_disable`) when River reports it changed
-within a moment of the release. The key table (`sola_core::keys`) and
+**Caps Lock does nothing** (Joshua, 2026-11-01: "Caps lock as a function
+should be completely disabled. I don't want to see the caps lock light
+come on .. caps lock by itself should be a no-op for now"). sola-river
+gives every keyboard the keymap River runs by default (US; the desk sets
+no XKB options) with the Caps key's lock action taken off
+(`sola-river/keymaps/desk.xkb`, through `river_xkb_config_v1.create_keymap`
+and `river_xkb_keyboard_v1.set_keymap`, then NumLock on again, since a
+keymap resets the state). The key still sends `Caps_Lock`, so
+Super+CapsLock matches; it never locks and its light never comes on. If
+River reports Caps Lock on anyway (a keyboard the keymap did not reach),
+sola-river turns it off. (Before 2026-11-01, sola-river put Caps Lock
+back after the chord, since River updates the keyboard's state after it
+has matched a key to a binding.) The key table (`sola_core::keys`) and
 the kit's iced key map gain Caps Lock, so it can be bound and captured in
 Settings → Keybindings. A chord carries the pointer's position
 (`ChordEvent.pointer`, from River's `pointer_position`), which Super+Tab

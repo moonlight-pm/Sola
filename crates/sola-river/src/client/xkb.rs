@@ -68,12 +68,12 @@ impl Dispatch<RiverInputDeviceV1, ()> for AppData {
 
 impl Dispatch<RiverXkbConfigV1, ()> for AppData {
     fn event(
-        _state: &mut Self,
-        _cfg: &RiverXkbConfigV1,
+        state: &mut Self,
+        cfg: &RiverXkbConfigV1,
         event: <RiverXkbConfigV1 as Proxy>::Event,
         _: &(),
         _: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         match event {
             xkb_iface::Event::Finished => {
@@ -85,6 +85,8 @@ impl Dispatch<RiverXkbConfigV1, ()> for AppData {
                 // delayed relative to our input-manager bind.
                 keyboard.numlock_enable();
                 info!("numlock enabled by default");
+                // The desk's keymap: Caps Lock does nothing (`client::caps`).
+                state.desk_keymap.keyboard(cfg, &keyboard, qh);
             }
         }
     }
@@ -117,6 +119,7 @@ impl Dispatch<RiverXkbKeyboardV1, ()> for AppData {
                 caps_reported(state, keyboard, false);
             }
             river_xkb_keyboard_v1::Event::Removed => {
+                state.desk_keymap.removed(keyboard);
                 keyboard.destroy();
             }
             _ => {}
@@ -124,19 +127,12 @@ impl Dispatch<RiverXkbKeyboardV1, ()> for AppData {
     }
 }
 
-/// Caps Lock changed (or was reported at start). Put it back when
-/// Super+CapsLock changed it (`client::caps`).
-fn caps_reported(state: &mut AppData, keyboard: &RiverXkbKeyboardV1, on: bool) {
+/// Caps Lock came on: it does nothing on the desk (`client::caps`), so
+/// turn it off — a keyboard the desk's keymap did not reach.
+fn caps_reported(_state: &mut AppData, keyboard: &RiverXkbKeyboardV1, on: bool) {
     debug!(on, "capslock");
-    match state.caps.reported(on, std::time::Instant::now()) {
-        Some(true) => {
-            keyboard.capslock_enable();
-            info!("capslock put back on after Super+CapsLock");
-        }
-        Some(false) => {
-            keyboard.capslock_disable();
-            info!("capslock put back off after Super+CapsLock");
-        }
-        None => {}
+    if on {
+        keyboard.capslock_disable();
+        info!("capslock turned off: it does nothing on the desk");
     }
 }
