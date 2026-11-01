@@ -20,6 +20,48 @@ pub struct Window {
     pub pid: Option<u32>,
 }
 
+/// The tab a window is (sola-river → shell): the token ([`tab_token`]) a
+/// kit app's tab window names in its Wayland app id (`<app_id>#<token>`,
+/// [`split_app_id`]); sola-river publishes the app id without it. Sticky,
+/// keyed by `window_id`; retracted when the window closes. Its own topic,
+/// so `Windows`' layout stays as every build reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowTab {
+    pub window_id: u32,
+    pub tab: String,
+}
+
+/// What separates an app id from a tab token in a window's Wayland app id.
+pub const TAB_TOKEN_SEP: char = '#';
+
+/// The token that names tab `key` ([`Tab::key`]) in its window's Wayland
+/// app id: FNV-1a of the key, 16 hex digits — the same in every build, so
+/// an app and the shell agree without talking.
+pub fn tab_token(key: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in key.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+/// A window's Wayland app id, apart: the app id, and the tab token a kit
+/// tab window adds (`<app_id>#<16 hex digits>`); anything else is all app
+/// id.
+pub fn split_app_id(raw: &str) -> (&str, Option<&str>) {
+    match raw.rsplit_once(TAB_TOKEN_SEP) {
+        Some((app, token))
+            if !app.is_empty()
+                && token.len() == 16
+                && token.bytes().all(|b| b.is_ascii_hexdigit()) =>
+        {
+            (app, Some(token))
+        }
+        _ => (raw, None),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenUrlRequest {
     pub url: String,
@@ -196,6 +238,11 @@ pub struct Tab {
     /// Opened in the background (a ⌘-click): it joins its zone behind the
     /// tab shown there and does not take focus.
     pub background: bool,
+    /// The tab's own icon, a picture file (a browser page's favicon): the
+    /// shell's bar shows it in place of the app's. The app announces the
+    /// tab again when it changes. Always written: the bus's encoding
+    /// (postcard) has no field names, so a skipped field breaks the read.
+    pub icon: Option<String>,
 }
 
 /// Which sola-river window a [`Tab`] is (shell → apps). Sticky, keyed by
@@ -520,8 +567,10 @@ pub struct Appearance {
     /// then its own. `None`: the scheme alone.
     #[serde(default)]
     pub custom: Option<u8>,
-    /// Light mode: what the desk tells web pages it prefers
-    /// (`prefers-color-scheme`); off, dark. Sola's own windows stay dark.
+    /// Light mode: Sola's windows wear the light theme (the shell writes
+    /// the light seed into `Topic::Theme`, with the picture's colors over
+    /// it when adapting), and web pages are told light
+    /// (`prefers-color-scheme`); off, dark.
     #[serde(default)]
     pub light: bool,
     /// Lock the screen when the idle fade is complete (needs a password,
@@ -1604,7 +1653,9 @@ pub(crate) fn try_decode_legacy_mail<T: 'static>(bytes: &[u8]) -> Option<T> {
 pub struct MailRule {
     pub name: String,
     pub action: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Always written: the bus's encoding (postcard) has no field names,
+    /// so a skipped `None` broke reading the whole `MailConfig`.
+    #[serde(default)]
     pub dest: Option<String>,
     pub conditions: Vec<MailRuleCondition>,
 }
@@ -2368,10 +2419,79 @@ define_topics! {
     // Appended last.
     #[sticky]
     ScreenLock(ScreenLock),
+
+    // The bus has sent a subscriber every sticky it holds for the kinds it
+    // asked for (bus → that client only, after each subscribe): what an
+    // app knew at its start is all in. Appended last.
+    Replayed,
+
+    // An apply moved these packages (`pkg:sola-mail`, …): an app running
+    // from one is on its old program (`cargo make oath apply` → the
+    // session manager, which starts such apps again). Appended last.
+    PackagesMoved(Vec<String>),
+
+    // The tab a window is (sola-river → shell). Sticky, keyed by
+    // window_id; retracted on close. Appended last.
+    #[sticky(keys = [window_id])]
+    WindowTab(WindowTab),
 }
 
 #[cfg(test)]
 mod tests {
+    use super::{split_app_id, tab_token};
+
+    /// A rule with no destination (delete, mark read) must read back: a
+    /// skipped `dest` broke postcard decoding of the whole config.
+    #[test]
+    fn a_mail_rule_with_no_dest_reads_back() {
+        let cfg = super::MailConfig {
+            rules: vec![super::MailRule {
+                name: "trash".into(),
+                action: "delete".into(),
+                dest: None,
+                conditions: Vec::new(),
+            }],
+            ..super::MailConfig::default()
+        };
+        let msg = super::Topic::MailConfig(cfg).to_message();
+        let Some(super::Topic::MailConfig(back)) = super::Topic::parse(&msg) else {
+            panic!("the config did not read back");
+        };
+        assert_eq!(back.rules[0].name, "trash");
+        assert_eq!(back.rules[0].dest, None);
+    }
+
+    /// The bus's encoding has no field names: a tab with no icon must
+    /// still read back (a skipped field broke every such announcement).
+    #[test]
+    fn a_tab_with_no_icon_reads_back() {
+        let tab = super::Tab {
+            key: "sola-browser/p".into(),
+            app_id: "sola-browser".into(),
+            pid: 7,
+            seq: 1,
+            window_id: None,
+            background: false,
+            icon: None,
+        };
+        let msg = super::Topic::Tab(tab.clone()).to_message();
+        assert!(matches!(super::Topic::parse(&msg), Some(super::Topic::Tab(t)) if t.key == tab.key));
+    }
+
+    #[test]
+    fn a_tab_window_s_app_id_splits_into_app_and_token() {
+        let token = tab_token("sola-browser/page-1");
+        assert_eq!(token.len(), 16);
+        assert_eq!(token, tab_token("sola-browser/page-1"), "the same every time");
+        assert_ne!(token, tab_token("sola-browser/page-2"));
+        let raw = format!("sola-browser#{token}");
+        assert_eq!(split_app_id(&raw), ("sola-browser", Some(token.as_str())));
+        // Anything else is all app id.
+        assert_eq!(split_app_id("steam"), ("steam", None));
+        assert_eq!(split_app_id("odd#name"), ("odd#name", None));
+        assert_eq!(split_app_id("#0123456789abcdef"), ("#0123456789abcdef", None));
+    }
+
     use super::*;
 
     #[test]

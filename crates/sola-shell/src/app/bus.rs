@@ -68,10 +68,24 @@ impl Shell {
                 Task::none()
             }
             Topic::Windows(w) => {
-                self.on_windows(w);
-                self.resolve_pending_launch_if_window();
-                self.flush_calendar_event();
-                self.desk_window_gone();
+                // Until the bus has replayed what it holds, the list waits:
+                // the zone grid and the bar's saved layout come in any order,
+                // and a window placed before its zone is known lands in Full.
+                if !self.replayed {
+                    self.held_windows = Some(w);
+                    return Task::none();
+                }
+                self.take_windows(w);
+                Task::none()
+            }
+            Topic::Replayed => {
+                if !self.replayed {
+                    self.replayed = true;
+                    if let Some(w) = self.held_windows.take() {
+                        tracing::info!(count = w.len(), "bus replayed: placing the windows up");
+                        self.take_windows(w);
+                    }
+                }
                 Task::none()
             }
             Topic::SetAppMenu(m) => {
@@ -97,6 +111,22 @@ impl Shell {
             Topic::UserAppExited(e) => self.on_user_app_exited(e),
             Topic::WindowParent(p) => {
                 self.on_window_parent(p, message.sticky);
+                Task::none()
+            }
+            Topic::WindowTab(t) => {
+                // The tab this window names (sola-river): pair by it.
+                if message.sticky {
+                    self.window_tabs.insert(t.window_id, t.tab);
+                } else {
+                    self.window_tabs.remove(&t.window_id);
+                }
+                if self.pair_tabs(std::time::Instant::now()) {
+                    self.sync_floats();
+                    self.keep_focus_on_screen();
+                    self.emit_all_frames();
+                    self.emit_composition();
+                }
+                self.persist_tabs();
                 Task::none()
             }
             Topic::TabLayout(l) => {
@@ -264,6 +294,14 @@ impl Shell {
         self.emit_composition();
         self.emit_registered_chords();
         self.emit_idle_keep(true);
+    }
+
+    /// A window list, once the bus has replayed (`Topic::Replayed`).
+    fn take_windows(&mut self, w: Vec<Window>) {
+        self.on_windows(w);
+        self.resolve_pending_launch_if_window();
+        self.flush_calendar_event();
+        self.desk_window_gone();
     }
 
     /// Receive the full window list from sola-river.
@@ -517,9 +555,9 @@ impl Shell {
         self.focused_window_id = Some(wid);
         self.tabs.focus(wid);
         self.mru_window_by_app.insert(app_id.to_string(), wid);
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        super::with_bus(|bus| {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-        }
+        });
     }
 
     /// River named a dialog's parent (or took it back). A dialog leaves the
@@ -593,11 +631,20 @@ impl Shell {
     /// place may move to the tab's saved place.
     fn on_tab(&mut self, tab: sola_bus::topics::Tab, sticky: bool) {
         if !sticky {
+            self.tab_icons.remove(&tab.key);
             if let Some(wid) = self.pairing.retract(&tab.key) {
                 tracing::info!(window_id = wid, key = %tab.key, "tab closed");
                 retract_tab_window(tab.key);
             }
             return;
+        }
+        match &tab.icon {
+            Some(icon) => {
+                self.tab_icons.insert(tab.key.clone(), icon.clone());
+            }
+            None => {
+                self.tab_icons.remove(&tab.key);
+            }
         }
         self.pairing.announce(crate::pairing::Announced {
             key: tab.key,
@@ -620,15 +667,18 @@ impl Shell {
     /// apps which window each tab is (`TabWindow`), and remember placed
     /// windows by their tab's key. True when one moved to a saved place.
     fn pair_tabs(&mut self, now: std::time::Instant) -> bool {
-        let candidates: Vec<(u32, String, u32)> = self
+        let candidates: Vec<(u32, String, u32, Option<String>)> = self
             .known_windows
             .iter()
             .filter(|w| w.app_id != Self::APP_ID && self.tabs.parent_of(w.window_id).is_none())
-            .filter_map(|w| Some((w.window_id, w.app_id.clone(), w.pid?)))
+            .filter_map(|w| {
+                let tab = self.window_tabs.get(&w.window_id).cloned();
+                Some((w.window_id, w.app_id.clone(), w.pid?, tab))
+            })
             .collect();
         let refs: Vec<crate::pairing::Candidate<'_>> = candidates
             .iter()
-            .map(|(w, a, p)| (*w, a.as_str(), *p))
+            .map(|(w, a, p, t)| (*w, a.as_str(), *p, t.as_deref()))
             .collect();
         let mut moved = false;
         for (window_id, key) in self.pairing.pair(&refs) {

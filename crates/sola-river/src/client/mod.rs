@@ -59,6 +59,14 @@ pub struct AppData {
     pub seat: Option<RiverSeatV1>,
     pub wl_seat: Option<wl_seat::WlSeat>,
     pub registry: WindowRegistry,
+    /// The id each window had, by River's identifier: kept through a
+    /// restart of sola-river ([`crate::window_ids`]).
+    pub window_ids: crate::window_ids::WindowIds,
+    /// New windows River has not named yet (`identifier` comes after their
+    /// app id and title): not in `Windows` until then.
+    pub unidentified: std::collections::HashSet<u32>,
+    /// Windows whose tab the shell has been told (`Topic::WindowTab`).
+    pub tabs_told: std::collections::HashSet<u32>,
     pub pending: PendingUpdate,
     pub chords: ChordRegistry,
     pub bus: BusClient,
@@ -240,6 +248,9 @@ impl AppData {
             seat: None,
             wl_seat: None,
             registry: WindowRegistry::new(),
+            window_ids: crate::window_ids::WindowIds::default(),
+            unidentified: std::collections::HashSet::new(),
+            tabs_told: std::collections::HashSet::new(),
             pending: PendingUpdate::default(),
             chords: ChordRegistry::default(),
             bus,
@@ -308,6 +319,10 @@ pub fn connect(
     let _registry = display.get_registry(&qh, ());
 
     let mut data = AppData::new(bus);
+    // The ids this compositor's windows had before a restart of sola-river:
+    // new windows take ids above them.
+    data.window_ids = crate::window_ids::WindowIds::load();
+    data.registry.reserve(data.window_ids.highest());
     queue.roundtrip(&mut data)?;
     queue.roundtrip(&mut data)?;
 

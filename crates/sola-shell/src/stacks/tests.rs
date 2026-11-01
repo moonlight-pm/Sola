@@ -809,3 +809,94 @@ fn the_landing_slot_is_where_the_window_lands() {
     s.focus(4);
     assert_eq!(s.landing_slot("sola-scope", true), (Zone::Float, 2, Some(4)));
 }
+
+#[test]
+fn an_app_s_later_windows_follow_the_one_that_came_back() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    s.load(
+        &layout_of(
+            vec![("main", FULL, vec!["mail"], Some(0)), ("games", RIGHT, vec!["steam"], Some(0))],
+            &[("main", "Main"), ("games", "Gaming")],
+            "main",
+        ),
+        t,
+    );
+    // Steam's first window takes Steam's place on Gaming.
+    let first = s.place(1, "steam", "steam", false, false, t);
+    assert_eq!(first, Placed { zone: RIGHT, shown: true, returning: true });
+    assert_eq!(s.workspace_of(1), Some("games"));
+    // Its main window comes after, with no place left: it joins it there.
+    let main = s.place(2, "steam", "steam", false, false, t + Duration::from_secs(11));
+    assert_eq!(main, Placed { zone: RIGHT, shown: true, returning: true });
+    assert_eq!(s.workspace_of(2), Some("games"));
+    assert_eq!(s.showing_id(), "main");
+    // Another app's new window still joins the showing workspace.
+    s.place(3, "term", "term", false, false, t + Duration::from_secs(12));
+    assert_eq!(s.workspace_of(3), Some("main"));
+    // The first one closes: a window that comes takes its place back.
+    s.remove(1, t + Duration::from_secs(20));
+    s.place(4, "steam", "steam", false, false, t + Duration::from_secs(25));
+    assert_eq!(s.workspace_of(4), Some("games"));
+    // Once the layout is restored, a new Steam window opens where you are.
+    s.place(5, "steam", "steam", false, false, t + RESTORE_GRACE + Duration::from_secs(30));
+    assert_eq!(s.workspace_of(5), Some("main"));
+}
+
+#[test]
+fn an_app_on_two_workspaces_comes_back_to_both() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    s.load(
+        &layout_of(
+            vec![("main", FULL, vec!["steam"], Some(0)), ("games", RIGHT, vec!["steam"], Some(0))],
+            &[("main", "Main"), ("games", "Gaming")],
+            "main",
+        ),
+        t,
+    );
+    s.place(1, "steam", "steam", false, false, t);
+    s.place(2, "steam", "steam", false, false, t);
+    let mut on: Vec<_> = [1, 2].iter().map(|&w| s.workspace_of(w).unwrap()).collect();
+    on.sort();
+    assert_eq!(on, vec!["games", "main"]);
+}
+
+/// A restarted shell with the apps kept: every window is up before the
+/// saved layout loads, and the tabs pair after, one by one in any order.
+/// Each window ends where it was saved, in the saved order.
+#[test]
+fn kept_windows_go_back_to_their_places_after_a_shell_restart() {
+    let t = Instant::now();
+    let saved = layout_of(
+        // Loose rows first, then the groups: Terminal's before Browser's.
+        vec![
+            ("main", LEFT, vec!["sola-mail"], Some(0)),
+            ("main", RIGHT, vec!["sola-settings", "sola-terminal/t1"], Some(1)),
+            ("main", LEFT, vec!["sola-browser/p1", "sola-browser/p2"], None),
+            ("main", RIGHT, vec!["sola-browser/p3"], None),
+        ],
+        &[("main", "Main")],
+        "main",
+    );
+    let mut s = Stacks::new();
+    // The window list comes first: no places yet.
+    for (w, app) in [(1, "sola-settings"), (2, "sola-browser"), (3, "sola-browser"), (4, "sola-mail"), (5, "sola-terminal"), (6, "sola-browser")] {
+        s.place(w, app, app, false, true, t);
+    }
+    // The layout loads; the windows are placed again, by app id (not paired).
+    s.load(&saved, t);
+    s.clear();
+    for (w, app) in [(1, "sola-settings"), (2, "sola-browser"), (3, "sola-browser"), (4, "sola-mail"), (5, "sola-terminal"), (6, "sola-browser")] {
+        s.place(w, app, app, false, true, t);
+    }
+    // The tabs pair (named ids), in no particular order.
+    s.set_key(6, "sola-browser/p2", t);
+    s.set_key(5, "sola-terminal/t1", t);
+    s.set_key(2, "sola-browser/p3", t);
+    s.set_key(3, "sola-browser/p1", t);
+    let l = s.layout(t);
+    let zones: Vec<(Zone, Vec<String>)> = l.zones.iter().map(|z| (z.zone, z.apps.clone())).collect();
+    let want: Vec<(Zone, Vec<String>)> = saved.zones.iter().map(|z| (z.zone, z.apps.clone())).collect();
+    assert_eq!(zones, want);
+}

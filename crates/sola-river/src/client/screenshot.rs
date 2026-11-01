@@ -1223,6 +1223,7 @@ mod tests {
     ) -> Entry {
         Entry {
             app_id: Some("app".into()),
+            tab: None,
             title: Some("t".into()),
             max_size: (0, 0),
             pid: None,

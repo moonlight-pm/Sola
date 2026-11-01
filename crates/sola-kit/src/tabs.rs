@@ -27,6 +27,8 @@ struct Entry {
     background: bool,
     /// sola-river's id, once the shell has paired it.
     river: Option<u32>,
+    /// The tab's own icon ([`TabWindows::set_icon`]).
+    icon: Option<String>,
     /// On screen, per the shell (a window starts shown until it says).
     shown: bool,
     /// Last [`TabActivity`] sent; `None` until the first, which is always
@@ -84,7 +86,14 @@ impl TabWindows {
         settings.exit_on_close_request = false;
         self.opened += 1;
         let key = format!("{app_id}/{id}");
-        announce(&tab(&key, app_id, self.opened, None, background));
+        // The window names its tab in its Wayland app id; sola-river takes
+        // it off and tells the shell, which pairs the two exactly.
+        settings.platform_specific.application_id = format!(
+            "{app_id}{}{}",
+            sola_bus::topics::TAB_TOKEN_SEP,
+            sola_bus::topics::tab_token(&key)
+        );
+        announce(&tab(&key, app_id, self.opened, None, background, None));
         let (wid, task) = window::open(settings);
         self.windows.insert(
             wid,
@@ -94,6 +103,7 @@ impl TabWindows {
                 seq: self.opened,
                 background,
                 river: None,
+                icon: None,
                 shown: true,
                 activity: None,
             },
@@ -107,7 +117,7 @@ impl TabWindows {
             return;
         };
         if let Ok(mut bus) = crate::app::bus().lock() {
-            let _ = bus.retract(Topic::Tab(tab(&entry.key, &entry.app_id, entry.seq, None, false)));
+            let _ = bus.retract(Topic::Tab(tab(&entry.key, &entry.app_id, entry.seq, None, false, None)));
             if entry.activity.is_some() {
                 let _ = bus.retract(Topic::TabActivity(TabActivity {
                     key: entry.key.clone(),
@@ -133,6 +143,27 @@ impl TabWindows {
                 tracing::warn!(key = %entry.key, "tab activity failed: {e:?}");
             }
         }
+    }
+
+    /// The tab's own icon, a picture file (a page's favicon), shown on its
+    /// row in the shell's bar in place of the app's; `None`, the app's.
+    /// Announced again when it changes.
+    pub fn set_icon(&mut self, window: window::Id, icon: Option<String>) {
+        let Some(entry) = self.windows.get_mut(&window) else {
+            return;
+        };
+        if entry.icon == icon {
+            return;
+        }
+        entry.icon = icon;
+        announce(&tab(
+            &entry.key,
+            &entry.app_id,
+            entry.seq,
+            entry.river,
+            entry.background,
+            entry.icon.clone(),
+        ));
     }
 
     /// Ask the shell to show this tab's window and focus it.
@@ -170,7 +201,7 @@ impl TabWindows {
         if entry.river != river {
             entry.river = river;
             if river.is_some() {
-                announce(&tab(&key, &entry.app_id, entry.seq, river, entry.background));
+                announce(&tab(&key, &entry.app_id, entry.seq, river, entry.background, entry.icon.clone()));
             }
         }
         shown_changed
@@ -208,7 +239,14 @@ impl TabWindows {
     }
 }
 
-fn tab(key: &str, app_id: &str, seq: u32, window_id: Option<u32>, background: bool) -> Tab {
+fn tab(
+    key: &str,
+    app_id: &str,
+    seq: u32,
+    window_id: Option<u32>,
+    background: bool,
+    icon: Option<String>,
+) -> Tab {
     Tab {
         key: key.to_string(),
         app_id: app_id.to_string(),
@@ -216,6 +254,7 @@ fn tab(key: &str, app_id: &str, seq: u32, window_id: Option<u32>, background: bo
         seq,
         window_id,
         background,
+        icon,
     }
 }
 

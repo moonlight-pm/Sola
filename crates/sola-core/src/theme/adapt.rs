@@ -81,11 +81,14 @@ const TEXT_SHARE: f32 = 0.3;
 /// Surfaces darker than this take a thinner tint (a tint reads stronger
 /// near black).
 const TINT_FULL_L: f32 = 0.18;
-/// The accent's lightness (the seed cyan's), the lowest it steps down to
-/// for a hue that cannot be vivid that light (blue), and its strongest
-/// chroma.
-const ACCENT_L: f32 = 0.82;
-const ACCENT_L_MIN: f32 = 0.68;
+/// Light surfaces (lighter than [`LIGHT_L`]) take this much of the tint: a
+/// full one near white reads as a pastel wash.
+const LIGHT_L: f32 = 0.6;
+const LIGHT_TINT_SHARE: f32 = 0.35;
+/// The accent starts at the seed accent's lightness and steps down at most
+/// this far for a hue that cannot be vivid that light (blue); its
+/// strongest chroma.
+const ACCENT_STEP: f32 = 0.14;
 const ACCENT_C: f32 = 0.14;
 /// The accent is the best of the picture's colors at least this far
 /// from the tint; with none, the tint's own hue.
@@ -177,25 +180,17 @@ impl Scheme {
         hue_name(self.tint_hue)
     }
 
-    /// Three of the scheme's colors at `strength`, for a preview:
-    /// the base, the raised fill and the accent (`#rrggbb`).
-    pub fn preview(&self, strength: f32) -> [String; 3] {
-        let seed = Palette::seed();
-        let grey = |name: &str| {
-            seed.tokens
-                .get(name)
-                .and_then(|t| Rgba::parse(&t.value))
-                .unwrap_or(Rgba {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 1.0,
-                })
-        };
+    /// Three of the scheme's colors at `strength` over the `light` (or
+    /// dark) seed, for a preview: the base, the raised fill and the accent
+    /// (`#rrggbb`).
+    pub fn preview(&self, strength: f32, light: bool) -> [String; 3] {
+        let seed = Palette::seed_for(light);
+        let accent_l = accent_lightness(&seed);
+        let grey = |name: &str| seed_rgba(&seed, name);
         [
-            self.color(Role::Surface, grey("bg-primary"), strength).hex(),
-            self.color(Role::Surface, grey("bg-secondary"), strength).hex(),
-            self.color(Role::Accent, grey("accent"), strength).hex(),
+            self.color(Role::Surface, grey("bg-primary"), strength, accent_l).hex(),
+            self.color(Role::Surface, grey("bg-secondary"), strength, accent_l).hex(),
+            self.color(Role::Accent, grey("accent"), strength, accent_l).hex(),
         ]
     }
 
@@ -216,27 +211,32 @@ impl Scheme {
         }
     }
 
-    fn color(&self, role: Role, seed: Rgba, strength: f32) -> Rgba {
+    /// `role`'s color from its `seed` token; the accent at `accent_l`, the
+    /// seed accent's lightness ([`accent_lightness`]).
+    fn color(&self, role: Role, seed: Rgba, strength: f32, accent_l: f32) -> Rgba {
         let l = Lch::from_rgb(seed.rgb()).l;
         let tint = self.tint_chroma * strength.clamp(0.0, 1.0);
         match role {
+            Role::Surface if l > LIGHT_L => {
+                Lch::new(l, tint * LIGHT_TINT_SHARE, self.tint_hue).to_rgba(seed.a)
+            }
             Role::Surface => {
                 let c = tint * (l / TINT_FULL_L).min(1.0);
                 Lch::new(l, c, self.tint_hue).to_rgba(seed.a)
             }
             Role::Text => Lch::new(l, tint * TEXT_SHARE, self.tint_hue).to_rgba(seed.a),
-            Role::Accent => self.accent().to_rgba(1.0),
-            Role::AccentDim => self.accent().to_rgba(0.10),
+            Role::Accent => self.accent(accent_l).to_rgba(1.0),
+            Role::AccentDim => self.accent(accent_l).to_rgba(0.10),
             Role::Flower if self.tint_chroma == 0.0 => seed,
-            Role::Flower => self.accent().to_rgba(1.0),
+            Role::Flower => self.accent(accent_l).to_rgba(1.0),
         }
     }
 
-    /// The accent: as light as the seed's, stepping down (to
-    /// [`ACCENT_L_MIN`]) until its chroma fits the sRGB gamut.
-    fn accent(&self) -> Lch {
-        let mut l = ACCENT_L;
-        while l > ACCENT_L_MIN && !Lch::new(l, self.accent_chroma, self.accent_hue).fits() {
+    /// The accent: as light as the seed's (`from`), stepping down (at most
+    /// [`ACCENT_STEP`]) until its chroma fits the sRGB gamut.
+    fn accent(&self, from: f32) -> Lch {
+        let mut l = from;
+        while l > from - ACCENT_STEP && !Lch::new(l, self.accent_chroma, self.accent_hue).fits() {
             l -= 0.01;
         }
         Lch::new(l, self.accent_chroma, self.accent_hue)
@@ -263,16 +263,45 @@ pub fn custom_color_token(key: &str) -> Option<&'static str> {
     }
 }
 
+/// The seed token `name` (opaque black when absent or unparsed).
+fn seed_rgba(seed: &Palette, name: &str) -> Rgba {
+    seed.tokens
+        .get(name)
+        .and_then(|t| Rgba::parse(&t.value))
+        .unwrap_or(Rgba {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        })
+}
+
+/// The OKLCH lightness of `seed`'s accent: where an adapted accent starts.
+fn accent_lightness(seed: &Palette) -> f32 {
+    Lch::from_rgb(seed_rgba(seed, "accent").rgb()).l
+}
+
 impl Theme {
+    /// The theme is light: its base (`bg-primary`) is lighter than mid
+    /// grey (Settings → Appearance → Light).
+    pub fn is_light(&self) -> bool {
+        Lch::from_rgb(token_rgb(self, "bg-primary")).l > LIGHT_L
+    }
+
     /// Set the custom colors (`key → #rrggbb`, keys of [`CUSTOM_COLORS`];
     /// others and malformed values are skipped), each on its family:
     /// `window` the base; `panels` the raised fill and the switcher's
     /// (keeping its alpha); `highlight` a column's active row, and the
     /// selection takes its hue at the selection's own lightness; `accent`
-    /// the accent, its text, its 10% wash and the shell's flower. Returns
-    /// true when a token changed.
-    pub fn customize(&mut self, colors: &std::collections::BTreeMap<String, String>) -> bool {
-        let seed = Palette::seed();
+    /// the accent, its text, its 10% wash and the shell's flower. The
+    /// selection's lightness is the `light` (or dark) seed's. Returns true
+    /// when a token changed.
+    pub fn customize(
+        &mut self,
+        colors: &std::collections::BTreeMap<String, String>,
+        light: bool,
+    ) -> bool {
+        let seed = Palette::seed_for(light);
         let mut values: Vec<(&str, String)> = Vec::new();
         for (key, hex) in colors {
             let Some(c) = Rgba::parse(hex).filter(|c| c.a >= 0.999) else {
@@ -309,31 +338,29 @@ impl Theme {
     }
 
     /// Rewrite the adapted color tokens from `scheme`, the tint at
-    /// `strength` (0–1) of the picture's own colorfulness (each token from
-    /// its seed grey, so the result does not depend on what was there).
-    /// Returns true when a token changed.
-    pub fn adapt(&mut self, scheme: &Scheme, strength: f32) -> bool {
-        let seed = Palette::seed();
+    /// `strength` (0–1) of the picture's own colorfulness, over the
+    /// `light` (or dark) seed (each token from its seed grey, so the result
+    /// does not depend on what was there). Returns true when a token
+    /// changed.
+    pub fn adapt(&mut self, scheme: &Scheme, strength: f32, light: bool) -> bool {
+        let seed = Palette::seed_for(light);
+        let accent_l = accent_lightness(&seed);
         self.rewrite(|name| {
             let (_, role) = RECIPE.iter().find(|(n, _)| *n == name)?;
             // The accents need no seed value (`accent-dim` is `rgba(…)`).
-            let base = Rgba::parse(&seed.tokens.get(name)?.value).unwrap_or(Rgba {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 1.0,
-            });
-            Some(scheme.color(*role, base, strength).hex())
+            seed.tokens.get(name)?;
+            Some(scheme.color(*role, seed_rgba(&seed, name), strength, accent_l).hex())
         })
     }
 
-    /// Put the seed's values back on the adapted tokens. Returns true when
-    /// a token changed.
-    pub fn unadapt(&mut self) -> bool {
-        let seed = Palette::seed();
+    /// Put the `light` (or dark) seed's values back on every color token
+    /// it has: the adapted ones and the status and shell colors that only
+    /// change with the mode. Returns true when a token changed.
+    pub fn unadapt(&mut self, light: bool) -> bool {
+        let seed = Palette::seed_for(light);
         self.rewrite(|name| {
-            RECIPE.iter().find(|(n, _)| *n == name)?;
-            Some(seed.tokens.get(name)?.value.clone())
+            let token = seed.tokens.get(name)?;
+            (token.kind == TokenKind::Color).then(|| token.value.clone())
         })
     }
 
@@ -377,16 +404,32 @@ pub fn keep_hue(color: [f32; 3], lightness_from: [f32; 3]) -> [f32; 3] {
 /// A focused window's 1 px rim from the theme's `highlight` (sRGB 0–1):
 /// the highlight a step lighter (4% white), in its own hue — on the grey
 /// theme `#3d3d3d`, the lit edge white-at-18% gave; on a tinted or custom
-/// highlight, that tint.
+/// highlight, that tint. On a light highlight, a step darker (12% black).
 pub fn focus_rim(highlight: [f32; 3]) -> [f32; 3] {
-    lifted(highlight, 0.04)
+    if Lch::from_rgb(highlight).l > LIGHT_L {
+        deepened(highlight, 0.12)
+    } else {
+        lifted(highlight, 0.04)
+    }
 }
 
 /// An unfocused window's 1 px rim from the theme's base (`bg-primary`):
 /// 7% lighter in its hue, opaque — what white at 7% gave over the window,
-/// without letting what is under the window's edge show (`rest_rim`).
+/// without letting what is under the window's edge show (`rest_rim`). On
+/// a light base, 12% darker.
 pub fn rest_rim(base: [f32; 3]) -> [f32; 3] {
-    lifted(base, 0.07)
+    if Lch::from_rgb(base).l > LIGHT_L {
+        deepened(base, 0.12)
+    } else {
+        lifted(base, 0.07)
+    }
+}
+
+/// `color` as darkened by mixing `amount` of black in, keeping its hue and
+/// chroma ([`keep_hue`]). sRGB channels, 0–1.
+pub fn deepened(color: [f32; 3], amount: f32) -> [f32; 3] {
+    let deep = color.map(|c| c * (1.0 - amount));
+    keep_hue(color, deep)
 }
 
 /// `color` as lightened by mixing `amount` of white in, keeping its hue
@@ -740,7 +783,7 @@ mod tests {
         let scheme = Scheme::from_pixels(&fill([90, 90, 90], 100));
         assert_eq!(scheme.tint_chroma, 0.0);
         let mut theme = Theme::default();
-        theme.adapt(&scheme, 0.6);
+        theme.adapt(&scheme, 0.6, false);
         assert_eq!(token(&theme, "bg-primary"), "#0b0b0b");
         assert_eq!(token(&theme, "text-primary"), "#ececec");
         assert_eq!(token(&theme, "shell-flower"), "#ffb800");
@@ -752,7 +795,7 @@ mod tests {
         assert!((200.0..290.0).contains(&scheme.tint_hue), "{scheme:?}");
         assert!(scheme.tint_chroma > 0.0);
         let mut theme = Theme::default();
-        assert!(theme.adapt(&scheme, 0.6));
+        assert!(theme.adapt(&scheme, 0.6, false));
         let bg = Rgba::parse(&token(&theme, "bg-secondary")).unwrap();
         assert!(bg.b > bg.r, "blue tint: {bg:?}");
         let (seed, now) = (
@@ -784,7 +827,7 @@ mod tests {
         let scheme = Scheme::from_pixels(&fill([30, 60, 160], 100));
         let chroma = |strength: f32| {
             let mut theme = Theme::default();
-            theme.adapt(&scheme, strength);
+            theme.adapt(&scheme, strength, false);
             Lch::from_rgb(Rgba::parse(&token(&theme, "bg-tertiary")).unwrap().rgb()).c
         };
         assert!(chroma(0.0) < 0.002, "no strength: grey");
@@ -819,7 +862,7 @@ mod tests {
         assert!(hue_apart(v[1].accent_hue, v[1].tint_hue) >= ACCENT_APART);
         assert_eq!(Scheme::from_pixels(&px), v[0]);
         assert_eq!(v[1].name(), "Blue");
-        let [base, raised, accent] = v[1].preview(0.6);
+        let [base, raised, accent] = v[1].preview(0.6, false);
         assert!(base.starts_with('#') && raised.len() == 7 && accent.len() == 7);
     }
 
@@ -874,7 +917,7 @@ mod tests {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-        assert!(theme.customize(&colors));
+        assert!(theme.customize(&colors, false));
         assert_eq!(token(&theme, "accent"), "#ff8800");
         assert_eq!(token(&theme, "text-accent"), "#ff8800");
         assert_eq!(token(&theme, "accent-dim"), "#ff88001a");
@@ -887,7 +930,7 @@ mod tests {
         let seed = Lch::from_rgb(Rgba::parse("#292929").unwrap().rgb());
         assert!((sel.l - seed.l).abs() < 0.01 && sel.c > 0.02);
         assert_eq!(token(&theme, "bg-primary"), "#0b0b0b", "a malformed color is skipped");
-        assert!(theme.unadapt());
+        assert!(theme.unadapt(false));
         assert_eq!(theme, Theme::default());
     }
 
@@ -895,11 +938,11 @@ mod tests {
     fn a_theme_saved_without_a_managed_token_gets_it() {
         let mut theme = Theme::default();
         theme.palette.tokens.remove("highlight");
-        assert!(theme.unadapt());
+        assert!(theme.unadapt(false));
         assert_eq!(token(&theme, "highlight"), "#353535");
         let scheme = Scheme::from_pixels(&fill([30, 60, 160], 100));
         theme.palette.tokens.remove("highlight");
-        theme.adapt(&scheme, 0.6);
+        theme.adapt(&scheme, 0.6, false);
         assert_ne!(token(&theme, "highlight"), "#353535", "adapted, not just added");
     }
 
@@ -923,11 +966,54 @@ mod tests {
     fn adapting_is_idempotent_and_unadapt_restores_the_seed() {
         let scheme = Scheme::from_pixels(&fill([160, 60, 40], 50));
         let mut theme = Theme::default();
-        assert!(theme.adapt(&scheme, 0.6));
+        assert!(theme.adapt(&scheme, 0.6, false));
         let once = theme.clone();
-        assert!(!theme.adapt(&scheme, 0.6));
+        assert!(!theme.adapt(&scheme, 0.6, false));
         assert_eq!(theme, once);
-        assert!(theme.unadapt());
+        assert!(theme.unadapt(false));
         assert_eq!(theme, Theme::default());
+    }
+
+    #[test]
+    fn every_dark_color_has_a_light_one() {
+        let (dark, light) = (Palette::seed(), Palette::seed_light());
+        for (name, token) in &dark.tokens {
+            if token.kind == TokenKind::Color {
+                assert_ne!(light.tokens[name].value, token.value, "{name} has no light value");
+            }
+        }
+        assert!(!Theme::default().is_light());
+        let mut theme = Theme::default();
+        assert!(theme.unadapt(true));
+        assert!(theme.is_light());
+    }
+
+    #[test]
+    fn light_keeps_the_light_seed_lightness_and_a_readable_accent() {
+        let scheme = Scheme::from_pixels(&fill([30, 60, 160], 100));
+        let mut theme = Theme::default();
+        theme.adapt(&scheme, 1.0, true);
+        let l = |t: &Theme, n: &str| Lch::from_rgb(token_rgb(t, n)).l;
+        let seed = Theme {
+            palette: Palette::seed_light(),
+            components: Default::default(),
+        };
+        for name in ["bg-primary", "bg-secondary", "border", "text-primary"] {
+            assert!((l(&theme, name) - l(&seed, name)).abs() < 0.01, "{name}");
+        }
+        let base = Lch::from_rgb(token_rgb(&theme, "bg-primary"));
+        assert!(base.c > 0.005 && base.c < 0.04, "a soft tint: {}", base.c);
+        assert!(l(&theme, "accent") < 0.65, "the accent reads on white");
+        // Back to dark puts the dark greys back, the status colors too.
+        assert!(theme.unadapt(false));
+        assert_eq!(theme, Theme::default());
+    }
+
+    #[test]
+    fn a_light_rim_is_darker() {
+        let base = Rgba::parse("#f8f8f8").unwrap().rgb();
+        assert!(Lch::from_rgb(rest_rim(base)).l < Lch::from_rgb(base).l - 0.03);
+        let hi = Rgba::parse("#d7d7d7").unwrap().rgb();
+        assert!(Lch::from_rgb(focus_rim(hi)).l < Lch::from_rgb(hi).l);
     }
 }

@@ -51,6 +51,7 @@ const GHOST_GRACE: Duration = Duration::from_secs(30);
 /// How long the saved layout waits for the session to restore its apps.
 const RESTORE_GRACE: Duration = Duration::from_secs(120);
 
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tab {
     pub window_id: u32,
@@ -85,6 +86,12 @@ pub struct Stacks {
     restore_until: Option<Instant>,
     /// Places of windows that just left.
     ghosts: Vec<(Slot, Instant)>,
+    /// Apps one of whose windows took a remembered place by the app's id
+    /// (no tab key): that window. While it is open and the saved layout is
+    /// being restored, a window of the app that finds no place of its own
+    /// joins it: Steam maps a short-lived window first, which takes
+    /// Steam's place, and its main window after.
+    came_back: HashMap<String, u32>,
     /// Saved index of each restored window, so windows that come back in
     /// any order still line up as saved.
     ranks: HashMap<u32, usize>,
@@ -116,6 +123,7 @@ impl Stacks {
             restore: Vec::new(),
             restore_until: None,
             ghosts: Vec::new(),
+            came_back: HashMap::new(),
             ranks: HashMap::new(),
             focused: None,
             opened: None,
@@ -158,8 +166,11 @@ impl Stacks {
     // ---------------------------------------------------------------------
 
     /// Place a new window. In order: the place its key just left, its
-    /// key's saved place (for a tab with neither, its app's), Floating for
-    /// `floats`, else the showing workspace's landing zone (shown): Full
+    /// key's saved place (for a tab with neither, its app's), beside a
+    /// window of its app that took its app's place (a window with no tab
+    /// key, while the layout is restored: on that workspace, in that zone
+    /// or Floating), Floating for `floats`, else the showing workspace's
+    /// landing zone (shown): Full
     /// while it is up or nothing is tiled, else the last focused half. In
     /// the bar it goes right after the focused tab, whatever that tab's
     /// zone (after the last window opened from it, while it kept focus),
@@ -201,12 +212,24 @@ impl Stacks {
         };
         let keys: &[&str] = if key == app_id { &[key] } else { &[key, app_id] };
         for k in keys {
+            let by_app = *k == app_id;
             if let Some(slot) = self.claim_ghost(k, now) {
+                if by_app {
+                    self.came_back.insert(app_id.to_string(), window_id);
+                }
                 return self.insert_slot(tab(slot.zone), &slot, None);
             }
             if let Some(slot) = self.claim_restore(k, now) {
+                if by_app {
+                    self.came_back.insert(app_id.to_string(), window_id);
+                }
                 let at = slot.at;
                 return self.insert_slot(tab(slot.zone), &slot, Some(at));
+            }
+        }
+        if key == app_id {
+            if let Some(placed) = self.follow(tab(Zone::Float), floats, now) {
+                return placed;
             }
         }
         let (zone, mut at, opener) = self.landing_slot(app_id, floats);
@@ -268,6 +291,31 @@ impl Stacks {
             }
         };
         (zone, at, opener)
+    }
+
+    /// Put `tab` (a window with no place of its own) beside the window of
+    /// its app that came back by the app's id, while that one is open and
+    /// the saved layout is still being restored: on its workspace, right
+    /// after it in the bar, in its zone (Floating for `floats`), shown
+    /// there.
+    fn follow(&mut self, mut tab: Tab, floats: bool, now: Instant) -> Option<Placed> {
+        let &leader = self.came_back.get(&tab.app_id)?;
+        let restoring = self.restore_until.is_some_and(|until| now < until);
+        let d = self.desk_of(leader).filter(|_| restoring);
+        let Some(d) = d else {
+            self.came_back.remove(&tab.app_id);
+            return None;
+        };
+        let desk = &mut self.desks[d];
+        tab.zone = if floats { Zone::Float } else { desk.zone_of(leader)? };
+        let zone = tab.zone;
+        let at = desk.bar.index_of(leader).map_or(desk.bar.len(), |i| i + 1);
+        let shown = desk.insert(tab, at, true);
+        Some(Placed {
+            zone,
+            shown,
+            returning: true,
+        })
     }
 
     fn insert_slot(&mut self, mut tab: Tab, slot: &Slot, rank: Option<usize>) -> Placed {

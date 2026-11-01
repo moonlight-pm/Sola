@@ -3451,7 +3451,7 @@ fn card_surface_style(theme: &Theme, active: bool, hovered: bool) -> container::
             },
             // inset top hairline approximated as a light top edge via shadow
             shadow: Shadow {
-                color: Color::from_rgba(1.0, 1.0, 1.0, 0.04),
+                color: crate::components::style::ink(0.04),
                 offset: Vector::new(0.0, 1.0),
                 blur_radius: 0.0,
             },

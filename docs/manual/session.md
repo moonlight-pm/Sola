@@ -333,19 +333,33 @@ each application's notes ([Applications](applications.md)).
 ### Places
 
 A window an application opens as a tab is announced first, with a key
-that stays the same across restarts: `<app_id>/<tab id>`
+that stays the same across restarts: `<app_id>/<tab id>`. The window names
+its tab too: a kit app gives it the Wayland app id `<app_id>#<token>` (the
+key's token, `sola_bus::topics::tab_token`); `sola-river` publishes the app
+id without it and the token as `WindowTab`, and the shell pairs each window
+with the tab it names — whatever came first, and in whatever order the
+windows were made. A window with no token (an app from before) pairs by
+the order its process announced its tabs. Keys:
 (`sola-terminal/<tab id>`, `sola-browser/<page id>`, `<web app id>/<page id>`,
 `sola-paint/<path>`, `sola-projects/<project id>`,
 `sola-design/<project id>`). A window that is not an announced tab goes by
 its app id.
 
 The shell saves the bar as `TabLayout` whenever it changes. When the shell
-starts, it takes the saved layout once. For the next 2 minutes, a window
+starts, it takes the saved layout once, and it places the windows already
+up (applications kept through its restart) only after the bus has
+replayed everything it holds (`Replayed`): the zone grid and the saved
+layout are in first, whatever order they came in. For the next 2 minutes, a window
 that arrives takes its saved workspace, zone, and place, matched by its key
-and then by its app id, and a zone shows the tab it showed. A window with
-no saved place joins the showing workspace, after the focused tab. A
-floating window also gets back its saved rectangle
-([Compositor](compositor.md)).
+and then by its app id, and a zone shows the tab it showed. An app with
+windows on several workspaces gets one saved place per window. A window
+with no key of its own that finds no place left, while a window of its app
+that took the app's place is still open (while the layout is restored), joins that
+one: same workspace and zone, right after it in the bar. Steam maps a
+short-lived window first, which takes Steam's place, and its main window
+after; the main window goes where Steam was. Any other window with no saved
+place joins the showing workspace, after the focused tab. A floating window
+also gets back its saved rectangle ([Compositor](compositor.md)).
 
 A window that closes keeps its place for 30 s, so an application that
 restarts or executes a new version in that time gets its windows back where
@@ -511,7 +525,7 @@ Call methods, owner `desk` (also the MCP tools `desk_launch` and
 
 | What restarts | What happens |
 |---|---|
-| `sola-session` | Open applications keep running, but the new `sola-session` did not start them: no `UserAppExited`, and `solactl desk close` does not find them. The listed ones with windows stay in `SessionApps` while they have windows (3 s grace). Super+Q still closes their windows. Restore launches only listed applications that have no window. A listed one that isn't Sola's is watched as before: once its windows are gone for 5 s, it quits whole. An apply that moves `pkg:sola` stops `sola-session`, which closes the applications as at **Exit Sola**; the new one opens them again. |
+| `sola-session` | Open applications keep running, but the new `sola-session` did not start them: no `UserAppExited`, and `solactl desk close` does not find them. The listed ones with windows stay in `SessionApps` while they have windows (3 s grace). Super+Q still closes their windows. Restore launches only listed applications that have no window. A listed one that isn't Sola's is watched as before: once its windows are gone for 5 s, it quits whole. An apply that moves `pkg:sola` restarts `sola-session` the same way: `svc:sola-session` keeps its children (`keep_children`), so the applications, and a game under Steam, keep running on the program they started with. Without it, PID 1 stops them with the service and the new one opens them again. An application of Sola's whose own package moved is stopped and started again on the new program, alone (its running program against the one its command names: checked as the session manager starts, and when an apply says it moved packages, `PackagesMoved`); one that isn't Sola's never is. |
 | `sola-bus` | `sola-session` reconnects and subscribes again. A `LaunchApp` sent while the bus was down is lost. |
 | The compositor | The applications lose their display and exit; they stay in `SessionApps` and start again on the new compositor. See [Architecture](architecture.md#when-a-part-stops). |
 

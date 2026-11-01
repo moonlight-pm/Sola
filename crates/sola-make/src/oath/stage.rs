@@ -12,7 +12,7 @@ use std::process::{Command, exit};
 
 use super::packages::{PACKAGES, Package, build_crates};
 
-const STAGE_ROOT: &str = "target/oath";
+pub(super) const STAGE_ROOT: &str = "target/oath";
 /// `pkg:cef`'s CEF (`Release/`, `Resources/`), through its live slot.
 const OATH_CEF: &str = "/oath/store/pkg/cef/live/cef";
 const FIRST_PARTY_ICONS: &str = "crates/sola-assets/icons";

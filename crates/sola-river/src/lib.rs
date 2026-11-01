@@ -6,3 +6,4 @@ pub mod proc_identity;
 pub mod protocol;
 pub mod registry;
 pub mod translator;
+pub mod window_ids;

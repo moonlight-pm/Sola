@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,7 @@ use crate::tag;
 use crate::watch::{Foreign, Owners};
 
 mod foreign;
+mod refresh;
 
 /// How long a new compositor runs before the apps that went with the last
 /// one are started on it (sola-river and the shell come back first).
@@ -76,6 +78,11 @@ pub struct Session {
     owners: Owners,
     /// The last live window list.
     windows: Vec<Window>,
+    /// Apps stopped for a new program, by app id: their command, to start
+    /// again once they exit.
+    relaunch: HashMap<String, String>,
+    /// Apps found running at start, asked to exit for a new program.
+    moving: Vec<refresh::Moving>,
 }
 
 impl Session {
@@ -93,6 +100,8 @@ impl Session {
             foreign: HashMap::new(),
             owners: Owners::default(),
             windows: Vec::new(),
+            relaunch: HashMap::new(),
+            moving: Vec::new(),
         }
     }
 
@@ -228,7 +237,10 @@ impl Session {
         match topic {
             Topic::SessionApps(apps) => *persisted = apps,
             Topic::Windows(ws) => {
-                *running = ws.into_iter().map(|w| w.app_id).collect();
+                *running = ws.iter().map(|w| w.app_id.clone()).collect();
+                // The apps found running are told by their windows' pids
+                // ([`refresh`]).
+                self.windows = ws;
             }
             other => self.handle(other),
         }
@@ -347,6 +359,10 @@ impl Session {
             Topic::LaunchApp(p) => self.launch(p),
             Topic::CloseApp(app_id) => self.close(&app_id),
             Topic::CloseWindow(window_id) => self.close_foreign_window(window_id),
+            Topic::PackagesMoved(packages) => {
+                info!(?packages, "packages moved: checking the apps' programs");
+                self.refresh_moved();
+            }
             Topic::Shutdown => {
                 self.shutdown_all_apps();
                 std::process::exit(0);
@@ -456,6 +472,7 @@ impl Session {
         self.settle_adopted();
         self.bring_back_lost();
         self.step_foreign();
+        self.step_moving();
     }
 
     /// One bus message: a live window list goes to the adopted apps (a
@@ -535,6 +552,7 @@ impl Session {
         for (app_id, command, status) in to_emit {
             info!(%app_id, ?status, "user app exited");
             self.emit_exited(&app_id, &command, status);
+            self.relaunch_moved(&app_id);
         }
         if reaped_any {
             self.emit_session_apps();
@@ -637,6 +655,18 @@ fn prepare(cmd: &mut Command, app_id: &str, foreign: bool) {
     }
     if foreign {
         cmd.env(tag::VAR, app_id);
+    }
+    // Each app leads a session of its own, as sshd's logins do: PID 1
+    // stops `svc:sola-session` by signalling its process group, so an app
+    // left in that group went down with every restart of the session
+    // manager (a `pkg:sola` apply), `keep_children` or not.
+    // SAFETY: setsid(2) is async-signal-safe; a fresh child is never a
+    // group leader, so it cannot fail here.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
     }
 }
 
@@ -783,6 +813,8 @@ const SESSION_TOPICS: &[TopicKind] = &[
     // current-window list (to skip apps already running).
     TopicKind::SessionApps,
     TopicKind::Windows,
+    // An apply moved packages: apps on an old program start again.
+    TopicKind::PackagesMoved,
 ];
 
 fn connect_and_subscribe(bus: &mut BusClient) {
@@ -803,8 +835,10 @@ pub fn run() {
         sola_call::methods::desk_methods(),
     ));
 
-    // Relaunch last session's apps (once, before the steady-state loop).
+    // Relaunch last session's apps (once, before the steady-state loop),
+    // and start again those found running on an old program.
     session.restore_session();
+    session.refresh_moved();
 
     let poll = Duration::from_millis(500);
     loop {

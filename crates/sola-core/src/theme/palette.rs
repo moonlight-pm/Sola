@@ -220,4 +220,55 @@ impl Palette {
         );
         palette
     }
+
+    /// The light seed: [`Palette::seed`] with every color in its light
+    /// form (Settings → Appearance → Light, `Appearance.light`). Surfaces
+    /// mirror the dark ladder — the canvas lightest, panels and hovers a
+    /// step darker, lines darker still — the text is near black, and the
+    /// accent and status colors are deepened to read on white. Sizes,
+    /// fonts and spacing are the dark seed's.
+    pub fn seed_light() -> Self {
+        let mut palette = Self::seed();
+        for (name, value) in LIGHT {
+            if let Some(token) = palette.tokens.get_mut(*name) {
+                token.value = (*value).to_string();
+            }
+        }
+        palette
+    }
+
+    /// [`Palette::seed_light`] when `light`, else [`Palette::seed`].
+    pub fn seed_for(light: bool) -> Self {
+        if light { Self::seed_light() } else { Self::seed() }
+    }
 }
+
+/// The light seed's colors (OKLCH lightness in the comments): every color
+/// token of the dark seed has one.
+const LIGHT: &[(&str, &str)] = &[
+    ("bg-primary", "#f8f8f8"),    // 0.98
+    ("bg-secondary", "#ededed"),  // 0.945
+    ("bg-tertiary", "#e4e4e4"),   // 0.92
+    ("bg-hover", "#e4e4e4"),      // 0.92
+    ("border", "#d1d1d1"),        // 0.86
+    ("border-subtle", "#e4e4e4"), // 0.92
+    ("text-primary", "#1d1d1d"),  // 0.23
+    ("text-secondary", "#5b5b5b"), // 0.47
+    ("text-tertiary", "#7a7a7a"), // 0.58
+    ("text-muted", "#c8c8c8"),
+    // The seed cyan's hue at 0.58.
+    ("text-accent", "#0289a0"),
+    ("accent", "#0289a0"),
+    ("accent-dim", "rgba(2, 137, 160, 0.12)"),
+    ("selection", "#dedede"),     // 0.90
+    ("highlight", "#d7d7d7"),     // 0.88
+    // The dark seed's hues at 0.58.
+    ("danger", "#c64b55"),
+    ("success", "#01915d"),
+    ("warning", "#9a7302"),
+    ("shell-menubar-bg", "#ffffff"),
+    ("shell-flower", "#f0a500"),
+    ("shell-backdrop-dim", "#00000040"),
+    ("shell-switcher-bg", "#ededede6"),
+    ("shell-switcher-border", "#0000001a"),
+];

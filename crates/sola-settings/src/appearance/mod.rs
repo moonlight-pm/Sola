@@ -1,4 +1,4 @@
-//! Appearance: light or dark (for web pages), the background picture and
+//! Appearance: light or dark (the desk and web pages), the background picture and
 //! the ones kept before ([`pictures`]), whether the theme's colors follow
 //! it (and which of its schemes), the looks you make with your own colors,
 //! how opaque the desk is over the picture, and the idle fade and dim. A
@@ -229,8 +229,9 @@ fn mode(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
             row![choice("Dark", false), choice("Light", true)].spacing(SPACE_SM),
         )]),
         Some(
-            "What web pages are told you prefer: a site with a light and a \
-             dark look shows that one. Sola's own windows stay dark."
+            "Sola's windows and the desk wear it, with the picture's colors \
+             when the theme follows the picture, and web pages are told it: \
+             a site with a light and a dark look shows that one."
                 .into(),
         ),
     )

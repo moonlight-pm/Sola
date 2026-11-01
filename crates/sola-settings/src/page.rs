@@ -342,7 +342,7 @@ pub fn dot<'a, M: 'a>(color: Color) -> Element<'a, M> {
         .style(move |_: &Theme| container::Style {
             background: Some(Background::Color(color)),
             border: Border {
-                color: alpha(Color::WHITE, 0.2),
+                color: sola_kit::components::style::ink(0.2),
                 width: 1.0,
                 radius: 5.0.into(),
             },

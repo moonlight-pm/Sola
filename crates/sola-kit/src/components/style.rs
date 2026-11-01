@@ -92,6 +92,28 @@ pub fn install_chrome_surface(base: Color, raised: Color) {
 const CHROME_DEFAULT: Color = Color::from_rgb(20.0 / 255.0, 20.0 / 255.0, 20.0 / 255.0);
 static CHROME: std::sync::RwLock<Color> = std::sync::RwLock::new(CHROME_DEFAULT);
 
+/// The theme is light (Settings → Appearance → Light): its base is light,
+/// so edges, lifts and soft lines go toward black instead of white. Set
+/// with the theme ([`install_light`], from `theme::install_atoms`).
+pub fn is_light() -> bool {
+    LIGHT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Set [`is_light`] from the theme's base fill.
+pub fn install_light(base: Color) {
+    LIGHT.store(relative_luminance(base) > 0.5, std::sync::atomic::Ordering::Relaxed);
+}
+
+static LIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Soft ink over any surface at `amount`: white on the dark theme, black on
+/// the light one. For lines and washes that only need to stand off what is
+/// under them.
+pub fn ink(amount: f32) -> Color {
+    let base = if is_light() { Color::BLACK } else { Color::WHITE };
+    Color { a: amount, ..base }
+}
+
 /// Soft hairline weight — OD `--hairline` (white 7% in sRGB over surface).
 pub const HAIRLINE_A: f32 = 0.07;
 /// Stronger hairline — OD `--hairline-strong` (white 12% in sRGB).
@@ -114,14 +136,17 @@ pub fn lift_in_hue(surface: Color, amount: f32) -> Color {
 }
 
 /// CSS `color-mix(in srgb, #fff amount, surface)` as an **opaque** colour.
-/// Use this for edges instead of `Color { a: amount, ..WHITE }`.
+/// Use this for edges instead of `Color { a: amount, ..WHITE }`. On the
+/// light theme ([`is_light`]) the mix is with black: an edge or a lift
+/// that stands off a light surface.
 pub fn mix_white(surface: Color, amount: f32) -> Color {
     let t = amount.clamp(0.0, 1.0);
     let k = 1.0 - t;
+    let toward = if is_light() { 0.0 } else { t };
     Color {
-        r: surface.r * k + t,
-        g: surface.g * k + t,
-        b: surface.b * k + t,
+        r: surface.r * k + toward,
+        g: surface.g * k + toward,
+        b: surface.b * k + toward,
         a: 1.0,
     }
 }

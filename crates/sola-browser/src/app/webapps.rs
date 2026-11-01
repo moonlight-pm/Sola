@@ -460,7 +460,7 @@ impl<E: Engine> App<E> {
     }
 
     /// The page's favicon as the app's icon (a file); a globe without one.
-    fn save_icon(&self, app_id: &str, tab: TabId) -> String {
+    pub(super) fn save_icon(&self, app_id: &str, tab: TabId) -> String {
         let Some(png) = self.webapps.favicons.get(&tab) else {
             return "lucide/globe".into();
         };

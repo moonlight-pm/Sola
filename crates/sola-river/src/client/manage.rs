@@ -185,6 +185,13 @@ pub(crate) fn gamescope_size_gate(
 pub fn handle_manage_start(state: &mut AppData) {
     // This sequence's enters are read; a move from here on is new.
     state.pointer_moved = false;
+    // River names a window as it creates it, before this sequence: one
+    // still unnamed keeps the id it was given, and is told now.
+    if !state.unidentified.is_empty() {
+        tracing::warn!(windows = ?state.unidentified, "windows River did not name; told by their new ids");
+        state.unidentified.clear();
+        crate::translator::emit_windows(state);
+    }
     let Some(wm) = state.wm.clone() else { return };
 
     // Layer-shell default output (manage-sequence-only request).
@@ -253,6 +260,9 @@ pub fn handle_manage_start(state: &mut AppData) {
             tracing::info!(window_id, %app_id, w = propose.0, h = propose.1, "propose_dimensions");
             proxy.propose_dimensions(propose.0, propose.1);
             state.last_proposed.insert(window_id, propose);
+            if propose.0 > 0 && propose.1 > 0 {
+                state.window_ids.note_size(window_id, propose);
+            }
             if crate::proc_identity::is_gamescope_app_id(&app_id) {
                 state
                     .gamescope_last_size_at
@@ -261,6 +271,10 @@ pub fn handle_manage_start(state: &mut AppData) {
         }
     }
     state.pending.manage_dirty = false;
+    // The sizes given, written once a sequence is not part of a drag.
+    if state.op.is_none() {
+        state.window_ids.flush();
+    }
     // `pending.manage` was drained above; no separate clear needed.
 
     // While a layer surface holds exclusive focus (e.g. sola-kvm edge

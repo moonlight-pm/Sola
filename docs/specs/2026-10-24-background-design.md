@@ -274,6 +274,28 @@ and the window's focus rim is white by the Next decision.
   seed's greys, the picture's scheme over them when adapting, your colors
   over that; with neither, the greys once and then hands off.
 
+## Light mode (2026-11-01)
+
+**Asked (Joshua, 2026-11-01):** "lets add dark/light mode as a global setting (in settings appearance) -- and lets also actually have a light theme -- This theme needs to be responsive to the background image too"; "Make sure the browser recognizes the system dark/light setting"; "we don't need to run a sola design pass, just give it your best first effort."
+
+- **The setting:** the Mode that told only web pages (`Appearance.light`)
+  is the desk's: Light makes the shell write the light seed
+  (`Palette::seed_light`) into `Topic::Theme`; Dark the dark one.
+- **The light seed** mirrors the dark ladder by OKLCH lightness: the
+  canvas 0.98, panels 0.945, hovers 0.92, lines 0.86, the highlight 0.88,
+  text 0.23 / 0.47 / 0.58; the accent and the status colors keep their
+  hues at 0.58; the top row white.
+- **Following the picture:** as in the dark (above), each token keeps its
+  seed's lightness, with the picture's hue: surfaces lighter than 0.6
+  take 35% of the tint (a full one near white reads as a wash), and the
+  accent starts at the seed accent's lightness and steps down at most
+  0.14 to fit the gamut. The looks' previews are in the mode in use.
+- **Lines and rims:** the kit's soft lines and lifts and the window rims
+  go toward black on a light surface (`style::is_light`, `mix_white`,
+  `style::ink`; `focus_rim` / `rest_rim`).
+- **Pages:** as before, `prefers-color-scheme` by DevTools emulation; the
+  restored pages wait for the scheme before they load.
+
 ## The idle fade (2026-10-24)
 
 **Asked (Joshua):** "a 'fade out' effect — sort of in place of a screen

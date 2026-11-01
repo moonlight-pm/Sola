@@ -489,6 +489,16 @@ End, and the arrows). Composed input (dead keys, CJK) reaches the page,
 with the candidate window at the caret. `<select>` dropdowns open over
 the page.
 
+## Favicons
+
+Each page's row in the bar shows its favicon (the browser's globe until the
+page has one; an SVG favicon, which CEF's image download does not decode,
+is fetched and drawn to a PNG): the browser writes each page's latest favicon to
+`~/.cache/sola/browser/favicons/` and names it on the page's tab. A web
+app made before its page had a favicon (its icon the globe) takes the
+page's favicon as its icon once one comes, in the bar and the launcher;
+a web app with an icon keeps it.
+
 ## Light or dark
 
 Pages are told whether you prefer light or dark (`prefers-color-scheme`):
@@ -496,7 +506,11 @@ Pages are told whether you prefer light or dark (`prefers-color-scheme`):
 both looks shows the one you chose; one with a single look is unchanged.
 Pages that load after a change follow it at once; one already open
 follows it when it is next on screen. Web apps follow it too. Design's
-boards do not. The browser's own chrome stays dark either way.
+boards do not. The pages a desk start brings back wait for it (or for the
+bus to say it has replayed everything it holds, when none is saved) before
+they load, so a site that reads it only once,
+as it loads, comes up in the right one. The browser's own chrome wears
+the desk's theme, light or dark.
 
 ## Keys
 

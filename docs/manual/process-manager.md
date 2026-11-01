@@ -97,8 +97,14 @@ pkill -x sola-shell
 ```
 
 When a service's main process exits, PID 1 also kills what is left in its
-cgroup. Killing `sola-session` therefore ends the applications it
-started, and the new session manager reopens them.
+cgroup — except for a service with `keep_children`, whose children keep
+running. `svc:sola-session` has it (on novus since 2026-11-01; Oath's desk
+profile to follow), and the session manager starts each application in a
+session of its own (`setsid`), out of its process group, which PID 1
+signals when it exits or is stopped: killing or restarting `sola-session` leaves the applications it
+started running, a game under Steam included, and the new session
+manager keeps the saved ones it finds running and reopens only the listed
+ones that have no window.
 
 Not restarted by PID 1: applications. When one exits, the session
 manager publishes its exit and leaves it closed. A stopped shell or
@@ -132,13 +138,20 @@ Appearance. Take such an update with `sudo oath update --confirm
 --reboot`, which restarts nothing before the reboot. A PID 1 from Oath's desk output
 `fdecb1ec3d68` or older restarts the seat's services in an update anyway.
 
-Stopping `svc:sola-session` stops the applications in its cgroup with it.
-The new session manager reopens the applications that were open, and
-Terminal and Projects reattach to their tmux sessions, which kept running.
-An application does not restart itself: its program is in the store
-directory it started from, which never changes, so an application started
-before an apply runs the old program until it is opened again or the
-session manager restarts. `sudo oath undo` takes an apply back the same
+With `keep_children` on `svc:sola-session`, its restart leaves the
+applications running: they stay on the windows and places they had.
+Without it, stopping the service stops the applications in its cgroup,
+and the new session manager reopens them. An application does not restart
+itself: its program is in the store directory it started from, which
+never changes, so an application started before an apply runs the old
+program until it is opened again. The session manager does that for each
+of Sola's applications whose program changed: as it starts, and when an
+apply says it moved packages (`PackagesMoved` on the bus, from `cargo make
+oath apply` when `pkg:sola` did not move), it compares the program each one
+runs (`/proc/<pid>/exe`) with the one its command names now
+(`/bin/sola-mail`, through its links), stops one that differs, and starts
+it again; its windows come back to their places. An
+application that isn't Sola's is never restarted for it. `sudo oath undo` takes an apply back the same
 way, restarting the same services on the previous programs.
 
 ## Environment

@@ -4,6 +4,7 @@
 //! adds `App<E>`, its constructor, and all update/view/subscription methods.
 
 mod desk_menu;
+mod favicons;
 mod pages;
 #[cfg(feature = "vault")]
 mod vault;
@@ -295,6 +296,8 @@ pub struct App<E: Engine> {
     recently_closed: Vec<crate::session::ClosedTab>,
     /// Each page's stable id ([`crate::session::SessionTab::id`]).
     page_ids: HashMap<TabId, String>,
+    /// Each page's favicon file, named on its tab ([`favicons`]).
+    page_icons: HashMap<TabId, String>,
     /// Web apps: the pages hosted as their own apps ([`webapps`]).
     pub(crate) webapps: webapps::WebApps,
     /// Editable contents of the URL bar.
@@ -316,6 +319,14 @@ pub struct App<E: Engine> {
     screen_size: Option<(u32, u32)>,
     /// Light or dark as last told the pages (`Appearance.light`).
     pages_light: Option<bool>,
+    /// The window is up but the restored pages wait for `pages_light`: a
+    /// page that reads `prefers-color-scheme` once as it loads would keep
+    /// the light it was born with ([`Self::open_restored`]). Until
+    /// `Appearance` comes, or the bus says it has replayed everything
+    /// (`Topic::Replayed`: there is none).
+    scheme_wait: bool,
+    /// The bus has replayed what it holds (`Topic::Replayed`).
+    replayed: bool,
     nav_hold: Option<NavHold>,
     page_menus: PageMenusHandle,
     /// Float tracker + iced window id for CSD while floating.
@@ -405,6 +416,8 @@ impl<E: Engine> App<E> {
         recently_closed: Vec<crate::session::ClosedTab>,
     ) -> Self {
         let page_menus = engine.page_menus_handle();
+        // The last run's page favicons: each page sends its own again.
+        favicons::clear();
         let mut app = Self {
             engine,
             windows: crate::page_windows::PageWindows::new(app_id, slot.clone()),
@@ -423,6 +436,7 @@ impl<E: Engine> App<E> {
             engine_tabs_seen: false,
             recently_closed,
             page_ids: HashMap::new(),
+            page_icons: HashMap::new(),
             webapps: webapps::WebApps::default(),
             url_field: String::new(),
             last_seen_url: String::new(),
@@ -433,6 +447,8 @@ impl<E: Engine> App<E> {
             wallpaper: None,
             screen_size: None,
             pages_light: None,
+            scheme_wait: false,
+            replayed: false,
             nav_hold: None,
             page_menus,
             float: sola_kit::FloatState::new(app_id),
@@ -667,6 +683,22 @@ impl<E: Engine> App<E> {
         }
     }
 
+    /// Open the restored pages and the `--app` web app (once its catalog
+    /// entry is in). After `WindowReady`, and after the pages' light or
+    /// dark is sent ([`Msg::SchemeWaited`] if it never comes).
+    fn open_restored(&mut self) -> Task<Msg> {
+        self.scheme_wait = false;
+        let mut hold = Task::none();
+        if let Some((tabs, active_index)) = self.pending_session.take() {
+            self.bootstrap_tabs(tabs, active_index);
+            hold = self.hold_restored_apps();
+        }
+        if let Some(id) = self.webapps.launch.clone() {
+            self.open_app(&id);
+        }
+        hold
+    }
+
     /// Clear compositor env so WebKit child processes cannot open a Wayland
     /// window. Safe after iced has already connected (WindowReady).
     /// Open restored tabs in order and focus `active_index`.
@@ -769,6 +801,7 @@ impl<E: Engine> App<E> {
                 tasks.push(self.windows.close(id).map(|_| Msg::Noop));
             }
         }
+        self.sync_page_icons();
         for (id, shown) in self.windows.take_shown_changes() {
             let _ = self.cmd_tx.send(Cmd::ShowPage { id, shown });
         }
@@ -833,17 +866,14 @@ impl<E: Engine> App<E> {
         match msg {
             Msg::WindowReady(id) => {
                 self.window_id = id;
-                // Iced is connected; open restored tabs now.
-                let mut hold = Task::none();
-                if let Some((tabs, active_index)) = self.pending_session.take() {
-                    self.bootstrap_tabs(tabs, active_index);
-                    hold = self.hold_restored_apps();
+                // Iced is connected; open the restored pages once they can
+                // be told light or dark.
+                let bus_up = sola_kit::app::bus().lock().is_ok_and(|b| b.is_connected());
+                if self.pages_light.is_none() && !self.replayed && bus_up {
+                    self.scheme_wait = true;
+                    return Task::none();
                 }
-                // `--app`: the web app, once its catalog entry is in.
-                if let Some(id) = self.webapps.launch.clone() {
-                    self.open_app(&id);
-                }
-                return hold;
+                return self.open_restored();
             }
             Msg::TitleDrag => return sola_kit::drag(self.windows.window_of(self.cached_active)),
             Msg::TitleResize(dir) => {
@@ -1141,6 +1171,7 @@ impl<E: Engine> App<E> {
                     self.remember_closed(id);
                 }
                 self.webapps.favicons.remove(&id);
+                self.forget_page_icon(id);
                 // If closing the active tab, pick a new active tab
                 // first so the engine never sees `active` pointing
                 // at a closed tab.
@@ -1328,22 +1359,36 @@ impl<E: Engine> App<E> {
             Msg::Bus(message) => {
                 self.windows.update(&message);
                 use sola_bus::topics::Topic;
+                let mut restored = Task::none();
                 match Topic::parse(&message) {
                     Some(Topic::OutputGeometry(g)) if g.width > 0 && g.height > 0 => {
                         self.screen_size = Some((g.width as u32, g.height as u32));
                     }
+                    Some(Topic::Replayed) => {
+                        self.replayed = true;
+                        if self.scheme_wait {
+                            tracing::info!("no Appearance saved: restored pages open without light or dark");
+                            restored = self.open_restored();
+                        }
+                    }
                     Some(Topic::Appearance(look)) if self.pages_light != Some(look.light) => {
                         self.pages_light = Some(look.light);
                         let _ = self.cmd_tx.send(Cmd::ColorScheme { light: look.light });
+                        if self.scheme_wait {
+                            // The scheme is queued ahead of the pages.
+                            restored = self.open_restored();
+                        }
                     }
                     _ => {}
                 }
                 // The tab bar's stoplight: as the window's own close.
                 if let Some(window) = self.windows.close_request(&message) {
-                    return self.on_page_window(window, iced::window::Event::CloseRequested);
+                    let close = self.on_page_window(window, iced::window::Event::CloseRequested);
+                    return Task::batch([restored, close]);
                 }
                 let rebind = self.on_workspace_message(&message);
                 return Task::batch([
+                    restored,
                     rebind,
                     crate::integration::handle_bus(self, message, self.app_id),
                 ]);
@@ -2010,17 +2055,6 @@ impl<E: Engine> App<E> {
                     }
                 }
             }
-        }
-    }
-
-    /// Page favicons were for the tab strip; with a window per page nothing
-    /// shows them yet, so they are dropped as they arrive.
-    /// Keep each page's latest favicon: a wrapped page's app icon.
-    fn drain_favicons(&mut self) {
-        let icons: Vec<crate::engine::FaviconIpc> =
-            self.engine.favicons_handle().lock().unwrap().drain(..).collect();
-        for icon in icons {
-            self.webapps.favicons.insert(icon.tab_id, icon.png);
         }
     }
 

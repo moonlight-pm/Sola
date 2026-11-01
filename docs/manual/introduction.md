@@ -124,10 +124,11 @@ from a checkout, or `oath set` and `oath apply` of a published release
 ([Installing](#installing)). PID 1 restarts each service whose program
 comes from a package that moved, and no other: the Sola services restart,
 while rivulet and the tmux servers that hold Terminal's and Projects'
-shells keep running. The restarted session manager reopens the
-applications that were open, and Terminal and Projects reattach to their
-tmux sessions. No session needs ending. An application does not restart
-itself when its package moves.
+shells keep running, and so do the open applications (the session
+manager keeps its children). No session needs ending. An application
+whose own package moved is stopped and started again on its new program by
+the session manager, alone, once the apply has said so; one that isn't Sola's (Steam,
+a game) is never restarted for it.
 
 Every apply takes a generation. `sudo oath undo` puts back the pins the
 last apply changed and relinks `/bin`, and PID 1 restarts the same
