@@ -260,6 +260,9 @@ pub fn handle_manage_start(state: &mut AppData) {
             tracing::info!(window_id, %app_id, w = propose.0, h = propose.1, "propose_dimensions");
             proxy.propose_dimensions(propose.0, propose.1);
             state.last_proposed.insert(window_id, propose);
+            if propose.0 > 0 && propose.1 > 0 {
+                state.window_ids.note_size(window_id, propose);
+            }
             if crate::proc_identity::is_gamescope_app_id(&app_id) {
                 state
                     .gamescope_last_size_at

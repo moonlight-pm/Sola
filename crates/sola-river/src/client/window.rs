@@ -296,8 +296,11 @@ fn take_back_id(state: &mut AppData, minted: u32, identifier: &str) {
             if let Some(n) = state.nodes_by_window.remove(&minted) {
                 state.nodes_by_window.insert(old, n);
             }
-            if let Some(d) = state.pending.manage.remove(&minted) {
-                state.pending.manage.insert(old, d);
+            let had = state.pending.manage.remove(&minted);
+            // Offered the size it had, not 0×0: it does not resize on the
+            // way back.
+            if let Some(size) = state.window_ids.size_for(identifier).or(had) {
+                state.pending.manage.insert(old, size);
             }
             info!(window_id = old, minted, %identifier, "window found again: its id back");
             old

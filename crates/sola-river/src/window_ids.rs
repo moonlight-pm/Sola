@@ -6,6 +6,11 @@
 //! keep their ids. The apps name those ids when they announce their tabs
 //! again, and the shell pairs each tab with its own window, not by order.
 //!
+//! It keeps the size each window was last given too: a window found again
+//! is offered that size, not 0×0 ("pick your own"), so it does not resize
+//! twice on the way back (a browser page left without a frame at its last
+//! size stays blank).
+//!
 //! The map belongs to one compositor (its Wayland socket, by inode and
 //! change time): a new rivulet starts it over.
 
@@ -20,12 +25,21 @@ use tracing::warn;
 struct Saved {
     compositor: String,
     ids: HashMap<String, u32>,
+    /// The size each window was last given, by identifier.
+    #[serde(default)]
+    sizes: HashMap<String, (i32, i32)>,
 }
+
+/// Sizes are written at most this often (a drag resizes every frame).
+const SIZE_FLUSH: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[derive(Default)]
 pub struct WindowIds {
     path: Option<PathBuf>,
     saved: Saved,
+    /// A size changed since the last write, and when that was.
+    dirty: bool,
+    flushed: Option<std::time::Instant>,
 }
 
 impl WindowIds {
@@ -39,11 +53,12 @@ impl WindowIds {
             .filter(|s| !compositor.is_empty() && s.compositor == compositor)
             .unwrap_or(Saved {
                 compositor,
-                ids: HashMap::new(),
+                ..Saved::default()
             });
         Self {
             path: Some(path),
             saved,
+            ..Self::default()
         }
     }
 
@@ -63,16 +78,51 @@ impl WindowIds {
         }
     }
 
-    /// The window `id` closed.
-    pub fn forget(&mut self, id: u32) {
-        let before = self.saved.ids.len();
-        self.saved.ids.retain(|_, v| *v != id);
-        if self.saved.ids.len() != before {
-            self.save();
+    /// The size the window with `identifier` was last given.
+    pub fn size_for(&self, identifier: &str) -> Option<(i32, i32)> {
+        self.saved.sizes.get(identifier).copied()
+    }
+
+    /// Window `id` was given `size` (written by [`Self::flush`]).
+    pub fn note_size(&mut self, id: u32, size: (i32, i32)) {
+        let Some(identifier) = self.identifier_of(id) else {
+            return;
+        };
+        if self.saved.sizes.insert(identifier, size) != Some(size) {
+            self.dirty = true;
         }
     }
 
-    fn save(&self) {
+    /// Write the sizes noted since the last write, at most every
+    /// [`SIZE_FLUSH`].
+    pub fn flush(&mut self) {
+        if !self.dirty || self.flushed.is_some_and(|t| t.elapsed() < SIZE_FLUSH) {
+            return;
+        }
+        self.save();
+    }
+
+    /// The window `id` closed.
+    pub fn forget(&mut self, id: u32) {
+        let Some(identifier) = self.identifier_of(id) else {
+            return;
+        };
+        self.saved.ids.remove(&identifier);
+        self.saved.sizes.remove(&identifier);
+        self.save();
+    }
+
+    fn identifier_of(&self, id: u32) -> Option<String> {
+        self.saved
+            .ids
+            .iter()
+            .find(|(_, v)| **v == id)
+            .map(|(k, _)| k.clone())
+    }
+
+    fn save(&mut self) {
+        self.dirty = false;
+        self.flushed = Some(std::time::Instant::now());
         let Some(path) = &self.path else {
             return;
         };
@@ -110,7 +160,9 @@ mod tests {
             saved: Saved {
                 compositor: "c".into(),
                 ids: pairs.iter().map(|(k, v)| ((*k).to_string(), *v)).collect(),
+                sizes: HashMap::new(),
             },
+            ..WindowIds::default()
         }
     }
 
@@ -123,5 +175,9 @@ mod tests {
         assert_eq!(w.id_for("b"), None);
         w.remember("c", 13);
         assert_eq!(w.highest(), 13);
+        w.note_size(7, (1200, 2100));
+        assert_eq!(w.size_for("a"), Some((1200, 2100)));
+        w.forget(7);
+        assert_eq!(w.size_for("a"), None);
     }
 }

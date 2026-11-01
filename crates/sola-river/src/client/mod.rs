@@ -350,6 +350,7 @@ pub fn connect(
 /// and if pending is dirty, asks River to start a new manage cycle via
 /// `manage_dirty`.
 pub fn bus_tick(state: &mut AppData) {
+    state.window_ids.flush();
     // sola-bus holds sticky topics only in memory. A bus restart wipes
     // OutputGeometry / Windows; if we stay connected without re-emitting,
     // a late shell (or a shell that also restarted for the install) never
