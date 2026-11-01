@@ -74,6 +74,9 @@ pub(crate) fn key_button_inset() -> f32 {
 
 /// How long the copy-URL glyph stays on the check after a successful copy.
 const COPY_URL_FLASH: Duration = Duration::from_millis(1200);
+/// How long restored pages wait for `Appearance` (light or dark) before
+/// opening without it: the bus hands it over as it connects.
+const SCHEME_WAIT: Duration = Duration::from_millis(1500);
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -174,6 +177,9 @@ pub enum Msg {
     /// Compositor clipboard probe for page paste (image or text).
     PageOffer(sola_kit::clipboard::Offer),
     WindowReady(Option<iced::window::Id>),
+    /// No `Appearance` came within [`SCHEME_WAIT`] of the window: open the
+    /// restored pages without it.
+    SchemeWaited,
     /// A page window opened, resized, gained focus, or was asked to close.
     PageWindow(iced::window::Id, iced::window::Event),
     /// A task finished with nothing to do (a page window opened or closed).
@@ -316,6 +322,10 @@ pub struct App<E: Engine> {
     screen_size: Option<(u32, u32)>,
     /// Light or dark as last told the pages (`Appearance.light`).
     pages_light: Option<bool>,
+    /// The window is up but the restored pages wait for `pages_light`: a
+    /// page that reads `prefers-color-scheme` once as it loads would keep
+    /// the light it was born with ([`Self::open_restored`]).
+    scheme_wait: bool,
     nav_hold: Option<NavHold>,
     page_menus: PageMenusHandle,
     /// Float tracker + iced window id for CSD while floating.
@@ -433,6 +443,7 @@ impl<E: Engine> App<E> {
             wallpaper: None,
             screen_size: None,
             pages_light: None,
+            scheme_wait: false,
             nav_hold: None,
             page_menus,
             float: sola_kit::FloatState::new(app_id),
@@ -667,6 +678,22 @@ impl<E: Engine> App<E> {
         }
     }
 
+    /// Open the restored pages and the `--app` web app (once its catalog
+    /// entry is in). After `WindowReady`, and after the pages' light or
+    /// dark is sent ([`Msg::SchemeWaited`] if it never comes).
+    fn open_restored(&mut self) -> Task<Msg> {
+        self.scheme_wait = false;
+        let mut hold = Task::none();
+        if let Some((tabs, active_index)) = self.pending_session.take() {
+            self.bootstrap_tabs(tabs, active_index);
+            hold = self.hold_restored_apps();
+        }
+        if let Some(id) = self.webapps.launch.clone() {
+            self.open_app(&id);
+        }
+        hold
+    }
+
     /// Clear compositor env so WebKit child processes cannot open a Wayland
     /// window. Safe after iced has already connected (WindowReady).
     /// Open restored tabs in order and focus `active_index`.
@@ -833,17 +860,22 @@ impl<E: Engine> App<E> {
         match msg {
             Msg::WindowReady(id) => {
                 self.window_id = id;
-                // Iced is connected; open restored tabs now.
-                let mut hold = Task::none();
-                if let Some((tabs, active_index)) = self.pending_session.take() {
-                    self.bootstrap_tabs(tabs, active_index);
-                    hold = self.hold_restored_apps();
+                // Iced is connected; open the restored pages once they can
+                // be told light or dark.
+                if self.pages_light.is_none() {
+                    self.scheme_wait = true;
+                    return Task::perform(tokio::time::sleep(SCHEME_WAIT), |_| Msg::SchemeWaited);
                 }
-                // `--app`: the web app, once its catalog entry is in.
-                if let Some(id) = self.webapps.launch.clone() {
-                    self.open_app(&id);
+                return self.open_restored();
+            }
+            Msg::SchemeWaited => {
+                if self.scheme_wait {
+                    tracing::warn!(
+                        wait_ms = SCHEME_WAIT.as_millis() as u64,
+                        "no Appearance yet: restored pages open without light or dark"
+                    );
+                    return self.open_restored();
                 }
-                return hold;
             }
             Msg::TitleDrag => return sola_kit::drag(self.windows.window_of(self.cached_active)),
             Msg::TitleResize(dir) => {
@@ -1328,6 +1360,7 @@ impl<E: Engine> App<E> {
             Msg::Bus(message) => {
                 self.windows.update(&message);
                 use sola_bus::topics::Topic;
+                let mut restored = Task::none();
                 match Topic::parse(&message) {
                     Some(Topic::OutputGeometry(g)) if g.width > 0 && g.height > 0 => {
                         self.screen_size = Some((g.width as u32, g.height as u32));
@@ -1335,15 +1368,21 @@ impl<E: Engine> App<E> {
                     Some(Topic::Appearance(look)) if self.pages_light != Some(look.light) => {
                         self.pages_light = Some(look.light);
                         let _ = self.cmd_tx.send(Cmd::ColorScheme { light: look.light });
+                        if self.scheme_wait {
+                            // The scheme is queued ahead of the pages.
+                            restored = self.open_restored();
+                        }
                     }
                     _ => {}
                 }
                 // The tab bar's stoplight: as the window's own close.
                 if let Some(window) = self.windows.close_request(&message) {
-                    return self.on_page_window(window, iced::window::Event::CloseRequested);
+                    let close = self.on_page_window(window, iced::window::Event::CloseRequested);
+                    return Task::batch([restored, close]);
                 }
                 let rebind = self.on_workspace_message(&message);
                 return Task::batch([
+                    restored,
                     rebind,
                     crate::integration::handle_bus(self, message, self.app_id),
                 ]);

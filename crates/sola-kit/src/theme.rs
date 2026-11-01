@@ -175,7 +175,8 @@ fn extended_from_atoms(a: &Atoms) -> Extended {
         success: Success::generate(success, bg, fg),
         warning: Warning::generate(warning, bg, fg),
         danger: Danger::generate(danger, bg, fg),
-        is_dark: true,
+        // The light theme (Settings → Appearance → Light) has a light base.
+        is_dark: crate::components::style::relative_luminance(bg) <= 0.5,
     }
 }
 
@@ -223,6 +224,7 @@ pub fn install_selection(color: Color) {
 /// ([`crate::components::style::chrome_surface`]). Every theme path calls
 /// it (the bus consumer, the shell).
 pub fn install_atoms(atoms: &Atoms) {
+    crate::components::style::install_light(atoms.bg);
     install_selection(atoms.selection);
     if let Ok(mut guard) = HIGHLIGHT.write() {
         *guard = atoms.highlight;

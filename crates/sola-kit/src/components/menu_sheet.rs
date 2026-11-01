@@ -44,7 +44,7 @@ pub fn colors(theme: &Theme) -> Colors {
         sheet: raised,
         edge: mix_white(raised, 0.1),
         hot: alpha(p.primary.base.color, 0.14),
-        sep: alpha(Color::WHITE, 0.07),
+        sep: crate::components::style::ink(0.07),
         ink,
         ink_dim: alpha(ink, 0.55),
         ink_faint: alpha(ink, 0.38),

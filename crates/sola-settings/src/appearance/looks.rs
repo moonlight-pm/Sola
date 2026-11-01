@@ -10,7 +10,7 @@ use iced::{Alignment, Background as Fill, Border, Color, Element, Length, Theme}
 use sola_bus::topics::{Appearance, CustomLook, ThemeVariation};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::form::toggle_style;
-use sola_kit::components::style::{SPACE_MD, SPACE_SM, SPACE_XS, alpha};
+use sola_kit::components::style::{SPACE_MD, SPACE_SM, SPACE_XS, ink};
 
 use super::{AppearanceMsg, AppearanceState, slider_with};
 use crate::page;
@@ -273,7 +273,7 @@ pub(super) fn yours(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
             container::Style {
                 background: Some(Fill::Color(color)),
                 border: Border {
-                    color: alpha(Color::WHITE, 0.2),
+                    color: ink(0.2),
                     width: 1.0,
                     radius: 4.0.into(),
                 },
@@ -381,7 +381,7 @@ fn card(face: Face, picked: bool, on_press: AppearanceMsg) -> Element<'static, A
                 color: if picked {
                     theme.extended_palette().primary.base.color
                 } else {
-                    alpha(Color::WHITE, 0.12)
+                    ink(0.12)
                 },
                 width: ring,
                 radius: RADIUS.into(),
@@ -394,7 +394,7 @@ fn card(face: Face, picked: bool, on_press: AppearanceMsg) -> Element<'static, A
             container::Style {
                 background: Some(Fill::Color(source)),
                 border: Border {
-                    color: alpha(Color::WHITE, 0.25),
+                    color: ink(0.25),
                     width: 1.0,
                     radius: 4.0.into(),
                 },

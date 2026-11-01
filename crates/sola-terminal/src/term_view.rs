@@ -310,25 +310,39 @@ impl Palette {
         // keep recognisable values rather than inventing a tint.
         let magenta = rgb(0xaa, 0x33, 0xaa);
         let cyan = rgb(0x33, 0xaa, 0xaa);
+        // The light theme (Settings → Appearance → Light): black is dark
+        // and white light, as light terminal schemes have them, so black
+        // text still reads on the light ground.
+        let light = sola_kit::components::style::relative_luminance(atoms.bg) > 0.5;
+        let (black, white) = if light {
+            (atoms.fg_muted, atoms.bg_hover)
+        } else {
+            (atoms.bg_hover, atoms.fg_muted)
+        };
         Self {
             bg: atoms.bg,
             fg: atoms.fg,
             // Fixed deep gold, independent of the theme accent — a warm gold
-            // cursor reads clearly on every palette and never muddies to brown.
-            cursor: rgb(0xff, 0xb8, 0x00),
+            // cursor reads clearly on every palette and never muddies to
+            // brown; darker on the light theme.
+            cursor: if light {
+                rgb(0xc9, 0x8a, 0x00)
+            } else {
+                rgb(0xff, 0xb8, 0x00)
+            },
             // Neon accent wash — not the graphite `selection` atom (UI rows)
             // and not a darkened-cyan mix of that neon toward black.
             selection: with_alpha(atoms.accent, SELECTION_WASH_ALPHA),
             ansi: [
-                atoms.bg_hover,                           // 0  black
+                black,                                    // 0  black
                 atoms.danger,                             // 1  red
                 atoms.success,                            // 2  green
                 atoms.warning,                            // 3  yellow
                 atoms.accent,                             // 4  blue
                 magenta,                                  // 5  magenta
                 cyan,                                     // 6  cyan
-                atoms.fg_muted,                           // 7  white
-                mix(atoms.bg_hover, atoms.fg_muted, 0.5), // 8  bright black
+                white,                                    // 7  white
+                mix(black, white, 0.5),                   // 8  bright black
                 lighten(atoms.danger),                    // 9  bright red
                 lighten(atoms.success),                   // 10 bright green
                 lighten(atoms.warning),                   // 11 bright yellow

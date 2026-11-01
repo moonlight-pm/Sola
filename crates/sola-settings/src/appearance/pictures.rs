@@ -198,7 +198,7 @@ fn tile<'a>(state: &'a AppearanceState, path: &'a Path) -> Element<'a, Appearanc
                 color: if set {
                     theme.extended_palette().primary.base.color
                 } else {
-                    alpha(Color::WHITE, 0.12)
+                    sola_kit::components::style::ink(0.12)
                 },
                 width: ring,
                 radius: RADIUS.into(),

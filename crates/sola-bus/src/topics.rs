@@ -520,8 +520,10 @@ pub struct Appearance {
     /// then its own. `None`: the scheme alone.
     #[serde(default)]
     pub custom: Option<u8>,
-    /// Light mode: what the desk tells web pages it prefers
-    /// (`prefers-color-scheme`); off, dark. Sola's own windows stay dark.
+    /// Light mode: Sola's windows wear the light theme (the shell writes
+    /// the light seed into `Topic::Theme`, with the picture's colors over
+    /// it when adapting), and web pages are told light
+    /// (`prefers-color-scheme`); off, dark.
     #[serde(default)]
     pub light: bool,
     /// Lock the screen when the idle fade is complete (needs a password,

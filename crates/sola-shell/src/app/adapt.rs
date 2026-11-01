@@ -36,9 +36,11 @@ impl Shell {
         let look = look.unwrap_or_default();
         self.pictures.look = Some(look.clone());
         let strength = look.strength.min(100) as f32 / 100.0;
-        let restrength = strength != self.adapt.strength;
+        // The previews in Settings are at the strength and in the mode.
+        let restrength = strength != self.adapt.strength || look.light != self.adapt.light;
         self.adapt.on = look.adapt_theme;
         self.adapt.strength = strength;
+        self.adapt.light = look.light;
         self.adapt.variation = look.variation as usize;
         self.adapt.colors = look.colors;
         self.lock_idle = look.lock_idle;

@@ -227,7 +227,7 @@ Settings' **Appearance** page holds, top to bottom:
 
 | Section | Settings |
 |---|---|
-| Light or dark | **Mode**: **Dark** (at first) or **Light**: what web pages are told you prefer ([Browser](sola-browser.md#light-or-dark)). Sola's own windows stay dark |
+| Light or dark | **Mode**: **Dark** (at first) or **Light**: the desk and every Sola window wear the light theme, and web pages are told you prefer it ([Browser](sola-browser.md#light-or-dark)) |
 | Background picture | The picture's file name and **Clear**, or "None — the black ground."; under it every picture set before, each with the look it was worn with ([Kept pictures](#kept-pictures)). A picture is set from Paint (File → Set as Background), Browser, or `solactl background` |
 | Colors | **Adapt colors to the background**, **Strength**, and a card for each look |
 | Your colors | **Window**, **Panels**, **Highlight**, **Accent** |
@@ -239,8 +239,15 @@ The settings travel as the persistent topic `Appearance`, saved in
 `Theme`; the compositor acts on the opacity, the idle fade and the dim
 ([Shell § The idle fade](sola-shell.md#the-idle-fade) has their defaults
 and ranges; [Compositor](compositor.md) how they are drawn); the browser
-acts on light or dark. There is no light theme for Sola itself: every look
-is dark, and **Light** changes only what web pages are told.
+acts on light or dark too. **Light** gives Sola a light theme: the Shell
+writes the light greys into `Theme` (a near-white base, panels and lines a
+step darker, near-black text, a deeper accent and status colors), and with
+**Adapt colors to the background** on, the picture's colors go over them
+as over the dark greys: the same hues, a softer tint, an accent dark enough
+to read on white. The looks' previews show the mode in use. Lines, lifts
+and window rims go darker on a light surface instead of lighter; the
+terminal's black is dark and its white light. **Dark** puts the dark greys
+back.
 
 ## Colors from the background picture
 
