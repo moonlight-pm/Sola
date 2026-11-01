@@ -1035,22 +1035,45 @@ impl App {
             .find(|id| **id == self.selected)
             .or_else(|| ids.first())
             .cloned();
-        let tasks: Vec<Task<Msg>> = ids
-            .iter()
-            .map(|id| self.open_window(id, front.as_deref() != Some(id.as_str())))
-            .collect();
-        Task::batch(tasks)
+        // The windows one after another, as announced: the shell pairs a
+        // process's new windows with its tabs by order.
+        let mut opens = Vec::new();
+        let mut attaches = Vec::new();
+        for id in &ids {
+            if let Some((open, attach)) =
+                self.open_window_parts(id, front.as_deref() != Some(id.as_str()))
+            {
+                opens.push(open);
+                attaches.push(attach);
+            }
+        }
+        Task::batch([
+            sola_kit::tabs::in_order(opens).map(|_| Msg::Ignore),
+            Task::batch(attaches),
+        ])
     }
 
     /// Open session `tab_id`'s window and attach it.
     fn open_window(&mut self, tab_id: &str, background: bool) -> Task<Msg> {
-        if self.windows.has(tab_id) {
-            return Task::none();
+        match self.open_window_parts(tab_id, background) {
+            Some((open, attach)) => Task::batch([open.map(|_| Msg::Ignore), attach]),
+            None => Task::none(),
         }
-        let open = self.windows.open(APP_ID, tab_id, background).map(|_| Msg::Ignore);
+    }
+
+    /// [`Self::open_window`]'s window and its attach, apart.
+    fn open_window_parts(
+        &mut self,
+        tab_id: &str,
+        background: bool,
+    ) -> Option<(Task<iced::window::Id>, Task<Msg>)> {
+        if self.windows.has(tab_id) {
+            return None;
+        }
+        let open = self.windows.open(APP_ID, tab_id, background);
         let attach = self.attach_pane(tab_id, &[]);
         self.publish_menu();
-        Task::batch([open, attach])
+        Some((open, attach))
     }
 
     /// Close a session's window (its close dot, Close Window, the tab bar's

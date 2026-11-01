@@ -232,6 +232,16 @@ impl TabWindows {
     }
 }
 
+/// Open several tabs' windows one after another, in the order their tabs
+/// were announced ([`TabWindows::open`]). The shell pairs a process's new
+/// windows with its tabs by order — sola-river numbers windows as they are
+/// created — and a batch of `window::open` tasks creates them in any order,
+/// putting tabs on each other's windows (a page then thinks it is hidden
+/// and stops painting).
+pub fn in_order(opens: Vec<Task<window::Id>>) -> Task<window::Id> {
+    opens.into_iter().reduce(Task::chain).unwrap_or_else(Task::none)
+}
+
 fn tab(
     key: &str,
     app_id: &str,

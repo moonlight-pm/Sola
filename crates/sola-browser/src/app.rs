@@ -783,6 +783,7 @@ impl<E: Engine> App<E> {
     /// and show the active page when it changed from outside its window.
     fn sync_windows(&mut self) -> Task<Msg> {
         let mut tasks = Vec::new();
+        let mut opens = Vec::new();
         let ids: Vec<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
         for id in &ids {
             if !self.windows.has(*id) && !self.webapps.holds(*id) {
@@ -790,13 +791,11 @@ impl<E: Engine> App<E> {
                 let background = *id != self.cached_active;
                 // A web app's page opens as the app.
                 let app_id = self.window_app_id(*id);
-                tasks.push(
-                    self.windows
-                        .open(&app_id, *id, &page_id, background)
-                        .map(|_| Msg::Noop),
-                );
+                opens.push(self.windows.open(&app_id, *id, &page_id, background));
             }
         }
+        // One after another, as announced: the shell pairs by order.
+        tasks.push(sola_kit::tabs::in_order(opens).map(|_| Msg::Noop));
         for id in self.windows.open_tabs() {
             if !ids.contains(&id) {
                 tasks.push(self.windows.close(id).map(|_| Msg::Noop));

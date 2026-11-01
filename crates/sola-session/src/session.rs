@@ -79,8 +79,9 @@ pub struct Session {
     /// The last live window list.
     windows: Vec<Window>,
     /// When the apps were last checked for a moved package
-    /// ([`refresh`]).
+    /// ([`refresh`]), and when this process started.
     checked_at: Option<Instant>,
+    started_at: Instant,
     /// Apps stopped for a new program, by app id: their command, to start
     /// again once they exit.
     relaunch: HashMap<String, String>,
@@ -104,6 +105,7 @@ impl Session {
             owners: Owners::default(),
             windows: Vec::new(),
             checked_at: None,
+            started_at: Instant::now(),
             relaunch: HashMap::new(),
             moving: Vec::new(),
         }
