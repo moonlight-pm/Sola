@@ -105,7 +105,11 @@ typed while **Checking…** shows are ignored. A password typed through a
 paired KVM works like the local keyboard.
 
 Locking the screen also locks the vault, unless **Lock when the screen
-locks** is off in Vault's settings ([Vault](sola-vault.md#locking)).
+locks** is off in Vault's settings ([Vault](sola-vault.md#locking)): once
+the compositor has the screen locked, `sola-lock` says so on the bus
+(`ScreenLock`), and says it is unlocked once you unlock it
+([The bus](bus.md#app-state)). A lock screen that dies says nothing, so
+the screen still counts as locked.
 
 While locked, the compositor (`ext-session-lock-v1`) shows and sends input
 to the lock screen only. If `sola-lock` dies, the screen stays locked and the

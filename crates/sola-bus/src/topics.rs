@@ -1928,6 +1928,16 @@ pub struct VaultState {
     pub items: u32,
 }
 
+/// The screen is locked (`Topic::ScreenLock`, sticky, from `sola-lock`):
+/// `locked` once the compositor confirms the lock, and `false` once
+/// `sola-lock` unlocks it. A lock screen that dies says nothing: the
+/// compositor keeps the screen locked until another one takes over, so
+/// `locked` stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ScreenLock {
+    pub locked: bool,
+}
+
 /// What a right-click landed on, as the app sees it. Never the text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct DeskMenuContext {
@@ -2336,6 +2346,11 @@ define_topics! {
     // An app asks to be the handler for a link scheme or a file type (an
     // app through the kit → shell, which asks you). Appended last.
     DefaultHandlerRequest(DefaultHandlerRequest),
+
+    // The screen locked or unlocked (sola-lock → sola-vaultd). Sticky.
+    // Appended last.
+    #[sticky]
+    ScreenLock(ScreenLock),
 }
 
 #[cfg(test)]
@@ -2386,6 +2401,18 @@ mod tests {
             other => panic!("expected MailStatus, got {other:?}"),
         }
         assert_eq!(TopicKind::MailStatus.as_str(), "MailStatus");
+    }
+
+    #[test]
+    fn screen_lock_is_sticky_on_the_wire() {
+        let msg = Topic::ScreenLock(ScreenLock { locked: true }).to_message();
+        assert!(TopicKind::ScreenLock.behavior().is_sticky());
+        assert!(msg.keys.is_empty());
+        match Topic::parse(&msg) {
+            Some(Topic::ScreenLock(s)) => assert!(s.locked),
+            other => panic!("expected ScreenLock, got {other:?}"),
+        }
+        assert_eq!(TopicKind::ScreenLock.as_str(), "ScreenLock");
     }
 
     #[test]

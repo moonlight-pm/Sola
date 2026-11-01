@@ -2,11 +2,13 @@
 //! vault's, by the click's context. Pure, so the composition is tested
 //! without a window.
 
+use std::collections::HashMap;
+
 use sola_bus::topics::{DeskEdit, DeskMenuContext, DeskMenuItem, DeskMenuOpen, DeskPick};
 use sola_core::KeyChord;
 use sola_vault_proto::{DeliverField, ItemKind, ItemSummary};
 
-use super::vault::{Search, VaultView};
+use super::vault::{ItemFields, Search, VaultView};
 
 /// One row of a column.
 #[derive(Debug, Clone, PartialEq)]
@@ -53,7 +55,8 @@ pub enum Sub {
     Vault,
     /// A login of the site: its index in the vault's matches.
     Login(usize),
-    /// A search result: its index in what the search shows.
+    /// A search result (an item of any kind): its index in what the
+    /// search shows.
     Found(usize),
 }
 
@@ -187,12 +190,27 @@ fn join(groups: Vec<Vec<Row>>) -> Vec<Row> {
     out
 }
 
-/// The column `sub` opens.
+/// The item a column of values is for: a login of the site, or a search
+/// result.
+pub fn item_of<'a>(sub: Sub, vault: &'a VaultView, search: Option<&'a Search>) -> Option<&'a ItemSummary> {
+    match sub {
+        Sub::Login(i) => match vault {
+            VaultView::Unlocked { logins } => logins.get(i),
+            _ => None,
+        },
+        Sub::Found(i) => search.and_then(|s| s.found().get(i).copied()),
+        Sub::App(_) | Sub::Vault => None,
+    }
+}
+
+/// The column `sub` opens. `fields` holds the items' values the menu has
+/// asked for, by item id.
 pub fn sub_rows(
     open: &DeskMenuOpen,
     sub: Sub,
     vault: &VaultView,
     search: Option<&Search>,
+    fields: &HashMap<String, ItemFields>,
 ) -> Vec<Row> {
     match sub {
         Sub::App(i) => match open.items.get(i) {
@@ -223,28 +241,24 @@ pub fn sub_rows(
                     .map(|(i, item)| login_row(item, Sub::Found(i)))
                     .collect();
                 if found.is_empty() {
-                    vec![note("No logins found")]
+                    vec![note("Nothing found")]
                 } else {
                     found
                 }
             }
             None => vault_rows(vault, &open.context),
         },
-        Sub::Login(i) => match vault {
-            VaultView::Unlocked { logins } => logins
-                .get(i)
-                .map(|item| value_rows(item, &open.context, Fill::Offered))
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        },
-        // A search finds any site's logins: Fill is only for the page's.
-        Sub::Found(i) => search
-            .and_then(|s| {
-                s.found()
-                    .get(i)
-                    .map(|item| value_rows(item, &open.context, Fill::NotHere))
-            })
-            .unwrap_or_default(),
+        // A search finds any site's items: Fill is only for the page's.
+        Sub::Login(_) | Sub::Found(_) => {
+            let fill = if matches!(sub, Sub::Login(_)) {
+                Fill::Offered
+            } else {
+                Fill::NotHere
+            };
+            item_of(sub, vault, search)
+                .map(|item| value_rows(item, fields.get(&item.id), &open.context, fill))
+                .unwrap_or_default()
+        }
     }
 }
 
@@ -275,7 +289,8 @@ fn vault_rows(vault: &VaultView, context: &DeskMenuContext) -> Vec<Row> {
     }
 }
 
-/// An item that opens its values.
+/// An item that opens its values (a login of the page, or any item the
+/// search found).
 fn login_row(item: &ItemSummary, sub: Sub) -> Row {
     let hint = Some(item.subtitle.clone()).filter(|s| !s.is_empty());
     row(&item.name, hint, true, Does::Sub(sub))
@@ -294,17 +309,22 @@ pub enum Fill {
 /// A re-prompt item's note, over the row that opens it in Vault.
 pub const REPROMPT_NOTE: &str = "Asks for your master password";
 pub const OPEN_IN_VAULT: &str = "Open in Vault…";
+/// An item's column while its values are on their way.
+pub const READING_ITEM: &str = "Reading the item…";
+pub const NO_VALUES: &str = "No values";
 
-/// What can be put into the field from `item`: in a secret field only the
-/// password and the code; on a page (the browser) the page's own logins
-/// fill whole too. A re-prompt item's rows are there but dimmed: its
-/// values wait for the master password, in Vault.
-pub fn value_rows(item: &ItemSummary, context: &DeskMenuContext, fill: Fill) -> Vec<Row> {
+/// What can be put into the field from `item`: every value it has, by
+/// label, as the service listed them (`fields`, `None` before it is
+/// asked); on a page (the browser) the page's own logins fill whole too.
+/// Any field takes any value. A re-prompt item's rows are there but
+/// dimmed: its values wait for the master password, in Vault.
+pub fn value_rows(
+    item: &ItemSummary,
+    fields: Option<&ItemFields>,
+    context: &DeskMenuContext,
+    fill: Fill,
+) -> Vec<Row> {
     let live = !item.reprompt;
-    let deliver = |field| Does::Deliver {
-        item: item.id.clone(),
-        field,
-    };
     let mut rows = Vec::new();
     if fill == Fill::Offered && context.site.is_some() && item.kind == ItemKind::Login {
         rows.push(row(
@@ -317,12 +337,17 @@ pub fn value_rows(item: &ItemSummary, context: &DeskMenuContext, fill: Fill) -> 
         ));
         rows.push(Row::Sep);
     }
-    if !context.secret {
-        rows.push(row("Username", None, live, deliver(DeliverField::Username)));
-    }
-    rows.push(row("Password", None, live, deliver(DeliverField::Password)));
-    if item.has_totp {
-        rows.push(row("One-time code", None, live, deliver(DeliverField::Code)));
+    match fields {
+        None | Some(ItemFields::Asking) => rows.push(note(READING_ITEM)),
+        Some(ItemFields::Failed(message)) => rows.push(note(message)),
+        Some(ItemFields::Listed(list)) if list.is_empty() => rows.push(note(NO_VALUES)),
+        Some(ItemFields::Listed(list)) => rows.extend(list.iter().map(|f| {
+            let field = DeliverField::Field { key: f.key.clone() };
+            row(&f.label, None, live, Does::Deliver {
+                item: item.id.clone(),
+                field,
+            })
+        })),
     }
     if item.reprompt {
         rows.push(Row::Sep);
@@ -369,6 +394,33 @@ pub(crate) mod tests {
             deleted: false,
             search: id.into(),
         }
+    }
+
+    /// An item's values as the service lists them: `(key, label)`.
+    pub(crate) fn listed(fields: &[(&str, &str)]) -> ItemFields {
+        ItemFields::Listed(
+            fields
+                .iter()
+                .map(|(key, label)| sola_vault_proto::FieldInfo {
+                    key: key.to_string(),
+                    label: label.to_string(),
+                    hidden: *key == "password",
+                })
+                .collect(),
+        )
+    }
+
+    /// A login's: username, password, and a code when it has one.
+    pub(crate) fn login_values(totp: bool) -> ItemFields {
+        let mut fields = vec![("username", "Username"), ("password", "Password")];
+        if totp {
+            fields.push(("totp", "One-time code"));
+        }
+        listed(&fields)
+    }
+
+    fn none() -> HashMap<String, ItemFields> {
+        HashMap::new()
     }
 
     fn labels(rows: &[Row]) -> Vec<&str> {
@@ -460,7 +512,7 @@ pub(crate) mod tests {
         let o = open(items, vec![], field(false, false, None));
         let main = main_rows(&o, |_| None);
         assert_eq!(main[0].sub(), Some(Sub::App(0)));
-        let sub = sub_rows(&o, Sub::App(0), &VaultView::Asking, None);
+        let sub = sub_rows(&o, Sub::App(0), &VaultView::Asking, None, &none());
         assert_eq!(labels(&sub), ["Mail", "Deeper"]);
         assert!(sub[0].is_live());
         assert!(!sub[1].is_live());
@@ -469,7 +521,7 @@ pub(crate) mod tests {
     #[test]
     fn the_vault_column_follows_the_vault() {
         let o = open(vec![], vec![], field(true, false, None));
-        let at = |v: &VaultView| labels(&sub_rows(&o, Sub::Vault, v, None)).join("|");
+        let at = |v: &VaultView| labels(&sub_rows(&o, Sub::Vault, v, None, &none())).join("|");
         assert_eq!(at(&VaultView::Unavailable), "Vault isn't running");
         assert_eq!(at(&VaultView::SignedOut), "Sign in to Vault…");
         assert_eq!(at(&VaultView::Locked), "Unlock Vault…");
@@ -478,7 +530,7 @@ pub(crate) mod tests {
         };
         // No site: no logins to offer first.
         assert_eq!(at(&unlocked), "Search vault…");
-        assert!(!sub_rows(&o, Sub::Vault, &VaultView::Unavailable, None)[0].is_live());
+        assert!(!sub_rows(&o, Sub::Vault, &VaultView::Unavailable, None, &none())[0].is_live());
     }
 
     #[test]
@@ -487,11 +539,15 @@ pub(crate) mod tests {
         let vault = VaultView::Unlocked {
             logins: vec![login("a", true), login("b", false)],
         };
-        let rows = sub_rows(&o, Sub::Vault, &vault, None);
+        let rows = sub_rows(&o, Sub::Vault, &vault, None, &none());
         assert_eq!(labels(&rows), ["a site", "b site", "—", "Search vault…"]);
         let Row::Item(a) = &rows[0] else { panic!() };
         assert_eq!(a.hint.as_deref(), Some("a@example.com"));
-        let values = sub_rows(&o, Sub::Login(0), &vault, None);
+        let fields = HashMap::from([
+            ("a".to_string(), login_values(true)),
+            ("b".to_string(), login_values(false)),
+        ]);
+        let values = sub_rows(&o, Sub::Login(0), &vault, None, &fields);
         assert_eq!(labels(&values), ["Fill", "—", "Username", "Password", "One-time code"]);
         let Row::Item(fill) = &values[0] else { panic!() };
         assert_eq!(fill.does, Does::Pick(DeskPick::VaultFill { item: "a".into() }));
@@ -500,30 +556,66 @@ pub(crate) mod tests {
             pass.does,
             Does::Deliver {
                 item: "a".into(),
-                field: DeliverField::Password
+                field: DeliverField::Field { key: "password".into() }
             }
         );
-        assert_eq!(labels(&sub_rows(&o, Sub::Login(1), &vault, None)), [
+        assert_eq!(labels(&sub_rows(&o, Sub::Login(1), &vault, None, &fields)), [
             "Fill", "—", "Username", "Password"
         ]);
     }
 
     #[test]
-    fn a_secret_field_gets_the_password_and_the_code_only() {
-        let item = login("a", true);
-        let rows = value_rows(&item, &field(true, true, None), Fill::Offered);
-        assert_eq!(labels(&rows), ["Password", "One-time code"]);
+    fn an_items_column_reads_until_its_values_come() {
+        let item = login("a", false);
+        let page = field(true, false, None);
+        assert_eq!(labels(&value_rows(&item, None, &page, Fill::NotHere)), [READING_ITEM]);
+        let asking = ItemFields::Asking;
+        assert_eq!(labels(&value_rows(&item, Some(&asking), &page, Fill::NotHere)), [READING_ITEM]);
+        let failed = ItemFields::Failed("The vault is locked.".into());
+        let rows = value_rows(&item, Some(&failed), &page, Fill::NotHere);
+        assert_eq!(labels(&rows), ["The vault is locked."]);
+        assert!(!rows[0].is_live());
+        let empty = listed(&[]);
+        assert_eq!(labels(&value_rows(&item, Some(&empty), &page, Fill::NotHere)), [NO_VALUES]);
+    }
+
+    #[test]
+    fn any_field_gets_every_value() {
+        // A password field (secret) too: no special handling.
+        let mut card = login("visa", false);
+        card.kind = ItemKind::Card;
+        let values = listed(&[
+            ("cardholder", "Cardholder"),
+            ("number", "Number"),
+            ("exp", "Expiration"),
+            ("code", "Security code"),
+            ("custom0", "PIN"),
+            ("notes", "Notes"),
+        ]);
+        let rows = value_rows(&card, Some(&values), &field(true, true, None), Fill::Offered);
+        assert_eq!(labels(&rows), ["Cardholder", "Number", "Expiration", "Security code", "PIN", "Notes"]);
+        let Row::Item(code) = &rows[3] else { panic!() };
+        assert_eq!(
+            code.does,
+            Does::Deliver {
+                item: "visa".into(),
+                field: DeliverField::Field { key: "code".into() }
+            }
+        );
+        // Fill is a login's, for the page's own.
+        let page = field(true, false, Some("https://shop.example"));
+        assert_eq!(value_rows(&card, Some(&values), &page, Fill::Offered).len(), 6);
     }
 
     #[test]
     fn a_search_result_never_offers_fill() {
         let o = open(vec![], vec![], field(true, false, Some("https://a.example/login")));
-        let search = Search {
-            query: "other".into(),
-            items: Some(Ok(vec![login("other", false)])),
-        };
+        let mut search = Search::new(8);
+        search.query = "other".into();
+        search.items = Some(Ok(vec![login("other", false)]));
         let vault = VaultView::Unlocked { logins: vec![] };
-        let values = sub_rows(&o, Sub::Found(0), &vault, Some(&search));
+        let fields = HashMap::from([("other".to_string(), login_values(false))]);
+        let values = sub_rows(&o, Sub::Found(0), &vault, Some(&search), &fields);
         assert_eq!(labels(&values), ["Username", "Password"]);
     }
 
@@ -531,7 +623,8 @@ pub(crate) mod tests {
     fn a_re_prompt_item_is_dimmed_and_opens_in_vault() {
         let mut item = login("a", true);
         item.reprompt = true;
-        let rows = value_rows(&item, &field(true, false, Some("https://a.example")), Fill::Offered);
+        let values = login_values(true);
+        let rows = value_rows(&item, Some(&values), &field(true, false, Some("https://a.example")), Fill::Offered);
         assert_eq!(labels(&rows), [
             "Fill",
             "—",

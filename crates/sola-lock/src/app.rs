@@ -1,6 +1,7 @@
 //! The lock: `ext-session-lock-v1` through smithay-client-toolkit, a lock
 //! surface on every output, the keyboard into the password, and the check
-//! on a thread (Oath answers a wrong password late).
+//! on a thread (Oath answers a wrong password late). The bus hears when
+//! the lock holds and when it ends ([`crate::bus`]).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,6 +32,7 @@ use wayland_client::protocol::{wl_keyboard, wl_output, wl_seat, wl_shm, wl_surfa
 use wayland_client::backend::ObjectId;
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, WEnum};
 
+use crate::bus::Announce;
 use crate::draw::{Painter, Scene};
 use crate::keys::{Edit, Keys};
 use crate::picture;
@@ -83,6 +85,8 @@ struct Lock {
     /// Set when the check says right: unlock and leave.
     unlocked: bool,
     failed: Option<String>,
+    /// `ScreenLock` on the bus.
+    bus: Announce,
 }
 
 pub fn run() -> Result<(), String> {
@@ -119,6 +123,7 @@ pub fn run() -> Result<(), String> {
         loop_handle: event_loop.handle(),
         unlocked: false,
         failed: None,
+        bus: Announce::new(),
     };
     state.lock = Some(
         state
@@ -182,6 +187,7 @@ pub fn run() -> Result<(), String> {
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_secs(1)), |_, _, state: &mut Lock| {
+            state.bus.keep_up();
             let now = clock();
             if now != state.clock {
                 state.clock = now;
@@ -203,6 +209,9 @@ pub fn run() -> Result<(), String> {
                 lock.unlock();
             }
             let _ = state.conn.roundtrip();
+            if state.locked {
+                state.bus.locked(false);
+            }
             return Ok(());
         }
     }
@@ -379,6 +388,7 @@ impl SessionLockHandler for Lock {
     fn locked(&mut self, _: &Connection, qh: &QueueHandle<Self>, _: SessionLock) {
         info!(outputs = self.surfaces.len(), "locked");
         self.locked = true;
+        self.bus.locked(true);
         let outputs: Vec<_> = self.outputs.outputs().collect();
         for output in outputs {
             self.add_surface(output, qh);

@@ -1,17 +1,19 @@
 //! Reading the unlocked vault: the list, a page's logins, one item, its
-//! code, what a page form gets, a single value for a delivery.
+//! code, what a page form gets, what an item can put into a field and a
+//! single value for a delivery.
 
 use std::collections::HashMap;
 
 use bitwarden_vault::{CipherRepromptType, CipherType, CipherView};
 use sola_vault_proto::{
-    DeliverField, ErrorCode, FillMaterial, IdentityFill, ItemKind, ItemRecord, ItemSummary, TotpSpec,
-    UriEntry,
+    DeliverField, ErrorCode, FIELD_TOTP, FieldInfo, FillMaterial, IdentityFill, ItemKind, ItemRecord,
+    ItemSummary, TotpSpec, UriEntry,
 };
 use zeroize::Zeroizing;
 
 use super::convert;
 use super::errors::{Result, err, not_found};
+use super::fields;
 use super::item::{record_from_view, summary_from_view};
 use super::match_uri::{log_host, uri_matches};
 use super::passkey;
@@ -157,10 +159,17 @@ pub async fn fill(svc: &VaultService, id: &str, url: &str, with_code: bool) -> R
     }
 }
 
-/// One value of an item, for a delivery into another app's field. A
-/// password is delivered even when the account may not view it, as
-/// Bitwarden fills one. An item that asks for the master password first
-/// (re-prompt) is not delivered: the desk menu cannot ask.
+/// What item `id` can put into a field, by label (the desk menu's list;
+/// never a value).
+pub async fn field_infos(svc: &VaultService, id: &str) -> Result<Vec<FieldInfo>> {
+    Ok(fields::infos(svc.cipher(id).await?))
+}
+
+/// One value of an item, for a delivery into another app's field: any
+/// [`field_infos`] lists. A password is delivered even when the account
+/// may not view it, as Bitwarden fills one. An item that asks for the
+/// master password first (re-prompt) is not delivered: the desk menu
+/// cannot ask.
 pub async fn value(svc: &VaultService, id: &str, field: &DeliverField) -> Result<Zeroizing<String>> {
     let view = svc.cipher(id).await?;
     if view.reprompt == CipherRepromptType::Password {
@@ -172,30 +181,17 @@ pub async fn value(svc: &VaultService, id: &str, field: &DeliverField) -> Result
     if view.deleted_date.is_some() {
         return Err(err(ErrorCode::Invalid, "This item is in the trash."));
     }
-    let missing = || err(ErrorCode::NotFound, "This item has no such value.");
-    let login = view.login.as_ref();
-    let value = match field {
-        DeliverField::Username => match view.r#type {
-            CipherType::Login => login.and_then(|l| l.username.clone()),
-            CipherType::Identity => view.identity.as_ref().and_then(|i| i.username.clone()),
-            _ => None,
-        },
-        DeliverField::Password => login.and_then(|l| l.password.clone()),
-        DeliverField::Code => totp_spec(&view).map(|s| s.code_at(unix_now())),
-        DeliverField::Field { key } => {
-            let password = login.and_then(|l| l.password.clone());
-            let record = record_from_view(view, Vec::new()).ok_or_else(not_found)?;
-            if key == "password" {
-                password
-            } else {
-                record.field(key).map(str::to_string)
-            }
-        }
+    // A login's or an identity's username, a login's password and code:
+    // the keys the list has them under.
+    let key = match field {
+        DeliverField::Username => "username",
+        DeliverField::Password => "password",
+        DeliverField::Code => FIELD_TOTP,
+        DeliverField::Field { key } => key.as_str(),
     };
-    value
+    fields::value(view, key)
         .filter(|v| !v.is_empty())
-        .map(Zeroizing::new)
-        .ok_or_else(missing)
+        .ok_or_else(|| err(ErrorCode::NotFound, "This item has no such value."))
 }
 
 fn totp_spec(view: &CipherView) -> Option<TotpSpec> {

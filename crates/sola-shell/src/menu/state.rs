@@ -27,6 +27,23 @@ pub const SYNTHESIZED_CLOSE_WINDOW_KEY: KeyChord = KeyCode::W.meta();
 /// The flower's item that opens Settings.
 pub const ACTION_SETTINGS: &str = "settings";
 
+/// The flower's Lock Vault, while the vault is unlocked.
+pub const ACTION_LOCK_VAULT: &str = "lock_vault";
+
+/// The flower menu's rows now: Lock Vault after Lock Screen while the
+/// vault is unlocked.
+pub fn system_items(mut items: Vec<MenuItem>, vault_unlocked: bool) -> Vec<MenuItem> {
+    if !vault_unlocked {
+        return items;
+    }
+    let at = items
+        .iter()
+        .position(|i| matches!(i, MenuItem::Action { id, .. } if id == crate::lock::ACTION_LOCK))
+        .map_or(items.len(), |i| i + 1);
+    items.insert(at, action(ACTION_LOCK_VAULT, "Lock Vault", None));
+    items
+}
+
 /// Flower / system menu (and the shell's own application menu when focused).
 pub fn system_menu() -> MenuDefinition {
     MenuDefinition {
@@ -281,6 +298,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn lock_vault_shows_only_while_the_vault_is_unlocked() {
+        let labels = |items: Vec<MenuItem>| -> Vec<String> {
+            items
+                .into_iter()
+                .map(|item| match item {
+                    MenuItem::Action { label, .. } => label,
+                    MenuItem::Divider => "---".into(),
+                })
+                .collect()
+        };
+        assert_eq!(labels(system_items(system_menu().items, false)), system_menu_labels());
+        let unlocked = labels(system_items(system_menu().items, true));
+        let at = unlocked.iter().position(|l| l == "Lock Screen").unwrap();
+        assert_eq!(unlocked[at + 1], "Lock Vault");
+        assert_eq!(unlocked.len(), system_menu_labels().len() + 1);
     }
 
     #[test]

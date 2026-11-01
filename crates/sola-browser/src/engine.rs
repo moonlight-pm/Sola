@@ -156,10 +156,10 @@ pub struct PageContext {
     /// Background.
     #[serde(default)]
     pub image: bool,
-    /// The field looks like a password field, as far as CEF lets the
-    /// browser tell ([`crate::page_menu::looks_secret`]).
+    /// Chromium can copy the selection (its `CM_EDITFLAG_CAN_COPY`):
+    /// never in a password field.
     #[serde(default)]
-    pub secret: bool,
+    pub can_copy: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

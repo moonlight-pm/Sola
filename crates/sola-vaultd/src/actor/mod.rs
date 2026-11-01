@@ -23,8 +23,6 @@ use crate::tickets::Tickets;
 use crate::vault::errors::{Result, err, locked, signed_out};
 use crate::vault::{Session, VaultService, cache, session};
 
-/// How often the screen lock is looked for while the vault is open.
-const SCREEN_POLL: Duration = Duration::from_secs(3);
 /// A login waiting for its second step is forgotten after this.
 const PENDING_TTL: Duration = Duration::from_secs(10 * 60);
 
@@ -36,7 +34,8 @@ pub enum Input {
         peer: Peer,
         reply: oneshot::Sender<Response>,
     },
-    /// The desk's idle fade and its settings, from the bus.
+    /// The desk's idle fade and its settings, and the screen lock, from
+    /// the bus.
     Desk(DeskSignal),
     /// The call plane's `lock` and `sync`.
     Call(CallJob, oneshot::Sender<std::result::Result<(), String>>),
@@ -45,6 +44,9 @@ pub enum Input {
 pub enum DeskSignal {
     Fade(bool),
     Look { fade_idle: bool, fade_after_min: u16 },
+    /// The screen locked (`true`) or unlocked (`sola-lock`'s
+    /// `ScreenLock`).
+    ScreenLock(bool),
 }
 
 pub enum CallJob {
@@ -91,7 +93,6 @@ pub struct Vault {
     pending: Option<Pending>,
     tickets: Tickets,
     idle: IdleClock,
-    next_screen_poll: Instant,
     sync: SyncState,
     out: Outlets,
 }
@@ -119,7 +120,6 @@ impl Vault {
             pending: None,
             tickets: Tickets::default(),
             idle: IdleClock::new(now),
-            next_screen_poll: now,
             sync: SyncState::default(),
             out,
         };
@@ -198,6 +198,11 @@ impl Vault {
                 fade_idle,
                 fade_after_min,
             }) => self.idle.look(fade_idle, fade_after_min),
+            Input::Desk(DeskSignal::ScreenLock(locked)) => {
+                if locked && self.settings.lock_on_screen_lock {
+                    self.lock("the screen locked");
+                }
+            }
             Input::Call(job, reply) => {
                 let result = match job {
                     CallJob::Lock => {
@@ -222,16 +227,14 @@ impl Vault {
     fn next_wake(&self) -> Option<Instant> {
         let mut wake = self.pending.as_ref().map(|p| p.since + PENDING_TTL);
         if matches!(self.account, Account::Unlocked(_)) {
-            let idle = self.idle_minutes().and_then(|m| self.idle.deadline(m));
-            let screen = self.settings.lock_on_screen_lock.then_some(self.next_screen_poll);
-            for t in [idle, screen].into_iter().flatten() {
+            if let Some(t) = self.idle_minutes().and_then(|m| self.idle.deadline(m)) {
                 wake = Some(wake.map_or(t, |w| w.min(t)));
             }
         }
         wake
     }
 
-    /// Forget a stale pending login; lock when idle or the screen locked.
+    /// Forget a stale pending login; lock when idle.
     fn tick(&mut self) {
         let now = Instant::now();
         if self.pending.as_ref().is_some_and(|p| now >= p.since + PENDING_TTL) {
@@ -244,13 +247,6 @@ impl Vault {
         if let Some(m) = self.idle_minutes() {
             if self.idle.deadline(m).is_some_and(|d| now >= d) {
                 self.lock("idle");
-                return;
-            }
-        }
-        if self.settings.lock_on_screen_lock && now >= self.next_screen_poll {
-            self.next_screen_poll = now + SCREEN_POLL;
-            if crate::screen_lock::locked() {
-                self.lock("the screen locked");
             }
         }
     }

@@ -2482,7 +2482,6 @@ cef::wrap_context_menu_handler! {
             let can_copy = flags.0
                 & cef::sys::cef_context_menu_edit_state_flags_t::CM_EDITFLAG_CAN_COPY.0
                 != 0;
-            let secret = crate::page_menu::looks_secret(editable, selection.as_deref(), can_copy);
             let mut ctx = PageContext {
                 link_url: nonempty(params.link_url()),
                 src_url: nonempty(params.source_url()),
@@ -2494,7 +2493,7 @@ cef::wrap_context_menu_handler! {
                 y: params.ycoord(),
                 tab_id: 0,
                 image: params.media_type() == cef::ContextMenuMediaType::IMAGE,
-                secret,
+                can_copy,
             };
             if let Some(b) = browser {
                 ctx.can_go_back = b.can_go_back() != 0;

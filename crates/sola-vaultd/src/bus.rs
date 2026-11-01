@@ -1,7 +1,8 @@
 //! The vault on the bus: `Topic::VaultState` (sticky, never a secret) on
 //! every change; in, the desk's idle fade and its settings for the idle
-//! lock; out, `LaunchApp` for the call plane's `open`. Reconnects when
-//! the bus restarts (the client re-sends the sticky state itself).
+//! lock, and `ScreenLock` from `sola-lock` for the screen lock's; out,
+//! `LaunchApp` for the call plane's `open`. Reconnects when the bus
+//! restarts (the client re-sends the sticky state itself).
 
 use std::time::Duration;
 
@@ -47,7 +48,7 @@ pub async fn run(
             }
             tokio::time::sleep(RETRY).await;
         }
-        if let Err(e) = bus.subscribe(&[TopicKind::IdleFade, TopicKind::Appearance]) {
+        if let Err(e) = bus.subscribe(&[TopicKind::IdleFade, TopicKind::Appearance, TopicKind::ScreenLock]) {
             warn!(error = %e, "vault: bus subscribe failed");
         }
         let Some(Ok(notify)) = bus.try_clone_notify() else {
@@ -85,7 +86,7 @@ pub async fn run(
                         break;
                     }
                     while let Some(msg) = bus.try_recv() {
-                        if let Some(signal) = Topic::parse(&msg).and_then(desk_signal) {
+                        if let Some(signal) = Topic::parse(&msg).and_then(|t| desk_signal(t, msg.sticky)) {
                             let _ = to_vault.send(Input::Desk(signal));
                         }
                     }
@@ -109,13 +110,16 @@ fn drain(notify: &tokio::net::UnixStream) -> bool {
     }
 }
 
-fn desk_signal(topic: Topic) -> Option<DeskSignal> {
+/// What the actor hears of a bus message; `sticky` is false for a
+/// retraction (the state is gone).
+fn desk_signal(topic: Topic, sticky: bool) -> Option<DeskSignal> {
     match topic {
         Topic::IdleFade(fade) => Some(DeskSignal::Fade(fade.fading)),
         Topic::Appearance(look) => Some(DeskSignal::Look {
             fade_idle: look.fade_idle,
             fade_after_min: look.fade_after_min,
         }),
+        Topic::ScreenLock(lock) => Some(DeskSignal::ScreenLock(sticky && lock.locked)),
         _ => None,
     }
 }
@@ -123,6 +127,16 @@ fn desk_signal(topic: Topic) -> Option<DeskSignal> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_screen_lock_reaches_the_actor() {
+        use sola_bus::topics::ScreenLock;
+        let lock = |locked| Topic::ScreenLock(ScreenLock { locked });
+        assert!(matches!(desk_signal(lock(true), true), Some(DeskSignal::ScreenLock(true))));
+        assert!(matches!(desk_signal(lock(false), true), Some(DeskSignal::ScreenLock(false))));
+        // Retracted: no lock stands.
+        assert!(matches!(desk_signal(lock(true), false), Some(DeskSignal::ScreenLock(false))));
+    }
 
     #[test]
     fn the_bus_state_carries_no_more_than_the_status() {

@@ -28,6 +28,7 @@ pub mod agents;
 pub mod bus;
 pub mod desk;
 pub mod projects;
+pub mod vault;
 pub mod web;
 pub mod workspaces;
 pub mod zones;
@@ -277,6 +278,8 @@ pub enum Msg {
     ScreenshotDone(Result<(), String>),
     /// The desk menu (`crate::desk_menu`).
     Desk(crate::desk_menu::DeskMsg),
+    /// The flower menu's Lock Vault came back (`app::vault`).
+    VaultLocked(Result<(), String>),
     /// Arrows or Return in a shell overlay: the desk menu's while it is
     /// open, else the launcher's and the shortcuts'.
     OverlayKey(crate::desk_menu::Key),
@@ -496,6 +499,9 @@ pub struct Shell {
     /// Last `Topic::MailStatus` inbox unread. Chip shows only when mail
     /// is mapped and this is `Some(n)` with `n > 0`.
     pub inbox_unread: Option<u32>,
+    /// The vault is unlocked (`Topic::VaultState`): the flower menu has
+    /// Lock Vault.
+    pub vault_unlocked: bool,
     /// Calendar's coming days (`Topic::CalendarAgenda`): the clock's
     /// panel lists today's. `None` until Calendar has published.
     pub calendar_agenda: Option<sola_bus::topics::CalendarAgenda>,
@@ -625,6 +631,7 @@ impl Shell {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
+            vault_unlocked: false,
             calendar_agenda: None,
             calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
@@ -2481,6 +2488,9 @@ impl Shell {
                 if app_id == Self::APP_ID && action_id == crate::lock::ACTION_LOCK {
                     return self.lock_screen("key");
                 }
+                if app_id == Self::APP_ID && action_id == crate::menu::state::ACTION_LOCK_VAULT {
+                    return self.lock_vault();
+                }
                 if app_id == Self::APP_ID && action_id == crate::power::ACTION_RESTART_COMPUTER {
                     return self.request_machine_power(crate::power::Kind::Reboot);
                 }
@@ -3066,6 +3076,7 @@ impl Shell {
                 None => iced::Task::none(),
             },
             Msg::Desk(msg) => self.on_desk(msg),
+            Msg::VaultLocked(result) => self.on_vault_locked(result),
             Msg::OverlayKey(key) => {
                 use crate::desk_menu::Key;
                 if self.desk.is_some() {
@@ -3214,6 +3225,7 @@ mod pending_launch_tests {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
+            vault_unlocked: false,
             calendar_agenda: None,
             calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],
@@ -3344,6 +3356,7 @@ mod hide_tests {
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
             inbox_unread: None,
+            vault_unlocked: false,
             calendar_agenda: None,
             calendar_event_pending: None,
             overlay_iced_live: [false; OVERLAY_LIVE_SLOTS],

@@ -470,9 +470,11 @@ impl App {
             }
             Msg::DeskInsert(pane, value) => {
                 match (value, self.tabs.pane_runtime(&pane)) {
-                    // As typed, not a bracketed paste: a password prompt
-                    // takes keys.
-                    (Ok(value), Some(rt)) => rt.backend.write(value.as_str().as_bytes()),
+                    // As typed (a password prompt takes keys); lines as a paste.
+                    (Ok(value), Some(rt)) => {
+                        let mode = { *rt.emulator.term().lock().mode() };
+                        rt.backend.write(&input::vault_value(value.as_str(), mode));
+                    }
                     (Ok(_), None) => tracing::warn!(%pane, "desk menu: the pane went away"),
                     (Err(e), _) => {
                         tracing::warn!(%pane, code = ?e.code, "desk menu: the vault value did not come")

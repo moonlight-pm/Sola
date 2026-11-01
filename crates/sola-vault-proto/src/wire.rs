@@ -84,6 +84,8 @@ pub enum Request {
     PasskeyCreate { origin: String, public_key_json: String, cipher_id: Option<String> },
 
     // The desk menu
+    /// What item `id` can put into a field, by label: never a value.
+    Fields { id: String },
     /// A value for process `pid`'s focused field: a one-time ticket.
     Deliver { id: String, field: DeliverField, pid: u32 },
     /// The value, once, to the process it was made for.
@@ -119,6 +121,9 @@ pub enum Reply {
     Credential { json: String },
     Ticket { ticket: String },
     Value(String),
+    /// [`Request::Fields`]: the item's values by label, in its record's
+    /// order.
+    Fields(Vec<FieldInfo>),
 }
 
 /// Why a request failed.
@@ -198,5 +203,18 @@ mod tests {
         assert_eq!(unit, r#"{"method":"status"}"#);
         let back: Envelope<Request> = serde_json::from_str(&line).unwrap();
         assert!(matches!(back.body, Request::Get { id } if id == "x"));
+    }
+
+    #[test]
+    fn fields_carry_labels_never_values() {
+        let req = serde_json::to_string(&Request::Fields { id: "x".into() }).unwrap();
+        assert_eq!(req, r#"{"method":"fields","params":{"id":"x"}}"#);
+        let reply = Reply::Fields(vec![FieldInfo {
+            key: FIELD_TOTP.into(),
+            label: "One-time code".into(),
+            hidden: false,
+        }]);
+        let line = serde_json::to_string(&reply).unwrap();
+        assert_eq!(line, r#"{"Fields":[{"key":"totp","label":"One-time code","hidden":false}]}"#);
     }
 }

@@ -386,5 +386,6 @@ fn reply_name(r: &Reply) -> &'static str {
         Reply::Credential { .. } => "credential",
         Reply::Ticket { .. } => "ticket",
         Reply::Value(_) => "value",
+        Reply::Fields(_) => "fields",
     }
 }

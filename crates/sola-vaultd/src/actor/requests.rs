@@ -91,6 +91,7 @@ impl Vault {
                 Ok(Reply::Credential { json })
             }
 
+            Request::Fields { id } => Ok(Reply::Fields(read::field_infos(svc, &id).await?)),
             Request::Deliver { id, field, pid } => {
                 let value = read::value(svc, &id, &field).await?;
                 let ticket = self.tickets.issue(pid, value, Instant::now());
