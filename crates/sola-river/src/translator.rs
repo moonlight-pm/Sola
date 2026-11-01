@@ -10,7 +10,10 @@ use crate::client::AppData;
 use crate::registry::chord_diff;
 
 pub fn emit_windows(state: &mut AppData) {
-    let windows = state.registry.as_windows();
+    // A window River has not named yet is not told: it may take back the
+    // id it had ([`crate::window_ids`]).
+    let mut windows = state.registry.as_windows();
+    windows.retain(|w| !state.unidentified.contains(&w.window_id));
     debug!(count = windows.len(), "emitting Windows");
     state.bus.emit(Topic::Windows(windows));
 }

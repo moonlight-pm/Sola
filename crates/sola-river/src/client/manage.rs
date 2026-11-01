@@ -185,6 +185,13 @@ pub(crate) fn gamescope_size_gate(
 pub fn handle_manage_start(state: &mut AppData) {
     // This sequence's enters are read; a move from here on is new.
     state.pointer_moved = false;
+    // River names a window as it creates it, before this sequence: one
+    // still unnamed keeps the id it was given, and is told now.
+    if !state.unidentified.is_empty() {
+        tracing::warn!(windows = ?state.unidentified, "windows River did not name; told by their new ids");
+        state.unidentified.clear();
+        crate::translator::emit_windows(state);
+    }
     let Some(wm) = state.wm.clone() else { return };
 
     // Layer-shell default output (manage-sequence-only request).

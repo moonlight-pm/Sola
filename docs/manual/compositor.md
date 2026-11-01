@@ -732,10 +732,12 @@ steps (`idle: the fade starts`, `idle: the background dims`,
 - Only floating windows move or resize, and only by their own title bar
   or edges. There is no keyboard move and no modifier-drag.
 - The zones are fixed: Full, two halves at 50 / 50, Floating, and Cinema.
-- A window keeps its id through a restart of `sola-river` only when
-  River names the window before anything else about it (the identifier is
-  sent as the window is created). The first `sola-river` with the map
-  (2026-11-01) had none to read: the windows up then were numbered anew.
+- A window keeps its id through a restart of `sola-river` because River
+  names it as it creates it: `sola-river` tells nothing of a new window
+  until then (one River leaves unnamed is told by its new id when River
+  next lays out). A dialog's parent link sent before that names the new
+  id. The first `sola-river` with the map (2026-11-01) had none to read:
+  the windows up then were numbered anew.
 - Only the first seat is used.
 - `input.key` uses a US keymap regardless of the keyboard's layout. The
   method declares `chord` as text, so a caller that sends text, as the MCP

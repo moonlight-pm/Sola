@@ -62,6 +62,9 @@ pub struct AppData {
     /// The id each window had, by River's identifier: kept through a
     /// restart of sola-river ([`crate::window_ids`]).
     pub window_ids: crate::window_ids::WindowIds,
+    /// New windows River has not named yet (`identifier` comes after their
+    /// app id and title): not in `Windows` until then.
+    pub unidentified: std::collections::HashSet<u32>,
     pub pending: PendingUpdate,
     pub chords: ChordRegistry,
     pub bus: BusClient,
@@ -244,6 +247,7 @@ impl AppData {
             wl_seat: None,
             registry: WindowRegistry::new(),
             window_ids: crate::window_ids::WindowIds::default(),
+            unidentified: std::collections::HashSet::new(),
             pending: PendingUpdate::default(),
             chords: ChordRegistry::default(),
             bus,

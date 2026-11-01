@@ -30,6 +30,11 @@ impl Dispatch<RiverWindowManagerV1, ()> for AppData {
         match event {
             Event::Window { id: window } => {
                 let wid = state.registry.mint();
+                // River (v4) names every window; until it has, the window
+                // is not told, so it can take back its old id.
+                if state.wm.as_ref().is_some_and(|wm| wm.version() >= 4) {
+                    state.unidentified.insert(wid);
+                }
                 state.windows_by_object.insert(window.id(), wid);
                 let node = window.get_node(qh, ());
                 state.nodes_by_window.insert(wid, node);
@@ -270,13 +275,16 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
     }
 }
 
-/// River named window `minted` `identifier` (sent once, as it is created).
-/// A window this compositor had before sola-river restarted takes back
-/// the id it had — before anything about it is told, so the bus only ever
-/// sees that id ([`crate::window_ids`]) — and the id is kept for the next.
+/// River named window `minted` `identifier` (sent once, as it is created,
+/// after its app id and title). A window this compositor had before
+/// sola-river restarted takes back the id it had — nothing about it has
+/// been told yet, so the bus only ever sees that id
+/// ([`crate::window_ids`]) — and the id is kept for the next. Then the
+/// window is told.
 fn take_back_id(state: &mut AppData, minted: u32, identifier: &str) {
+    let untold = state.unidentified.remove(&minted);
     let id = match state.window_ids.id_for(identifier) {
-        Some(old) if old != minted && state.registry.untold(minted) && state.registry.rekey(minted, old) => {
+        Some(old) if old != minted && untold && state.registry.rekey(minted, old) => {
             for v in state.windows_by_object.values_mut() {
                 if *v == minted {
                     *v = old;
@@ -297,12 +305,14 @@ fn take_back_id(state: &mut AppData, minted: u32, identifier: &str) {
         _ => minted,
     };
     state.window_ids.remember(identifier, id);
+    crate::translator::emit_windows(state);
 }
 
 /// Tear down a window the same way `closed` does. Used for the protocol
 /// event and for pid-gone pruning after a hard client kill (no `closed`).
 pub(crate) fn drop_window(state: &mut AppData, window_id: u32) {
     state.window_ids.forget(window_id);
+    state.unidentified.remove(&window_id);
     // River asserts in Window.destroy() that no seat is still focused
     // on the window. Queue clear_focus so the next manage_start sends
     // it before we destroy the proxy.

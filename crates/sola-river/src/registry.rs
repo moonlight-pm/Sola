@@ -72,13 +72,6 @@ impl WindowRegistry {
         true
     }
 
-    /// Nothing about window `id` has been told yet: no app id, title or pid.
-    pub fn untold(&self, id: u32) -> bool {
-        self.by_id
-            .get(&id)
-            .is_some_and(|e| e.app_id.is_none() && e.title.is_none() && e.pid.is_none())
-    }
-
     pub fn mint(&mut self) -> u32 {
         self.next_id += 1;
         self.by_id.insert(
