@@ -1653,7 +1653,9 @@ pub(crate) fn try_decode_legacy_mail<T: 'static>(bytes: &[u8]) -> Option<T> {
 pub struct MailRule {
     pub name: String,
     pub action: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Always written: the bus's encoding (postcard) has no field names,
+    /// so a skipped `None` broke reading the whole `MailConfig`.
+    #[serde(default)]
     pub dest: Option<String>,
     pub conditions: Vec<MailRuleCondition>,
 }
@@ -2437,6 +2439,27 @@ define_topics! {
 #[cfg(test)]
 mod tests {
     use super::{split_app_id, tab_token};
+
+    /// A rule with no destination (delete, mark read) must read back: a
+    /// skipped `dest` broke postcard decoding of the whole config.
+    #[test]
+    fn a_mail_rule_with_no_dest_reads_back() {
+        let cfg = super::MailConfig {
+            rules: vec![super::MailRule {
+                name: "trash".into(),
+                action: "delete".into(),
+                dest: None,
+                conditions: Vec::new(),
+            }],
+            ..super::MailConfig::default()
+        };
+        let msg = super::Topic::MailConfig(cfg).to_message();
+        let Some(super::Topic::MailConfig(back)) = super::Topic::parse(&msg) else {
+            panic!("the config did not read back");
+        };
+        assert_eq!(back.rules[0].name, "trash");
+        assert_eq!(back.rules[0].dest, None);
+    }
 
     /// The bus's encoding has no field names: a tab with no icon must
     /// still read back (a skipped field broke every such announcement).
