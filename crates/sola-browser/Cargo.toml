@@ -50,7 +50,7 @@ wgpu = { version = "27", features = ["vulkan-portability"] }
 # root — sola-make's `install-cef` reads the same file and downloads
 # the matching binary distribution into `~/.cache/sola/cef-<ver>/`.
 # Do NOT enable `accelerated_osr`.
-cef = "156.2.0"
+cef = "156.3.0"
 
 # The vault's socket protocol (types, requests, a blocking client).
 sola-vault-proto = { path = "../sola-vault-proto", optional = true }

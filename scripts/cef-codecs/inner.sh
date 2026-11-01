@@ -59,8 +59,8 @@ echo "[cef-codecs] depot_tools ensure_bootstrap"
 # alone is not enough on a fresh clone.
 (cd /build/depot_tools && ./ensure_bootstrap)
 
-# Pin matches workspace cef-version (156.0.14+g4fa4ab5+chromium-156.0.8078.48).
-CEF_CHECKOUT="${CEF_CHECKOUT:-4fa4ab516dacf6c49fc7e6e70d2b7ebce29fa35f}"
+# Pin matches workspace cef-version (156.0.15+gcf671c0+chromium-156.0.8078.80).
+CEF_CHECKOUT="${CEF_CHECKOUT:-cf671c072925b27823a61181152f4f288e8e4306}"
 CEF_BRANCH="${CEF_BRANCH:-8078}"
 
 export PATH="/build/depot_tools:${PATH}"
