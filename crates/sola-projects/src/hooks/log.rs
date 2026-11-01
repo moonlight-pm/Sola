@@ -56,6 +56,11 @@ pub fn parse(line: &str, host: Option<&str>) -> Option<Event> {
     }
     let body = base64::engine::general_purpose::STANDARD.decode(payload).ok()?;
     let pane = (!pane.is_empty()).then(|| pane.to_string());
+    if agent == "gauge" {
+        let mut incoming = event::gauge_from_json(pane, &body)?;
+        incoming.host = host.map(str::to_string);
+        return Some(Event::Hook(incoming));
+    }
     let mut incoming = event::from_json(pane, Some(agent.to_string()), &body).ok()??;
     incoming.host = host.map(str::to_string);
     Some(Event::Hook(incoming))
@@ -170,6 +175,23 @@ mod tests {
         assert_eq!(i.agent, "claude");
         assert_eq!(i.host.as_deref(), Some("novus"));
         assert_eq!(i.mapped.status, Some(crate::status::AgentStatus::Done));
+    }
+
+    #[test]
+    fn a_gauge_line_carries_its_gauges_and_no_status() {
+        let l = line(
+            "gauge",
+            "ws-main",
+            r#"{"session_id":"sid","workspace":{"current_dir":"/src"},"effort":{"level":"high"},"fast_mode":true}"#,
+        );
+        let Some(Event::Hook(i)) = parse(&l, None) else {
+            panic!("not a hook");
+        };
+        assert_eq!(i.pane_id, "ws-main");
+        assert_eq!(i.mapped.status, None);
+        assert_eq!(i.mapped.session_id.as_deref(), Some("sid"));
+        let g = i.gauges.expect("gauges");
+        assert_eq!((g.effort.as_deref(), g.fast), (Some("high"), Some(true)));
     }
 
     #[test]

@@ -480,8 +480,19 @@ Grok, or Shell) and model at the left; at the right its turns (prompts
 you sent), compactions, and context (what its last request carried, in
 tokens; "of 272k" when the agent's files give its window). Claude's come
 from its transcript, Codex's from its rollout; Grok's files give only
-compactions. A session on another computer reads them there over ssh. In
-Cinema the window shows only the terminal.
+compactions. A session on another computer reads them there over ssh.
+A Claude session shows more, from Claude's status line: its effort level
+and `fast` (when fast mode is on) after the model; its context as a
+percent of the window ("45% of 1M context"); and what is left of the
+account's 5-hour and weekly limits ("68% left in 5h", "82% left this
+week"), or a gateway's spend ("$12 of $50"). Projects installs the status
+line command (`~/.config/sola/projects/claude-status.sh`, or
+`~/.config/sola/remote/` on another computer) as Claude's `statusLine`
+unless you have one of your own; it writes to the computer's hook log
+only when one of those figures changes, and prints nothing, so Claude's
+own status line stays empty. The figures come with Claude's next update
+of its status line (after a message). In Cinema the window shows only
+the terminal.
 
 **A Projects window to pick a project in.** The launcher's Projects
 (`window.navigate`), **Project → Open Project…** (⌘O) and **New

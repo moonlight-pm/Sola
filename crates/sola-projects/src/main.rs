@@ -35,6 +35,7 @@ mod calls;
 mod cards;
 mod catalog;
 mod cli;
+mod gauges;
 mod hooks;
 mod instance;
 mod islands;
@@ -660,6 +661,15 @@ impl App {
                     );
                     return Task::none();
                 };
+                // A status line's gauges: the bar's, nothing else.
+                if let Some(gauges) = incoming.gauges.clone() {
+                    let st = self.pane_status.entry(id.clone()).or_default();
+                    if st.gauges != gauges {
+                        st.gauges = gauges;
+                        self.sync_row(&id);
+                    }
+                    return Task::none();
+                }
                 self.islands
                     .note_hook(&id, incoming.ask.clone(), incoming.transcript.clone());
                 let prev = self

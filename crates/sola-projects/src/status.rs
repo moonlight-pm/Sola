@@ -110,6 +110,8 @@ pub struct PaneStatus {
     /// Turns, context and model for the session's bar ([`crate::stats`]),
     /// read with the compaction count.
     pub stats: Stats,
+    /// What Claude's status line last said ([`crate::gauges`]).
+    pub gauges: crate::gauges::Gauges,
 }
 
 impl PaneStatus {
@@ -909,6 +911,7 @@ mod tests {
                 tool: None,
                 session_id: Some(session.into()),
             },
+            gauges: None,
         }
     }
 
@@ -930,6 +933,7 @@ mod tests {
                 tool: None,
                 session_id: Some(session.into()),
             },
+            gauges: None,
         }
     }
 
@@ -951,6 +955,7 @@ mod tests {
                 tool: None,
                 session_id: Some(session.into()),
             },
+            gauges: None,
         }
     }
 
@@ -972,6 +977,7 @@ mod tests {
                 tool: None,
                 session_id: Some(session.into()),
             },
+            gauges: None,
         }
     }
 
@@ -1452,6 +1458,7 @@ mod tests {
                 tool: None,
                 session_id: Some("c-sid".into()),
             },
+            gauges: None,
         };
         pane.apply_hook(&incoming);
         assert_eq!(pane.agent.as_deref(), Some("codex"));

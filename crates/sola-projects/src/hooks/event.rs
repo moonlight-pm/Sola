@@ -24,6 +24,9 @@ pub struct Incoming {
     pub ask: Option<crate::islands::Ask>,
     /// Claude's transcript (a finished turn's last message).
     pub transcript: Option<String>,
+    /// A status line's gauges (a `gauge` line of the hook log): they go on
+    /// the session's bar and change nothing else.
+    pub gauges: Option<crate::gauges::Gauges>,
 }
 
 /// The event in hook payload `body`: `pane_header` is the hook's
@@ -79,7 +82,42 @@ pub fn from_json(
         cwd,
         ask: crate::islands::ask_from_hook(&event),
         transcript: crate::islands::transcript_of(&event),
+        gauges: None,
     }))
+}
+
+/// A `gauge` line's payload (Claude's status line): its session's gauges,
+/// placed as a hook would be (its pane, cwd and session id).
+pub fn gauge_from_json(pane_header: Option<String>, body: &[u8]) -> Option<Incoming> {
+    let v: Value = serde_json::from_slice(body).ok()?;
+    let session_id = v["session_id"].as_str().map(str::to_string);
+    let cwd = v["workspace"]["current_dir"]
+        .as_str()
+        .or_else(|| v["cwd"].as_str())
+        .map(str::to_string);
+    let pane_id = pane_header.unwrap_or_default();
+    if pane_id.is_empty() && cwd.is_none() {
+        return None;
+    }
+    Some(Incoming {
+        host: None,
+        pane_id,
+        agent: "claude".into(),
+        mapped: MappedHook {
+            status: None,
+            clear_turn: false,
+            claim: false,
+            session_end: false,
+            compacted: false,
+            prompt: None,
+            tool: None,
+            session_id,
+        },
+        cwd,
+        ask: None,
+        transcript: None,
+        gauges: Some(crate::gauges::Gauges::from_statusline(&v)),
+    })
 }
 
 fn string_cwd(event: &Value) -> Option<String> {

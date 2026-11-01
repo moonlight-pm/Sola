@@ -13,6 +13,8 @@ use crate::machine::Machine;
 const SCRIPT_NAME: &str = "grok-hook.sh";
 const CODEX_SCRIPT_NAME: &str = "codex-hook.sh";
 const CLAUDE_SCRIPT_NAME: &str = "claude-hook.sh";
+/// Claude's status line command ([`crate::gauges`]).
+const CLAUDE_STATUS_SCRIPT_NAME: &str = "claude-status.sh";
 const HOOK_FILE: &str = "sola-status.json";
 const CODEX_HOOK_MARK: &str = "codex-hook.sh";
 const CLAUDE_HOOK_MARK: &str = "claude-hook.sh";
@@ -48,6 +50,7 @@ pub struct HookPaths {
     pub codex_script_path: PathBuf,
     pub claude_settings_json: PathBuf,
     pub claude_script_path: PathBuf,
+    pub claude_status_script_path: PathBuf,
 }
 
 impl HookPaths {
@@ -72,6 +75,7 @@ impl HookPaths {
             codex_script_path: cfg.join(CODEX_SCRIPT_NAME),
             claude_settings_json: claude_root.join("settings.json"),
             claude_script_path: cfg.join(CLAUDE_SCRIPT_NAME),
+            claude_status_script_path: cfg.join(CLAUDE_STATUS_SCRIPT_NAME),
         }
     }
 }
@@ -89,6 +93,7 @@ impl HookPaths {
             codex_script_path: cfg.join(CODEX_SCRIPT_NAME),
             claude_settings_json: r.claude_home.join("settings.json"),
             claude_script_path: cfg.join(CLAUDE_SCRIPT_NAME),
+            claude_status_script_path: cfg.join(CLAUDE_STATUS_SCRIPT_NAME),
         }
     }
 }
@@ -155,7 +160,9 @@ fn install_claude(m: &Machine, paths: &HookPaths) -> Result<(), String> {
         m.mkdir_p(dir)?;
     }
     write_executable(m, &paths.claude_script_path, &hook_script("claude"))?;
+    write_executable(m, &paths.claude_status_script_path, &status_script())?;
     let command = hook_command(&paths.claude_script_path);
+    let status_command = hook_command(&paths.claude_status_script_path);
     let existing = m.read_to_string(&paths.claude_settings_json).unwrap_or_default();
     let parsed = if existing.trim().is_empty() {
         json!({})
@@ -171,9 +178,61 @@ fn install_claude(m: &Machine, paths: &HookPaths) -> Result<(), String> {
             }
         }
     };
-    let merged = merge_claude_hooks(parsed, &command);
+    let merged = merge_claude_status_line(merge_claude_hooks(parsed, &command), &status_command);
     write_json_if_changed(m, &paths.claude_settings_json, &merged, &existing)?;
     Ok(())
+}
+
+/// Claude's `statusLine` runs our status script ([`crate::gauges`]) —
+/// unless you have one of your own, which stays.
+pub fn merge_claude_status_line(mut doc: Value, command: &str) -> Value {
+    let Some(map) = doc.as_object_mut() else {
+        return doc;
+    };
+    let ours = map
+        .get("statusLine")
+        .and_then(|s| s.get("command"))
+        .and_then(|c| c.as_str())
+        .is_none_or(|c| is_marked(c, CLAUDE_STATUS_SCRIPT_NAME));
+    if ours {
+        map.insert("statusLine".into(), json!({ "type": "command", "command": command }));
+    }
+    doc
+}
+
+/// Claude's status line command: the payload to this computer's hook log
+/// as a `gauge` line when what the bar shows of it changed (the context's
+/// use, the limits, effort, fast mode, the model), else nothing. Prints
+/// nothing (Claude's own status line stays empty). The last figures per
+/// session sit beside the log, in `gauges/`.
+fn status_script() -> String {
+    format!(
+        r#"#!/bin/sh
+payload=$({{ command -p cat 2>/dev/null || cat; }})
+[ -z "$payload" ] && exit 0
+pane="${{SOLA_PANE_ID:-}}"
+log="$HOME/{rel}"
+dir="${{log%/*}}"
+mkdir -p "$dir/gauges" 2>/dev/null || exit 0
+sid=$(printf '%s' "$payload" | grep -o '"session_id":"[^"]*"' | head -n 1 | cut -d'"' -f4)
+[ -z "$sid" ] && exit 0
+sig=$(printf '%s' "$payload" | grep -o -E '"(used_percentage|context_window_size|level|fast_mode|used_usd|limit_usd|id)":("[^"]*"|[0-9.]+|true|false)' | tr -d '\n')
+last="$dir/gauges/$sid"
+[ "$(cat "$last" 2>/dev/null)" = "$sig" ] && exit 0
+printf '%s' "$sig" > "$last"
+if [ -f "$log" ] && [ "$(wc -c < "$log")" -gt 8388608 ]; then
+  mv -f "$log" "$log.1" 2>/dev/null
+fi
+{{
+  command -v flock >/dev/null 2>&1 && flock 9
+  printf 'gauge\t%s\t' "$pane"
+  printf '%s' "$payload" | base64 | tr -d '\n'
+  printf '\n'
+}} 9>>"$log" >&9 2>/dev/null
+exit 0
+"#,
+        rel = super::log::REL,
+    )
 }
 
 fn write_json_if_changed(
@@ -393,6 +452,7 @@ mod tests {
             codex_script_path: root.join("bin").join(CODEX_SCRIPT_NAME),
             claude_settings_json: root.join("claude").join("settings.json"),
             claude_script_path: root.join("bin").join(CLAUDE_SCRIPT_NAME),
+            claude_status_script_path: root.join("bin").join(CLAUDE_STATUS_SCRIPT_NAME),
         };
         (paths, root)
     }
@@ -506,5 +566,16 @@ mod tests {
         let count = |s: &str| s.matches("claude-hook.sh").count();
         assert_eq!(count(&text), count(&twice));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_status_line_is_ours_unless_you_have_your_own() {
+        let ours = merge_claude_status_line(json!({}), "sh /x/claude-status.sh");
+        assert_eq!(ours["statusLine"]["command"], "sh /x/claude-status.sh");
+        let again = merge_claude_status_line(ours, "sh /y/claude-status.sh");
+        assert_eq!(again["statusLine"]["command"], "sh /y/claude-status.sh", "ours is updated");
+        let yours = json!({"statusLine": {"type": "command", "command": "~/bin/mine.sh"}});
+        let kept = merge_claude_status_line(yours.clone(), "sh /x/claude-status.sh");
+        assert_eq!(kept, yours, "yours stays");
     }
 }

@@ -3,7 +3,11 @@
 //! standard bar at the top of the projects window can show some basic
 //! stats"): the agent and its model at the left; its turns, compactions and
 //! context at the right ([`crate::stats`]). A shell with no agent shows
-//! only that.
+//! only that. Claude's status line adds (Joshua, 2026-11-01: "credits
+//! quota/remaining, model effort, fast (on/off), context should show
+//! percent used"; [`crate::gauges`]): the effort and fast mode by the
+//! model, the context as % of its window, and what is left of the
+//! account's 5-hour and weekly limits (or a gateway's spend).
 
 use iced::widget::{Space, container, row, text};
 use iced::{Alignment, Element, Length, Padding};
@@ -20,6 +24,8 @@ use crate::status::PaneStatus;
 pub struct Line {
     pub agent: String,
     pub model: Option<String>,
+    /// By the model: the effort level, `fast` when fast mode is on.
+    pub modes: Vec<String>,
     /// `(figure, word)`, left to right.
     pub figures: Vec<(String, String)>,
 }
@@ -49,17 +55,40 @@ pub fn line(st: Option<&PaneStatus>) -> Line {
         }
         let c = u64::from(st.compaction_count);
         figures.push((c.to_string(), plural(c, "compaction", "compactions")));
-        if let Some(n) = s.context {
-            let word = match s.window {
-                Some(w) => format!("of {} context", short_tokens(w)),
-                None => "context".into(),
-            };
-            figures.push((short_tokens(n), word));
+        let g = &st.gauges;
+        let word = match g.window.or(s.window) {
+            Some(w) => format!("of {} context", short_tokens(w)),
+            None => "context".into(),
+        };
+        match (g.context_pct, s.context) {
+            (Some(p), _) => figures.push((format!("{p}%"), word)),
+            (None, Some(n)) => figures.push((short_tokens(n), word)),
+            (None, None) => {}
+        }
+        if let Some(used) = g.five_hour {
+            figures.push((format!("{}%", 100 - used.min(100)), "left in 5h".into()));
+        }
+        if let Some(used) = g.seven_day {
+            figures.push((format!("{}%", 100 - used.min(100)), "left this week".into()));
+        }
+        if let Some((used, limit)) = g.spend {
+            figures.push((format!("${used}"), format!("of ${limit}")));
         }
     }
+    let modes = st
+        .map(|s| {
+            let g = &s.gauges;
+            g.effort
+                .iter()
+                .cloned()
+                .chain(g.fast.filter(|f| *f).map(|_| "fast".to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
     Line {
         agent: agent_name(agent),
         model: st.and_then(|s| s.stats.model.as_deref()).map(model_label),
+        modes,
         figures,
     }
 }
@@ -71,6 +100,9 @@ pub fn view<'a>(st: Option<&PaneStatus>) -> Element<'a, Msg> {
         .align_y(Alignment::Center);
     if let Some(model) = line.model {
         left = left.push(text(model).size(13).style(kit_text::muted));
+    }
+    for mode in line.modes {
+        left = left.push(text(mode).size(13).style(kit_text::muted));
     }
     let mut right = row![].spacing(SPACE_LG).align_y(Alignment::Center);
     for (figure, word) in line.figures {
@@ -123,6 +155,7 @@ mod tests {
             Line {
                 agent: "Claude".into(),
                 model: Some("Opus 5.5".into()),
+                modes: vec![],
                 figures: vec![
                     ("42".into(), "turns".into()),
                     ("3".into(), "compactions".into()),
@@ -153,6 +186,40 @@ mod tests {
 
     #[test]
     fn a_shell_shows_only_that() {
-        assert_eq!(line(None), Line { agent: "Shell".into(), model: None, figures: vec![] });
+        assert_eq!(
+            line(None),
+            Line { agent: "Shell".into(), model: None, modes: vec![], figures: vec![] }
+        );
+    }
+
+    #[test]
+    fn the_status_line_adds_effort_fast_percent_and_what_is_left() {
+        let st = PaneStatus {
+            agent: Some("claude".into()),
+            compaction_count: 0,
+            stats: Stats { turns: 3, context: Some(446_000), window: None, model: Some("claude-opus-5-5".into()) },
+            gauges: crate::gauges::Gauges {
+                context_pct: Some(45),
+                window: Some(1_000_000),
+                effort: Some("xhigh".into()),
+                fast: Some(true),
+                five_hour: Some(32),
+                seven_day: Some(18),
+                spend: None,
+            },
+            ..PaneStatus::default()
+        };
+        let l = line(Some(&st));
+        assert_eq!(l.modes, vec!["xhigh".to_string(), "fast".to_string()]);
+        assert_eq!(
+            l.figures,
+            vec![
+                ("3".into(), "turns".into()),
+                ("0".into(), "compactions".into()),
+                ("45%".into(), "of 1M context".into()),
+                ("68%".into(), "left in 5h".into()),
+                ("82%".into(), "left this week".into()),
+            ]
+        );
     }
 }
