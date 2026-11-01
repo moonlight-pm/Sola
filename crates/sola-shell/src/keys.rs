@@ -123,6 +123,7 @@ mod tests {
         let back = from_chord_event(&ChordEvent {
             keysym: reg.keysym,
             modifiers: reg.modifiers,
+            pointer: None,
         })
         .expect("round-trip must succeed for TAB");
         assert_eq!(back.keycode, KeyCode::TAB);
@@ -146,6 +147,7 @@ mod tests {
         let back = from_chord_event(&ChordEvent {
             keysym: reg.keysym,
             modifiers: reg.modifiers,
+            pointer: None,
         })
         .expect("round-trip must succeed for H");
         assert_eq!(back.keycode, KeyCode::H);
@@ -165,6 +167,7 @@ mod tests {
         let back = from_chord_event(&ChordEvent {
             keysym: reg.keysym,
             modifiers: reg.modifiers,
+            pointer: None,
         })
         .expect("round-trip must succeed for Q");
         assert_eq!(back.keycode, KeyCode::Q);
@@ -195,6 +198,7 @@ mod tests {
             let back = from_chord_event(&ChordEvent {
                 keysym: reg.keysym,
                 modifiers: reg.modifiers,
+                pointer: None,
             })
             .expect("arrow keysym must round-trip");
             assert_eq!(back.keycode, kc);
@@ -212,6 +216,7 @@ mod tests {
             let back = from_chord_event(&ChordEvent {
                 keysym: reg.keysym,
                 modifiers: reg.modifiers,
+                pointer: None,
             })
             .expect("zoom keysym must round-trip");
             assert_eq!(back.keycode, kc);
@@ -233,6 +238,7 @@ mod tests {
         let back = from_chord_event(&ChordEvent {
             keysym: alt.keysym,
             modifiers: alt.modifiers,
+            pointer: None,
         })
         .expect("KP_UP keysym must round-trip to KP_8");
         assert_eq!(back.keycode, KeyCode::KP_8);
@@ -256,6 +262,7 @@ mod tests {
         let back = from_chord_event(&ChordEvent {
             keysym: reg.keysym,
             modifiers: reg.modifiers,
+            pointer: None,
         })
         .expect("KP_Multiply keysym must round-trip");
         assert_eq!(back.keycode, KeyCode::KP_MULTIPLY);
@@ -278,6 +285,7 @@ mod tests {
         let back = from_chord_event(&ChordEvent {
             keysym: reg.keysym,
             modifiers: reg.modifiers,
+            pointer: None,
         })
         .expect("KP_Add keysym must round-trip");
         assert_eq!(back.keycode, KeyCode::KP_ADD);

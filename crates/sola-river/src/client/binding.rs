@@ -20,15 +20,20 @@ impl Dispatch<RiverXkbBindingV1, (u32, u32)> for AppData {
         match event {
             Event::Pressed => {
                 tracing::debug!(keysym, modifiers, "chord pressed");
-                state
-                    .bus
-                    .emit(Topic::Chord(ChordEvent { keysym, modifiers }));
+                let pointer = state.pointer_pos;
+                state.bus.emit(Topic::Chord(ChordEvent {
+                    keysym,
+                    modifiers,
+                    pointer,
+                }));
             }
             Event::Released => {
                 tracing::debug!(keysym, modifiers, "chord released");
-                state
-                    .bus
-                    .emit(Topic::ChordReleased(ChordEvent { keysym, modifiers }));
+                state.bus.emit(Topic::ChordReleased(ChordEvent {
+                    keysym,
+                    modifiers,
+                    pointer: None,
+                }));
             }
             _ => {}
         }

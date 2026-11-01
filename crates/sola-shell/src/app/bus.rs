@@ -406,7 +406,8 @@ impl Shell {
             let key = self.pairing.key_of(*wid).unwrap_or(app_id).to_string();
             // A background tab joins behind the shown one, like a returning one.
             let behind = first_list || self.pairing.background(*wid);
-            let placed = self.tabs.place(*wid, app_id, &key, floats, behind, now);
+            let kin = self.project_kin(*wid, app_id);
+            let placed = self.tabs.place_near(*wid, app_id, &key, floats, behind, &kin, now);
             placed_any = true;
             tracing::info!(window_id = wid, %app_id, ?placed, "placed window");
             if placed.zone == Zone::Float {
@@ -1086,8 +1087,10 @@ impl Shell {
                 self.hide_focused_app();
                 Task::none()
             }
-            Act::NextTab => Task::done(Msg::CycleTabs { back: false }),
-            Act::PrevTab => Task::done(Msg::CycleTabs { back: true }),
+            Act::NextTab => Task::done(Msg::CycleApp { back: false }),
+            Act::PrevTab => Task::done(Msg::CycleApp { back: true }),
+            Act::NextHere => Task::done(Msg::CycleHere { back: false }),
+            Act::PrevHere => Task::done(Msg::CycleHere { back: true }),
             Act::NextWorkspace => {
                 self.step_workspace(false);
                 Task::none()
@@ -1142,6 +1145,7 @@ impl Shell {
             return Task::none();
         }
 
+        self.chord_pointer = evt.pointer;
         let Some(chord) = keys::from_chord_event(&evt) else {
             tracing::debug!(
                 keysym = evt.keysym,

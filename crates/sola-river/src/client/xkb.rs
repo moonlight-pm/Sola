@@ -68,12 +68,12 @@ impl Dispatch<RiverInputDeviceV1, ()> for AppData {
 
 impl Dispatch<RiverXkbConfigV1, ()> for AppData {
     fn event(
-        _state: &mut Self,
-        _cfg: &RiverXkbConfigV1,
+        state: &mut Self,
+        cfg: &RiverXkbConfigV1,
         event: <RiverXkbConfigV1 as Proxy>::Event,
         _: &(),
         _: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
         match event {
             xkb_iface::Event::Finished => {
@@ -85,6 +85,8 @@ impl Dispatch<RiverXkbConfigV1, ()> for AppData {
                 // delayed relative to our input-manager bind.
                 keyboard.numlock_enable();
                 info!("numlock enabled by default");
+                // The desk's keymap: Caps Lock does nothing (`client::caps`).
+                state.desk_keymap.keyboard(cfg, &keyboard, qh);
             }
         }
     }
@@ -96,7 +98,7 @@ impl Dispatch<RiverXkbConfigV1, ()> for AppData {
 
 impl Dispatch<RiverXkbKeyboardV1, ()> for AppData {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         keyboard: &RiverXkbKeyboardV1,
         event: <RiverXkbKeyboardV1 as Proxy>::Event,
         _: &(),
@@ -110,10 +112,27 @@ impl Dispatch<RiverXkbKeyboardV1, ()> for AppData {
             river_xkb_keyboard_v1::Event::NumlockDisabled => {
                 debug!("numlock off");
             }
+            river_xkb_keyboard_v1::Event::CapslockEnabled => {
+                caps_reported(state, keyboard, true);
+            }
+            river_xkb_keyboard_v1::Event::CapslockDisabled => {
+                caps_reported(state, keyboard, false);
+            }
             river_xkb_keyboard_v1::Event::Removed => {
+                state.desk_keymap.removed(keyboard);
                 keyboard.destroy();
             }
             _ => {}
         }
+    }
+}
+
+/// Caps Lock came on: it does nothing on the desk (`client::caps`), so
+/// turn it off — a keyboard the desk's keymap did not reach.
+fn caps_reported(_state: &mut AppData, keyboard: &RiverXkbKeyboardV1, on: bool) {
+    debug!(on, "capslock");
+    if on {
+        keyboard.capslock_disable();
+        info!("capslock turned off: it does nothing on the desk");
     }
 }

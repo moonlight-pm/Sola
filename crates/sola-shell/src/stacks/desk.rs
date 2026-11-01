@@ -1,9 +1,11 @@
-//! One workspace: every tab in bar order, each in its zone; what each
-//! tiled zone shows (and showed before it), the order its zones were
-//! picked, the floats' stacking, and the zone last looked at.
+//! One workspace: every tab in bar order (as blocks: loose rows and app
+//! groups, [`Bar`]), each in its zone; what each tiled zone shows (and
+//! showed before it), the order its zones were picked, the floats'
+//! stacking, and the zone last looked at.
 
 use sola_bus::topics::{Zone, ZoneLayout};
 
+use super::bar::Bar;
 use super::{FULL, Tab};
 
 pub(super) struct Column {
@@ -35,9 +37,9 @@ impl Column {
 pub(super) struct Desk {
     pub id: String,
     pub name: String,
-    /// Every tab in bar order. The bar lists them so, whatever their
-    /// zones; a zone's own order is its tabs' order here.
-    pub tabs: Vec<Tab>,
+    /// Every tab in bar order, as blocks. The bar lists them so, whatever
+    /// their zones; a zone's own order is its tabs' order here.
+    pub bar: Bar,
     pub columns: Vec<Column>,
     /// Floats bottom → top.
     pub float_z: Vec<u32>,
@@ -53,7 +55,7 @@ impl Desk {
         Self {
             id: id.into(),
             name: name.into(),
-            tabs: Vec::new(),
+            bar: Bar::default(),
             columns: zones.iter().map(|&z| Column::new(z)).collect(),
             float_z: Vec::new(),
             picks: Vec::new(),
@@ -79,12 +81,12 @@ impl Desk {
             return;
         }
         let moved: Vec<u32> = self
-            .tabs
-            .iter()
+            .bar
+            .tabs()
             .filter(|t| gone.contains(&t.zone))
             .map(|t| t.window_id)
             .collect();
-        for t in self.tabs.iter_mut().filter(|t| gone.contains(&t.zone)) {
+        for t in self.bar.tabs_mut().filter(|t| gone.contains(&t.zone)) {
             t.zone = FULL;
         }
         self.columns.retain(|c| !gone.contains(&c.zone));
@@ -118,7 +120,7 @@ impl Desk {
 
     /// `zone`'s tabs, in bar order.
     pub fn in_zone(&self, zone: Zone) -> impl Iterator<Item = &Tab> {
-        self.tabs.iter().filter(move |t| t.zone == zone)
+        self.bar.tabs().filter(move |t| t.zone == zone)
     }
 
     pub fn zone_of(&self, window_id: u32) -> Option<Zone> {
@@ -126,7 +128,7 @@ impl Desk {
     }
 
     pub fn tab(&self, window_id: u32) -> Option<&Tab> {
-        self.tabs.iter().find(|t| t.window_id == window_id)
+        self.bar.tab(window_id)
     }
 
     /// Where a new tiled window goes: the zone last looked at. The first
@@ -134,7 +136,7 @@ impl Desk {
     /// Cinema was looked at last (it takes no new windows). A zone that
     /// emptied gives way to what is on screen now.
     pub fn landing(&self, layout: &ZoneLayout) -> Zone {
-        if !self.tabs.iter().any(|t| t.zone != Zone::Float) {
+        if !self.bar.tabs().any(|t| t.zone != Zone::Float) {
             return FULL;
         }
         match self.last_zone {
@@ -162,15 +164,36 @@ impl Desk {
     /// Put `tab` at the end of the bar; a tiled zone shows it when `show`
     /// (or when it showed nothing).
     pub fn push(&mut self, tab: Tab, show: bool) -> bool {
-        let at = self.tabs.len();
+        let at = self.bar.len();
         self.insert(tab, at, show)
     }
 
-    /// Put `tab` at index `at` of the bar (clamped), in its zone; a tiled
-    /// zone shows it when `show` (or when it showed nothing).
+    /// Put `tab` at index `at` of the bar (in its app's group, when it has
+    /// one: [`Bar::insert`]), in its zone; a tiled zone shows it when
+    /// `show` (or when it showed nothing).
     pub fn insert(&mut self, tab: Tab, at: usize, show: bool) -> bool {
         let (window_id, zone) = (tab.window_id, tab.zone);
-        self.tabs.insert(at.min(self.tabs.len()), tab);
+        self.bar.insert(tab, at);
+        self.placed(window_id, zone, show)
+    }
+
+    /// Put back `tab`, saved at index `rank` of the bar, among the windows
+    /// already back ([`Bar::insert_ranked`]).
+    pub fn insert_ranked(
+        &mut self,
+        tab: Tab,
+        rank: usize,
+        rank_of: &dyn Fn(u32) -> Option<usize>,
+        show: bool,
+    ) -> bool {
+        let (window_id, zone) = (tab.window_id, tab.zone);
+        self.bar.insert_ranked(tab, rank, rank_of);
+        self.placed(window_id, zone, show)
+    }
+
+    /// A tab was put in the bar: stack a float, show a tiled one when
+    /// `show` or its zone showed nothing. Returns whether its zone shows it.
+    fn placed(&mut self, window_id: u32, zone: Zone, show: bool) -> bool {
         if zone == Zone::Float {
             self.float_z.push(window_id);
             return true;
@@ -188,11 +211,11 @@ impl Desk {
     /// before (else its next in the bar, else its previous).
     pub fn take(&mut self, window_id: u32) -> Option<(Zone, usize, Tab, bool)> {
         self.float_z.retain(|&w| w != window_id);
-        let at = self.tabs.iter().position(|t| t.window_id == window_id)?;
-        let tab = self.tabs.remove(at);
+        let (at, tab) = self.bar.remove(window_id)?;
         let zone = tab.zone;
-        let next = self.tabs[at..].iter().find(|t| t.zone == zone);
-        let prev = self.tabs[..at].iter().rev().find(|t| t.zone == zone);
+        let tabs: Vec<&Tab> = self.bar.tabs().collect();
+        let next = tabs[at..].iter().find(|t| t.zone == zone);
+        let prev = tabs[..at].iter().rev().find(|t| t.zone == zone);
         let fallback = next.or(prev).map(|t| t.window_id);
         let col = self.column_mut(zone);
         col.recent.retain(|&w| w != window_id);
@@ -206,25 +229,8 @@ impl Desk {
         Some((zone, at, tab, was_shown))
     }
 
-    /// Move `window_id` to just before `before` in the bar (else to the
-    /// end). Its zone and what every zone shows stay.
-    pub fn reorder(&mut self, window_id: u32, before: Option<u32>) -> bool {
-        if before == Some(window_id) {
-            return false;
-        }
-        let Some(from) = self.tabs.iter().position(|t| t.window_id == window_id) else {
-            return false;
-        };
-        let tab = self.tabs.remove(from);
-        let to = before
-            .and_then(|b| self.tabs.iter().position(|t| t.window_id == b))
-            .unwrap_or(self.tabs.len());
-        self.tabs.insert(to, tab);
-        to != from
-    }
-
     pub fn clear(&mut self) {
-        self.tabs.clear();
+        self.bar.clear();
         for c in &mut self.columns {
             c.shown = None;
             c.recent.clear();

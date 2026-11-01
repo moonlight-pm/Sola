@@ -112,7 +112,8 @@ No gaps and no titlebars on tiles yet (N8).
   isn't useful… Windows retain their zone, but the sidebar doesn't need to
   reflect where they are"): no zone headers. The bar is one list of the
   workspace's windows in an order of its own; a window keeps its zone, and
-  its row says nothing about it.
+  its row says nothing about it. **Amended 2026-10-31:** the apps that
+  open a window per document have a group each (§ App groups and keys).
 - **Row:** app icon and window title, truncated. Three states, as on
   board 05: shown (lifted a step), focused (the pill), behind (tertiary
   ink). Agent marks join in slice 3.
@@ -123,7 +124,8 @@ No gaps and no titlebars on tiles yet (N8).
   2026-10-28:** a drag only reorders the bar; the window keeps its zone and
   nothing shows or hides. A zone's own order is its windows' order in
   the bar. Moving a window to another zone (the keys, the Window
-  menu) leaves its row where it is.
+  menu) leaves its row where it is. **Amended 2026-10-31:** a group's rows
+  move within it, groups move by their header (§ App groups and keys).
 - **Close from a row** (Joshua, 2026-10-23): hovering a row shows the
   titlebar's red stoplight, which closes the window as its own close dot
   would. A tab's window goes to its app (`Topic::CloseTab { key }`; kit
@@ -157,12 +159,12 @@ No gaps and no titlebars on tiles yet (N8).
 
 | Chord | Next | Today |
 |--|--|--|
-| Super+\` / Super+Shift+\` | Next / previous tab in the focused zone. **Amended 2026-10-28** (Joshua: "Super+\` should just step through the tabs on this workspace in their tab order"): the next / previous tab in the workspace's bar, wrapping, whatever its zone (showing it shows Full or the halves as needed); with nothing focused, the first / last | Next window of the focused app |
+| Super+\` / Super+Shift+\` | Next / previous tab in the focused zone. **Amended 2026-10-28** (Joshua: "Super+\` should just step through the tabs on this workspace in their tab order"): the next / previous tab in the workspace's bar, wrapping, whatever its zone (showing it shows Full or the halves as needed); with nothing focused, the first / last. **Amended 2026-10-31:** the focused app's windows on this workspace, in bar order (§ App groups and keys) | Next window of the focused app |
 | Super+KP_4 / KP_6 | Move the focused tab to Left / Right (end of stack, shown) | Snap to the left / right column |
 | Super+KP_* | Move to Floating | Float |
 | Super+KP_0 / KP_Enter | Fullscreen / Cinema the shown tab (toggle). **Amended 2026-10-23:** KP_0 moves the tab to Full; KP_Enter stays Cinema | Same zones |
 | Super+KP_8, 2, 5, =, ., + | Unbound on the two-zone layout | Other snaps |
-| Super+Tab | Same app list; confirming shows that app's most recent tab in its zone. **Amended 2026-10-25:** the switcher is gone; Super+Tab / Super+Shift+Tab focus the next / previous zone with something to show (bar order, wrapping), showing its tab. **Amended 2026-10-28** (Joshua: "Super+Tab doesn't really make sense now. Let's have that step through workspaces"): Super+Tab / Super+Shift+Tab show the next / previous workspace (was Super+Ctrl+(Shift+)Tab, now unbound); window groups are gone | Raises the app |
+| Super+Tab | Same app list; confirming shows that app's most recent tab in its zone. **Amended 2026-10-25:** the switcher is gone; Super+Tab / Super+Shift+Tab focus the next / previous zone with something to show (bar order, wrapping), showing its tab. **Amended 2026-10-28** (Joshua: "Super+Tab doesn't really make sense now. Let's have that step through workspaces"): Super+Tab / Super+Shift+Tab show the next / previous workspace (was Super+Ctrl+(Shift+)Tab, now unbound); window groups are gone. **Amended 2026-10-31:** Super+Tab steps the windows under the pointer; the workspaces moved to Super+CapsLock (§ App groups and keys) | Raises the app |
 | Super+H | Hides the app as today; its rows stay, dimmed; clicking one unhides it | Hides the app |
 | Launcher on a running app | Shows its most recent tab. **Amended 2026-10-26 (Projects):** Projects opens a project, not a second Projects — the launcher's second stage lists `~/Projects` (Joshua: "All projects always go in ~/Projects"; open ones show and selecting brings up their workspace and window; others open in the current workspace; or a new one by name), through Projects' `project.open`; see the shell manual's Launcher. **Amended 2026-10-25:** opens a new window (the browser a page window, Terminal a tab window); one-window apps (Design, Paint, Arcade) still raise | Raises it |
 
@@ -191,6 +193,9 @@ No gaps and no titlebars on tiles yet (N8).
 - **Amended 2026-10-28:** `TabLayout.zones` are runs of a workspace's bar
   in order, each a stretch of tabs in one zone (a zone may have several);
   a layout saved per zone loads as Full, Left, Right, Floating.
+- **Amended 2026-10-31:** `TabLayout.groups` keeps each empty group's
+  place (its workspace, app and index in the saved bar); a group's rows
+  are one run of the saved bar (§ App groups and keys).
 - **From slice 2:** apps announce their tabs (a `Tabs` topic: per window, a
   tab key, kind, title, restore token, and mark), and `TabLayout` keys by
   tab key instead of app id.
@@ -644,6 +649,113 @@ My calls, mirroring Projects:
   the canvas in its project's window (opening it if closed) and shows that
   window. A canvas any window shows counts as on the human's screen
   (`canvas.close` refuses it; `status.shown`).
+
+## App groups and keys (2026-10-31)
+
+Joshua, 2026-10-31: "The desktop sidebar, i think i want to add 'groups'.
+And these aren't ad-hoc groups, but group by app. 'Stand alone' apps like
+mail or settings, or any wrapped browser -- these all are ungrouped.
+'loose' browser pages should go under a 'Browser' group. Projects go under
+a Projects group … Groups can be dragged around to reorder. Items in
+groups can be re-ordered within their group. Must be workspace aware of
+course." On the keys: "i'd like to consider using SUPER+CAPSLOCK as the
+workspace switcher. SUPER+TAB this will cycle through all windows that
+are below the mouse cursor. SUPER+\` cycles all the windows for the app
+--- so no more walking down the sidebar which i find useless." Branch
+`bar-groups`. N7 dropped the browser's own groups (made by hand); these
+are the apps themselves.
+
+### Decided (Joshua, 2026-10-31)
+
+- **Which apps group:** the apps that open a window per document —
+  Browser (its pages, app id `sola-browser`), Projects, Terminal, Paint,
+  Design. Every other window is a loose row of its own: Mail, Settings,
+  Calendar, web apps (their own app ids, though the browser hosts them),
+  Steam, games, anything not Sola's.
+- **A group of one** is still a group: a header and its row. A row never
+  moves when the app's second window opens.
+- **No folding.** A long group (a browser with seventy pages) makes the
+  bar scroll.
+- **The look (2026-11-01):** way A of `design/bar-groups/` (Joshua: "i
+  like the 'CAPTION' style design"; asked for "Remove the icon from group
+  rows … indent their children … Group titles or the groups themselves
+  should be more distinct"): the header is the app's name in small
+  capitals, no icon, its text where a loose row's icon starts; the
+  group's windows sit 14 in.
+- **Loose rows first (2026-11-01;** Joshua: "lets add another rule -- all
+  'loose' (singleton) apps go at the top"**):** every loose row above
+  every group.
+- **Projects is one flat group.** A new session lands after the last row
+  of its project (read from the window's title, `WindowLabel`, when the
+  window has one when it maps).
+- **Keys:** Super+CapsLock / Super+Shift+CapsLock show the next /
+  previous workspace (was Super+Tab). Super+Tab / Super+Shift+Tab step
+  through the windows of the zone under the pointer — the zone of the
+  window on screen there; over a float, the floats under it — in bar
+  order, wrapping, starting from the window on screen there (**amended
+  2026-11-01**, Joshua: "only rotate between windows in the same zone
+  under the cursor, not all windows under the cursor"; it first stepped
+  every window whose place covered the pointer, Full's with a half's).
+  With the pointer on no window, the focused window's zone. Super+\` /
+  Super+Shift+\` step through the focused app's windows on the showing
+  workspace in bar order (the titlebar's Window → Cycle Windows too). No
+  key walks the whole bar.
+
+### The bar
+
+- A workspace's bar is a run of **blocks**: a loose row, or an app's group
+  (its header and its rows). Every loose row comes first, then the
+  groups (2026-11-01; at first they mixed in any order). The flat order
+  (every row, top to bottom) is what the zones, the keys and the saved
+  layout read, as before.
+- **Header:** a caption (the kit's `SidebarSection::caption`): the app's
+  name in small capitals, semibold 10.5, the secondary ink, 18 of air
+  above it, 6 below, its text where a loose row's icon starts; the
+  group's rows 14 in (`CAPTION_NEST`); no icon, fill, chevron, close or
+  count (2026-11-01; first a pocket with the app's icon). Super+H shows
+  "hidden" at the caption's end instead of on each row. A click on it
+  does nothing.
+- **Drag:** a group's row moves only within its group; a group moves by
+  its header among the groups; a loose row moves among the loose rows
+  (the kit's `reorder_within_sections` with `loose_first`).
+- **Where a new window lands:** right after its opener (and after the
+  last window opened from it while it kept focus) when the opener is in
+  its group; otherwise a grouped window goes to the end of its group (its
+  emptied group's place, when it left one), the first of a group right
+  after the group holding the focused row (the top of the groups when a
+  loose row has focus), and a loose window right after a loose focused
+  row, else at the end of the loose rows. A link opened from Terminal
+  puts its page at the end of Browser, not after the terminal.
+- **An emptied group keeps its place** on its workspace (an invisible
+  block), so the app's next window brings the group back there; saved with
+  the layout (`TabLayout.groups`).
+- **Workspaces:** each has its own blocks. A window sent to another
+  workspace joins its group there (the end), or brings the group back at
+  its place there, else goes to the end of the bar.
+- **The launcher's ghost row** stands where the window will land: in its
+  group when the group is on the bar.
+- **The old saved bar** (rows of one app between others) regroups at each
+  app's first row, its loose rows going above the groups.
+
+### Keys and Caps Lock
+
+**Caps Lock does nothing** (Joshua, 2026-11-01: "Caps lock as a function
+should be completely disabled. I don't want to see the caps lock light
+come on .. caps lock by itself should be a no-op for now"). sola-river
+gives every keyboard the keymap River runs by default (US; the desk sets
+no XKB options) with the Caps key's lock action taken off
+(`sola-river/keymaps/desk.xkb`, through `river_xkb_config_v1.create_keymap`
+and `river_xkb_keyboard_v1.set_keymap`, then NumLock on again, since a
+keymap resets the state). The key still sends `Caps_Lock`, so
+Super+CapsLock matches; it never locks and its light never comes on. If
+River reports Caps Lock on anyway (a keyboard the keymap did not reach),
+sola-river turns it off. (Before 2026-11-01, sola-river put Caps Lock
+back after the chord, since River updates the keyboard's state after it
+has matched a key to a binding.) The key table (`sola_core::keys`) and
+the kit's iced key map gain Caps Lock, so it can be bound and captured in
+Settings → Keybindings. A chord carries the pointer's position
+(`ChordEvent.pointer`, from River's `pointer_position`), which Super+Tab
+reads.
 
 ## Not in slice 1
 

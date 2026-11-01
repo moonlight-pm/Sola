@@ -426,6 +426,11 @@ pub struct SidebarSection<'a, Message> {
     pub on_label: Option<Message>,
     /// Trailing `+` on the section header (add a row in this group).
     pub on_add: Option<Message>,
+    /// A caption group ([`Self::caption`]): the name in small capitals
+    /// above members that sit one step in.
+    pub caption: bool,
+    /// Dim word at the end of a caption ([`Self::note`]).
+    pub note: Option<String>,
 }
 
 /// Header chrome for a [`SidebarSection::collapsible`] section.
@@ -462,6 +467,8 @@ impl<'a, Message> SidebarSection<'a, Message> {
             collapse: None,
             on_label: None,
             on_add: None,
+            caption: false,
+            note: None,
         }
     }
 
@@ -474,6 +481,8 @@ impl<'a, Message> SidebarSection<'a, Message> {
             collapse: None,
             on_label: None,
             on_add: None,
+            caption: false,
+            note: None,
         }
     }
 
@@ -492,6 +501,21 @@ impl<'a, Message> SidebarSection<'a, Message> {
     /// Trailing `+` on the group header.
     pub fn on_add(mut self, msg: Message) -> Self {
         self.on_add = Some(msg);
+        self
+    }
+
+    /// A caption group (the shell's app groups): the label in small
+    /// capitals with air above it, the members [`CAPTION_NEST`] in, no
+    /// fill, no fold. Drawn by the reorder strip, where the caption is a
+    /// reorder row that moves the group; give the section an [`Self::id`].
+    pub fn caption(mut self) -> Self {
+        self.caption = true;
+        self
+    }
+
+    /// A dim word at the caption's end (e.g. "hidden").
+    pub fn note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
         self
     }
 
@@ -1273,6 +1297,44 @@ fn header_commit_button<'a, Message: Clone + 'a>(
         .into()
 }
 
+/// How far a caption group's members sit in from its caption.
+pub const CAPTION_NEST: f32 = 14.0;
+
+/// A caption group's header: its name in small capitals, semibold, in
+/// the secondary ink, with air above it and its text where a row's icon
+/// starts; a dim note at the end.
+fn caption_header<'a, Message: 'a>(label: String, note: Option<String>) -> Element<'a, Message> {
+    let ink = |theme: &Theme| iced::widget::text::Style {
+        color: Some(theme.extended_palette().secondary.base.text),
+    };
+    let name = text(label.to_uppercase())
+        .font(iced::Font {
+            weight: iced::font::Weight::Semibold,
+            ..fonts::ui()
+        })
+        .size(10.5)
+        .wrapping(Wrapping::None)
+        .style(ink);
+    let mut body = row![name].align_y(iced::Alignment::End).width(Length::Fill);
+    if let Some(note) = note {
+        body = body
+            .push(Space::new().width(Length::Fill))
+            .push(text(note).font(fonts::ui()).size(11).style(ink));
+    }
+    container(body)
+        .width(Length::Fill)
+        .padding(Padding {
+            top: CAPTION_AIR,
+            bottom: 6.0,
+            left: 9.0,
+            right: 10.0,
+        })
+        .into()
+}
+
+/// Air above a caption: its group stands apart from the rows before it.
+const CAPTION_AIR: f32 = 18.0;
+
 fn section_header<'a, Message: Clone + 'a>(
     label: String,
     on_press: Option<Message>,
@@ -1468,6 +1530,7 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
     collapsed: bool,
     on_action: Rc<dyn Fn(Msg) -> Message + 'a>,
     locked: bool,
+    loose_first: bool,
 ) -> Element<'a, Message> {
     let mut leaves = Vec::new();
     let mut meta = Vec::new();
@@ -1513,7 +1576,11 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
             row_index += 1;
         } else if let (Some(label), Some(hid)) = (section.label.clone(), gid.clone()) {
             if !collapsed {
-                let el = section_header(label, None, section.on_add);
+                let el = if section.caption {
+                    caption_header(label, section.note.clone())
+                } else {
+                    section_header(label, None, section.on_add)
+                };
                 leaves.push(el);
                 meta.push(strip::LeafMeta {
                     id: hid.clone(),
@@ -1544,6 +1611,14 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
                 } else {
                     render_item(item, None, row_index, show, density, hover_wired, true)
                 };
+                if section.caption && !collapsed {
+                    el = container(el)
+                        .padding(Padding {
+                            left: CAPTION_NEST,
+                            ..Padding::ZERO
+                        })
+                        .into();
+                }
                 if let Some(hid) = hover_id {
                     let act = Rc::clone(&on_action);
                     el = mouse_area(el).on_enter(act(Msg::Hover(Some(hid)))).into();
@@ -1574,6 +1649,7 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
         Rc::clone(&on_action),
         locked,
     )
+    .loose_first(loose_first)
     .into();
     mouse_area(hidden_scroll(strip, None, None))
         .on_exit(on_action(Msg::Hover(None)))
@@ -2472,6 +2548,8 @@ pub struct SidebarPanel<'a, Message> {
     /// `(width, colors)` — `colors` is `None` for theme-default chrome.
     resize: Option<(f32, Option<crate::components::DividerColors>)>,
     reorder: ReorderMode,
+    /// Loose rows stay above every group ([`Self::loose_first`]).
+    loose_first: bool,
     controller: Option<(&'a State, Rc<dyn Fn(Msg) -> Message + 'a>)>,
     /// Optional leading content (search field, brand, rename bar).
     /// Stacked above the section list; never scrolls with items.
@@ -2501,6 +2579,7 @@ where
             collapse: None,
             resize: None,
             reorder: ReorderMode::Off,
+            loose_first: false,
             controller: None,
             header: None,
             footer: None,
@@ -2583,6 +2662,14 @@ where
         self
     }
 
+    /// Loose rows stay above every group while dragging: a loose row
+    /// moves among the loose rows, a group among the groups (the shell's
+    /// bar, whose model keeps them so).
+    pub fn loose_first(mut self) -> Self {
+        self.loose_first = true;
+        self
+    }
+
     /// A footer element pinned below the rows (hidden when collapsed).
     pub fn footer(mut self, el: Element<'a, Message, Theme>) -> Self {
         self.footer = Some(el);
@@ -2609,6 +2696,7 @@ where
             collapse,
             resize,
             reorder,
+            loose_first,
             controller,
             header,
             footer,
@@ -2693,6 +2781,7 @@ where
                     collapsed,
                     Rc::clone(act),
                     reorder_locked,
+                    loose_first,
                 ),
                 None => column![].into(),
             }
