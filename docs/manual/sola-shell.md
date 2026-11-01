@@ -261,11 +261,11 @@ app's name while it has none).
 
 The apps that open a window per document — Browser (its pages),
 Projects, Terminal, Paint and Design — keep their windows together in a
-**group**: a pocket headed by the app's icon and name, with a row per
-window in it, even when there is only one. Every other window is a row
-of its own: Mail, Settings, Calendar, web apps (though Browser runs
-them), Steam, games. Groups and rows mix in any order. A group does not
-fold; a long one makes the bar scroll. A Projects window's row names three things,
+**group**: the app's name in small capitals, with its windows a step in
+under it, even when there is only one. Every other window is a row of
+its own — Mail, Settings, Calendar, web apps (though Browser runs them),
+Steam, games — and these rows come first, above every group. A group
+does not fold; a long one makes the bar scroll. A Projects window's row names three things,
 drawn apart: the project, the session in a quieter ink (when it is not the
 project's main one), and the computer the session runs on — this one too —
 as a chip in that computer's prompt color.
@@ -276,8 +276,8 @@ as a chip in that computer's prompt color.
   screen, and in full ink without the lift while it is not (Full while the
   halves are up, or the halves while Full is).
 - **Windows behind** are muted.
-- **An app hidden** with Super+H says *hidden* on its rows (on its
-  group's header, for a group).
+- **An app hidden** with Super+H says *hidden* on its rows (beside its
+  group's name, for a group).
 - **Activity**: a window that is working shows a turning ring in place of
   its icon, and one waiting on a decision a diamond, so the title does not
   move. Projects marks each session's window by its session, and Design
@@ -289,9 +289,9 @@ and zone come on screen with it, and a hidden app comes back). Hovering a
 row shows a red close dot: it closes that window as the window's own
 close dot would. Drag a row to move it in the list; the window stays in
 its zone and nothing on screen changes. A row in a group moves only
-within its group; drag a group by its header to move the whole group. A
-row of its own moves between the groups and rows, never into a group.
-Clicking a group's header does nothing.
+within its group; drag a group by its name to move it among the groups.
+A row of its own moves among the other rows of their own, above the
+groups. Clicking a group's name does nothing.
 
 While an app starts from the launcher, a faint row with its name and a
 turning ring stands where its window will land; the window takes its
@@ -303,9 +303,12 @@ when that window is in the new one's group: a page opened with a link
 from a page, a Terminal tab from a terminal. Windows opened behind it
 from the same window stay in the order you opened them. Otherwise a
 window of a group goes to the end of its group (a link opened from
-Terminal puts its page at the end of Browser), and a window of its own,
-or the first of a group, goes right after the group or row that had
-focus. A new Projects session goes after its project's other sessions.
+Terminal puts its page at the end of Browser), and the first window of a
+group starts its group right after the group that had focus (at the top
+of the groups, when a row of its own had focus). A window of its own
+goes right after the row of its own that had focus, else at the end of
+those rows. A new Projects session goes after its project's other
+sessions.
 A dialog has no row: it rides above the window it belongs to.
 
 When a group's last window closes, the group keeps its place on that

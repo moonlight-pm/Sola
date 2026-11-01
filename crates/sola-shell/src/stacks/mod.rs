@@ -232,13 +232,15 @@ impl Stacks {
 
     /// Where [`Self::place`] puts a new window of `app_id` that has no
     /// remembered slot: the zone (Float, or the showing workspace's landing
-    /// zone), the index in the bar, and the focused tab (the opener). In
-    /// the bar it goes right after the opener — after the last window
-    /// opened from it while it kept focus — when that is in its group;
-    /// otherwise a grouped window goes to the end of its group, and
-    /// anything else (or a group not on the bar) right after the block
-    /// holding the opener. The launcher's ghost row stands there while an
-    /// app starts.
+    /// zone), the index in the bar, and the focused tab (the opener). Loose
+    /// rows come first, then the groups. In the bar a window goes right
+    /// after the opener — after the last window opened from it while it
+    /// kept focus — when that is in its group; otherwise a grouped window
+    /// goes to the end of its group (its emptied group's place, when it
+    /// left one), the first of a group right after the group holding the
+    /// opener (the top of the groups, from a loose row), and a loose window
+    /// right after a loose opener, else at the end of the loose rows. The
+    /// launcher's ghost row stands there while an app starts.
     pub fn landing_slot(&self, app_id: &str, floats: bool) -> (Zone, usize, Option<u32>) {
         let desk = &self.desks[self.showing];
         let zone = if floats { Zone::Float } else { desk.landing(&self.layout) };
@@ -250,16 +252,20 @@ impl Stacks {
             }
             _ => opener,
         };
-        let group = grouped(app_id)
-            .then(|| bar.group_range(app_id))
-            .flatten()
-            .filter(|(start, end)| start < end);
+        let loose_len = bar.loose_len();
+        let after_end = after.and_then(|a| bar.block_end(a));
         let in_group = |w: u32| bar.tab(w).is_some_and(|t| t.app_id == app_id);
-        let at = match (after, group) {
-            (Some(a), Some(_)) if in_group(a) => bar.index_of(a).map_or(bar.len(), |i| i + 1),
-            (_, Some((_, end))) => end,
-            (Some(a), None) => bar.block_end(a).unwrap_or(bar.len()),
-            (None, None) => bar.len(),
+        let at = if !grouped(app_id) {
+            after_end.unwrap_or(loose_len).min(loose_len)
+        } else {
+            match bar.group_range(app_id) {
+                Some((start, end)) if start == end => start,
+                Some((_, end)) => match after.filter(|&a| in_group(a)) {
+                    Some(a) => bar.index_of(a).map_or(end, |i| i + 1),
+                    None => end,
+                },
+                None => after_end.unwrap_or(bar.len()).max(loose_len),
+            }
         };
         (zone, at, opener)
     }

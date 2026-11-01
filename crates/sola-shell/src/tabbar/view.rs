@@ -2,8 +2,9 @@
 //! switches workspaces, [`super::head`]), then a row per window (app icon,
 //! title) in the workspace's bar order — one list, not grouped by zone. The
 //! windows of each app that opens a window per document sit in that app's
-//! group: a pocket headed by the app's icon and name, which does not fold
-//! (spec § App groups and keys). Board 05's rows: the focused window is
+//! group, under its name in small capitals, one step in; the group does
+//! not fold. Every loose row comes before the groups (spec § App groups
+//! and keys; `design/bar-groups/`, way A). Board 05's rows: the focused window is
 //! the pill; a tiled zone's shown tab is lifted a step while its zone is
 //! on screen and bright while it is not (Full while the halves are up, or
 //! the halves while Full is); the tabs behind are muted. A tab that is
@@ -91,6 +92,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     let panel = SidebarPanel::new(sections)
         .controller(&shell.tabbar.gestures, Msg::TabBar)
         .reorder_within_sections()
+        .loose_first()
         .fill_width()
         .header(super::head::view(shell))
         .build();
@@ -99,19 +101,18 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     island(panel)
 }
 
-/// An app's group: a pocket headed by its icon and name, its rows inside.
-/// It does not fold; Super+H says "hidden" here once, not on each row.
+/// An app's group: its name as a caption, its rows one step in. It does
+/// not fold; Super+H says "hidden" here once, not on each row.
 fn group_section<'a>(
     shell: &'a Shell,
     app: &str,
     items: Vec<SidebarItem<'a, Msg>>,
 ) -> SidebarSection<'a, Msg> {
-    let mark = icon(app_icon(shell, app), LEADING_SLOT as u16);
     let mut section = SidebarSection::new(app_label(shell, app), items)
         .id(group_row_id(app))
-        .pocket(Msg::Noop, mark);
+        .caption();
     if shell.is_app_hidden(app) {
-        section = section.header_note("hidden");
+        section = section.note("hidden");
     }
     section
 }

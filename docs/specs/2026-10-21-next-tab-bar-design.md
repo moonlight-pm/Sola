@@ -676,6 +676,15 @@ are the apps themselves.
   moves when the app's second window opens.
 - **No folding.** A long group (a browser with seventy pages) makes the
   bar scroll.
+- **The look (2026-11-01):** way A of `design/bar-groups/` (Joshua: "i
+  like the 'CAPTION' style design"; asked for "Remove the icon from group
+  rows … indent their children … Group titles or the groups themselves
+  should be more distinct"): the header is the app's name in small
+  capitals, no icon, its text where a loose row's icon starts; the
+  group's windows sit 14 in.
+- **Loose rows first (2026-11-01;** Joshua: "lets add another rule -- all
+  'loose' (singleton) apps go at the top"**):** every loose row above
+  every group.
 - **Projects is one flat group.** A new session lands after the last row
   of its project (read from the window's title, `WindowLabel`, when the
   window has one when it maps).
@@ -695,23 +704,28 @@ are the apps themselves.
 ### The bar
 
 - A workspace's bar is a run of **blocks**: a loose row, or an app's group
-  (its header — the app's icon and name — and its rows). Groups and loose
-  rows mix in any order. The flat order (every row, top to bottom) is what
-  the zones, the keys and the saved layout read, as before.
-- **Header:** the app's icon and name in a pocket (the kit's
-  `SidebarSection::pocket`); no chevron, no close, no count. Super+H shows
-  "hidden" on the header once instead of on each row. A click on it does
-  nothing.
+  (its header and its rows). Every loose row comes first, then the
+  groups (2026-11-01; at first they mixed in any order). The flat order
+  (every row, top to bottom) is what the zones, the keys and the saved
+  layout read, as before.
+- **Header:** a caption (the kit's `SidebarSection::caption`): the app's
+  name in small capitals, semibold 10.5, the secondary ink, 18 of air
+  above it, 6 below, its text where a loose row's icon starts; the
+  group's rows 14 in (`CAPTION_NEST`); no icon, fill, chevron, close or
+  count (2026-11-01; first a pocket with the app's icon). Super+H shows
+  "hidden" at the caption's end instead of on each row. A click on it
+  does nothing.
 - **Drag:** a group's row moves only within its group; a group moves by
-  its header; a loose row moves between blocks and never into a group
-  (the kit's `reorder_within_sections`, its loose rows moving block to
-  block).
+  its header among the groups; a loose row moves among the loose rows
+  (the kit's `reorder_within_sections` with `loose_first`).
 - **Where a new window lands:** right after its opener (and after the
   last window opened from it while it kept focus) when the opener is in
-  its group; otherwise a grouped window goes to the end of its group, and
-  a loose row (or a group not on the bar yet) goes right after the block
-  that holds the focused row. A link opened from Terminal puts its page at
-  the end of Browser, not after the terminal.
+  its group; otherwise a grouped window goes to the end of its group (its
+  emptied group's place, when it left one), the first of a group right
+  after the group holding the focused row (the top of the groups when a
+  loose row has focus), and a loose window right after a loose focused
+  row, else at the end of the loose rows. A link opened from Terminal
+  puts its page at the end of Browser, not after the terminal.
 - **An emptied group keeps its place** on its workspace (an invisible
   block), so the app's next window brings the group back there; saved with
   the layout (`TabLayout.groups`).
@@ -721,7 +735,7 @@ are the apps themselves.
 - **The launcher's ghost row** stands where the window will land: in its
   group when the group is on the bar.
 - **The old saved bar** (rows of one app between others) regroups at each
-  app's first row.
+  app's first row, its loose rows going above the groups.
 
 ### Keys and Caps Lock
 
