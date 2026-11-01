@@ -24,6 +24,7 @@ use crate::tag;
 use crate::watch::{Foreign, Owners};
 
 mod foreign;
+mod refresh;
 
 /// How long a new compositor runs before the apps that went with the last
 /// one are started on it (sola-river and the shell come back first).
@@ -77,6 +78,14 @@ pub struct Session {
     owners: Owners,
     /// The last live window list.
     windows: Vec<Window>,
+    /// When the apps were last checked for a moved package
+    /// ([`refresh`]).
+    checked_at: Option<Instant>,
+    /// Apps stopped for a new program, by app id: their command, to start
+    /// again once they exit.
+    relaunch: HashMap<String, String>,
+    /// Apps found running at start, asked to exit for a new program.
+    moving: Vec<refresh::Moving>,
 }
 
 impl Session {
@@ -94,6 +103,9 @@ impl Session {
             foreign: HashMap::new(),
             owners: Owners::default(),
             windows: Vec::new(),
+            checked_at: None,
+            relaunch: HashMap::new(),
+            moving: Vec::new(),
         }
     }
 
@@ -229,7 +241,10 @@ impl Session {
         match topic {
             Topic::SessionApps(apps) => *persisted = apps,
             Topic::Windows(ws) => {
-                *running = ws.into_iter().map(|w| w.app_id).collect();
+                *running = ws.iter().map(|w| w.app_id.clone()).collect();
+                // The apps found running are told by their windows' pids
+                // ([`refresh`]).
+                self.windows = ws;
             }
             other => self.handle(other),
         }
@@ -457,6 +472,8 @@ impl Session {
         self.settle_adopted();
         self.bring_back_lost();
         self.step_foreign();
+        self.refresh_moved();
+        self.step_moving();
     }
 
     /// One bus message: a live window list goes to the adopted apps (a
@@ -536,6 +553,7 @@ impl Session {
         for (app_id, command, status) in to_emit {
             info!(%app_id, ?status, "user app exited");
             self.emit_exited(&app_id, &command, status);
+            self.relaunch_moved(&app_id);
         }
         if reaped_any {
             self.emit_session_apps();

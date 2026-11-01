@@ -1,5 +1,6 @@
 mod adopted;
 mod display;
+mod moved;
 mod quit;
 mod session;
 mod tag;

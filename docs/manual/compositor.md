@@ -114,9 +114,13 @@ manager that stops answering for more than 3 s.
 ### Ids
 
 `sola-river` numbers every window, counting from 1 in the order windows
-appear. This `window_id` is not reused while `sola-river` runs; it starts
-again from 1 when `sola-river` restarts. Every window topic on the bus and
-the `windows` call use it.
+appear. This `window_id` is not reused while `sola-river` runs, and a
+window keeps it when `sola-river` restarts: River names each window with
+an identifier of its own (`river_window_v1.identifier`), and `sola-river`
+keeps which id it gave each one in
+`$XDG_RUNTIME_DIR/sola-river-windows.json` (for this compositor only; a
+new rivulet starts over). New windows count on from the highest. Every
+window topic on the bus and the `windows` call use it.
 
 A window joins the `Windows` list once the compositor has reported both its
 app id and its title. Each entry carries `window_id`, `app_id`, `title`,
@@ -728,10 +732,10 @@ steps (`idle: the fade starts`, `idle: the background dims`,
 - Only floating windows move or resize, and only by their own title bar
   or edges. There is no keyboard move and no modifier-drag.
 - The zones are fixed: Full, two halves at 50 / 50, Floating, and Cinema.
-- Window ids change when `sola-river` restarts. Until their publishers
-  send them again, records keyed by window id from before the restart
-  (`WindowGeometry`, `WindowFloating`, `WindowChrome`) can name other
-  windows.
+- A window keeps its id through a restart of `sola-river` only when
+  River names the window before anything else about it (the identifier is
+  sent as the window is created). The first `sola-river` with the map
+  (2026-11-01) had none to read: the windows up then were numbered anew.
 - Only the first seat is used.
 - `input.key` uses a US keymap regardless of the keyboard's layout. The
   method declares `chord` as text, so a caller that sends text, as the MCP

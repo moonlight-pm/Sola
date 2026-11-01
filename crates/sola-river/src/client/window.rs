@@ -115,6 +115,9 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
         };
         let mut apps_dirty = false;
         match event {
+            Event::Identifier { identifier } => {
+                take_back_id(state, window_id, &identifier);
+            }
             Event::AppId { app_id } => {
                 let value = app_id.unwrap_or_default();
                 info!(window_id, app_id = %value, "app_id set");
@@ -267,9 +270,39 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
     }
 }
 
+/// River named window `minted` `identifier` (sent once, as it is created).
+/// A window this compositor had before sola-river restarted takes back
+/// the id it had — before anything about it is told, so the bus only ever
+/// sees that id ([`crate::window_ids`]) — and the id is kept for the next.
+fn take_back_id(state: &mut AppData, minted: u32, identifier: &str) {
+    let id = match state.window_ids.id_for(identifier) {
+        Some(old) if old != minted && state.registry.untold(minted) && state.registry.rekey(minted, old) => {
+            for v in state.windows_by_object.values_mut() {
+                if *v == minted {
+                    *v = old;
+                }
+            }
+            if let Some(w) = state.windows_by_id.remove(&minted) {
+                state.windows_by_id.insert(old, w);
+            }
+            if let Some(n) = state.nodes_by_window.remove(&minted) {
+                state.nodes_by_window.insert(old, n);
+            }
+            if let Some(d) = state.pending.manage.remove(&minted) {
+                state.pending.manage.insert(old, d);
+            }
+            info!(window_id = old, minted, %identifier, "window found again: its id back");
+            old
+        }
+        _ => minted,
+    };
+    state.window_ids.remember(identifier, id);
+}
+
 /// Tear down a window the same way `closed` does. Used for the protocol
 /// event and for pid-gone pruning after a hard client kill (no `closed`).
 pub(crate) fn drop_window(state: &mut AppData, window_id: u32) {
+    state.window_ids.forget(window_id);
     // River asserts in Window.destroy() that no seat is still focused
     // on the window. Queue clear_focus so the next manage_start sends
     // it before we destroy the proxy.

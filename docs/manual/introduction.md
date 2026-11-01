@@ -125,9 +125,10 @@ from a checkout, or `oath set` and `oath apply` of a published release
 comes from a package that moved, and no other: the Sola services restart,
 while rivulet and the tmux servers that hold Terminal's and Projects'
 shells keep running, and so do the open applications (the session
-manager keeps its children). No session needs ending. An application does
-not restart itself when its package moves: close it and open it again for
-the new version.
+manager keeps its children). No session needs ending. An application
+whose own package moved is stopped and started again on its new program by
+the session manager, alone, within 2 seconds; one that isn't Sola's (Steam,
+a game) is never restarted for it.
 
 Every apply takes a generation. `sudo oath undo` puts back the pins the
 last apply changed and relinks `/bin`, and PID 1 restarts the same

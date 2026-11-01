@@ -53,6 +53,32 @@ impl WindowRegistry {
         Self::default()
     }
 
+    /// New ids start above `id` (the ones a restarted sola-river keeps for
+    /// windows it finds again, [`crate::window_ids`]).
+    pub fn reserve(&mut self, id: u32) {
+        self.next_id = self.next_id.max(id);
+    }
+
+    /// Give window `from`'s entry the id `to` (unused): a window found again
+    /// takes back the id it had.
+    pub fn rekey(&mut self, from: u32, to: u32) -> bool {
+        if self.by_id.contains_key(&to) {
+            return false;
+        }
+        let Some(entry) = self.by_id.remove(&from) else {
+            return false;
+        };
+        self.by_id.insert(to, entry);
+        true
+    }
+
+    /// Nothing about window `id` has been told yet: no app id, title or pid.
+    pub fn untold(&self, id: u32) -> bool {
+        self.by_id
+            .get(&id)
+            .is_some_and(|e| e.app_id.is_none() && e.title.is_none() && e.pid.is_none())
+    }
+
     pub fn mint(&mut self) -> u32 {
         self.next_id += 1;
         self.by_id.insert(
