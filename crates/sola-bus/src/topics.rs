@@ -277,6 +277,19 @@ pub struct TabLayout {
     /// recent first: what is on screen follows from it.
     #[serde(default)]
     pub picks: Vec<WorkspacePicks>,
+    /// Where each app group with no windows left sits in its workspace's
+    /// bar, so the app's next window brings it back there.
+    #[serde(default)]
+    pub groups: Vec<TabLayoutGroup>,
+}
+
+/// An empty app group's place (`TabLayout.groups`): before the tab at
+/// index `at` of its workspace's saved bar (the end when there is none).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct TabLayoutGroup {
+    pub workspace: String,
+    pub app: String,
+    pub at: u32,
 }
 
 /// A workspace's zones, most recently picked first (`TabLayout.picks`).
@@ -748,6 +761,10 @@ pub struct RegisteredChord {
 pub struct ChordEvent {
     pub keysym: u32,
     pub modifiers: u32,
+    /// Where the pointer was (compositor coordinates) when the chord
+    /// fired, if sola-river knows: Super+Tab steps the windows under it.
+    #[serde(default)]
+    pub pointer: Option<(i32, i32)>,
 }
 
 /// Mouse click targeted at a specific window, emitted by sola-river

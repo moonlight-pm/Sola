@@ -5,8 +5,9 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use sola_bus::topics::{TabLayout, TabLayoutZone, Workspace, WorkspacePicks, Zone};
+use sola_bus::topics::{TabLayout, TabLayoutGroup, TabLayoutZone, Workspace, WorkspacePicks, Zone};
 
+use super::bar::{Bar, Block, app_of_key, grouped};
 use super::desk::Desk;
 use super::{FULL, GHOST_GRACE, RESTORE_GRACE, Stacks};
 
@@ -29,7 +30,10 @@ impl Stacks {
     /// order (a layout saved before the bar mixed zones has one run per
     /// zone). A zone saved before workspaces belongs to the first one; a
     /// zone the layout no longer has sends its windows to Full when they
-    /// come.
+    /// come. Each workspace's app groups wait in their saved places — at
+    /// their first window's index, or the place an empty one kept — so
+    /// windows that come back line up around them (a bar saved before
+    /// groups regroups at each app's first row).
     pub fn load(&mut self, layout: &TabLayout, now: Instant) {
         if !layout.workspaces.is_empty() {
             self.desks = layout
@@ -55,8 +59,18 @@ impl Stacks {
         }
         let first = self.desks[0].id.clone();
         self.restore.clear();
-        // Each workspace's next index in its bar.
+        // Each workspace's next index in its bar, and its groups: (index,
+        // after the tabs saved there, app). An empty group sits before the
+        // tab at its index; a group's first tab is that tab.
         let mut next: HashMap<String, usize> = HashMap::new();
+        let mut groups: HashMap<String, Vec<(usize, bool, String)>> = HashMap::new();
+        for g in &layout.groups {
+            let workspace = if g.workspace.is_empty() { &first } else { &g.workspace };
+            groups
+                .entry(workspace.clone())
+                .or_default()
+                .push((g.at as usize, false, g.app.clone()));
+        }
         for z in &layout.zones {
             let workspace = if z.workspace.is_empty() {
                 first.clone()
@@ -65,6 +79,11 @@ impl Stacks {
             };
             let start = next.entry(workspace.clone()).or_default();
             for (i, key) in z.apps.iter().enumerate() {
+                let app = app_of_key(key);
+                let ws_groups = groups.entry(workspace.clone()).or_default();
+                if grouped(app) && !ws_groups.iter().any(|(_, _, a)| a == app) {
+                    ws_groups.push((*start + i, true, app.to_string()));
+                }
                 self.restore.push(Slot {
                     workspace: workspace.clone(),
                     zone: z.zone,
@@ -75,6 +94,17 @@ impl Stacks {
             }
             *start += z.apps.len();
         }
+        for d in &mut self.desks {
+            let mut ws_groups = groups.remove(&d.id).unwrap_or_default();
+            ws_groups.sort();
+            let mut seen = Vec::new();
+            ws_groups.retain(|(_, _, app)| {
+                let first = !seen.contains(app);
+                seen.push(app.clone());
+                first
+            });
+            d.bar = Bar::of_groups(ws_groups.into_iter().map(|(at, _, app)| (app, at)).collect());
+        }
         self.restore_until = Some(now + RESTORE_GRACE);
     }
 
@@ -83,31 +113,57 @@ impl Stacks {
     /// (a restarting app, apps the session has not restored yet).
     pub fn layout(&self, now: Instant) -> TabLayout {
         let mut zones: Vec<TabLayoutZone> = Vec::new();
+        let mut groups: Vec<TabLayoutGroup> = Vec::new();
         for desk in &self.desks {
-            // The bar: (zone, key, the zone shows it).
-            let mut bar: Vec<(Zone, String, bool)> = desk
-                .tabs
-                .iter()
-                .map(|t| {
+            // The bar: its tabs (zone, key, the zone shows it), and the
+            // empty groups between them.
+            let mut bar: Vec<Row> = Vec::new();
+            for block in desk.bar.blocks() {
+                if let Block::Group { app, tabs, .. } = block {
+                    if tabs.is_empty() {
+                        bar.push(Row::Empty(app.clone()));
+                        continue;
+                    }
+                }
+                for t in block.tabs() {
                     let shown = desk.column(t.zone).shown == Some(t.window_id);
-                    (t.zone, t.key.clone(), shown)
-                })
-                .collect();
+                    bar.push(Row::Tab(t.zone, t.key.clone(), shown));
+                }
+            }
             let here = |s: &Slot| s.workspace == desk.id;
             for (g, _) in self.live_ghosts(now).filter(|(g, _)| here(g)) {
                 if g.shown {
-                    for row in bar.iter_mut().filter(|row| row.0 == g.zone) {
-                        row.2 = false;
+                    for row in &mut bar {
+                        if let Row::Tab(zone, _, shown) = row {
+                            if *zone == g.zone {
+                                *shown = false;
+                            }
+                        }
                     }
                 }
-                let at = g.at.min(bar.len());
-                bar.insert(at, (g.zone, g.key.clone(), g.shown));
+                let at = row_index(&bar, g.at);
+                bar.insert(at, Row::Tab(g.zone, g.key.clone(), g.shown));
             }
             for s in self.live_restore(now).filter(|s| here(s)) {
-                let taken = bar.iter().any(|row| row.0 == s.zone && row.2);
-                bar.push((s.zone, s.key.clone(), s.shown && !taken));
+                let taken = bar
+                    .iter()
+                    .any(|row| matches!(row, Row::Tab(z, _, true) if *z == s.zone));
+                bar.push(Row::Tab(s.zone, s.key.clone(), s.shown && !taken));
             }
-            for (zone, key, shown) in bar {
+            let mut index = 0u32;
+            for row in bar {
+                let (zone, key, shown) = match row {
+                    Row::Tab(zone, key, shown) => (zone, key, shown),
+                    Row::Empty(app) => {
+                        groups.push(TabLayoutGroup {
+                            workspace: desk.id.clone(),
+                            app,
+                            at: index,
+                        });
+                        continue;
+                    }
+                };
+                index += 1;
                 let run = match zones.last_mut() {
                     Some(z) if z.zone == zone && z.workspace == desk.id => z,
                     _ => {
@@ -152,6 +208,7 @@ impl Stacks {
                     zones: d.picks.clone(),
                 })
                 .collect(),
+            groups,
         }
     }
 
@@ -184,4 +241,27 @@ impl Stacks {
         self.live_ghosts(now).any(|(g, _)| g.key == key)
             || self.live_restore(now).any(|s| s.key == key)
     }
+}
+
+/// A row of the bar being saved: a tab (its zone, key, and whether its
+/// zone shows it), or an empty group's place.
+enum Row {
+    Tab(Zone, String, bool),
+    Empty(String),
+}
+
+/// Where the tab at index `at` of the bar (counting tabs only) sits among
+/// `rows`: before it, past the empty groups before it; the end when there
+/// is none.
+fn row_index(rows: &[Row], at: usize) -> usize {
+    let mut tabs = 0;
+    for (i, row) in rows.iter().enumerate() {
+        if let Row::Tab(..) = row {
+            if tabs == at {
+                return i;
+            }
+            tabs += 1;
+        }
+    }
+    rows.len()
 }

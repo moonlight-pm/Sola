@@ -450,6 +450,11 @@ pub struct SectionCollapse<'a, Message> {
     pub on_color_dismiss: Option<Message>,
     /// Commit button in edit mode (check next to the swatch).
     pub on_commit: Option<Message>,
+    /// A mark in the chevron's place ([`SidebarSection::pocket`]: the
+    /// group does not fold).
+    pub leading: Option<Element<'a, Message, Theme>>,
+    /// Dim trailing word on the header, folded or not (e.g. "hidden").
+    pub note: Option<String>,
 }
 
 impl<'a, Message> SidebarSection<'a, Message> {
@@ -520,7 +525,33 @@ impl<'a, Message> SidebarSection<'a, Message> {
             color_picker: None,
             on_color_dismiss: None,
             on_commit: None,
+            leading: None,
+            note: None,
         });
+        self
+    }
+
+    /// A pocket that does not fold (the shell's app groups): the header
+    /// shows `leading` (the app's icon) and the name, no chevron, and a
+    /// press only emits `on_press`. Members nest in the pocket; the header
+    /// is a reorder row when the panel is reorderable.
+    pub fn pocket(
+        self,
+        on_press: Message,
+        leading: impl Into<Element<'a, Message, Theme>>,
+    ) -> Self {
+        let mut section = self.collapsible(false, on_press);
+        if let Some(c) = &mut section.collapse {
+            c.leading = Some(leading.into());
+        }
+        section
+    }
+
+    /// A dim word at the header's end, folded or not.
+    pub fn header_note(mut self, note: impl Into<String>) -> Self {
+        if let Some(c) = &mut self.collapse {
+            c.note = Some(note.into());
+        }
         self
     }
 
@@ -997,22 +1028,15 @@ pub(crate) fn well_select_plate(c: Color) -> Color {
     well_lift(well_face(c), WELL_SELECT_MIX)
 }
 
-/// A row's fill and ink on `well`. `column`: the plain column (no pocket
-/// of its own), whose active row is the theme's highlight.
-fn well_row_colors(
-    well: Color,
-    column: bool,
-    active: bool,
-    shown: bool,
-    hovered: bool,
-) -> (Color, Color) {
+/// A row's fill and ink on `well` (the column, or a group's pocket). The
+/// active row is the theme's highlight wherever it sits (the shell's bar:
+/// the focused window's pill, in an app's group or not).
+fn well_row_colors(well: Color, active: bool, shown: bool, hovered: bool) -> (Color, Color) {
     let face = well_face(well);
     let ink = on_color(face);
-    if active && column {
+    if active {
         let fill = crate::theme::highlight();
         (fill, on_color(fill))
-    } else if active {
-        (well_lift(face, WELL_SELECT_MIX), ink)
     } else if hovered {
         (well_lift(face, WELL_HOVER_MIX), ink)
     } else if shown {
@@ -1087,7 +1111,7 @@ fn tab_item_style(
     well: Option<Color>,
 ) -> button::Style {
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    let (bg, text_color) = well_row_colors(row_surface(well), well.is_none(), active, shown, hovered);
+    let (bg, text_color) = well_row_colors(row_surface(well), active, shown, hovered);
     button::Style {
         background: Some(Background::Color(bg)),
         text_color,
@@ -1115,7 +1139,7 @@ fn tab_close_style(
     if chrome == SidebarItemChrome::Row {
         let face = well_face(row_surface(well));
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-        let (wash, ink) = well_row_colors(face, well.is_none(), active, false, hovered);
+        let (wash, ink) = well_row_colors(face, active, false, hovered);
         let rest = if wash.a <= 0.001 {
             face
         } else if wash.a >= 0.999 {
@@ -1179,6 +1203,12 @@ fn collapse_header_item<'a, Message: Clone + 'a>(
         if let Some(n) = collapse.count {
             item = item.secondary(n);
         }
+    }
+    if let Some(note) = collapse.note {
+        item = item.secondary(note);
+    }
+    if let Some(mark) = collapse.leading {
+        item = item.leading(mark);
     }
     if let Some(ctx) = collapse.on_context {
         item = item.on_context(ctx);
@@ -2164,7 +2194,9 @@ fn item_text_block<'a, Message: 'a>(
     }
 
     let mut title_row = row![].spacing(SPACE_SM).align_y(iced::Alignment::Center);
-    if let Some(collapsed) = section_header {
+    // A header with a mark of its own (a pocket that does not fold) shows
+    // it in the chevron's place.
+    if let Some(collapsed) = section_header.filter(|_| leading.is_none()) {
         let chev = ink.unwrap_or(Color {
             r: 0.58,
             g: 0.58,
@@ -3322,7 +3354,7 @@ fn row_container_style(
 ) -> container::Style {
     match chrome {
         SidebarItemChrome::Row => {
-            let (bg, text_color) = well_row_colors(row_surface(well), well.is_none(), active, shown, hovered);
+            let (bg, text_color) = well_row_colors(row_surface(well), active, shown, hovered);
             container::Style {
                 background: Some(Background::Color(bg)),
                 text_color: Some(text_color),
@@ -3519,6 +3551,19 @@ mod tests {
     }
 
     #[test]
+    fn a_pocket_header_shows_its_mark_and_note() {
+        let section: SidebarSection<'_, ()> = SidebarSection::new("Browser", Vec::new())
+            .pocket((), Space::new())
+            .header_note("hidden");
+        let collapse = section.collapse.expect("a pocket is a collapse section");
+        assert!(!collapse.collapsed);
+        let item = collapse_header_item(section.label, collapse);
+        assert_eq!(item.label, "Browser");
+        assert!(item.leading.is_some());
+        assert_eq!(item.secondary.as_deref(), Some("hidden"));
+    }
+
+    #[test]
     fn collapse_header_is_folder_caption() {
         let item = collapse_header_item(
             Some("Work".into()),
@@ -3535,6 +3580,8 @@ mod tests {
                 color_picker: None,
                 on_color_dismiss: None,
                 on_commit: None,
+                leading: None,
+                note: None,
             },
         );
         assert_eq!(item.label, "Work");
@@ -3559,6 +3606,8 @@ mod tests {
                 color_picker: None,
                 on_color_dismiss: None,
                 on_commit: None,
+                leading: None,
+                note: None,
             },
         );
         assert!(idle.on_edit.is_some());
@@ -3577,6 +3626,8 @@ mod tests {
                 color_picker: None,
                 on_color_dismiss: None,
                 on_commit: None,
+                leading: None,
+                note: None,
             },
         );
         assert!(renaming.on_edit.is_none());
@@ -3600,6 +3651,8 @@ mod tests {
                 color_picker: None,
                 on_color_dismiss: None,
                 on_commit: None,
+                leading: None,
+                note: None,
             },
         );
         let renaming = collapse_header_item(
@@ -3617,6 +3670,8 @@ mod tests {
                 color_picker: None,
                 on_color_dismiss: None,
                 on_commit: None,
+                leading: None,
+                note: None,
             },
         );
         assert_eq!(
@@ -3661,31 +3716,20 @@ mod tests {
     }
 
     #[test]
-    fn grouped_select_stays_in_pocket_hue() {
+    fn the_active_row_is_the_highlight_in_a_pocket_too() {
         let theme = crate::default_theme();
-        let blue = Color::from_rgb(0.15, 0.35, 0.70);
-        let s = row_container_style(&theme, true, false, SidebarItemChrome::Row, false, Some(blue));
-        match s.background {
-            Some(Background::Color(c)) => {
-                assert!((c.a - 1.0).abs() < 1e-6);
-                assert_ne!(c, blue);
-                assert!(c.b > c.r && c.b > c.g, "still blue, got {c:?}");
-                let d_blue = (c.r - blue.r).abs() + (c.g - blue.g).abs() + (c.b - blue.b).abs();
-                let d_white = (1.0 - c.r) + (1.0 - c.g) + (1.0 - c.b);
-                assert!(d_blue < d_white, "must stay nearer the pocket than white");
-            }
-            other => panic!("expected solid lift, got {other:?}"),
-        }
-        let white = Color::WHITE;
-        let s = row_container_style(&theme, true, false, SidebarItemChrome::Row, false, Some(white));
-        match s.background {
-            Some(Background::Color(c)) => {
-                assert!(c.r > 0.80 && c.r < 1.0, "quiet darken on white, got {c:?}");
-                assert_ne!(c, inset_surface(chrome_surface(), 0.22));
-            }
-            other => panic!("expected solid lift, got {other:?}"),
-        }
-        assert_eq!(s.text_color, Some(Color::BLACK));
+        let column = row_container_style(&theme, true, false, SidebarItemChrome::Row, false, None);
+        let pocket = row_container_style(
+            &theme,
+            true,
+            false,
+            SidebarItemChrome::Row,
+            false,
+            Some(group_well_fill()),
+        );
+        assert_eq!(column.background, Some(Background::Color(crate::theme::highlight())));
+        assert_eq!(pocket.background, column.background);
+        assert_eq!(pocket.text_color, column.text_color);
     }
 
     #[test]
@@ -3716,6 +3760,8 @@ mod tests {
                 color_picker: None,
                 on_color_dismiss: None,
                 on_commit: Some(()),
+                leading: None,
+                note: None,
             },
         );
         assert!(renaming.content.is_some());

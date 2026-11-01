@@ -344,6 +344,7 @@ fn keycode_of(code: Code) -> Option<KeyCode> {
         Code::Escape => KeyCode::ESCAPE,
         Code::Backspace => KeyCode::BACKSPACE,
         Code::Tab => KeyCode::TAB,
+        Code::CapsLock => KeyCode::CAPS_LOCK,
         Code::Enter => KeyCode::ENTER,
         Code::Space => KeyCode::SPACE,
         Code::ArrowLeft => KeyCode::LEFT,

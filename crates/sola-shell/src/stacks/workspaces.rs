@@ -42,7 +42,7 @@ impl Stacks {
     pub fn windows_on(&self, index: usize) -> Vec<u32> {
         self.desks
             .get(index)
-            .map_or_else(Vec::new, |d| d.tabs.iter().map(|t| t.window_id).collect())
+            .map_or_else(Vec::new, |d| d.bar.tabs().map(|t| t.window_id).collect())
     }
 
     /// Show workspace `index`. Returns false when it is already showing or
@@ -66,8 +66,9 @@ impl Stacks {
     }
 
     /// Send `window_id` to workspace `index`: the same zone there, at the
-    /// end of its bar, shown (a float stays a float; Full or the halves come up with
-    /// it). Returns false when nothing moved.
+    /// end of its bar (of its app's group there, when it has one), shown
+    /// (a float stays a float; Full or the halves come up with it).
+    /// Returns false when nothing moved.
     pub fn send(&mut self, window_id: u32, index: usize) -> bool {
         let window_id = self.parent_of(window_id).unwrap_or(window_id);
         if index >= self.desks.len() || self.desk_of(window_id) == Some(index) {
@@ -136,11 +137,12 @@ impl Stacks {
         let gone = self.desks.remove(index);
         let heir = index.saturating_sub(1);
         let shown: Vec<bool> = gone
-            .tabs
-            .iter()
+            .bar
+            .tabs()
             .map(|t| gone.column(t.zone).shown == Some(t.window_id))
             .collect();
-        for (tab, shown) in gone.tabs.into_iter().zip(shown) {
+        let tabs: Vec<super::Tab> = gone.bar.tabs().cloned().collect();
+        for (tab, shown) in tabs.into_iter().zip(shown) {
             self.desks[heir].push(tab, shown);
         }
         self.showing = self

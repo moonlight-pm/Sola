@@ -5,6 +5,7 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use sola_bus::topics::{ChordEvent, Topic};
 
 use crate::client::AppData;
+use crate::client::caps::CAPS_LOCK;
 use crate::protocol::river_xkb_bindings_v1::river_xkb_binding_v1::RiverXkbBindingV1;
 
 impl Dispatch<RiverXkbBindingV1, (u32, u32)> for AppData {
@@ -20,15 +21,26 @@ impl Dispatch<RiverXkbBindingV1, (u32, u32)> for AppData {
         match event {
             Event::Pressed => {
                 tracing::debug!(keysym, modifiers, "chord pressed");
-                state
-                    .bus
-                    .emit(Topic::Chord(ChordEvent { keysym, modifiers }));
+                if keysym == CAPS_LOCK {
+                    state.caps.pressed();
+                }
+                let pointer = state.pointer_pos;
+                state.bus.emit(Topic::Chord(ChordEvent {
+                    keysym,
+                    modifiers,
+                    pointer,
+                }));
             }
             Event::Released => {
                 tracing::debug!(keysym, modifiers, "chord released");
-                state
-                    .bus
-                    .emit(Topic::ChordReleased(ChordEvent { keysym, modifiers }));
+                if keysym == CAPS_LOCK {
+                    state.caps.released(std::time::Instant::now());
+                }
+                state.bus.emit(Topic::ChordReleased(ChordEvent {
+                    keysym,
+                    modifiers,
+                    pointer: None,
+                }));
             }
             _ => {}
         }

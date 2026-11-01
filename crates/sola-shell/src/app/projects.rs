@@ -11,6 +11,7 @@
 use std::time::Duration;
 
 use sola_bus::topics::{LaunchAppPayload, Topic};
+use sola_core::window_label::WindowLabel;
 
 use super::{Msg, Shell, with_bus};
 use crate::launcher::projects::{APP_ID, CALL_OWNER};
@@ -24,6 +25,31 @@ const START_TIMEOUT: Duration = Duration::from_secs(20);
 const TOAST_SECS: u64 = 5;
 
 impl Shell {
+    /// The windows a new Projects window belongs beside in the bar: the
+    /// other windows of its project (read from the titles, `WindowLabel`),
+    /// so a new session lands after its project's last row. None for
+    /// another app, or a window without its title yet.
+    pub(crate) fn project_kin(&self, window_id: u32, app_id: &str) -> Vec<u32> {
+        let project = |title: &str| WindowLabel::parse(title).map(|l| l.project);
+        if app_id != APP_ID {
+            return Vec::new();
+        }
+        let Some(mine) = self
+            .known_windows
+            .iter()
+            .find(|w| w.window_id == window_id)
+            .and_then(|w| project(&w.title))
+        else {
+            return Vec::new();
+        };
+        self.known_windows
+            .iter()
+            .filter(|w| w.window_id != window_id && w.app_id == APP_ID)
+            .filter(|w| project(&w.title).as_ref() == Some(&mine))
+            .map(|w| w.window_id)
+            .collect()
+    }
+
     pub(crate) fn projects_running(&self) -> bool {
         self.known_windows
             .iter()

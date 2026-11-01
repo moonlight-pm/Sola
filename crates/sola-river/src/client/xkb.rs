@@ -96,7 +96,7 @@ impl Dispatch<RiverXkbConfigV1, ()> for AppData {
 
 impl Dispatch<RiverXkbKeyboardV1, ()> for AppData {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         keyboard: &RiverXkbKeyboardV1,
         event: <RiverXkbKeyboardV1 as Proxy>::Event,
         _: &(),
@@ -110,10 +110,33 @@ impl Dispatch<RiverXkbKeyboardV1, ()> for AppData {
             river_xkb_keyboard_v1::Event::NumlockDisabled => {
                 debug!("numlock off");
             }
+            river_xkb_keyboard_v1::Event::CapslockEnabled => {
+                caps_reported(state, keyboard, true);
+            }
+            river_xkb_keyboard_v1::Event::CapslockDisabled => {
+                caps_reported(state, keyboard, false);
+            }
             river_xkb_keyboard_v1::Event::Removed => {
                 keyboard.destroy();
             }
             _ => {}
         }
+    }
+}
+
+/// Caps Lock changed (or was reported at start). Put it back when
+/// Super+CapsLock changed it (`client::caps`).
+fn caps_reported(state: &mut AppData, keyboard: &RiverXkbKeyboardV1, on: bool) {
+    debug!(on, "capslock");
+    match state.caps.reported(on, std::time::Instant::now()) {
+        Some(true) => {
+            keyboard.capslock_enable();
+            info!("capslock put back on after Super+CapsLock");
+        }
+        Some(false) => {
+            keyboard.capslock_disable();
+            info!("capslock put back off after Super+CapsLock");
+        }
+        None => {}
     }
 }

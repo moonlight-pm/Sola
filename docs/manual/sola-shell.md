@@ -37,10 +37,11 @@ system key.
 | Super+H | Hide the focused app |
 | Super+L | Lock the screen (needs a password: [Security](security.md#locking)) |
 | Super+Q | Close the focused app: every window of it. One that isn't Sola's quits whole ([Session manager](session.md#applications-that-arent-solas)) |
-| Super+Backtick | Show the next window in the bar (Super+Shift+Backtick: the previous) |
+| Super+Tab | Show the next window under the pointer (Super+Shift+Tab: the previous) |
+| Super+Backtick | Show the focused app's next window on this workspace (Super+Shift+Backtick: the previous) |
 | Super+1 … Super+9 | Show workspace 1 to 9 |
 | Super+Ctrl+1 … Super+Ctrl+9 | Send the focused window to workspace 1 to 9 |
-| Super+Tab | Next workspace (Super+Shift+Tab: the previous) |
+| Super+CapsLock | Next workspace (Super+Shift+CapsLock: the previous) |
 | Super+Keypad 0 | Move the focused window to Full |
 | Super+Keypad 4 | Move the focused window to the left column (the default layout's) |
 | Super+Keypad 6 | Move the focused window to the right column (the default layout's) |
@@ -59,7 +60,17 @@ one of its surfaces is open; otherwise it goes to the focused window.
 
 The keypad chords work with NumLock on or off. Sola turns NumLock on for
 each keyboard at session start, so the pad types digits; press NumLock to
-switch it to navigation keys.
+switch it to navigation keys. Super+CapsLock leaves Caps Lock as it was.
+
+**Super+Tab** steps through every window whose place is under the
+pointer: the windows of the zone there, of Full (which covers every
+zone), of Cinema, and the floating windows under it — in their order in
+the bar, starting from the one you see there. Showing a Full window brings
+Full up, and a half's window brings the halves back. With the pointer
+over the bar, the top row or a gap, it steps through the windows at the
+focused window's place. **Super+Backtick** steps through the windows of
+the focused app on this workspace, in their order in the bar; the
+titlebar's Window → Cycle Windows does the same.
 
 While the launcher or the shortcuts overlay is up, every other shortcut
 except Super+K is ignored; while the screenshot marquee is up, every
@@ -246,7 +257,15 @@ the focused tab gets an island too.
 
 The bar lists every window on the workspace in one order of its own, not
 grouped by zone. Each row is the app's icon and the window's title (the
-app's name while it has none). A Projects window's row names three things,
+app's name while it has none).
+
+The apps that open a window per document — Browser (its pages),
+Projects, Terminal, Paint and Design — keep their windows together in a
+**group**: a pocket headed by the app's icon and name, with a row per
+window in it, even when there is only one. Every other window is a row
+of its own: Mail, Settings, Calendar, web apps (though Browser runs
+them), Steam, games. Groups and rows mix in any order. A group does not
+fold; a long one makes the bar scroll. A Projects window's row names three things,
 drawn apart: the project, the session in a quieter ink (when it is not the
 project's main one), and the computer the session runs on — this one too —
 as a chip in that computer's prompt color.
@@ -257,7 +276,8 @@ as a chip in that computer's prompt color.
   screen, and in full ink without the lift while it is not (Full while the
   halves are up, or the halves while Full is).
 - **Windows behind** are muted.
-- **An app hidden** with Super+H says *hidden* on its rows.
+- **An app hidden** with Super+H says *hidden* on its rows (on its
+  group's header, for a group).
 - **Activity**: a window that is working shows a turning ring in place of
   its icon, and one waiting on a decision a diamond, so the title does not
   move. Projects marks each session's window by its session, and Design
@@ -268,22 +288,31 @@ Click a row to show its window in its zone and focus it (its workspace
 and zone come on screen with it, and a hidden app comes back). Hovering a
 row shows a red close dot: it closes that window as the window's own
 close dot would. Drag a row to move it in the list; the window stays in
-its zone and nothing on screen changes. Super+Backtick steps through the
-list in this order.
+its zone and nothing on screen changes. A row in a group moves only
+within its group; drag a group by its header to move the whole group. A
+row of its own moves between the groups and rows, never into a group.
+Clicking a group's header does nothing.
 
 While an app starts from the launcher, a faint row with its name and a
 turning ring stands where its window will land; the window takes its
 place when it opens (or the row goes after 20 seconds, or when the launch
 fails).
 
-A new window's row goes right after the row of the window that had focus:
-a browser page opened with a link, a Terminal tab, a window from the
-launcher. Windows opened behind it from the same window stay in the order
-you opened them. A dialog has no row: it rides above the window it
-belongs to.
+A new window's row goes right after the row of the window that had focus
+when that window is in the new one's group: a page opened with a link
+from a page, a Terminal tab from a terminal. Windows opened behind it
+from the same window stay in the order you opened them. Otherwise a
+window of a group goes to the end of its group (a link opened from
+Terminal puts its page at the end of Browser), and a window of its own,
+or the first of a group, goes right after the group or row that had
+focus. A new Projects session goes after its project's other sessions.
+A dialog has no row: it rides above the window it belongs to.
 
-The bar's layout (the workspaces, and each window's place and zone) is
-saved in `~/.config/sola/shell/tabs.yaml`. Windows that come back within
+When a group's last window closes, the group keeps its place on that
+workspace, unseen, and the app's next window brings it back there.
+
+The bar's layout (the workspaces, each window's place and zone, and the
+places of empty groups) is saved in `~/.config/sola/shell/tabs.yaml`. Windows that come back within
 two minutes of the Shell starting take their saved places, and a window
 whose app restarts within 30 seconds takes the place it left.
 
@@ -304,8 +333,9 @@ then, for the current one:
 - **Move Left** and **Move Right** move it in the order (dimmed at the
   ends).
 - **Delete** removes it. Its windows join the workspace before it (the
-  next one, for the first), in the same zones, at the end of its bar. The
-  last workspace cannot be deleted.
+  next one, for the first), in the same zones, at the end of its bar (a
+  group's windows in that app's group there). The last workspace cannot
+  be deleted.
 
 ## Workspaces
 
@@ -315,10 +345,11 @@ you are on is on screen. A fresh desk starts with one, **Main**.
 - **Super+1 … Super+9** shows a workspace; its last focused window takes
   the keyboard.
 - **Super+Ctrl+1 … Super+Ctrl+9** sends the focused window there, into
-  the same zone, at the end of that workspace's bar, shown in its zone.
-  You stay where you are.
-- **Super+Tab** and **Super+Shift+Tab** step through the workspaces,
-  wrapping.
+  the same zone, at the end of its app's group there (at the end of that
+  workspace's bar, when it has none), shown in its zone. You stay where
+  you are.
+- **Super+CapsLock** and **Super+Shift+CapsLock** step through the
+  workspaces, wrapping.
 
 Showing a window that is on another workspace (from a notification, an
 agent island, Mail's chip) shows that workspace.

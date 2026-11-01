@@ -488,7 +488,7 @@ fn apply_dest(st: &mut StripState, locked: bool) -> bool {
         st.hole_at,
         &st.rest,
         &st.view,
-        held.as_group,
+        held.as_group || held.as_block,
         locked.then(|| held.group.clone()).flatten(),
     );
     st.absorb = next.absorb;
@@ -535,6 +535,9 @@ struct Held {
     end: usize,
     ids: Vec<String>,
     as_group: bool,
+    /// A loose row while items stay in their sections: it moves between
+    /// blocks like a group's header, never into a group.
+    as_block: bool,
     h: i32,
     grab: i32,
     group: Option<String>,
@@ -604,7 +607,13 @@ fn build_view(meta: &[LeafMeta], st: &StripState) -> Vec<ViewRow> {
     if let Some(h) = held {
         let hole = ViewRow {
             id: "empty".into(),
-            kind: if h.as_group { Kind::Group } else { Kind::Item },
+            kind: if h.as_group {
+                Kind::Group
+            } else if h.as_block {
+                Kind::Loose
+            } else {
+                Kind::Item
+            },
             group: if h.as_group { None } else { h.group.clone() },
             hole: true,
             leaf: None,
@@ -624,7 +633,7 @@ fn drop_of(
     locked: bool,
 ) -> Option<Drop> {
     let id = held.ids.first()?.clone();
-    if held.as_group {
+    if held.as_group || held.as_block {
         let before = view
             .iter()
             .skip(hole_at + 1)
@@ -983,17 +992,20 @@ where
                     let ids: Vec<String> = (start..end.min(self.meta.len()))
                         .map(|i| self.meta[i].id.clone())
                         .collect();
+                    let as_group = self
+                        .meta
+                        .get(origin)
+                        .is_some_and(|m| m.kind == LeafKind::Header);
+                    let group = self.meta.get(origin).and_then(|m| m.group.clone());
                     st.held = Some(Held {
                         start,
                         end,
                         ids,
-                        as_group: self
-                            .meta
-                            .get(origin)
-                            .is_some_and(|m| m.kind == LeafKind::Header),
+                        as_group,
+                        as_block: self.locked && !as_group && group.is_none(),
                         h: h.max(1),
                         grab,
-                        group: self.meta.get(origin).and_then(|m| m.group.clone()),
+                        group,
                     });
                     st.hole_at = vi;
                     st.hole_origin = vi;
@@ -1493,6 +1505,7 @@ mod tests {
             end: 1,
             ids: vec!["c3".into()],
             as_group: false,
+            as_block: false,
             h: 32,
             grab: 0,
             group: Some("c".into()),
@@ -1526,6 +1539,7 @@ mod tests {
             end: 1,
             ids: vec!["u1".into()],
             as_group: false,
+            as_block: false,
             h: 32,
             grab: 0,
             group: None,
@@ -1538,5 +1552,27 @@ mod tests {
                 before: Some("d1".into()),
             }
         );
+    }
+
+    #[test]
+    fn a_loose_row_kept_out_of_groups_drops_between_blocks() {
+        let (view, _) = split(vec![
+            row("c", Kind::Group, 0),
+            row("c1", Kind::Item, 32),
+            row("empty", Kind::Loose, 64),
+            row("d", Kind::Group, 96),
+        ]);
+        let held = Held {
+            start: 0,
+            end: 1,
+            ids: vec!["u1".into()],
+            as_group: false,
+            as_block: true,
+            h: 32,
+            grab: 0,
+            group: None,
+        };
+        let drop = drop_of(&held, &view, 2, Some("d".into()), true).unwrap();
+        assert_eq!(drop.dest, Dest::BlockBefore { before: Some("d".into()) });
     }
 }

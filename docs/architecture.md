@@ -246,6 +246,20 @@ Projects sends each project window's roll-up (a tab waiting on a decision
 beats a tab working). `Topic::Zones` is no
 longer read or written on `next`.
 
+**App groups (2026-10-31):** a desk's bar is blocks (`stacks/bar.rs`): a
+loose row, or the group of an app that opens a window per document
+(`stacks::grouped`: Browser, Projects, Terminal, Paint, Design); the flat
+order every reader uses is built from them. An emptied group stays as an
+empty block, its place kept, saved in `TabLayout.groups`; at load each
+desk's groups wait in their saved places with the saved index as their
+rank, so windows coming back in any order line up around them. The bar
+draws a group as a kit `SidebarSection::pocket` and drags with
+`reorder_within_sections`. Super+Tab reads the pointer from the chord
+(`ChordEvent.pointer`, sola-river's last `pointer_position`) and steps
+the windows whose place covers it (`app/cycle.rs`); sola-river puts Caps
+Lock back after a Caps Lock binding (`client/caps.rs`, through
+`river_xkb_keyboard_v1`).
+
 **Zones (2026-10-31):** the content area is a grid of
 equal cells from the persistent `Topic::ZoneLayout` (Settings → Zones →
 shell; `sola_bus::topics::ZoneLayout`, which also knows overlaps, cell

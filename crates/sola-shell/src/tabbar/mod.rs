@@ -1,9 +1,11 @@
 //! The tab bar (Next): a shell window docked left under the menubar that
 //! lists every window on the showing workspace in one run — not grouped by
-//! zone, though each window keeps its zone (Full, Left, Right, Floating).
-//! A row shows its window in its zone; drag a row to reorder it (its zone
-//! stays). The model is
-//! [`crate::stacks`]; the spec is `docs/specs/2026-10-21-next-tab-bar-design.md`.
+//! zone, though each window keeps its zone (Full, Left, Right, Floating) —
+//! with the windows of each app that opens a window per document under
+//! that app's header. A row shows its window in its zone; drag a row to
+//! reorder it within its group (its zone stays), a group by its header.
+//! The model is [`crate::stacks`]; the spec is
+//! `docs/specs/2026-10-21-next-tab-bar-design.md`.
 
 pub mod head;
 pub mod view;
@@ -41,13 +43,35 @@ pub fn window_of_row(id: &str) -> Option<u32> {
     id.strip_prefix('w')?.parse().ok()
 }
 
+/// A group header's id: its app.
+pub fn group_row_id(app: &str) -> String {
+    format!("g:{app}")
+}
+
+/// The block a row or a group header stands for.
+pub fn block_of_row(id: &str) -> Option<crate::stacks::BlockId> {
+    use crate::stacks::BlockId;
+    match id.strip_prefix("g:") {
+        Some(app) => Some(BlockId::Group(app.to_string())),
+        None => window_of_row(id).map(BlockId::Window),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn ids_round_trip() {
+        use crate::stacks::BlockId;
         assert_eq!(window_of_row(&row_id(42)), Some(42));
         assert_eq!(window_of_row("ghost"), None);
+        assert_eq!(window_of_row(&group_row_id("sola-browser")), None);
+        assert_eq!(
+            block_of_row(&group_row_id("sola-browser")),
+            Some(BlockId::Group("sola-browser".into()))
+        );
+        assert_eq!(block_of_row(&row_id(7)), Some(BlockId::Window(7)));
+        assert_eq!(block_of_row("ghost"), None);
     }
 }

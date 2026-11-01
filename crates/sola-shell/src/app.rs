@@ -26,6 +26,7 @@ use crate::zoning::ZoningState;
 pub mod adapt;
 pub mod agents;
 pub mod bus;
+pub mod cycle;
 pub mod desk;
 pub mod projects;
 pub mod web;
@@ -214,9 +215,12 @@ pub enum Msg {
         window_id: u32,
         generation: u64,
     },
-    /// Show the next (or, `back`, previous) tab in the workspace's bar
-    /// order, whatever its zone (Super+` / Super+Shift+`).
-    CycleTabs { back: bool },
+    /// Show the focused app's next (or, `back`, previous) window on the
+    /// workspace, in bar order (Super+` / Super+Shift+`).
+    CycleApp { back: bool },
+    /// Show the next (or previous) window whose place covers the pointer
+    /// (Super+Tab / Super+Shift+Tab).
+    CycleHere { back: bool },
     /// A tab bar row was clicked: show that window in its zone.
     ShowTab(u32),
     /// A tab bar row's stoplight: close that window, as its own close would.
@@ -403,6 +407,9 @@ pub struct Shell {
     /// `MouseLeft`); the focus-follows-mouse dwell fires only if the
     /// pointer is still on its window.
     pub pointer_window_id: Option<u32>,
+    /// Where the pointer was when the last chord fired (sola-river's
+    /// `ChordEvent.pointer`): Super+Tab steps the windows under it.
+    pub chord_pointer: Option<(i32, i32)>,
     /// Generation counter for the focus-follows-mouse dwell timer. Bumped on
     /// every enter/leave so a superseded `FocusHoverFire` is a no-op — gives
     /// a short grace period when mousing across apps toward the menubar.
@@ -584,6 +591,7 @@ impl Shell {
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
+            chord_pointer: None,
             pending_focus_generation: 0,
             mru_apps: Vec::new(),
             mru_window_by_app: HashMap::new(),
@@ -822,9 +830,10 @@ impl Shell {
     }
 
     /// A tab bar gesture finished: show a row, or move a dragged row in
-    /// the bar (its window keeps its zone).
+    /// its group, or a group or loose row among the others (a window keeps
+    /// its zone). A group header's click does nothing (groups do not fold).
     fn on_tabbar_event(&mut self, ev: sola_kit::components::SidebarEvent) -> iced::Task<Msg> {
-        use crate::tabbar::window_of_row;
+        use crate::tabbar::{block_of_row, window_of_row};
         use sola_kit::components::{Dest, SidebarEvent};
         match ev {
             SidebarEvent::Activate { id } => {
@@ -833,16 +842,21 @@ impl Shell {
                 }
             }
             SidebarEvent::Drop(drop) => {
-                let Some(wid) = window_of_row(&drop.id) else {
-                    return iced::Task::none();
+                let moved = match &drop.dest {
+                    // A group's row, within its group.
+                    Dest::Join { before, .. } => window_of_row(&drop.id).is_some_and(|wid| {
+                        self.tabs.reorder(wid, before.as_deref().and_then(window_of_row))
+                    }),
+                    // A group by its header, or a loose row: among the blocks.
+                    Dest::BlockBefore { before } => block_of_row(&drop.id).is_some_and(|id| {
+                        let before = before.as_deref().and_then(block_of_row);
+                        self.tabs.move_block(&id, before.as_ref())
+                    }),
+                    _ => false,
                 };
-                // The bar has no groups: every drop is among loose rows.
-                if let Dest::Loose { before } = drop.dest {
-                    let before = before.as_deref().and_then(window_of_row);
-                    if self.tabs.reorder(wid, before) {
-                        tracing::info!(window_id = wid, ?before, "reorder tab");
-                        self.persist_tabs();
-                    }
+                if moved {
+                    tracing::info!(row = %drop.id, dest = ?drop.dest, "reorder the bar");
+                    self.persist_tabs();
                 }
             }
             _ => {}
@@ -856,7 +870,7 @@ impl Shell {
                 self.hide_focused_app();
                 iced::Task::none()
             }
-            sola_kit::WindowAction::Cycle => iced::Task::done(Msg::CycleTabs { back: false }),
+            sola_kit::WindowAction::Cycle => iced::Task::done(Msg::CycleApp { back: false }),
             sola_kit::WindowAction::Zone(zone) => self.snap_focused_zone(zone),
         }
     }
@@ -1389,13 +1403,14 @@ impl Shell {
         )
     }
 
-    /// The ghost row for a launch in flight: its index in the bar and name.
-    pub fn launch_ghost(&self) -> Option<(usize, &str)> {
+    /// The ghost row for a launch in flight: its index in the bar, its
+    /// name, and its app (its group, when it has one).
+    pub fn launch_ghost(&self) -> Option<(usize, &str, &str)> {
         let p = self.pending_launch.as_ref()?;
         let floats =
             crate::zoning::floats_by_default(&p.app_id) || self.zoning.remembers(&p.app_id);
-        let (_, at, _) = self.tabs.landing_slot(floats);
-        Some((at, p.label.as_str()))
+        let (_, at, _) = self.tabs.landing_slot(&p.app_id, floats);
+        Some((at, p.label.as_str(), p.app_id.as_str()))
     }
 
     /// Drop pending launch (and its toast, if still current) when a matching
@@ -2979,12 +2994,12 @@ impl Shell {
                 crate::screenshot::crop_freeze(handle, rx, ry, rw, rh)
             }
             Msg::ScreenshotDone(result) => self.on_screenshot_done(result),
-            Msg::CycleTabs { back } => {
-                let from = self.focused_window_id;
-                if let Some(next) = self.tabs.step(from, back) {
-                    tracing::info!(?from, to = next, back, "Super+` — next tab in the bar");
-                    self.activate_window(next);
-                }
+            Msg::CycleApp { back } => {
+                self.step_app(back);
+                iced::Task::none()
+            }
+            Msg::CycleHere { back } => {
+                self.step_here(back);
                 iced::Task::none()
             }
             Msg::WorkspaceMenu(index) => {
@@ -3163,6 +3178,7 @@ mod pending_launch_tests {
             focused_app_id: None,
             focused_window_id: None,
             pointer_window_id: None,
+            chord_pointer: None,
             pending_focus_generation: 0,
             mru_apps: Vec::new(),
             mru_window_by_app: HashMap::new(),
@@ -3225,7 +3241,7 @@ mod pending_launch_tests {
         // Existing window only — still pending, the ghost in the tab bar.
         shell.resolve_pending_launch_if_window();
         assert!(shell.pending_launch.is_some());
-        assert_eq!(shell.launch_ghost().map(|(_, label)| label), Some("Terminal"));
+        assert_eq!(shell.launch_ghost().map(|(_, label, _)| label), Some("Terminal"));
         assert!(shell.menubar.toast.is_none());
 
         // New matching window resolves.
@@ -3303,6 +3319,7 @@ mod hide_tests {
             focused_app_id: focused.map(str::to_string),
             focused_window_id,
             pointer_window_id: focused_window_id,
+            chord_pointer: None,
             pending_focus_generation: 0,
             mru_apps: mru.iter().map(|s| s.to_string()).collect(),
             mru_window_by_app,

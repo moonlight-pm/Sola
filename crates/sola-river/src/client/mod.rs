@@ -35,6 +35,7 @@ use crate::protocol::wlr_virtual_pointer_unstable_v1::zwlr_virtual_pointer_manag
 use crate::registry::{ChordRegistry, WindowRegistry};
 
 pub mod binding;
+pub mod caps;
 pub mod input;
 pub mod layer_shell;
 pub mod manage;
@@ -162,6 +163,8 @@ pub struct AppData {
     /// move's position as it happens, before the enter it causes). An
     /// enter without it is still: the window under the pointer changed.
     pub pointer_moved: bool,
+    /// Puts Caps Lock back after Super+CapsLock (see `client::caps`).
+    pub caps: caps::CapsGuard,
     /// Announce the hovered window again on the pointer's next move: its
     /// enter was still, or keyboard focus went elsewhere without the
     /// pointer. The shell's focus-follows-mouse then takes it up.
@@ -268,6 +271,7 @@ impl AppData {
             pointer_window: None,
             pointer_pos: None,
             pointer_moved: false,
+            caps: caps::CapsGuard::default(),
             rehover: false,
             op: None,
             cursor_shape_manager: None,

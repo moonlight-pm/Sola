@@ -70,6 +70,7 @@ impl KeyCode {
     pub const ESCAPE: Self = Self(9);
     pub const BACKSPACE: Self = Self(22);
     pub const TAB: Self = Self(23);
+    pub const CAPS_LOCK: Self = Self(66);
     pub const ENTER: Self = Self(36);
 
     pub const LEFT: Self = Self(113);
@@ -246,6 +247,7 @@ pub const KEYS: &[Key] = &[
     key(KeyCode::ESCAPE, 0xFF1B, "Esc"),
     key(KeyCode::BACKSPACE, 0xFF08, "\u{232B}"), // ⌫
     key(KeyCode::TAB, 0xFF09, "\u{21E5}"),       // ⇥
+    key(KeyCode::CAPS_LOCK, 0xFFE5, "\u{21EA}"), // ⇪
     key(KeyCode::ENTER, 0xFF0D, "\u{21A9}"),     // ↩
     key(KeyCode::SPACE, 0x20, "Space"),
     key(KeyCode::LEFT, 0xFF51, "\u{2190}"),  // ←
