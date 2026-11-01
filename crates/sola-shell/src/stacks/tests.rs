@@ -809,3 +809,55 @@ fn the_landing_slot_is_where_the_window_lands() {
     s.focus(4);
     assert_eq!(s.landing_slot("sola-scope", true), (Zone::Float, 2, Some(4)));
 }
+
+#[test]
+fn an_app_s_later_windows_follow_the_one_that_came_back() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    s.load(
+        &layout_of(
+            vec![("main", FULL, vec!["mail"], Some(0)), ("games", RIGHT, vec!["steam"], Some(0))],
+            &[("main", "Main"), ("games", "Gaming")],
+            "main",
+        ),
+        t,
+    );
+    // Steam's first window takes Steam's place on Gaming.
+    let first = s.place(1, "steam", "steam", false, false, t);
+    assert_eq!(first, Placed { zone: RIGHT, shown: true, returning: true });
+    assert_eq!(s.workspace_of(1), Some("games"));
+    // Its main window comes after, with no place left: it joins it there.
+    let main = s.place(2, "steam", "steam", false, false, t + Duration::from_secs(11));
+    assert_eq!(main, Placed { zone: RIGHT, shown: true, returning: true });
+    assert_eq!(s.workspace_of(2), Some("games"));
+    assert_eq!(s.showing_id(), "main");
+    // Another app's new window still joins the showing workspace.
+    s.place(3, "term", "term", false, false, t + Duration::from_secs(12));
+    assert_eq!(s.workspace_of(3), Some("main"));
+    // The first one closes: a window that comes takes its place back.
+    s.remove(1, t + Duration::from_secs(20));
+    s.place(4, "steam", "steam", false, false, t + Duration::from_secs(25));
+    assert_eq!(s.workspace_of(4), Some("games"));
+    // Long after, a new Steam window opens where you are.
+    s.place(5, "steam", "steam", false, false, t + FOLLOW_GRACE + Duration::from_secs(30));
+    assert_eq!(s.workspace_of(5), Some("main"));
+}
+
+#[test]
+fn an_app_on_two_workspaces_comes_back_to_both() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    s.load(
+        &layout_of(
+            vec![("main", FULL, vec!["steam"], Some(0)), ("games", RIGHT, vec!["steam"], Some(0))],
+            &[("main", "Main"), ("games", "Gaming")],
+            "main",
+        ),
+        t,
+    );
+    s.place(1, "steam", "steam", false, false, t);
+    s.place(2, "steam", "steam", false, false, t);
+    let mut on: Vec<_> = [1, 2].iter().map(|&w| s.workspace_of(w).unwrap()).collect();
+    on.sort();
+    assert_eq!(on, vec!["games", "main"]);
+}

@@ -342,10 +342,15 @@ its app id.
 The shell saves the bar as `TabLayout` whenever it changes. When the shell
 starts, it takes the saved layout once. For the next 2 minutes, a window
 that arrives takes its saved workspace, zone, and place, matched by its key
-and then by its app id, and a zone shows the tab it showed. A window with
-no saved place joins the showing workspace, after the focused tab. A
-floating window also gets back its saved rectangle
-([Compositor](compositor.md)).
+and then by its app id, and a zone shows the tab it showed. An app with
+windows on several workspaces gets one saved place per window. A window
+with no key of its own that finds no place left, while a window of its app
+that took the app's place is still open (for 2 minutes after), joins that
+one: same workspace and zone, right after it in the bar. Steam maps a
+short-lived window first, which takes Steam's place, and its main window
+after; the main window goes where Steam was. Any other window with no saved
+place joins the showing workspace, after the focused tab. A floating window
+also gets back its saved rectangle ([Compositor](compositor.md)).
 
 A window that closes keeps its place for 30 s, so an application that
 restarts or executes a new version in that time gets its windows back where
@@ -511,7 +516,7 @@ Call methods, owner `desk` (also the MCP tools `desk_launch` and
 
 | What restarts | What happens |
 |---|---|
-| `sola-session` | Open applications keep running, but the new `sola-session` did not start them: no `UserAppExited`, and `solactl desk close` does not find them. The listed ones with windows stay in `SessionApps` while they have windows (3 s grace). Super+Q still closes their windows. Restore launches only listed applications that have no window. A listed one that isn't Sola's is watched as before: once its windows are gone for 5 s, it quits whole. An apply that moves `pkg:sola` stops `sola-session`, which closes the applications as at **Exit Sola**; the new one opens them again. |
+| `sola-session` | Open applications keep running, but the new `sola-session` did not start them: no `UserAppExited`, and `solactl desk close` does not find them. The listed ones with windows stay in `SessionApps` while they have windows (3 s grace). Super+Q still closes their windows. Restore launches only listed applications that have no window. A listed one that isn't Sola's is watched as before: once its windows are gone for 5 s, it quits whole. An apply that moves `pkg:sola` restarts `sola-session` the same way: `svc:sola-session` keeps its children (`keep_children`), so the applications, and a game under Steam, keep running on the program they started with. Without it, PID 1 stops them with the service and the new one opens them again. |
 | `sola-bus` | `sola-session` reconnects and subscribes again. A `LaunchApp` sent while the bus was down is lost. |
 | The compositor | The applications lose their display and exit; they stay in `SessionApps` and start again on the new compositor. See [Architecture](architecture.md#when-a-part-stops). |
 
