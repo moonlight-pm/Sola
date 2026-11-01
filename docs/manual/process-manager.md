@@ -99,9 +99,12 @@ pkill -x sola-shell
 When a service's main process exits, PID 1 also kills what is left in its
 cgroup — except for a service with `keep_children`, whose children keep
 running. `svc:sola-session` has it (on novus since 2026-11-01; Oath's desk
-profile to follow): killing or restarting `sola-session` leaves the
-applications it started running, a game under Steam included, and the new
-session manager reopens only the listed ones that have no window.
+profile to follow), and the session manager starts each application in a
+session of its own (`setsid`), out of its process group, which PID 1
+signals: killing or restarting `sola-session` leaves the applications it
+started running, a game under Steam included, and the new session
+manager keeps the saved ones it finds running and reopens only the listed
+ones that have no window.
 
 Not restarted by PID 1: applications. When one exits, the session
 manager publishes its exit and leaves it closed. A stopped shell or

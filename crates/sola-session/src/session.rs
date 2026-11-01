@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -637,6 +638,18 @@ fn prepare(cmd: &mut Command, app_id: &str, foreign: bool) {
     }
     if foreign {
         cmd.env(tag::VAR, app_id);
+    }
+    // Each app leads a session of its own, as sshd's logins do: PID 1
+    // stops `svc:sola-session` by signalling its process group, so an app
+    // left in that group went down with every restart of the session
+    // manager (a `pkg:sola` apply), `keep_children` or not.
+    // SAFETY: setsid(2) is async-signal-safe; a fresh child is never a
+    // group leader, so it cannot fail here.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
     }
 }
 
