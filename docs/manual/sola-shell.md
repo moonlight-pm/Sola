@@ -122,6 +122,7 @@ Click it again, press Escape, or click a window to close the panel.
 | Settings… | Brings Settings forward, or starts it |
 | Keyboard Shortcuts | Opens the shortcuts overlay (Super+K) |
 | Lock Screen | Locks the screen (Super+L; [Security](security.md#locking)) |
+| Lock Vault | Locks the vault at once ([Vault](sola-vault.md#locking)); there only while the vault is unlocked |
 | Exit Sola | Ends the desktop session (`Shutdown` on the bus); on Oath the console then has the screen, and `oath desk` brings the desk back |
 | Restart Computer | Restarts the machine |
 | Shut Down | Powers the machine off |

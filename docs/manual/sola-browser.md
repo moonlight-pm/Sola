@@ -333,9 +333,11 @@ shows, and does the page's part, the fills and passkeys. Signing in,
 unlocking, and locking are the vault's, not Browser's: unlock it here and
 Vault and the right-click menu are unlocked too.
 
-The button is a lock while the vault is locked, signed out, or its
-service is not running; a key while it is unlocked; a fingerprint while a
-site waits for a passkey. It stays pressed while the panel is up. A click
+The button shows the vault's state: a key in full ink while the vault
+is unlocked; the key dimmed with a small lock on its corner while it is
+locked; the key dimmed alone while you are signed out or the service is
+not running; a fingerprint while a site waits for a passkey. It stays
+pressed while the panel is up. A click
 on the page closes the panel; a sign-in, a two-step code, or an unsaved
 edit waits there for the next open.
 

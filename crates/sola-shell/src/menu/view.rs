@@ -74,6 +74,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             .and_then(|p| p.menus.first())
             .map(|m| m.items.clone())
             .unwrap_or_default();
+        let items = crate::menu::state::system_items(items, shell.vault_unlocked);
         (crate::app::Shell::APP_ID.to_string(), items)
     } else {
         let app_id_str = shell

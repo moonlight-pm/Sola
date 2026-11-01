@@ -6,6 +6,7 @@
 mod browse;
 mod forms;
 mod gate;
+mod key;
 mod parts;
 mod passkey;
 mod record;
@@ -240,22 +241,16 @@ impl<E: Engine> App<E> {
             .into()
     }
 
-    /// The key button in the location bar: a lock while the vault is
-    /// locked or away, a fingerprint while a site waits for a passkey,
-    /// the key otherwise; pressed while the sheet is up.
+    /// The key button in the location bar, the vault's state at a glance
+    /// ([`key`]): the key while unlocked, dimmed with a lock while locked,
+    /// dimmed alone while signed out or away; a fingerprint while a site
+    /// waits for a passkey; pressed while the sheet is up.
     pub(crate) fn vault_key_button(&self, muted: iced::Color) -> Element<'_, Msg> {
         let v = &self.vault;
         let open = v.is_open();
-        let (name, lit) = if v.passkey.is_some() {
-            ("fingerprint-pattern", true)
-        } else if v.unlocked() {
-            ("key-round", true)
-        } else {
-            ("lock", false)
-        };
+        let look = key::KeyLook::of(v.gate(), v.passkey.is_some());
         let fg = self.theme.extended_palette().background.base.text;
-        let color = if lit || open { fg } else { muted };
-        button(sola_kit::components::icon::icon_svg_colored(glyph(name), 18, color))
+        button(key::glyph_for(look, 18, fg, muted, open))
             .padding(PAD_CONTROL_SM)
             .width(Length::Fixed(crate::app::NAV_BTN_W))
             .style(move |t: &Theme, status| {

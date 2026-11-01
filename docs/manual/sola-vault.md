@@ -125,8 +125,10 @@ The vault's key is kept in the service's memory only, never on disk.
 - **Lock when the screen locks** (on by default) locks it as the lock
   screen comes up: `sola-lock` says so on the bus (`ScreenLock`), and the
   service locks on it ([Security](security.md#locking)).
-- **Vault → Lock** (⌘⇧L), the lock in Vault's foot, and
-  `solactl vault lock` lock it at once.
+- **Vault → Lock** (⌘⇧L), the lock in Vault's foot, **Lock Vault** in
+  the Shell's flower menu (there while the vault is unlocked;
+  [Shell](sola-shell.md#flower-menu)), and `solactl vault lock` lock it
+  at once.
 
 Locking drops the key, the synced items, and any value waiting to be
 delivered. The window goes back to the unlock card: the account's email

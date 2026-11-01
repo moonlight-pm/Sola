@@ -1,5 +1,5 @@
-//! The vault as the desk menu asks it: on the vault's own socket
-//! (`sola_vault_proto`), off the iced thread. The shell sees names,
+//! The vault as the desk menu (and the flower menu's Lock Vault) asks it:
+//! on the vault's own socket (`sola_vault_proto`), off the iced thread. The shell sees names,
 //! usernames and the labels of an item's values, never a value: a picked
 //! value is delivered by the daemon to the app's process, and the app
 //! gets only a ticket to redeem.
@@ -170,6 +170,14 @@ pub fn deliver(item: String, field: DeliverField, pid: u32) -> Result<Ticket, St
     match sola_vault_proto::call(CLIENT, Request::Deliver { id: item, field, pid }) {
         Ok(Reply::Ticket { ticket }) => Ok(Ticket(ticket)),
         Ok(_) => Err("The vault answered something else.".into()),
+        Err(e) => Err(e.message),
+    }
+}
+
+/// Lock the vault (the flower menu's Lock Vault). Blocking.
+pub fn lock() -> Result<(), String> {
+    match sola_vault_proto::call(CLIENT, Request::Lock) {
+        Ok(_) => Ok(()),
         Err(e) => Err(e.message),
     }
 }
