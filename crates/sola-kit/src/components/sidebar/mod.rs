@@ -426,6 +426,11 @@ pub struct SidebarSection<'a, Message> {
     pub on_label: Option<Message>,
     /// Trailing `+` on the section header (add a row in this group).
     pub on_add: Option<Message>,
+    /// A caption group ([`Self::caption`]): the name in small capitals
+    /// above members that sit one step in.
+    pub caption: bool,
+    /// Dim word at the end of a caption ([`Self::note`]).
+    pub note: Option<String>,
 }
 
 /// Header chrome for a [`SidebarSection::collapsible`] section.
@@ -450,11 +455,6 @@ pub struct SectionCollapse<'a, Message> {
     pub on_color_dismiss: Option<Message>,
     /// Commit button in edit mode (check next to the swatch).
     pub on_commit: Option<Message>,
-    /// A mark in the chevron's place ([`SidebarSection::pocket`]: the
-    /// group does not fold).
-    pub leading: Option<Element<'a, Message, Theme>>,
-    /// Dim trailing word on the header, folded or not (e.g. "hidden").
-    pub note: Option<String>,
 }
 
 impl<'a, Message> SidebarSection<'a, Message> {
@@ -467,6 +467,8 @@ impl<'a, Message> SidebarSection<'a, Message> {
             collapse: None,
             on_label: None,
             on_add: None,
+            caption: false,
+            note: None,
         }
     }
 
@@ -479,6 +481,8 @@ impl<'a, Message> SidebarSection<'a, Message> {
             collapse: None,
             on_label: None,
             on_add: None,
+            caption: false,
+            note: None,
         }
     }
 
@@ -497,6 +501,21 @@ impl<'a, Message> SidebarSection<'a, Message> {
     /// Trailing `+` on the group header.
     pub fn on_add(mut self, msg: Message) -> Self {
         self.on_add = Some(msg);
+        self
+    }
+
+    /// A caption group (the shell's app groups): the label in small
+    /// capitals with air above it, the members [`CAPTION_NEST`] in, no
+    /// fill, no fold. Drawn by the reorder strip, where the caption is a
+    /// reorder row that moves the group; give the section an [`Self::id`].
+    pub fn caption(mut self) -> Self {
+        self.caption = true;
+        self
+    }
+
+    /// A dim word at the caption's end (e.g. "hidden").
+    pub fn note(mut self, note: impl Into<String>) -> Self {
+        self.note = Some(note.into());
         self
     }
 
@@ -525,33 +544,7 @@ impl<'a, Message> SidebarSection<'a, Message> {
             color_picker: None,
             on_color_dismiss: None,
             on_commit: None,
-            leading: None,
-            note: None,
         });
-        self
-    }
-
-    /// A pocket that does not fold (the shell's app groups): the header
-    /// shows `leading` (the app's icon) and the name, no chevron, and a
-    /// press only emits `on_press`. Members nest in the pocket; the header
-    /// is a reorder row when the panel is reorderable.
-    pub fn pocket(
-        self,
-        on_press: Message,
-        leading: impl Into<Element<'a, Message, Theme>>,
-    ) -> Self {
-        let mut section = self.collapsible(false, on_press);
-        if let Some(c) = &mut section.collapse {
-            c.leading = Some(leading.into());
-        }
-        section
-    }
-
-    /// A dim word at the header's end, folded or not.
-    pub fn header_note(mut self, note: impl Into<String>) -> Self {
-        if let Some(c) = &mut self.collapse {
-            c.note = Some(note.into());
-        }
         self
     }
 
@@ -1028,15 +1021,22 @@ pub(crate) fn well_select_plate(c: Color) -> Color {
     well_lift(well_face(c), WELL_SELECT_MIX)
 }
 
-/// A row's fill and ink on `well` (the column, or a group's pocket). The
-/// active row is the theme's highlight wherever it sits (the shell's bar:
-/// the focused window's pill, in an app's group or not).
-fn well_row_colors(well: Color, active: bool, shown: bool, hovered: bool) -> (Color, Color) {
+/// A row's fill and ink on `well`. `column`: the plain column (no pocket
+/// of its own), whose active row is the theme's highlight.
+fn well_row_colors(
+    well: Color,
+    column: bool,
+    active: bool,
+    shown: bool,
+    hovered: bool,
+) -> (Color, Color) {
     let face = well_face(well);
     let ink = on_color(face);
-    if active {
+    if active && column {
         let fill = crate::theme::highlight();
         (fill, on_color(fill))
+    } else if active {
+        (well_lift(face, WELL_SELECT_MIX), ink)
     } else if hovered {
         (well_lift(face, WELL_HOVER_MIX), ink)
     } else if shown {
@@ -1111,7 +1111,7 @@ fn tab_item_style(
     well: Option<Color>,
 ) -> button::Style {
     let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    let (bg, text_color) = well_row_colors(row_surface(well), active, shown, hovered);
+    let (bg, text_color) = well_row_colors(row_surface(well), well.is_none(), active, shown, hovered);
     button::Style {
         background: Some(Background::Color(bg)),
         text_color,
@@ -1139,7 +1139,7 @@ fn tab_close_style(
     if chrome == SidebarItemChrome::Row {
         let face = well_face(row_surface(well));
         let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-        let (wash, ink) = well_row_colors(face, active, false, hovered);
+        let (wash, ink) = well_row_colors(face, well.is_none(), active, false, hovered);
         let rest = if wash.a <= 0.001 {
             face
         } else if wash.a >= 0.999 {
@@ -1203,12 +1203,6 @@ fn collapse_header_item<'a, Message: Clone + 'a>(
         if let Some(n) = collapse.count {
             item = item.secondary(n);
         }
-    }
-    if let Some(note) = collapse.note {
-        item = item.secondary(note);
-    }
-    if let Some(mark) = collapse.leading {
-        item = item.leading(mark);
     }
     if let Some(ctx) = collapse.on_context {
         item = item.on_context(ctx);
@@ -1302,6 +1296,44 @@ fn header_commit_button<'a, Message: Clone + 'a>(
         .on_press(msg)
         .into()
 }
+
+/// How far a caption group's members sit in from its caption.
+pub const CAPTION_NEST: f32 = 14.0;
+
+/// A caption group's header: its name in small capitals, semibold, in
+/// the secondary ink, with air above it and its text where a row's icon
+/// starts; a dim note at the end.
+fn caption_header<'a, Message: 'a>(label: String, note: Option<String>) -> Element<'a, Message> {
+    let ink = |theme: &Theme| iced::widget::text::Style {
+        color: Some(theme.extended_palette().secondary.base.text),
+    };
+    let name = text(label.to_uppercase())
+        .font(iced::Font {
+            weight: iced::font::Weight::Semibold,
+            ..fonts::ui()
+        })
+        .size(10.5)
+        .wrapping(Wrapping::None)
+        .style(ink);
+    let mut body = row![name].align_y(iced::Alignment::End).width(Length::Fill);
+    if let Some(note) = note {
+        body = body
+            .push(Space::new().width(Length::Fill))
+            .push(text(note).font(fonts::ui()).size(11).style(ink));
+    }
+    container(body)
+        .width(Length::Fill)
+        .padding(Padding {
+            top: CAPTION_AIR,
+            bottom: 6.0,
+            left: 9.0,
+            right: 10.0,
+        })
+        .into()
+}
+
+/// Air above a caption: its group stands apart from the rows before it.
+const CAPTION_AIR: f32 = 18.0;
 
 fn section_header<'a, Message: Clone + 'a>(
     label: String,
@@ -1498,6 +1530,7 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
     collapsed: bool,
     on_action: Rc<dyn Fn(Msg) -> Message + 'a>,
     locked: bool,
+    loose_first: bool,
 ) -> Element<'a, Message> {
     let mut leaves = Vec::new();
     let mut meta = Vec::new();
@@ -1543,7 +1576,11 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
             row_index += 1;
         } else if let (Some(label), Some(hid)) = (section.label.clone(), gid.clone()) {
             if !collapsed {
-                let el = section_header(label, None, section.on_add);
+                let el = if section.caption {
+                    caption_header(label, section.note.clone())
+                } else {
+                    section_header(label, None, section.on_add)
+                };
                 leaves.push(el);
                 meta.push(strip::LeafMeta {
                     id: hid.clone(),
@@ -1574,6 +1611,14 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
                 } else {
                     render_item(item, None, row_index, show, density, hover_wired, true)
                 };
+                if section.caption && !collapsed {
+                    el = container(el)
+                        .padding(Padding {
+                            left: CAPTION_NEST,
+                            ..Padding::ZERO
+                        })
+                        .into();
+                }
                 if let Some(hid) = hover_id {
                     let act = Rc::clone(&on_action);
                     el = mouse_area(el).on_enter(act(Msg::Hover(Some(hid)))).into();
@@ -1604,6 +1649,7 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
         Rc::clone(&on_action),
         locked,
     )
+    .loose_first(loose_first)
     .into();
     mouse_area(hidden_scroll(strip, None, None))
         .on_exit(on_action(Msg::Hover(None)))
@@ -2194,9 +2240,7 @@ fn item_text_block<'a, Message: 'a>(
     }
 
     let mut title_row = row![].spacing(SPACE_SM).align_y(iced::Alignment::Center);
-    // A header with a mark of its own (a pocket that does not fold) shows
-    // it in the chevron's place.
-    if let Some(collapsed) = section_header.filter(|_| leading.is_none()) {
+    if let Some(collapsed) = section_header {
         let chev = ink.unwrap_or(Color {
             r: 0.58,
             g: 0.58,
@@ -2504,6 +2548,8 @@ pub struct SidebarPanel<'a, Message> {
     /// `(width, colors)` — `colors` is `None` for theme-default chrome.
     resize: Option<(f32, Option<crate::components::DividerColors>)>,
     reorder: ReorderMode,
+    /// Loose rows stay above every group ([`Self::loose_first`]).
+    loose_first: bool,
     controller: Option<(&'a State, Rc<dyn Fn(Msg) -> Message + 'a>)>,
     /// Optional leading content (search field, brand, rename bar).
     /// Stacked above the section list; never scrolls with items.
@@ -2533,6 +2579,7 @@ where
             collapse: None,
             resize: None,
             reorder: ReorderMode::Off,
+            loose_first: false,
             controller: None,
             header: None,
             footer: None,
@@ -2615,6 +2662,14 @@ where
         self
     }
 
+    /// Loose rows stay above every group while dragging: a loose row
+    /// moves among the loose rows, a group among the groups (the shell's
+    /// bar, whose model keeps them so).
+    pub fn loose_first(mut self) -> Self {
+        self.loose_first = true;
+        self
+    }
+
     /// A footer element pinned below the rows (hidden when collapsed).
     pub fn footer(mut self, el: Element<'a, Message, Theme>) -> Self {
         self.footer = Some(el);
@@ -2641,6 +2696,7 @@ where
             collapse,
             resize,
             reorder,
+            loose_first,
             controller,
             header,
             footer,
@@ -2725,6 +2781,7 @@ where
                     collapsed,
                     Rc::clone(act),
                     reorder_locked,
+                    loose_first,
                 ),
                 None => column![].into(),
             }
@@ -3354,7 +3411,7 @@ fn row_container_style(
 ) -> container::Style {
     match chrome {
         SidebarItemChrome::Row => {
-            let (bg, text_color) = well_row_colors(row_surface(well), active, shown, hovered);
+            let (bg, text_color) = well_row_colors(row_surface(well), well.is_none(), active, shown, hovered);
             container::Style {
                 background: Some(Background::Color(bg)),
                 text_color: Some(text_color),
@@ -3551,19 +3608,6 @@ mod tests {
     }
 
     #[test]
-    fn a_pocket_header_shows_its_mark_and_note() {
-        let section: SidebarSection<'_, ()> = SidebarSection::new("Browser", Vec::new())
-            .pocket((), Space::new())
-            .header_note("hidden");
-        let collapse = section.collapse.expect("a pocket is a collapse section");
-        assert!(!collapse.collapsed);
-        let item = collapse_header_item(section.label, collapse);
-        assert_eq!(item.label, "Browser");
-        assert!(item.leading.is_some());
-        assert_eq!(item.secondary.as_deref(), Some("hidden"));
-    }
-
-    #[test]
     fn collapse_header_is_folder_caption() {
         let item = collapse_header_item(
             Some("Work".into()),
@@ -3580,8 +3624,6 @@ mod tests {
                 color_picker: None,
                 on_color_dismiss: None,
                 on_commit: None,
-                leading: None,
-                note: None,
             },
         );
         assert_eq!(item.label, "Work");
@@ -3606,8 +3648,6 @@ mod tests {
                 color_picker: None,
                 on_color_dismiss: None,
                 on_commit: None,
-                leading: None,
-                note: None,
             },
         );
         assert!(idle.on_edit.is_some());
@@ -3626,8 +3666,6 @@ mod tests {
                 color_picker: None,
                 on_color_dismiss: None,
                 on_commit: None,
-                leading: None,
-                note: None,
             },
         );
         assert!(renaming.on_edit.is_none());
@@ -3651,8 +3689,6 @@ mod tests {
                 color_picker: None,
                 on_color_dismiss: None,
                 on_commit: None,
-                leading: None,
-                note: None,
             },
         );
         let renaming = collapse_header_item(
@@ -3670,8 +3706,6 @@ mod tests {
                 color_picker: None,
                 on_color_dismiss: None,
                 on_commit: None,
-                leading: None,
-                note: None,
             },
         );
         assert_eq!(
@@ -3716,20 +3750,31 @@ mod tests {
     }
 
     #[test]
-    fn the_active_row_is_the_highlight_in_a_pocket_too() {
+    fn grouped_select_stays_in_pocket_hue() {
         let theme = crate::default_theme();
-        let column = row_container_style(&theme, true, false, SidebarItemChrome::Row, false, None);
-        let pocket = row_container_style(
-            &theme,
-            true,
-            false,
-            SidebarItemChrome::Row,
-            false,
-            Some(group_well_fill()),
-        );
-        assert_eq!(column.background, Some(Background::Color(crate::theme::highlight())));
-        assert_eq!(pocket.background, column.background);
-        assert_eq!(pocket.text_color, column.text_color);
+        let blue = Color::from_rgb(0.15, 0.35, 0.70);
+        let s = row_container_style(&theme, true, false, SidebarItemChrome::Row, false, Some(blue));
+        match s.background {
+            Some(Background::Color(c)) => {
+                assert!((c.a - 1.0).abs() < 1e-6);
+                assert_ne!(c, blue);
+                assert!(c.b > c.r && c.b > c.g, "still blue, got {c:?}");
+                let d_blue = (c.r - blue.r).abs() + (c.g - blue.g).abs() + (c.b - blue.b).abs();
+                let d_white = (1.0 - c.r) + (1.0 - c.g) + (1.0 - c.b);
+                assert!(d_blue < d_white, "must stay nearer the pocket than white");
+            }
+            other => panic!("expected solid lift, got {other:?}"),
+        }
+        let white = Color::WHITE;
+        let s = row_container_style(&theme, true, false, SidebarItemChrome::Row, false, Some(white));
+        match s.background {
+            Some(Background::Color(c)) => {
+                assert!(c.r > 0.80 && c.r < 1.0, "quiet darken on white, got {c:?}");
+                assert_ne!(c, inset_surface(chrome_surface(), 0.22));
+            }
+            other => panic!("expected solid lift, got {other:?}"),
+        }
+        assert_eq!(s.text_color, Some(Color::BLACK));
     }
 
     #[test]
@@ -3760,8 +3805,6 @@ mod tests {
                 color_picker: None,
                 on_color_dismiss: None,
                 on_commit: Some(()),
-                leading: None,
-                note: None,
             },
         );
         assert!(renaming.content.is_some());

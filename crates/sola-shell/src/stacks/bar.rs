@@ -1,8 +1,9 @@
 //! A workspace's bar as blocks (`docs/specs/2026-10-21-next-tab-bar-design.md`
 //! § App groups and keys): a loose row, or an app's group — the apps that
 //! open a window per document ([`grouped`]) keep their windows together
-//! under the app's header. Groups and loose rows mix in any order. The flat
-//! order, every row top to bottom, is what the zones, the keys and the
+//! under the app's header. Loose rows come first, every group after them
+//! (Joshua, 2026-11-01: "all 'loose' (singleton) apps go at the top"). The
+//! flat order, every row top to bottom, is what the zones, the keys and the
 //! saved layout read. A group whose last window left stays as an empty
 //! block: its place, for the app's next window.
 
@@ -136,6 +137,14 @@ impl Bar {
         self.blocks.iter().position(|b| b.is(id))
     }
 
+    /// How many loose rows there are: they are the first blocks.
+    pub fn loose_len(&self) -> usize {
+        self.blocks
+            .iter()
+            .take_while(|b| matches!(b, Block::Loose(_)))
+            .count()
+    }
+
     /// `app`'s group: where its rows start and end in the flat order
     /// (equal for an empty group).
     pub fn group_range(&self, app: &str) -> Option<(usize, usize)> {
@@ -152,8 +161,15 @@ impl Bar {
 
     /// The block a new block goes before, for flat index `at`: the first
     /// that starts there or later (so before any empty group there), past
-    /// a group `at` falls inside.
-    fn boundary(&self, at: usize) -> usize {
+    /// a group `at` falls inside; among the loose rows for a loose one,
+    /// among the groups for a group.
+    fn boundary(&self, at: usize, loose: bool) -> usize {
+        let b = self.boundary_at(at);
+        let first_group = self.loose_len();
+        if loose { b.min(first_group) } else { b.max(first_group) }
+    }
+
+    fn boundary_at(&self, at: usize) -> usize {
         let mut start = 0;
         for (b, block) in self.blocks.iter().enumerate() {
             if start >= at {
@@ -180,7 +196,7 @@ impl Bar {
                 }
                 return;
             }
-            let b = self.boundary(at);
+            let b = self.boundary(at, false);
             let app = tab.app_id.clone();
             self.blocks.insert(
                 b,
@@ -192,7 +208,7 @@ impl Bar {
             );
             return;
         }
-        let b = self.boundary(at);
+        let b = self.boundary(at, true);
         self.blocks.insert(b, Block::Loose(tab));
     }
 
@@ -220,11 +236,18 @@ impl Bar {
                 None => tabs.iter().all(|t| later(t.window_id)),
             },
         };
-        let b = self
-            .blocks
+        // A loose row among the loose rows, a new group among the groups.
+        let loose = !grouped(&tab.app_id);
+        let first_group = self.loose_len();
+        let (from, to) = if loose {
+            (0, first_group)
+        } else {
+            (first_group, self.blocks.len())
+        };
+        let b = self.blocks[from..to]
             .iter()
             .position(block_later)
-            .unwrap_or(self.blocks.len());
+            .map_or(to, |i| from + i);
         let block = if grouped(&tab.app_id) {
             Block::Group {
                 app: tab.app_id.clone(),
@@ -281,8 +304,9 @@ impl Bar {
         to != from
     }
 
-    /// Move block `id` before block `before` (else to the end). Returns
-    /// whether it moved.
+    /// Move block `id` before block `before` (else to the end): a loose
+    /// row among the loose rows, a group among the groups. Returns whether
+    /// it moved.
     pub fn move_block(&mut self, id: &BlockId, before: Option<&BlockId>) -> bool {
         let Some(from) = self.block_index(id) else {
             return false;
@@ -294,6 +318,11 @@ impl Bar {
         let to = before
             .and_then(|b| self.block_index(b))
             .unwrap_or(self.blocks.len());
+        let first_group = self.loose_len();
+        let to = match block {
+            Block::Loose(_) => to.min(first_group),
+            Block::Group { .. } => to.max(first_group),
+        };
         self.blocks.insert(to, block);
         to != from
     }
@@ -328,26 +357,34 @@ mod tests {
     }
 
     const BROWSER: &str = "sola-browser";
+    const TERMINAL: &str = "sola-terminal";
     const MAIL: &str = "sola-mail";
+    const SETTINGS: &str = "sola-settings";
 
     #[test]
     fn a_grouped_window_joins_its_group_wherever_it_is_put() {
         let mut bar = Bar::default();
         bar.insert(tab(1, BROWSER), 0);
-        bar.insert(tab(2, MAIL), 1);
-        // At the end of the bar, but its group is first.
+        bar.insert(tab(2, TERMINAL), 1);
+        // At the end of the bar, but its group is first of the groups.
         bar.insert(tab(3, BROWSER), 2);
         assert_eq!(ids(&bar), vec![1, 3, 2]);
         assert_eq!(bar.group_range(BROWSER), Some((0, 2)));
     }
 
     #[test]
-    fn a_loose_row_never_splits_a_group() {
+    fn loose_rows_go_above_every_group() {
         let mut bar = Bar::default();
         bar.insert(tab(1, BROWSER), 0);
         bar.insert(tab(2, BROWSER), 1);
-        bar.insert(tab(3, MAIL), 1);
-        assert_eq!(ids(&bar), vec![1, 2, 3]);
+        // Put after the group, or inside it: it goes to the top.
+        bar.insert(tab(3, MAIL), 2);
+        bar.insert(tab(4, SETTINGS), 2);
+        assert_eq!(ids(&bar), vec![3, 4, 1, 2]);
+        assert_eq!(bar.loose_len(), 2);
+        // A new group never goes among the loose rows.
+        bar.insert(tab(5, TERMINAL), 0);
+        assert_eq!(ids(&bar), vec![3, 4, 5, 1, 2]);
     }
 
     #[test]
@@ -355,7 +392,7 @@ mod tests {
         let mut bar = Bar::default();
         bar.insert(tab(1, MAIL), 0);
         bar.insert(tab(2, BROWSER), 1);
-        bar.insert(tab(3, "sola-settings"), 2);
+        bar.insert(tab(3, TERMINAL), 2);
         assert_eq!(bar.remove(2).map(|(at, _)| at), Some(1));
         assert_eq!(bar.group_range(BROWSER), Some((1, 1)));
         // The browser's next window, opened from the end, comes back there.
@@ -364,55 +401,76 @@ mod tests {
     }
 
     #[test]
-    fn a_new_block_goes_before_an_empty_group_at_its_boundary() {
+    fn a_new_group_goes_before_an_empty_group_at_its_boundary() {
         let mut bar = Bar::default();
         bar.insert(tab(1, MAIL), 0);
         bar.insert(tab(2, BROWSER), 1);
         bar.remove(2);
-        bar.insert(tab(3, "sola-settings"), 1);
+        bar.insert(tab(3, TERMINAL), 1);
+        assert_eq!(bar.group_range(TERMINAL), Some((1, 2)));
         assert_eq!(bar.group_range(BROWSER), Some((2, 2)));
     }
 
     #[test]
-    fn rows_reorder_within_their_group_and_loose_rows_between_blocks() {
+    fn rows_reorder_within_their_group_and_loose_rows_among_themselves() {
         let mut bar = Bar::default();
         bar.insert(tab(1, BROWSER), 0);
         bar.insert(tab(2, BROWSER), 1);
-        bar.insert(tab(3, MAIL), 2);
+        bar.insert(tab(3, MAIL), 0);
+        bar.insert(tab(4, SETTINGS), 1);
+        assert_eq!(ids(&bar), vec![3, 4, 1, 2]);
         // Before a row outside its group: the group's end.
         assert!(bar.reorder(1, Some(3)));
-        assert_eq!(ids(&bar), vec![2, 1, 3]);
+        assert_eq!(ids(&bar), vec![3, 4, 2, 1]);
         assert!(bar.reorder(1, Some(2)));
-        assert_eq!(ids(&bar), vec![1, 2, 3]);
-        // A loose row before a grouped one: before its group.
+        assert_eq!(ids(&bar), vec![3, 4, 1, 2]);
+        // A loose row before a grouped one: the end of the loose rows.
         assert!(bar.reorder(3, Some(2)));
-        assert_eq!(ids(&bar), vec![3, 1, 2]);
+        assert_eq!(ids(&bar), vec![4, 3, 1, 2]);
+        assert!(bar.reorder(3, Some(4)));
+        assert_eq!(ids(&bar), vec![3, 4, 1, 2]);
     }
 
     #[test]
-    fn a_group_moves_whole() {
+    fn a_group_moves_whole_among_the_groups() {
         let mut bar = Bar::default();
         bar.insert(tab(1, BROWSER), 0);
         bar.insert(tab(2, BROWSER), 1);
-        bar.insert(tab(3, MAIL), 2);
+        bar.insert(tab(3, TERMINAL), 2);
+        bar.insert(tab(4, MAIL), 0);
+        assert_eq!(ids(&bar), vec![4, 1, 2, 3]);
         assert!(bar.move_block(&BlockId::Group(BROWSER.into()), None));
-        assert_eq!(ids(&bar), vec![3, 1, 2]);
-        assert!(bar.move_block(&BlockId::Window(3), None));
-        assert_eq!(ids(&bar), vec![1, 2, 3]);
-        assert!(!bar.move_block(&BlockId::Window(3), None));
+        assert_eq!(ids(&bar), vec![4, 3, 1, 2]);
+        // Not above the loose rows: the top of the groups.
+        assert!(bar.move_block(&BlockId::Group(BROWSER.into()), Some(&BlockId::Window(4))));
+        assert_eq!(ids(&bar), vec![4, 1, 2, 3]);
+        assert!(!bar.move_block(&BlockId::Group(BROWSER.into()), Some(&BlockId::Window(4))));
+        // A loose row stays above the groups.
+        assert!(!bar.move_block(&BlockId::Window(4), None));
     }
 
     #[test]
     fn ranked_rows_line_up_as_saved_around_waiting_groups() {
-        // Saved: mail 0, browser 1–2, settings 3; nothing back yet.
-        let mut bar = Bar::of_groups(vec![(BROWSER.into(), 1)]);
+        // Saved: mail 0, settings 1, browser 2–3; nothing back yet.
+        let mut bar = Bar::of_groups(vec![(BROWSER.into(), 2)]);
         let ranks = [(10, 0), (11, 1), (12, 2), (13, 3)];
         let rank_of = |w: u32| ranks.iter().find(|(id, _)| *id == w).map(|(_, r)| *r);
-        bar.insert_ranked(tab(13, "sola-settings"), 3, &rank_of);
+        bar.insert_ranked(tab(13, BROWSER), 3, &rank_of);
+        bar.insert_ranked(tab(11, SETTINGS), 1, &rank_of);
         bar.insert_ranked(tab(12, BROWSER), 2, &rank_of);
         bar.insert_ranked(tab(10, MAIL), 0, &rank_of);
-        bar.insert_ranked(tab(11, BROWSER), 1, &rank_of);
         assert_eq!(ids(&bar), vec![10, 11, 12, 13]);
+    }
+
+    #[test]
+    fn a_loose_row_saved_after_a_group_comes_back_above_it() {
+        // Saved before loose rows went first: browser 0, steam 1.
+        let mut bar = Bar::of_groups(vec![(BROWSER.into(), 0)]);
+        let ranks = [(10, 0), (11, 1)];
+        let rank_of = |w: u32| ranks.iter().find(|(id, _)| *id == w).map(|(_, r)| *r);
+        bar.insert_ranked(tab(10, BROWSER), 0, &rank_of);
+        bar.insert_ranked(tab(11, "steam"), 1, &rank_of);
+        assert_eq!(ids(&bar), vec![11, 10]);
     }
 
     #[test]

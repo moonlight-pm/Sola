@@ -345,6 +345,26 @@ fn slot_at(
     }
 }
 
+/// Loose rows first: a loose row lands before the first group, a group
+/// after the last loose row.
+fn loose_first_slot(slot: usize, view: &[ViewRow], held: &Held) -> usize {
+    if held.as_block {
+        let first_group = view
+            .iter()
+            .position(|r| !r.hole && r.kind == Kind::Group)
+            .unwrap_or(view.len());
+        slot.min(first_group)
+    } else if held.as_group {
+        let loose_end = view
+            .iter()
+            .rposition(|r| !r.hole && r.kind == Kind::Loose)
+            .map_or(0, |i| i + 1);
+        slot.max(loose_end)
+    } else {
+        slot
+    }
+}
+
 fn move_hole(from: usize, slot: usize) -> Option<usize> {
     if slot == from || slot == from + 1 {
         return None;
@@ -476,7 +496,7 @@ fn snapshot_visual(st: &StripState, now: Instant) -> HashMap<String, f32> {
     m
 }
 
-fn apply_dest(st: &mut StripState, locked: bool) -> bool {
+fn apply_dest(st: &mut StripState, locked: bool, loose_first: bool) -> bool {
     let Some(held) = st.held.as_ref() else {
         return false;
     };
@@ -492,7 +512,12 @@ fn apply_dest(st: &mut StripState, locked: bool) -> bool {
         locked.then(|| held.group.clone()).flatten(),
     );
     st.absorb = next.absorb;
-    let Some(new_at) = move_hole(st.hole_at, next.slot) else {
+    let slot = if loose_first {
+        loose_first_slot(next.slot, &st.view, held)
+    } else {
+        next.slot
+    };
+    let Some(new_at) = move_hole(st.hole_at, slot) else {
         return false;
     };
     st.pending_visual = Some(snapshot_visual(st, Instant::now()));
@@ -696,6 +721,8 @@ pub struct ReorderStrip<'a, Message> {
     meta: Vec<LeafMeta>,
     on_action: std::rc::Rc<dyn Fn(Msg) -> Message + 'a>,
     locked: bool,
+    /// Loose rows stay above every group ([`super::SidebarPanel::loose_first`]).
+    loose_first: bool,
 }
 
 impl<'a, Message> ReorderStrip<'a, Message> {
@@ -712,7 +739,14 @@ impl<'a, Message> ReorderStrip<'a, Message> {
             meta,
             on_action,
             locked,
+            loose_first: false,
         }
+    }
+
+    /// Loose rows stay above every group while dragging.
+    pub fn loose_first(mut self, on: bool) -> Self {
+        self.loose_first = on;
+        self
     }
 }
 
@@ -1079,7 +1113,7 @@ where
                 shell.request_redraw();
             }
             Event::Window(window::Event::RedrawRequested(now)) => {
-                if st.dragging && !st.settling && apply_dest(st, self.locked) {
+                if st.dragging && !st.settling && apply_dest(st, self.locked, self.loose_first) {
                     shell.invalidate_layout();
                 }
                 let flipping = st.flip.values().any(|a| a.is_animating(*now));
@@ -1574,5 +1608,30 @@ mod tests {
         };
         let drop = drop_of(&held, &view, 2, Some("d".into()), true).unwrap();
         assert_eq!(drop.dest, Dest::BlockBefore { before: Some("d".into()) });
+    }
+
+    #[test]
+    fn loose_rows_first_keeps_each_kind_on_its_side() {
+        let (view, _) = split(vec![
+            row("a", Kind::Loose, 0),
+            row("b", Kind::Loose, 32),
+            row("c", Kind::Group, 64),
+            row("c1", Kind::Item, 96),
+        ]);
+        let held = |as_group, as_block| Held {
+            start: 0,
+            end: 1,
+            ids: vec!["x".into()],
+            as_group,
+            as_block,
+            h: 32,
+            grab: 0,
+            group: None,
+        };
+        // A loose row stops before the first group; a group after the last loose row.
+        assert_eq!(loose_first_slot(4, &view, &held(false, true)), 2);
+        assert_eq!(loose_first_slot(1, &view, &held(false, true)), 1);
+        assert_eq!(loose_first_slot(0, &view, &held(true, false)), 2);
+        assert_eq!(loose_first_slot(4, &view, &held(true, false)), 4);
     }
 }

@@ -31,16 +31,16 @@ fn bar(s: &Stacks) -> Vec<u32> {
 fn new_windows_join_the_focused_zone_and_show() {
     let t = Instant::now();
     let mut s = Stacks::new();
-    let p = s.place(1, "sola-terminal", "sola-terminal", false, false, t);
+    let p = s.place(1, "term", "term", false, false, t);
     assert_eq!(p, Placed { zone: FULL, shown: true, returning: false });
-    s.place(2, "sola-browser", "sola-browser", false, false, t);
+    s.place(2, "browser", "browser", false, false, t);
     assert_eq!(ids(&s, FULL), vec![1, 2]);
     assert_eq!(s.shown(FULL), Some(2));
 
     s.move_to(2, RIGHT);
     s.move_to(1, LEFT);
     s.focus(2);
-    s.place(3, "sola-mail", "sola-mail", false, false, t);
+    s.place(3, "mail", "mail", false, false, t);
     assert_eq!(ids(&s, RIGHT), vec![2, 3]);
     assert_eq!(s.shown(RIGHT), Some(3));
     assert_eq!(s.shown(LEFT), Some(1));
@@ -220,12 +220,14 @@ fn a_restarting_app_comes_back_to_its_place() {
     let mut s = Stacks::new();
     s.place(1, "sola-terminal", "sola-terminal", false, false, t);
     s.place(2, "sola-browser", "sola-browser", false, false, t);
+    // Mail, a loose row, goes above the groups.
     s.place(3, "sola-mail", "sola-mail", false, false, t);
+    assert_eq!(ids(&s, FULL), vec![3, 1, 2]);
     s.show(2);
     s.remove(2, t);
     let p = s.place(9, "sola-browser", "sola-browser", false, false, t + Duration::from_secs(3));
     assert_eq!(p, Placed { zone: FULL, shown: true, returning: true });
-    assert_eq!(ids(&s, FULL), vec![1, 9, 3]);
+    assert_eq!(ids(&s, FULL), vec![3, 1, 9]);
 
     // Past the grace, a new window is just new — but its app's group kept
     // its place, so the window comes back there.
@@ -233,7 +235,7 @@ fn a_restarting_app_comes_back_to_its_place() {
     let later = t + GHOST_GRACE + Duration::from_secs(1);
     let p = s.place(10, "sola-browser", "sola-browser", false, false, later);
     assert!(!p.returning);
-    assert_eq!(ids(&s, FULL), vec![1, 10, 3]);
+    assert_eq!(ids(&s, FULL), vec![3, 1, 10]);
 }
 
 #[test]
@@ -247,7 +249,8 @@ fn a_loose_app_back_after_the_grace_is_just_new() {
     let later = t + GHOST_GRACE + Duration::from_secs(1);
     let p = s.place(10, "app", "app", false, false, later);
     assert!(!p.returning);
-    assert_eq!(ids(&s, FULL), vec![1, 3, 10]);
+    // At the end of the loose rows, above Terminal's group.
+    assert_eq!(ids(&s, FULL), vec![3, 10, 1]);
 }
 
 #[test]
@@ -793,14 +796,14 @@ fn a_restarting_app_comes_back_to_its_workspace() {
 fn the_landing_slot_is_where_the_window_lands() {
     let t = Instant::now();
     let mut s = Stacks::new();
-    s.place(1, "sola-terminal", "sola-terminal", false, false, t);
-    s.place(2, "sola-browser", "sola-browser", false, false, t);
-    s.place(3, "sola-mail", "sola-mail", false, false, t);
+    s.place(1, "term", "term", false, false, t);
+    s.place(2, "browser", "browser", false, false, t);
+    s.place(3, "mail", "mail", false, false, t);
     s.focus(1);
     // After the focused tab, before the ones after it.
-    let (zone, at, opener) = s.landing_slot("sola-calendar", false);
+    let (zone, at, opener) = s.landing_slot("calendar", false);
     assert_eq!((zone, at, opener), (FULL, 1, Some(1)));
-    s.place(4, "sola-calendar", "sola-calendar", false, false, t);
+    s.place(4, "calendar", "calendar", false, false, t);
     assert_eq!(ids(&s, FULL), vec![1, 4, 2, 3]);
     // A floating app lands in Float, its row after the focused tab too.
     s.focus(4);

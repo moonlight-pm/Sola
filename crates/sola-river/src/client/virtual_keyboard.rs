@@ -74,7 +74,7 @@ pub fn init_if_ready(state: &mut AppData, qh: &QueueHandle<AppData>) {
     // Upload the keymap via memfd. The keymap must be a valid xkb text-v1
     // keymap with a trailing NUL; the compositor mmaps it and fstats for
     // the size.
-    match make_keymap_fd(KEYMAP) {
+    match make_keymap_fd("sola-virtual-keyboard-keymap", KEYMAP) {
         Ok((fd, size)) => {
             kb.keymap(KEYMAP_FORMAT_TEXT_V1, fd.as_fd(), size);
             state.virtual_keyboard.keymap_set = true;
@@ -142,11 +142,8 @@ fn now_ms() -> u32 {
     ms as u32
 }
 
-fn make_keymap_fd(text: &str) -> std::io::Result<(OwnedFd, u32)> {
-    let fd = memfd_create(
-        "sola-virtual-keyboard-keymap",
-        MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
-    )?;
+pub(crate) fn make_keymap_fd(name: &str, text: &str) -> std::io::Result<(OwnedFd, u32)> {
+    let fd = memfd_create(name, MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING)?;
     let mut file = std::fs::File::from(fd);
     file.write_all(text.as_bytes())?;
     // The keymap string must be NUL-terminated.
