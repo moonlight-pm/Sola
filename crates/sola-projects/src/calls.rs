@@ -96,7 +96,11 @@ pub fn methods() -> Vec<MethodSpec> {
             "Start or brief Grok, Codex, or Claude in an existing session",
             &[
                 req_s("session", Some('s'), "Session id or name"),
-                opt_s("agent", Some('a'), "grok, codex, or claude (default grok)"),
+                opt_s(
+                    "agent",
+                    Some('a'),
+                    "grok, codex, or claude (default: the one running there, else grok)",
+                ),
                 opt_s("prompt", None, "Prompt to send or pass as argv"),
                 opt(
                     "prompt-file",

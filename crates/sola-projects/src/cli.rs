@@ -338,7 +338,25 @@ pub fn shell_single_quote(s: &str) -> String {
     out
 }
 
-/// `None` if omitted. `--prompt` without `--agent` still implies grok.
+/// Which agent `session.exec` talks to in a pane where `running` runs (as
+/// its hooks last said): the one asked for, else the one running, else
+/// grok, started. Asking for another agent than the one running is an
+/// error: its launch line would be typed into the running agent's input
+/// (a Claude session got `grok '<prompt>'` as its message).
+pub fn exec_agent(asked: Option<&'static str>, running: Option<&str>) -> Result<&'static str, String> {
+    let running = running.map(|r| canonical_agent(r).ok_or_else(|| r.to_string()));
+    match (asked, running) {
+        (Some(a), Some(Ok(r))) if a != r => Err(format!(
+            "that session runs {r}, not {a}: leave out --agent to send it there, or end it first"
+        )),
+        (_, Some(Err(r))) => Err(format!("that session runs {r}, which session.exec cannot drive")),
+        (Some(a), _) => Ok(a),
+        (None, Some(Ok(r))) => Ok(r),
+        (None, None) => Ok("grok"),
+    }
+}
+
+/// `None` if omitted (see [`exec_agent`] for what that means).
 pub fn first_class_agent(agent: Option<&str>) -> Result<Option<&'static str>, String> {
     match agent {
         None => Ok(None),
@@ -548,5 +566,14 @@ mod tests {
         assert_eq!(notice_pane("ws-waiting-split-a-12"), Some("split-a"));
         assert_eq!(notice_pane("ws-git-rm-ws-x-12"), None);
         assert_eq!(notice_pane("ws-done-ws-main"), None);
+    }
+
+    #[test]
+    fn exec_goes_to_the_agent_running_unless_told() {
+        assert_eq!(exec_agent(None, Some("claude")), Ok("claude"), "no --agent: the one running");
+        assert_eq!(exec_agent(None, None), Ok("grok"), "nothing running: grok starts");
+        assert_eq!(exec_agent(Some("codex"), None), Ok("codex"));
+        assert_eq!(exec_agent(Some("claude"), Some("Claude")), Ok("claude"));
+        assert!(exec_agent(Some("grok"), Some("claude")).is_err(), "never typed into another agent");
     }
 }

@@ -75,8 +75,12 @@ solactl projects session.new --project PROJECT --name NAME --agent claude \
 
 Then **keep talking in this pane**. Do not `pane.wait` unless they asked.
 
-`--prompt` without `--agent` implies grok. `--agent` is `grok`, `codex`,
-or `claude`. Spawn parent defaults from `$SOLA_PANE_ID`.
+`session.new --prompt` without `--agent` starts grok: name the agent you
+mean. `session.exec` without `--agent` sends to whatever agent is running
+in that session (grok starts only when none is) — leave `--agent` out to
+talk to a running session; naming a different one is an error. `--agent`
+is `grok`, `codex`, or `claude`. Spawn parent defaults from
+`$SOLA_PANE_ID`.
 
 ## Talk to an existing session
 

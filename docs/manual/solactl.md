@@ -610,7 +610,10 @@ pane, the parent defaults to `$SOLA_PANE_ID`; `--parent` takes a session,
 pane, or path.
 
 `--agent` is `grok`, `codex`, or `claude`. Other names are an error
-(OpenCode is presence-only). `--prompt` without `--agent` implies Grok.
+(OpenCode is presence-only). `session.new` with `--prompt` and no
+`--agent` starts Grok. `session.exec` with no `--agent` sends to the agent
+already running in the session (Grok starts when none is); naming another
+agent than the one running is an error, not a launch line typed into it.
 `--prompt` and `--prompt-file` are exclusive. The first Codex session may
 need `/hooks` in its TUI to trust the Sola status hook. Claude hooks are
 merged into `~/.claude/settings.json` and apply to the next Claude

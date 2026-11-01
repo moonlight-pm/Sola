@@ -593,8 +593,8 @@ impl App {
         prompt_file: Option<String>,
         reply: sola_call::ReplyTx,
     ) -> Task<Msg> {
-        let agent = match cli::first_class_agent(agent.as_deref()) {
-            Ok(a) => a.unwrap_or("grok").to_string(),
+        let asked = match cli::first_class_agent(agent.as_deref()) {
+            Ok(a) => a,
             Err(e) => {
                 reply.err(e);
                 return Task::none();
@@ -607,7 +607,7 @@ impl App {
                 return Task::none();
             }
         };
-        let pane = match self.preferred_pane_for(Some(&ws_id), Some(&agent)) {
+        let pane = match self.preferred_pane_for(Some(&ws_id), asked) {
             Ok(p) => p,
             Err(e) => {
                 reply.err(e);
@@ -621,12 +621,15 @@ impl App {
                 return Task::none();
             }
         };
-        let same = self
-            .pane_status
-            .get(&pane)
-            .and_then(|s| s.agent.as_deref())
-            .is_some_and(|a| a.eq_ignore_ascii_case(&agent));
-        if same {
+        let running = self.pane_status.get(&pane).and_then(|s| s.agent.clone());
+        let agent = match cli::exec_agent(asked, running.as_deref()) {
+            Ok(a) => a.to_string(),
+            Err(e) => {
+                reply.err(e);
+                return Task::none();
+            }
+        };
+        if running.is_some() {
             std::thread::spawn(move || {
                 let sent = prompt.is_some();
                 let done = match prompt.as_deref() {

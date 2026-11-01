@@ -2336,18 +2336,16 @@ impl App {
         prompt: Option<&str>,
         prompt_file: Option<&str>,
     ) -> Result<(serde_json::Value, Task<Msg>), String> {
-        let agent = cli::first_class_agent(agent)?.unwrap_or("grok");
+        let asked = cli::first_class_agent(agent)?;
         let prompt = cli::read_prompt(prompt, prompt_file)?;
         let ws_id = catalog::resolve_tab(&self.tabs, q)?
             .id
             .clone();
-        let pane = self.preferred_pane_for(Some(&ws_id), Some(agent))?;
+        let pane = self.preferred_pane_for(Some(&ws_id), asked)?;
         self.local_pane(&pane)?;
-        let is_same = self
-            .pane_status
-            .get(&pane)
-            .and_then(|s| s.agent.as_deref())
-            .is_some_and(|a| a.eq_ignore_ascii_case(agent));
+        let running = self.pane_status.get(&pane).and_then(|s| s.agent.clone());
+        let agent = cli::exec_agent(asked, running.as_deref())?;
+        let is_same = running.is_some();
         if is_same {
             if let Some(text) = prompt.as_deref() {
                 self.write_pane(&pane, text, true)?;
