@@ -1,0 +1,15 @@
+title = "Bar groups"
+
+# The bar's app groups (Next spec § App groups and keys), applied
+# 2026-11-01 from branch `bar-groups`. Joshua's nits: no icon on a group's
+# header, the header flush and its windows indented, groups more distinct.
+# Parts from ../foundation (tokens, the bar's rows); novus's theme.
+
+[[artboard]]
+id = "ways"
+src = "groups.html"
+x = 0
+y = 0
+width = 1960
+height = "auto"
+title = "Bar groups / Ways"
