@@ -68,10 +68,24 @@ impl Shell {
                 Task::none()
             }
             Topic::Windows(w) => {
-                self.on_windows(w);
-                self.resolve_pending_launch_if_window();
-                self.flush_calendar_event();
-                self.desk_window_gone();
+                // Until the bus has replayed what it holds, the list waits:
+                // the zone grid and the bar's saved layout come in any order,
+                // and a window placed before its zone is known lands in Full.
+                if !self.replayed {
+                    self.held_windows = Some(w);
+                    return Task::none();
+                }
+                self.take_windows(w);
+                Task::none()
+            }
+            Topic::Replayed => {
+                if !self.replayed {
+                    self.replayed = true;
+                    if let Some(w) = self.held_windows.take() {
+                        tracing::info!(count = w.len(), "bus replayed: placing the windows up");
+                        self.take_windows(w);
+                    }
+                }
                 Task::none()
             }
             Topic::SetAppMenu(m) => {
@@ -280,6 +294,14 @@ impl Shell {
         self.emit_composition();
         self.emit_registered_chords();
         self.emit_idle_keep(true);
+    }
+
+    /// A window list, once the bus has replayed (`Topic::Replayed`).
+    fn take_windows(&mut self, w: Vec<Window>) {
+        self.on_windows(w);
+        self.resolve_pending_launch_if_window();
+        self.flush_calendar_event();
+        self.desk_window_gone();
     }
 
     /// Receive the full window list from sola-river.
@@ -533,9 +555,9 @@ impl Shell {
         self.focused_window_id = Some(wid);
         self.tabs.focus(wid);
         self.mru_window_by_app.insert(app_id.to_string(), wid);
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        super::with_bus(|bus| {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
-        }
+        });
     }
 
     /// River named a dialog's parent (or took it back). A dialog leaves the

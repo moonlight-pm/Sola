@@ -379,6 +379,11 @@ pub struct Shell {
     /// The tab each window names (`Topic::WindowTab`), by window id: its
     /// tab's token, which pairing goes by first.
     pub window_tabs: HashMap<u32, String>,
+    /// The bus has replayed what it holds (`Topic::Replayed`): the zone
+    /// grid and the bar's saved layout are in, so windows can be placed.
+    pub replayed: bool,
+    /// The window list that came before that, placed once it has.
+    pub held_windows: Option<Vec<Window>>,
     /// Agent sessions' islands in the top row and the card open.
     pub agents: crate::agents::AgentIslands,
     /// The theme's colors following the background picture.
@@ -588,6 +593,8 @@ impl Shell {
             tab_activity: HashMap::new(),
             tab_icons: HashMap::new(),
             window_tabs: HashMap::new(),
+            replayed: false,
+            held_windows: None,
             agents: Default::default(),
             adapt: Default::default(),
             pictures: Default::default(),
@@ -3182,6 +3189,8 @@ mod pending_launch_tests {
             tab_activity: HashMap::new(),
             tab_icons: HashMap::new(),
             window_tabs: HashMap::new(),
+            replayed: true,
+            held_windows: None,
             agents: Default::default(),
             adapt: Default::default(),
             pictures: Default::default(),
@@ -3294,6 +3303,54 @@ mod hide_tests {
         }
     }
 
+    /// Today's failure: at a shell start with the apps kept, the window
+    /// list came before the zone grid, and a window saved in a zone the
+    /// default grid lacks went to Full. The list now waits for the bus to
+    /// say it has replayed everything.
+    #[test]
+    fn kept_windows_wait_for_the_replay_and_take_their_saved_zones() {
+        use sola_bus::topics::{GridZone, TabLayout, TabLayoutZone, Topic, Workspace, ZoneLayout};
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        shell.replayed = false;
+        let mut mail = win(5, "sola-mail", "Mail");
+        mail.pid = Some(std::process::id());
+        // As the bus replays them: sticky.
+        let send = |shell: &mut Shell, t: Topic| {
+            let mut m = t.to_message();
+            m.sticky = true;
+            let _ = shell.handle_bus(&m);
+        };
+        send(&mut shell, Topic::Windows(vec![mail]));
+        assert_eq!(shell.tabs.zone_of(5), None, "not placed before the replay");
+        send(
+            &mut shell,
+            Topic::ZoneLayout(ZoneLayout {
+                rows: 1,
+                columns: 3,
+                zones: (0..3)
+                    .map(|c| GridZone { id: c as u32 + 1, row: 0, column: c, rows: 1, columns: 1 })
+                    .collect(),
+            }),
+        );
+        assert_eq!(shell.tabs.zone_layout().columns, 3, "the zone grid is in");
+        send(
+            &mut shell,
+            Topic::TabLayout(TabLayout {
+                zones: vec![TabLayoutZone {
+                    zone: Zone::Grid(3),
+                    apps: vec!["sola-mail".into()],
+                    shown: Some(0),
+                    workspace: "main".into(),
+                }],
+                workspaces: vec![Workspace { id: "main".into(), name: "Main".into() }],
+                showing: "main".into(),
+                ..TabLayout::default()
+            }),
+        );
+        send(&mut shell, Topic::Replayed);
+        assert_eq!(shell.tabs.zone_of(5), Some(Zone::Grid(3)));
+    }
+
     fn test_shell(windows: Vec<Window>, focused: Option<&str>, mru: &[&str]) -> Shell {
         let mut window_id_by_key = HashMap::new();
         let mut mru_window_by_app = HashMap::new();
@@ -3326,6 +3383,8 @@ mod hide_tests {
             tab_activity: HashMap::new(),
             tab_icons: HashMap::new(),
             window_tabs: HashMap::new(),
+            replayed: true,
+            held_windows: None,
             agents: Default::default(),
             adapt: Default::default(),
             pictures: Default::default(),

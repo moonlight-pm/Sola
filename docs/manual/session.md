@@ -346,7 +346,10 @@ the order its process announced its tabs. Keys:
 its app id.
 
 The shell saves the bar as `TabLayout` whenever it changes. When the shell
-starts, it takes the saved layout once. For the next 2 minutes, a window
+starts, it takes the saved layout once, and it places the windows already
+up (applications kept through its restart) only after the bus has
+replayed everything it holds (`Replayed`): the zone grid and the saved
+layout are in first, whatever order they came in. For the next 2 minutes, a window
 that arrives takes its saved workspace, zone, and place, matched by its key
 and then by its app id, and a zone shows the tab it showed. An app with
 windows on several workspaces gets one saved place per window. A window
