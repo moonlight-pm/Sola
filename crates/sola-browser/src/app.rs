@@ -685,7 +685,7 @@ impl<E: Engine> App<E> {
 
     /// Open the restored pages and the `--app` web app (once its catalog
     /// entry is in). After `WindowReady`, and after the pages' light or
-    /// dark is sent ([`Msg::SchemeWaited`] if it never comes).
+    /// dark is sent (or the bus has replayed without one, `Topic::Replayed`).
     fn open_restored(&mut self) -> Task<Msg> {
         self.scheme_wait = false;
         let mut hold = Task::none();
