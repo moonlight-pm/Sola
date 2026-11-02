@@ -4,7 +4,7 @@
 //! other targets' generated code ([`strip`]). A wrong entry fails the build,
 //! it cannot change a program: code that is gone cannot be compiled in.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -75,54 +75,29 @@ fn host() -> Result<String, String> {
 }
 
 /// The vendor directories (`name-version`) the workspace compiles for `host`.
+/// From `cargo tree`, which resolves features as a build does; `cargo metadata`
+/// also counts what dev-dependencies turn on.
 fn compiled(host: &str) -> Result<HashSet<String>, String> {
     let out = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--locked", "--filter-platform", host])
+        .args(["tree", "--workspace", "--locked", "--target", host])
+        .args(["--edges", "normal,build", "--prefix", "none", "--format", "{p}"])
         .output()
-        .map_err(|e| format!("cargo metadata: {e}"))?;
+        .map_err(|e| format!("cargo tree: {e}"))?;
     if !out.status.success() {
         return Err(format!(
-            "cargo metadata: {}",
+            "cargo tree: {}",
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    let metadata = serde_json::from_slice(&out.stdout).map_err(|e| format!("cargo metadata: {e}"))?;
-    Ok(reachable(&metadata))
+    Ok(String::from_utf8_lossy(&out.stdout).lines().filter_map(vendor_dir).collect())
 }
 
-/// What the workspace members reach through normal and build dependencies.
-fn reachable(metadata: &Value) -> HashSet<String> {
-    let empty = Vec::new();
-    let list = |v: &'_ Value, key: &str| v[key].as_array().unwrap_or(&empty).clone();
-    let dirs: HashMap<String, String> = list(metadata, "packages")
-        .iter()
-        .map(|p| {
-            let dir = format!("{}-{}", p["name"].as_str().unwrap_or(""), p["version"].as_str().unwrap_or(""));
-            (p["id"].as_str().unwrap_or("").to_string(), dir)
-        })
-        .collect();
-    let edges: HashMap<String, Vec<String>> = list(&metadata["resolve"], "nodes")
-        .iter()
-        .map(|n| {
-            let deps = list(n, "deps")
-                .iter()
-                .filter(|d| list(d, "dep_kinds").iter().any(|k| k["kind"].as_str() != Some("dev")))
-                .filter_map(|d| d["pkg"].as_str().map(str::to_string))
-                .collect();
-            (n["id"].as_str().unwrap_or("").to_string(), deps)
-        })
-        .collect();
-    let mut todo: Vec<String> = list(metadata, "workspace_members")
-        .iter()
-        .filter_map(|m| m.as_str().map(str::to_string))
-        .collect();
-    let mut seen = HashSet::new();
-    while let Some(id) = todo.pop() {
-        if seen.insert(id.clone()) {
-            todo.extend(edges.get(&id).into_iter().flatten().cloned());
-        }
-    }
-    seen.iter().filter_map(|id| dirs.get(id).cloned()).collect()
+/// The vendor directory of a `cargo tree` line (`name v1.2.3 (source) (*)`).
+fn vendor_dir(line: &str) -> Option<String> {
+    let mut words = line.split_whitespace();
+    let name = words.next()?;
+    let version = words.next()?.strip_prefix('v')?;
+    Some(format!("{name}-{version}"))
 }
 
 /// `dir` (`name-version`) holds crate `name`.
@@ -302,29 +277,11 @@ mod tests {
     }
 
     #[test]
-    fn only_normal_and_build_dependencies_count_as_compiled() {
-        let metadata = serde_json::json!({
-            "workspace_members": ["w"],
-            "packages": [
-                {"id": "w", "name": "w", "version": "1.0.0"},
-                {"id": "n", "name": "n", "version": "1.0.0"},
-                {"id": "b", "name": "b", "version": "1.0.0"},
-                {"id": "t", "name": "t", "version": "1.0.0"},
-                {"id": "o", "name": "o", "version": "1.0.0"},
-            ],
-            "resolve": {"nodes": [
-                {"id": "w", "deps": [
-                    {"pkg": "n", "dep_kinds": [{"kind": null}]},
-                    {"pkg": "b", "dep_kinds": [{"kind": "build"}]},
-                    {"pkg": "t", "dep_kinds": [{"kind": "dev"}]},
-                ]},
-                {"id": "n", "deps": []}, {"id": "b", "deps": []},
-                {"id": "t", "deps": []}, {"id": "o", "deps": []},
-            ]},
-        });
-        let got = reachable(&metadata);
-        let want: HashSet<String> = ["w-1.0.0", "n-1.0.0", "b-1.0.0"].map(String::from).into();
-        assert_eq!(got, want);
+    fn a_tree_line_names_its_vendor_directory() {
+        assert_eq!(vendor_dir("zerocopy v0.8.55").as_deref(), Some("zerocopy-0.8.55"));
+        assert_eq!(vendor_dir("cef v156.3.0+156.0.15 (*)").as_deref(), Some("cef-156.3.0+156.0.15"));
+        assert_eq!(vendor_dir("sola-kit v0.1.0 (/home/Sola/crates/sola-kit)").as_deref(), Some("sola-kit-0.1.0"));
+        assert_eq!(vendor_dir(""), None);
     }
 
     #[test]
