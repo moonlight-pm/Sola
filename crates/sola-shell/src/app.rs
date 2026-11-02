@@ -2657,6 +2657,7 @@ impl Shell {
                 self.launcher.prior_focus = self.focused_window_id;
                 self.launcher.active = true;
                 self.launcher.web = None;
+                self.launcher.web_fallback = None;
                 let apps = self.applications.clone();
                 self.launcher.apply_query(&apps, "");
                 self.emit_composition();
@@ -2677,6 +2678,7 @@ impl Shell {
                 }
                 self.launcher.active = false;
                 self.launcher.web = None;
+                self.launcher.web_fallback = None;
                 self.emit_composition();
                 self.emit_registered_chords();
                 // Restore focus to the previously focused app window.
@@ -2694,8 +2696,7 @@ impl Shell {
                     self.launcher.selected = 0;
                     return iced::Task::none();
                 }
-                let apps = self.applications.clone();
-                self.launcher.apply_query(&apps, &text);
+                self.launcher_filter(&text);
                 iced::Task::none()
             }
             Msg::LauncherNav { up } => {
@@ -2708,7 +2709,7 @@ impl Shell {
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
-                let len = match &self.launcher.web {
+                let len = match self.launcher.web_rows() {
                     Some(web) => web.rows().len(),
                     None => self.launcher.filtered_ids.len(),
                 };
@@ -2729,7 +2730,7 @@ impl Shell {
                 if !self.launcher.active {
                     return iced::Task::none();
                 }
-                if self.launcher.web.is_some() {
+                if self.launcher.web_rows().is_some() {
                     return self.web_pick(self.launcher.selected);
                 }
                 let app_id = self
@@ -2772,7 +2773,7 @@ impl Shell {
                     return iced::Task::none();
                 }
                 self.launcher.selected = i;
-                match self.launcher.web.is_some() {
+                match self.launcher.web_rows().is_some() {
                     true => self.web_pick(i),
                     false => iced::Task::none(),
                 }
@@ -3307,6 +3308,28 @@ mod hide_tests {
     /// list came before the zone grid, and a window saved in a zone the
     /// default grid lacks went to Full. The list now waits for the bus to
     /// say it has replayed everything.
+    #[test]
+    fn a_query_no_app_matches_offers_the_browser_and_keeps_following_the_typing() {
+        use crate::launcher::web::{Row, WebChooser};
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        // No history file read: the rows' first use is already made.
+        shell.launcher.web_fallback = Some(WebChooser::new(Vec::new()));
+        let first = |shell: &Shell| shell.launcher.web_rows().map(|w| w.rows()[0].clone());
+
+        shell.launcher_filter("example.com");
+        assert_eq!(
+            first(&shell),
+            Some(Row::Go {
+                url: "https://example.com".into(),
+                address: true
+            })
+        );
+        // The next key: a search now, and Return is still its first row.
+        shell.launcher_filter("example.com is");
+        assert!(matches!(first(&shell), Some(Row::Go { address: false, .. })));
+        assert_eq!(shell.launcher.selected, 0);
+    }
+
     #[test]
     fn kept_windows_wait_for_the_replay_and_take_their_saved_zones() {
         use sola_bus::topics::{GridZone, TabLayout, TabLayoutZone, Topic, Workspace, ZoneLayout};

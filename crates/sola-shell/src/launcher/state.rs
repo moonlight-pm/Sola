@@ -22,6 +22,10 @@ pub struct LauncherState {
     /// Browser was picked: the field is an address or a search
     /// ([`super::web`]); `selected` indexes its rows.
     pub web: Option<super::web::WebChooser>,
+    /// The same rows for what was typed, shown while no app matches it
+    /// ([`Self::falls_through`]). Kept while the launcher is up: it holds
+    /// the browser's history, read once.
+    pub web_fallback: Option<super::web::WebChooser>,
 }
 
 impl LauncherState {
@@ -31,6 +35,20 @@ impl LauncherState {
         self.query = query.to_string();
         self.filtered_ids = filter(apps, query);
         self.selected = 0;
+    }
+
+    /// Something was typed and no app matches it: Return goes to the
+    /// browser, as in its location bar.
+    pub fn falls_through(&self) -> bool {
+        self.web.is_none() && self.filtered_ids.is_empty() && !self.query.trim().is_empty()
+    }
+
+    /// The Browser field's rows, when they are what shows: Browser was
+    /// picked, or nothing matches what was typed.
+    pub fn web_rows(&self) -> Option<&super::web::WebChooser> {
+        self.web
+            .as_ref()
+            .or_else(|| self.web_fallback.as_ref().filter(|_| self.falls_through()))
     }
 }
 
@@ -80,6 +98,42 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn the_browser_rows_show_only_while_nothing_matches() {
+        use super::super::web::WebChooser;
+        let apps = fixture();
+        let mut s = LauncherState {
+            web_fallback: Some(WebChooser::new(Vec::new())),
+            ..Default::default()
+        };
+        s.apply_query(&apps, "");
+        assert!(!s.falls_through(), "nothing typed");
+        assert!(s.web_rows().is_none());
+        s.apply_query(&apps, "term");
+        assert!(!s.falls_through(), "an app matches");
+        assert!(s.web_rows().is_none());
+        s.apply_query(&apps, "   ");
+        assert!(!s.falls_through(), "only spaces");
+        s.apply_query(&apps, "rust iced");
+        assert!(s.falls_through());
+        assert!(s.web_rows().is_some());
+        s.apply_query(&apps, "fire");
+        assert!(s.web_rows().is_none(), "deleting back to a match brings the apps back");
+    }
+
+    #[test]
+    fn a_picked_browser_field_is_not_a_fall_through() {
+        use super::super::web::WebChooser;
+        let apps = fixture();
+        let mut s = LauncherState {
+            web: Some(WebChooser::new(Vec::new())),
+            ..Default::default()
+        };
+        s.apply_query(&apps, "rust iced");
+        assert!(!s.falls_through());
+        assert!(s.web_rows().is_some());
     }
 
     #[test]

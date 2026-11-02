@@ -1071,9 +1071,8 @@ impl Shell {
             let _ = self.applications.add(a);
         }
         if self.launcher.active {
-            let apps = self.applications.clone();
             let query = self.launcher.query.clone();
-            self.launcher.apply_query(&apps, &query);
+            self.launcher_filter(&query);
         }
     }
 

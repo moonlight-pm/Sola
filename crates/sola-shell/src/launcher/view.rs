@@ -6,7 +6,9 @@
 //! Chord wiring (Meta+Space toggle, Escape close, arrows nav, Enter launch)
 //! is handled in `on_chord`. Messages are defined on `Msg`.
 //!
-//! Picking Browser turns the card into the Browser field
+//! When no app matches what was typed, the Browser field's rows take their
+//! place, so a search or an address needs only Return. Picking Browser turns
+//! the card into the Browser field
 //! ([`crate::launcher::web`]): the field scoped to "Browser", what Return
 //! opens, then matching visits. Picking Projects has Projects open a window
 //! to pick a project in ([`crate::app::projects`]).
@@ -78,7 +80,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         None => query_input,
     };
 
-    let rows: Vec<Element<'_, Msg>> = if let Some(web) = &launcher.web {
+    let rows: Vec<Element<'_, Msg>> = if let Some(web) = launcher.web_rows() {
         web_rows(shell, web)
     } else if launcher.filtered_ids.is_empty() {
         vec![

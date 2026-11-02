@@ -9,6 +9,10 @@
 //! page for a search, then the visited pages that match — the browser's
 //! own history, ranked as its location bar ranks it. With nothing typed,
 //! the latest visits.
+//!
+//! The same rows show when no app matches what was typed in the launcher
+//! (Joshua, 2026-11-02: "open the browser with the text entered as a search
+//! ... if no other item is found"), without picking Browser first.
 
 use sola_core::omnibox::{self, history::Visit};
 
