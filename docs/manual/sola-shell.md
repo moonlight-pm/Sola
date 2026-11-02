@@ -607,6 +607,10 @@ its own, right after the focused window. **Projects** and **Browser** ask
 first (below). Escape closes the launcher; so does a click outside the
 card.
 
+When no app matches what you typed, the [Browser](#browser) rows take their
+place, so a search or an address needs only Super+Space, the text, and
+Enter. Delete back to a match and the apps return.
+
 Super+V pastes into the launcher's field (an address for Browser, say),
 and Super+C / X / A copy, cut and select in it, whatever app was focused
 when it opened. The same holds in the Super+K overlay.
