@@ -220,22 +220,22 @@ fn a_restarting_app_comes_back_to_its_place() {
     let mut s = Stacks::new();
     s.place(1, "sola-terminal", "sola-terminal", false, false, t);
     s.place(2, "sola-browser", "sola-browser", false, false, t);
-    // Mail, a loose row, goes above the groups.
+    // One window each: loose rows, in the order they came.
     s.place(3, "sola-mail", "sola-mail", false, false, t);
-    assert_eq!(ids(&s, FULL), vec![3, 1, 2]);
+    assert_eq!(ids(&s, FULL), vec![1, 2, 3]);
     s.show(2);
     s.remove(2, t);
     let p = s.place(9, "sola-browser", "sola-browser", false, false, t + Duration::from_secs(3));
     assert_eq!(p, Placed { zone: FULL, shown: true, returning: true });
-    assert_eq!(ids(&s, FULL), vec![3, 1, 9]);
+    assert_eq!(ids(&s, FULL), vec![1, 9, 3]);
 
-    // Past the grace, a new window is just new — but its app's group kept
-    // its place, so the window comes back there.
+    // Past the grace, a new window is just new: a lone window has no group
+    // to keep a place, so it joins the end of the loose rows.
     s.remove(9, t);
     let later = t + GHOST_GRACE + Duration::from_secs(1);
     let p = s.place(10, "sola-browser", "sola-browser", false, false, later);
     assert!(!p.returning);
-    assert_eq!(ids(&s, FULL), vec![3, 1, 10]);
+    assert_eq!(ids(&s, FULL), vec![1, 3, 10]);
 }
 
 #[test]
@@ -249,8 +249,8 @@ fn a_loose_app_back_after_the_grace_is_just_new() {
     let later = t + GHOST_GRACE + Duration::from_secs(1);
     let p = s.place(10, "app", "app", false, false, later);
     assert!(!p.returning);
-    // At the end of the loose rows, above Terminal's group.
-    assert_eq!(ids(&s, FULL), vec![3, 10, 1]);
+    // At the end of the loose rows.
+    assert_eq!(ids(&s, FULL), vec![1, 3, 10]);
 }
 
 #[test]
@@ -899,28 +899,4 @@ fn kept_windows_go_back_to_their_places_after_a_shell_restart() {
     let zones: Vec<(Zone, Vec<String>)> = l.zones.iter().map(|z| (z.zone, z.apps.clone())).collect();
     let want: Vec<(Zone, Vec<String>)> = saved.zones.iter().map(|z| (z.zone, z.apps.clone())).collect();
     assert_eq!(zones, want);
-}
-
-#[test]
-fn a_multi_window_web_app_groups_and_its_next_window_joins() {
-    let t = Instant::now();
-    let mut s = Stacks::new();
-    s.place(1, "firefox", "firefox", false, false, t);
-    s.place(2, "web-1", "web-1/a", false, false, t);
-    assert!(!s.is_grouped("web-1"));
-    assert!(matches!(s.blocks()[1], Block::Loose(_)));
-
-    let apps: std::collections::HashSet<String> = ["web-1".to_string()].into();
-    assert!(s.set_multi_window(apps.clone()));
-    assert!(!s.set_multi_window(apps), "nothing changed");
-    assert!(s.is_grouped("web-1"));
-    assert_eq!(bar(&s), [1, 2]);
-    assert!(matches!(&s.blocks()[1], Block::Group { app, .. } if app == "web-1"));
-
-    s.place(3, "web-1", "web-1/b", false, false, t);
-    assert!(matches!(&s.blocks()[1], Block::Group { tabs, .. } if tabs.len() == 2));
-
-    assert!(s.set_multi_window(Default::default()));
-    assert!(!s.is_grouped("web-1"));
-    assert!(s.blocks().iter().all(|b| matches!(b, Block::Loose(_))));
 }

@@ -27,7 +27,7 @@ mod saved;
 mod tests;
 mod workspaces;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use sola_bus::topics::{Zone, ZoneLayout};
@@ -35,7 +35,7 @@ use sola_bus::topics::{Zone, ZoneLayout};
 use desk::Desk;
 use saved::Slot;
 
-pub use bar::{Block, BlockId};
+pub use bar::{Block, BlockId, grouped};
 
 /// The zone that covers the whole content area (every cell of the grid):
 /// where a workspace's first window goes, and where a gone zone's go.
@@ -60,8 +60,6 @@ pub struct Tab {
     /// (`Topic::Tab`), else the app id.
     pub key: String,
     pub zone: Zone,
-    /// Its app's windows group in the bar ([`Stacks::is_grouped`]).
-    pub grouped: bool,
 }
 
 /// Where [`Stacks::place`] put a window.
@@ -83,9 +81,6 @@ pub struct Stacks {
     showing: usize,
     /// child → parent.
     parents: HashMap<u32, u32>,
-    /// The web apps set to open several windows: they group like the apps
-    /// that open a window per document.
-    multi_window: HashSet<String>,
     /// Places from the saved layout not yet taken.
     restore: Vec<Slot>,
     restore_until: Option<Instant>,
@@ -125,7 +120,6 @@ impl Stacks {
             layout,
             showing: 0,
             parents: HashMap::new(),
-            multi_window: HashSet::new(),
             restore: Vec::new(),
             restore_until: None,
             ghosts: Vec::new(),
@@ -210,13 +204,11 @@ impl Stacks {
         now: Instant,
     ) -> Placed {
         self.take(window_id);
-        let grouped = self.is_grouped(app_id);
         let tab = |zone| Tab {
             window_id,
             app_id: app_id.to_string(),
             key: key.to_string(),
             zone,
-            grouped,
         };
         let keys: &[&str] = if key == app_id { &[key] } else { &[key, app_id] };
         for k in keys {
@@ -286,7 +278,10 @@ impl Stacks {
         let loose_len = bar.loose_len();
         let after_end = after.and_then(|a| bar.block_end(a));
         let in_group = |w: u32| bar.tab(w).is_some_and(|t| t.app_id == app_id);
-        let at = if !self.is_grouped(app_id) {
+        // The app's first window here is a loose row; its second makes the
+        // group.
+        let first = !bar.tabs().any(|t| t.app_id == app_id);
+        let at = if !grouped(app_id) || first {
             after_end.unwrap_or(loose_len).min(loose_len)
         } else {
             match bar.group_range(app_id) {

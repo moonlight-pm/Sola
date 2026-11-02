@@ -16,13 +16,13 @@
 //! the browser makes them (Wrap This Page…); here one can be renamed or
 //! removed.
 
-use iced::widget::{column, row, toggler};
+use iced::widget::{column, row};
 use iced::{Element, Length, Task};
 use sola_kit::components::text_input::text_input;
 
 use sola_bus::topics::{AppKind, Application, ApplicationsConfig, Topic, Window as BusWindow};
 use sola_kit::app::try_bus;
-use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM};
+use sola_kit::components::style::{SPACE_LG, SPACE_MD};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::{Tone, badge, button as kit_btn, field, text_input as kit_input};
 
@@ -68,7 +68,6 @@ impl EditBuffer {
             kind: AppKind::Command,
             url: None,
             profile: None,
-            multi_window: false,
         };
         a.finalize();
         a
@@ -195,8 +194,6 @@ pub enum AppsMsg {
     Discard,
     CloseDetail,
     Remove(String),
-    /// A web app opens several windows, or does not.
-    MultiWindow(String, bool),
 }
 
 pub fn update(msg: AppsMsg, apps: &mut ApplicationsConfig, ui: &mut AppsState) -> Task<AppsMsg> {
@@ -329,14 +326,6 @@ pub fn update(msg: AppsMsg, apps: &mut ApplicationsConfig, ui: &mut AppsState) -
                 Detail::Closed => {}
             }
         }
-        AppsMsg::MultiWindow(app_id, on) => {
-            if let Some(mut app) = apps.get(&app_id).cloned() {
-                app.multi_window = on;
-                if apps.update(&app_id, app.clone()).is_ok() {
-                    emit(Topic::Application(app));
-                }
-            }
-        }
         AppsMsg::Remove(app_id) => {
             if let Some(removed) = apps.get(&app_id).cloned() {
                 apps.remove(&app_id);
@@ -356,7 +345,7 @@ pub fn view<'a>(
     running: &'a [BusWindow],
     ui: &'a AppsState,
 ) -> Element<'a, AppsMsg> {
-    let mut sections = vec![catalog(apps, ui), web_apps(apps, running, ui)];
+    let mut sections = vec![catalog(apps, ui), web_apps(apps, ui)];
     let candidates = collect_candidates(apps, running);
     if !candidates.is_empty() {
         sections.push(candidates_section(candidates));
@@ -415,11 +404,7 @@ fn catalog<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, A
 }
 
 /// The web apps Browser made, A→Z, the open one with its editor under it.
-fn web_apps<'a>(
-    apps: &'a ApplicationsConfig,
-    running: &'a [BusWindow],
-    ui: &'a AppsState,
-) -> Element<'a, AppsMsg> {
+fn web_apps<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, AppsMsg> {
     let mut rows: Vec<Element<'a, AppsMsg>> = Vec::new();
     for app in sorted_apps(apps, true) {
         let open = matches!(&ui.detail, Detail::Edit { orig, .. } if orig == &app.app_id);
@@ -436,8 +421,7 @@ fn web_apps<'a>(
                 .into(),
         );
         if let (true, Detail::Edit { orig, buffer }) = (open, &ui.detail) {
-            let windows = running.iter().filter(|w| w.app_id == app.app_id).count();
-            rows.push(page::editor(web_editor(app, windows, ui, orig, buffer)));
+            rows.push(page::editor(web_editor(app, ui, orig, buffer)));
         }
     }
     if rows.is_empty() {
@@ -456,11 +440,9 @@ fn web_apps<'a>(
     )
 }
 
-/// A web app's editor: its name, where it starts, whether it opens several
-/// windows (`windows` are open; with more than one, that stays on), Remove.
+/// A web app's editor: its name, where it starts, Remove.
 fn web_editor<'a>(
     app: &'a Application,
-    windows: usize,
     ui: &'a AppsState,
     orig: &'a str,
     buffer: &'a EditBuffer,
@@ -476,24 +458,9 @@ fn web_editor<'a>(
             .into(),
     ];
     let start = kit_text::body(app.url.as_deref().unwrap_or("")).style(kit_text::muted);
-    let locked = app.multi_window && windows > 1;
-    let id = app.app_id.clone();
-    let several = toggler(app.multi_window)
-        .on_toggle_maybe((!locked).then(|| move |on| AppsMsg::MultiWindow(id.clone(), on)))
-        .style(sola_kit::components::form::toggle_style);
-    let several_note = if locked {
-        format!("{windows} windows are open: close all but one to turn this off.")
-    } else {
-        "The launcher and ⌘N open another window, and its windows group in the bar.".to_string()
-    };
     let mut col = column![
         field_input("Name", &buffer.label, "", AppField::Label),
         field("Starts at", start, None, None),
-        column![
-            sola_kit::components::form::form_row("Open several windows", several),
-            kit_text::caption(several_note).style(kit_text::muted),
-        ]
-        .spacing(SPACE_SM),
     ]
     .spacing(SPACE_MD);
     if let Some(err) = ui.error.as_deref() {

@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use sola_bus::topics::{TabLayout, TabLayoutGroup, TabLayoutZone, Workspace, WorkspacePicks, Zone};
 
-use super::bar::{Bar, Block, app_of_key};
+use super::bar::{Bar, Block, app_of_key, grouped};
 use super::desk::Desk;
 use super::{FULL, GHOST_GRACE, RESTORE_GRACE, Stacks};
 
@@ -81,7 +81,7 @@ impl Stacks {
             for (i, key) in z.apps.iter().enumerate() {
                 let app = app_of_key(key);
                 let ws_groups = groups.entry(workspace.clone()).or_default();
-                if self.is_grouped(app) && !ws_groups.iter().any(|(_, _, a)| a == app) {
+                if grouped(app) && !ws_groups.iter().any(|(_, _, a)| a == app) {
                     ws_groups.push((*start + i, true, app.to_string()));
                 }
                 self.restore.push(Slot {

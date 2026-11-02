@@ -1,9 +1,10 @@
 //! The tab bar's view: a head with the showing workspace's name (its menu
 //! switches workspaces, [`super::head`]), then a row per window (app icon,
 //! title) in the workspace's bar order — one list, not grouped by zone. The
-//! windows of each app that opens a window per document sit in that app's
-//! group, under its name in small capitals, one step in; the group does
-//! not fold. Every loose row comes before the groups (spec § App groups
+//! windows of each app that opens a window per document, from its second on
+//! the workspace, sit in that app's group, under its name in small capitals,
+//! one step in; the group does not fold. Every loose row comes before the
+//! groups (spec § App groups
 //! and keys; `design/bar-groups/`, way A). Board 05's rows: the focused window is
 //! the pill; a tiled zone's shown tab is lifted a step while its zone is
 //! on screen and bright while it is not (Full while the halves are up, or
@@ -30,7 +31,7 @@ use sola_kit::components::{
 
 use super::{group_row_id, row_id};
 use crate::app::{Msg, Shell};
-use crate::stacks::{Block, Tab};
+use crate::stacks::{Block, Tab, grouped};
 
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     let hidden = |app: &str| shell.is_app_hidden(app);
@@ -44,7 +45,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     let ghost = shell.launch_ghost();
     // The ghost joins its group when the group is on the bar.
     let ghost_group = ghost.filter(|(_, _, app)| {
-        shell.tabs.is_grouped(app)
+        grouped(app)
             && shell.tabs.blocks().iter().any(
                 |b| matches!(b, Block::Group { app: a, tabs, .. } if a == app && !tabs.is_empty()),
             )

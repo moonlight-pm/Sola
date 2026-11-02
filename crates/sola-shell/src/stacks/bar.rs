@@ -1,18 +1,18 @@
 //! A workspace's bar as blocks (`docs/specs/2026-10-21-next-tab-bar-design.md`
 //! § App groups and keys): a loose row, or an app's group — the apps that
 //! open a window per document ([`grouped`]) keep their windows together
-//! under the app's header. Loose rows come first, every group after them
-//! (Joshua, 2026-11-01: "all 'loose' (singleton) apps go at the top"). The
-//! flat order, every row top to bottom, is what the zones, the keys and the
-//! saved layout read. A group whose last window left stays as an empty
-//! block: its place, for the app's next window.
+//! under the app's header, from the second window on: one window is a loose
+//! row like any other (Joshua, 2026-11-02: "even for built in apps, if there
+//! is only one window, don't show the group"). Loose rows come first, every
+//! group after them (Joshua, 2026-11-01: "all 'loose' (singleton) apps go at
+//! the top"). The flat order, every row top to bottom, is what the zones,
+//! the keys and the saved layout read. A group down to one window or none
+//! stays as an empty block: its place, for when the app has two again.
 
 use super::Tab;
 
 /// The apps whose windows group in the bar: each opens a window per
-/// document. A web app has an app id of its own, so it stays loose though
-/// the browser hosts it, unless it is set to open several windows
-/// ([`super::Stacks::is_grouped`]).
+/// document. Every web app too ([`grouped`]), each under its own name.
 const GROUPED: &[&str] = &[
     "sola-browser",
     "sola-projects",
@@ -23,7 +23,7 @@ const GROUPED: &[&str] = &[
 
 /// Whether `app_id`'s windows group in the bar.
 pub fn grouped(app_id: &str) -> bool {
-    GROUPED.contains(&app_id)
+    GROUPED.contains(&app_id) || sola_core::applications::is_web_app_id(app_id)
 }
 
 /// The app a remembered key belongs to: a tab key is `<app>/<tab>`, a
@@ -184,71 +184,63 @@ impl Bar {
         self.blocks.len()
     }
 
-    /// Put `tab` at flat index `at`: into its app's group when it has one
-    /// (kept within the group's rows), else a block of its own (a new
-    /// group, for a grouped app) at the block boundary there.
-    pub fn insert(&mut self, tab: Tab, at: usize) {
-        if tab.grouped {
-            if let Some(b) = self.group_index(&tab.app_id) {
-                let start = self.start_of(b);
-                if let Block::Group { tabs, .. } = &mut self.blocks[b] {
-                    let i = at.saturating_sub(start).min(tabs.len());
-                    tabs.insert(i, tab);
-                }
-                return;
-            }
-            let b = self.boundary(at, false);
-            let app = tab.app_id.clone();
+    /// A window of grouped app `tab` belongs to is here already: `tab` makes
+    /// (or joins) a group rather than a loose row.
+    fn joins_group(&self, tab: &Tab) -> bool {
+        grouped(&tab.app_id) && self.tabs().any(|t| t.app_id == tab.app_id)
+    }
+
+    /// `app`'s group for a further window: its lone window (a loose row until
+    /// now) moved in, the group made at `place` when it has no block. Its
+    /// block.
+    fn gather(&mut self, app: &str, place: impl FnOnce(&Self) -> usize) -> usize {
+        let lone = self
+            .blocks
+            .iter()
+            .position(|b| matches!(b, Block::Loose(t) if t.app_id == app))
+            .map(|b| self.blocks.remove(b));
+        let b = self.group_index(app).unwrap_or_else(|| {
+            let b = place(self);
             self.blocks.insert(
                 b,
                 Block::Group {
-                    app,
-                    tabs: vec![tab],
+                    app: app.to_string(),
+                    tabs: Vec::new(),
                     rank: None,
                 },
             );
-            return;
+            b
+        });
+        if let (Some(Block::Loose(lone)), Block::Group { tabs, .. }) = (lone, &mut self.blocks[b]) {
+            tabs.push(lone);
         }
-        let b = self.boundary(at, true);
-        self.blocks.insert(b, Block::Loose(tab));
+        b
     }
 
-    /// App `app`'s windows now group (`on`), or no longer do: they join a
-    /// group after the others, or go back among the loose rows.
-    pub fn regroup(&mut self, app: &str, on: bool) {
-        if on {
-            let mut tabs = Vec::new();
-            self.blocks.retain_mut(|block| match block {
-                Block::Loose(t) if t.app_id == app => {
-                    t.grouped = true;
-                    tabs.push(t.clone());
-                    false
-                }
-                _ => true,
-            });
-            if tabs.is_empty() {
-                return;
-            }
-            match self.group_index(app) {
-                Some(b) => {
-                    if let Block::Group { tabs: group, .. } = &mut self.blocks[b] {
-                        group.extend(tabs);
-                    }
-                }
-                None => self.blocks.push(Block::Group {
-                    app: app.to_string(),
-                    tabs,
-                    rank: None,
-                }),
-            }
-        } else if let Some(b) = self.group_index(app) {
-            if let Block::Group { tabs, .. } = self.blocks.remove(b) {
-                let at = self.loose_len();
-                for (i, mut tab) in tabs.into_iter().enumerate() {
-                    tab.grouped = false;
-                    self.blocks.insert(at + i, Block::Loose(tab));
-                }
-            }
+    /// Put `tab` at flat index `at`: into its app's group when the app has
+    /// another window here (kept within the group's rows), else a loose row
+    /// at the block boundary there.
+    pub fn insert(&mut self, tab: Tab, at: usize) {
+        if !self.joins_group(&tab) {
+            let b = self.boundary(at, true);
+            self.blocks.insert(b, Block::Loose(tab));
+            return;
+        }
+        let app = tab.app_id.clone();
+        // Its lone window, about to leave the loose rows, moves what `at` means.
+        let lone = self.blocks[..self.loose_len()]
+            .iter()
+            .position(|b| matches!(b, Block::Loose(t) if t.app_id == app));
+        let past_lone = lone.is_some_and(|l| l < at);
+        let at_after = at - usize::from(past_lone);
+        let b = self.gather(&app, |bar| bar.boundary(at_after.min(bar.len()), false));
+        let start = self.start_of(b);
+        if let Block::Group { tabs, .. } = &mut self.blocks[b] {
+            let i = match lone {
+                Some(_) => usize::from(past_lone),
+                None => at.saturating_sub(start).min(tabs.len()),
+            };
+            tabs.insert(i, tab);
         }
     }
 
@@ -257,18 +249,25 @@ impl Bar {
     /// is each placed window's saved index.
     pub fn insert_ranked(&mut self, tab: Tab, rank: usize, rank_of: &dyn Fn(u32) -> Option<usize>) {
         let later = |w: u32| rank_of(w).is_none_or(|r| r > rank);
-        if tab.grouped {
-            if let Some(b) = self.group_index(&tab.app_id) {
-                if let Block::Group { tabs, .. } = &mut self.blocks[b] {
-                    let i = tabs
-                        .iter()
-                        .position(|t| later(t.window_id))
-                        .unwrap_or(tabs.len());
-                    tabs.insert(i, tab);
-                }
-                return;
-            }
+        if !self.joins_group(&tab) {
+            let b = self.ranked_place(true, rank, &later);
+            self.blocks.insert(b, Block::Loose(tab));
+            return;
         }
+        let app = tab.app_id.clone();
+        let b = self.gather(&app, |bar| bar.ranked_place(false, rank, &later));
+        if let Block::Group { tabs, .. } = &mut self.blocks[b] {
+            let i = tabs
+                .iter()
+                .position(|t| later(t.window_id))
+                .unwrap_or(tabs.len());
+            tabs.insert(i, tab);
+        }
+    }
+
+    /// Where a block saved at index `rank` goes: before the first block saved
+    /// after it, a loose row among the loose rows, a group among the groups.
+    fn ranked_place(&self, loose: bool, rank: usize, later: &dyn Fn(u32) -> bool) -> usize {
         let block_later = |block: &Block| match block {
             Block::Loose(t) => later(t.window_id),
             Block::Group { tabs, rank: r, .. } => match r {
@@ -276,35 +275,25 @@ impl Bar {
                 None => tabs.iter().all(|t| later(t.window_id)),
             },
         };
-        // A loose row among the loose rows, a new group among the groups.
-        let loose = !tab.grouped;
         let first_group = self.loose_len();
         let (from, to) = if loose {
             (0, first_group)
         } else {
             (first_group, self.blocks.len())
         };
-        let b = self.blocks[from..to]
+        self.blocks[from..to]
             .iter()
             .position(block_later)
-            .map_or(to, |i| from + i);
-        let block = if tab.grouped {
-            Block::Group {
-                app: tab.app_id.clone(),
-                tabs: vec![tab],
-                rank: None,
-            }
-        } else {
-            Block::Loose(tab)
-        };
-        self.blocks.insert(b, block);
+            .map_or(to, |i| from + i)
     }
 
     /// Take `window_id` out: its flat index and its tab. Its group stays,
-    /// empty when it was the last.
+    /// as a place: the one window left, if that is all, goes to the end of
+    /// the loose rows.
     pub fn remove(&mut self, window_id: u32) -> Option<(usize, Tab)> {
         let at = self.index_of(window_id)?;
         let b = self.blocks.iter().position(|b| b.holds(window_id))?;
+        let mut lone = None;
         let tab = match &mut self.blocks[b] {
             Block::Loose(_) => match self.blocks.remove(b) {
                 Block::Loose(t) => t,
@@ -312,9 +301,17 @@ impl Bar {
             },
             Block::Group { tabs, .. } => {
                 let i = tabs.iter().position(|t| t.window_id == window_id)?;
-                tabs.remove(i)
+                let tab = tabs.remove(i);
+                if tabs.len() == 1 {
+                    lone = tabs.pop();
+                }
+                tab
             }
         };
+        if let Some(lone) = lone {
+            let first_group = self.loose_len();
+            self.blocks.insert(first_group, Block::Loose(lone));
+        }
         Some((at, tab))
     }
 
@@ -389,29 +386,7 @@ mod tests {
             app_id: app.to_string(),
             key: app.to_string(),
             zone: Zone::Fullscreen,
-            grouped: grouped(app),
         }
-    }
-
-    #[test]
-    fn a_multi_window_app_s_rows_move_to_a_group_and_back() {
-        let mut bar = Bar::default();
-        bar.insert(tab(1, "firefox"), 0);
-        bar.insert(tab(2, "web-1"), 1);
-        bar.insert(tab(3, "sola-terminal"), 2);
-        bar.regroup("web-1", true);
-        assert_eq!(ids(&bar), [1, 3, 2], "a group comes after the others");
-        assert_eq!(bar.group_range("web-1"), Some((2, 3)));
-        assert!(bar.tab(2).is_some_and(|t| t.grouped));
-        // The next window joins it.
-        let mut next = tab(4, "web-1");
-        next.grouped = true;
-        bar.insert(next, 3);
-        assert_eq!(ids(&bar), [1, 3, 2, 4]);
-        bar.regroup("web-1", false);
-        assert_eq!(ids(&bar), [1, 2, 4, 3], "back among the loose rows, before the groups");
-        assert_eq!(bar.group_range("web-1"), None);
-        assert!(bar.tab(2).is_some_and(|t| !t.grouped));
     }
 
     fn ids(bar: &Bar) -> Vec<u32> {
@@ -423,15 +398,61 @@ mod tests {
     const MAIL: &str = "sola-mail";
     const SETTINGS: &str = "sola-settings";
 
+    fn is_loose(bar: &Bar, window_id: u32) -> bool {
+        bar.blocks()
+            .iter()
+            .any(|b| matches!(b, Block::Loose(t) if t.window_id == window_id))
+    }
+
+    #[test]
+    fn one_window_is_a_loose_row_and_the_second_makes_the_group() {
+        let mut bar = Bar::default();
+        bar.insert(tab(1, TERMINAL), 0);
+        assert!(is_loose(&bar, 1));
+        assert_eq!(bar.group_range(TERMINAL), None);
+        bar.insert(tab(2, TERMINAL), 1);
+        assert!(!is_loose(&bar, 1) && !is_loose(&bar, 2));
+        assert_eq!(bar.group_range(TERMINAL), Some((0, 2)));
+        // The second to last leaving ends it; the last leaving leaves no row.
+        bar.remove(1);
+        assert!(is_loose(&bar, 2));
+        assert_eq!(bar.group_range(TERMINAL), Some((1, 1)));
+        bar.remove(2);
+        assert_eq!(bar.len(), 0);
+    }
+
+    #[test]
+    fn a_lone_window_of_a_grouped_app_drags_among_the_loose_rows() {
+        let mut bar = Bar::default();
+        bar.insert(tab(1, MAIL), 0);
+        bar.insert(tab(2, TERMINAL), 1);
+        bar.insert(tab(3, SETTINGS), 2);
+        assert!(bar.reorder(3, Some(2)));
+        assert_eq!(ids(&bar), vec![1, 3, 2]);
+        assert!(bar.move_block(&BlockId::Window(2), Some(&BlockId::Window(1))));
+        assert_eq!(ids(&bar), vec![2, 1, 3]);
+    }
+
+    #[test]
+    fn every_web_app_groups_and_other_apps_do_not() {
+        assert!(grouped("web-1234"));
+        assert!(grouped(TERMINAL));
+        assert!(!grouped("firefox"));
+    }
+
     #[test]
     fn a_grouped_window_joins_its_group_wherever_it_is_put() {
         let mut bar = Bar::default();
         bar.insert(tab(1, BROWSER), 0);
         bar.insert(tab(2, TERMINAL), 1);
-        // At the end of the bar, but its group is first of the groups.
+        // At the end of the bar: the second window makes the group, below
+        // the other app's lone row.
         bar.insert(tab(3, BROWSER), 2);
-        assert_eq!(ids(&bar), vec![1, 3, 2]);
-        assert_eq!(bar.group_range(BROWSER), Some((0, 2)));
+        assert_eq!(ids(&bar), vec![2, 1, 3]);
+        assert_eq!(bar.group_range(BROWSER), Some((1, 3)));
+        // Put anywhere, the next joins it.
+        bar.insert(tab(4, BROWSER), 0);
+        assert_eq!(ids(&bar), vec![2, 4, 1, 3]);
     }
 
     #[test]
@@ -446,7 +467,9 @@ mod tests {
         assert_eq!(bar.loose_len(), 2);
         // A new group never goes among the loose rows.
         bar.insert(tab(5, TERMINAL), 0);
-        assert_eq!(ids(&bar), vec![3, 4, 5, 1, 2]);
+        bar.insert(tab(6, TERMINAL), 0);
+        assert_eq!(ids(&bar), vec![3, 4, 6, 5, 1, 2]);
+        assert_eq!(bar.loose_len(), 2);
     }
 
     #[test]
@@ -454,12 +477,17 @@ mod tests {
         let mut bar = Bar::default();
         bar.insert(tab(1, MAIL), 0);
         bar.insert(tab(2, BROWSER), 1);
-        bar.insert(tab(3, TERMINAL), 2);
+        bar.insert(tab(5, BROWSER), 2);
+        bar.insert(tab(3, TERMINAL), 3);
+        bar.insert(tab(6, TERMINAL), 4);
+        assert_eq!(ids(&bar), vec![1, 2, 5, 3, 6]);
+        // Down to one window: a loose row, and the group's place stays.
         assert_eq!(bar.remove(2).map(|(at, _)| at), Some(1));
-        assert_eq!(bar.group_range(BROWSER), Some((1, 1)));
-        // The browser's next window, opened from the end, comes back there.
-        bar.insert(tab(4, BROWSER), 2);
-        assert_eq!(ids(&bar), vec![1, 4, 3]);
+        assert_eq!(ids(&bar), vec![1, 5, 3, 6]);
+        assert_eq!(bar.group_range(BROWSER), Some((2, 2)));
+        // Two again, opened from the end: back in its place.
+        bar.insert(tab(4, BROWSER), 4);
+        assert_eq!(ids(&bar), vec![1, 5, 4, 3, 6]);
     }
 
     #[test]
@@ -467,10 +495,13 @@ mod tests {
         let mut bar = Bar::default();
         bar.insert(tab(1, MAIL), 0);
         bar.insert(tab(2, BROWSER), 1);
+        bar.insert(tab(3, BROWSER), 2);
         bar.remove(2);
-        bar.insert(tab(3, TERMINAL), 1);
-        assert_eq!(bar.group_range(TERMINAL), Some((1, 2)));
-        assert_eq!(bar.group_range(BROWSER), Some((2, 2)));
+        bar.remove(3);
+        bar.insert(tab(4, TERMINAL), 1);
+        bar.insert(tab(5, TERMINAL), 2);
+        assert_eq!(bar.group_range(TERMINAL), Some((1, 3)));
+        assert_eq!(bar.group_range(BROWSER), Some((3, 3)));
     }
 
     #[test]
@@ -499,13 +530,14 @@ mod tests {
         bar.insert(tab(1, BROWSER), 0);
         bar.insert(tab(2, BROWSER), 1);
         bar.insert(tab(3, TERMINAL), 2);
+        bar.insert(tab(5, TERMINAL), 3);
         bar.insert(tab(4, MAIL), 0);
-        assert_eq!(ids(&bar), vec![4, 1, 2, 3]);
+        assert_eq!(ids(&bar), vec![4, 1, 2, 3, 5]);
         assert!(bar.move_block(&BlockId::Group(BROWSER.into()), None));
-        assert_eq!(ids(&bar), vec![4, 3, 1, 2]);
+        assert_eq!(ids(&bar), vec![4, 3, 5, 1, 2]);
         // Not above the loose rows: the top of the groups.
         assert!(bar.move_block(&BlockId::Group(BROWSER.into()), Some(&BlockId::Window(4))));
-        assert_eq!(ids(&bar), vec![4, 1, 2, 3]);
+        assert_eq!(ids(&bar), vec![4, 1, 2, 3, 5]);
         assert!(!bar.move_block(&BlockId::Group(BROWSER.into()), Some(&BlockId::Window(4))));
         // A loose row stays above the groups.
         assert!(!bar.move_block(&BlockId::Window(4), None));
@@ -526,13 +558,14 @@ mod tests {
 
     #[test]
     fn a_loose_row_saved_after_a_group_comes_back_above_it() {
-        // Saved before loose rows went first: browser 0, steam 1.
+        // Saved before loose rows went first: browser 0 and 1, steam 2.
         let mut bar = Bar::of_groups(vec![(BROWSER.into(), 0)]);
-        let ranks = [(10, 0), (11, 1)];
+        let ranks = [(10, 0), (12, 1), (11, 2)];
         let rank_of = |w: u32| ranks.iter().find(|(id, _)| *id == w).map(|(_, r)| *r);
         bar.insert_ranked(tab(10, BROWSER), 0, &rank_of);
-        bar.insert_ranked(tab(11, "steam"), 1, &rank_of);
-        assert_eq!(ids(&bar), vec![11, 10]);
+        bar.insert_ranked(tab(11, "steam"), 2, &rank_of);
+        bar.insert_ranked(tab(12, BROWSER), 1, &rank_of);
+        assert_eq!(ids(&bar), vec![11, 10, 12]);
     }
 
     #[test]
@@ -540,6 +573,7 @@ mod tests {
         let mut bar = Bar::default();
         bar.insert(tab(1, MAIL), 0);
         bar.insert(tab(2, BROWSER), 1);
+        bar.insert(tab(3, BROWSER), 2);
         bar.clear();
         assert_eq!(bar.len(), 0);
         assert_eq!(bar.group_range(BROWSER), Some((0, 0)));

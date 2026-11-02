@@ -3080,51 +3080,6 @@ mod tests {
     }
 
     #[test]
-    fn application_parse_accepts_a_record_from_before_multi_window() {
-        #[derive(serde::Serialize)]
-        struct Before {
-            app_id: String,
-            label: String,
-            command: String,
-            icon: String,
-            kind: sola_core::applications::AppKind,
-            url: Option<String>,
-            profile: Option<String>,
-        }
-        let old = Before {
-            app_id: "web-1".into(),
-            label: "Shortcut".into(),
-            command: "/bin/sola-browser --app web-1".into(),
-            icon: "lucide/globe".into(),
-            kind: sola_core::applications::AppKind::Web,
-            url: Some("https://app.shortcut.com".into()),
-            profile: Some("work".into()),
-        };
-        let mut msg = Topic::Application(Application::default()).to_message();
-        msg.payload = Some(postcard::to_allocvec(&old).unwrap());
-        match Topic::parse(&msg) {
-            Some(Topic::Application(app)) => {
-                assert_eq!(app.profile.as_deref(), Some("work"), "keeps its profile");
-                assert!(!app.multi_window);
-            }
-            other => panic!("expected Application, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn application_multi_window_reads_back() {
-        let app = Application {
-            app_id: "web-1".into(),
-            multi_window: true,
-            ..Default::default()
-        };
-        match Topic::parse(&Topic::Application(app).to_message()) {
-            Some(Topic::Application(back)) => assert!(back.multi_window),
-            other => panic!("expected Application, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn application_parse_accepts_pre_wrapper_postcard() {
         #[derive(serde::Serialize)]
         struct ApplicationV1 {

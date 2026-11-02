@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use iced::widget::{Shader, Space, column, container, mouse_area, row, stack, text, toggler};
+use iced::widget::{Shader, Space, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Element, Length, Task, window};
 use sola_bus::Message;
 use sola_bus::topics::{
@@ -67,8 +67,6 @@ pub struct WebApps {
 pub struct WrapDraft {
     pub tab: TabId,
     pub name: String,
-    /// The app is to open several windows.
-    pub multi_window: bool,
 }
 
 impl WebApps {
@@ -89,23 +87,21 @@ impl WebApps {
     }
 
     /// App `app_id`'s pages.
-    /// The app whose group `url` belongs in: an app that opens several
-    /// windows, on that site. If two are, the first by name.
-    fn group_for(&self, url: &str) -> Option<&Application> {
+    /// The app that starts on `url`'s site. If two do, the first by name.
+    fn app_for_site(&self, url: &str) -> Option<&Application> {
         self.apps
             .values()
-            .filter(|a| a.multi_window)
             .filter(|a| a.url.as_deref().is_some_and(|start| same_site(start, url)))
             .min_by(|a, b| (&a.label, &a.app_id).cmp(&(&b.label, &b.app_id)))
     }
 
     /// The app a link from page `opener` opens in, as a window of its own:
-    /// the opener's, on its site; else an app with a group for that site.
-    /// `None`: a browser page.
+    /// the opener's, on its site; else the one for that site. `None`: a
+    /// browser page.
     fn app_for_link(&self, opener: TabId, url: &str) -> Option<&Application> {
         self.app_of(opener)
             .filter(|a| a.url.as_deref().is_some_and(|start| same_site(start, url)))
-            .or_else(|| self.group_for(url))
+            .or_else(|| self.app_for_site(url))
     }
 
     pub fn tabs_of(&self, app_id: &str) -> Vec<TabId> {
@@ -126,12 +122,9 @@ pub fn app_menu(app: &Application) -> AppMenuPayload {
         disabled: false,
         checked: false,
     };
-    let mut own = Vec::new();
-    if app.multi_window {
-        own.push(action(ACTION_NEW_WINDOW, "New Window".into(), Some(KeyCode::N.meta())));
-        own.push(MenuItem::Divider);
-    }
-    own.extend([
+    let own = vec![
+        action(ACTION_NEW_WINDOW, "New Window".into(), Some(KeyCode::N.meta())),
+        MenuItem::Divider,
         action(ACTION_OPEN_IN_BROWSER, "Open in Browser".into(), None),
         action(integration::ACTION_RELOAD, "Reload".into(), Some(KeyCode::R.meta())),
         MenuItem::Divider,
@@ -139,7 +132,7 @@ pub fn app_menu(app: &Application) -> AppMenuPayload {
         action(ACTION_REMOVE, "Remove Web App…".into(), None),
         MenuItem::Divider,
         action(ACTION_QUIT, format!("Quit {}", app.label), Some(KeyCode::Q.meta())),
-    ]);
+    ];
     // Undo through Select All: a web app has no find bar.
     let edit = EDIT_MENU_ITEMS
         .iter()
@@ -227,12 +220,14 @@ impl<E: Engine> App<E> {
                     tracing::info!(app = %app.app_id, label = %app.label, "web app");
                     self.webapps.published.remove(&app.app_id);
                     let id = app.app_id.clone();
-                    // Renamed, or several windows on or off (Settings →
-                    // Applications): its open windows' menus follow now.
-                    let menus_moved = self.webapps.apps.get(&id).is_some_and(|old| {
-                        old.label != app.label || old.multi_window != app.multi_window
-                    });
-                    if menus_moved && !self.webapps.tabs_of(&id).is_empty() {
+                    // Renamed (Settings → Applications): its open windows'
+                    // menus take the new name now.
+                    let renamed = self
+                        .webapps
+                        .apps
+                        .get(&id)
+                        .is_some_and(|old| old.label != app.label);
+                    if renamed && !self.webapps.tabs_of(&id).is_empty() {
                         sola_kit::menu::publish_for(app_menu(&app));
                         self.webapps.published.insert(id.clone());
                     }
@@ -287,12 +282,12 @@ impl<E: Engine> App<E> {
     }
 
     /// A launch handed to this running browser: another window of an app
-    /// that opens several, else [`Self::open_app`].
+    /// already up (as ⌘N), else [`Self::open_app`].
     pub(crate) fn launch_app(&mut self, app_id: &str) {
-        let several = self.pending_session.is_none()
-            && self.webapps.apps.get(app_id).is_some_and(|a| a.multi_window)
+        let up = self.pending_session.is_none()
+            && self.webapps.apps.contains_key(app_id)
             && !self.webapps.tabs_of(app_id).is_empty();
-        if several {
+        if up {
             self.open_app_window(app_id);
         } else {
             self.open_app(app_id);
@@ -477,7 +472,6 @@ impl<E: Engine> App<E> {
         self.webapps.wrap = Some(WrapDraft {
             tab,
             name: suggested_name(&info.title, &info.url),
-            multi_window: false,
         });
         iced::widget::operation::focus(wrap_name_id())
     }
@@ -492,7 +486,7 @@ impl<E: Engine> App<E> {
         let Some(info) = self.cached_tabs.iter().find(|t| t.id == draft.tab) else {
             return Task::none();
         };
-        let app_id = format!("web-{}", crate::profiles::new_uuid());
+        let app_id = sola_core::applications::web_app_id(&crate::profiles::new_uuid());
         let mut app = Application {
             app_id: app_id.clone(),
             label: if name.is_empty() {
@@ -505,7 +499,6 @@ impl<E: Engine> App<E> {
             kind: AppKind::Web,
             url: Some(info.url.clone()),
             profile: Some(self.profile_of(draft.tab)),
-            multi_window: draft.multi_window,
         };
         app.finalize();
         tracing::info!(app = %app.app_id, label = %app.label, url = ?app.url, "wrapped a page");
@@ -623,12 +616,6 @@ impl<E: Engine> App<E> {
                  already signed in."
             ),
             name,
-            sola_kit::components::form::form_row(
-                "Open several windows",
-                toggler(draft.multi_window)
-                    .on_toggle(Msg::WrapMultiWindow)
-                    .style(sola_kit::components::form::toggle_style),
-            ),
             row![
                 kit_button::labeled("Wrap", kit_button::primary).on_press(Msg::WrapSubmit),
                 kit_button::labeled("Cancel", kit_button::ghost).on_press(Msg::WrapCancel),
@@ -728,13 +715,12 @@ mod tests {
         assert_eq!(suggested_name("", "https://app.slack.com/x"), "slack.com");
     }
 
-    fn web_app(id: &str, label: &str, url: &str, multi_window: bool) -> Application {
+    fn web_app(id: &str, label: &str, url: &str) -> Application {
         Application {
             app_id: id.into(),
             label: label.into(),
             url: Some(url.into()),
             kind: AppKind::Web,
-            multi_window,
             ..Default::default()
         }
     }
@@ -742,8 +728,8 @@ mod tests {
     fn catalog() -> WebApps {
         let mut web = WebApps::default();
         for app in [
-            web_app("shortcut", "Shortcut", "https://app.shortcut.com/acme", true),
-            web_app("slack", "Slack", "https://acme.slack.com", false),
+            web_app("shortcut", "Shortcut", "https://app.shortcut.com/acme"),
+            web_app("slack", "Slack", "https://acme.slack.com"),
         ] {
             web.apps.insert(app.app_id.clone(), app);
         }
@@ -761,27 +747,23 @@ mod tests {
         let web = catalog();
         // On the app's apex, any subdomain.
         assert_eq!(home(&web, 1, "https://api.shortcut.com/x").as_deref(), Some("shortcut"));
-        // A single-window app keeps its own too.
-        assert_eq!(home(&web, 2, "https://files.slack.com/x").as_deref(), Some("slack"));
-        // Another app's group.
+        // Another app's.
         assert_eq!(home(&web, 2, "https://app.shortcut.com/story/1").as_deref(), Some("shortcut"));
         // From a browser page too.
-        assert_eq!(home(&web, 9, "https://app.shortcut.com/story/1").as_deref(), Some("shortcut"));
+        assert_eq!(home(&web, 9, "https://files.slack.com/x").as_deref(), Some("slack"));
     }
 
     #[test]
     fn any_other_link_is_a_browser_page() {
         let web = catalog();
         assert_eq!(home(&web, 1, "https://github.com/sola"), None);
-        // A single-window app has no group to join.
-        assert_eq!(home(&web, 1, "https://acme.slack.com/x"), None);
-        assert_eq!(home(&web, 9, "https://acme.slack.com/x"), None);
+        assert_eq!(home(&web, 9, "https://github.com/sola"), None);
     }
 
     #[test]
     fn two_apps_on_a_site_settle_on_the_first_by_name() {
         let mut web = catalog();
-        let other = web_app("board", "Board", "https://app.shortcut.com/other", true);
+        let other = web_app("board", "Board", "https://app.shortcut.com/other");
         web.apps.insert(other.app_id.clone(), other);
         assert_eq!(home(&web, 9, "https://app.shortcut.com/x").as_deref(), Some("board"));
     }
@@ -796,25 +778,10 @@ mod tests {
     }
 
     #[test]
-    fn only_a_multi_window_app_s_menu_opens_another_window() {
-        let ids = |app: &Application| -> Vec<String> {
-            app_menu(app).menus[0]
-                .items
-                .iter()
-                .filter_map(|i| match i {
-                    MenuItem::Action { id, .. } => Some(id.clone()),
-                    _ => None,
-                })
-                .collect()
-        };
-        let mut app = Application {
-            app_id: "web-1".into(),
-            label: "Shortcut".into(),
-            ..Default::default()
-        };
-        assert!(!ids(&app).iter().any(|i| i == ACTION_NEW_WINDOW));
-        app.multi_window = true;
-        assert_eq!(ids(&app)[0], ACTION_NEW_WINDOW);
+    fn a_web_app_s_menu_opens_another_window() {
+        let app = web_app("web-1", "Shortcut", "https://app.shortcut.com");
+        let first = app_menu(&app).menus[0].items.first().cloned();
+        assert!(matches!(first, Some(MenuItem::Action { id, .. }) if id == ACTION_NEW_WINDOW));
     }
 
     #[test]

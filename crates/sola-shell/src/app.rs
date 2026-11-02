@@ -1330,7 +1330,7 @@ impl Shell {
     /// starting it: none for an app whose launch is a new window.
     pub fn window_to_raise(&self, app_id: &str) -> Option<u32> {
         let new_window = Self::NEW_WINDOW_APPS.contains(&app_id)
-            || self.applications.get(app_id).is_some_and(|a| a.multi_window);
+            || self.applications.get(app_id).is_some_and(|a| a.is_web());
         if new_window { None } else { self.running_window_of(app_id) }
     }
 
@@ -3314,26 +3314,24 @@ mod hide_tests {
     /// default grid lacks went to Full. The list now waits for the bus to
     /// say it has replayed everything.
     #[test]
-    fn the_launcher_opens_another_window_of_a_multi_window_app_and_raises_any_other() {
+    fn the_launcher_opens_another_window_of_a_web_app_and_raises_any_other() {
         use sola_core::applications::{AppKind, Application};
-        let app = |multi_window| Application {
-            app_id: "web-1".into(),
-            label: "Shortcut".into(),
-            command: "/bin/sola-browser --app web-1".into(),
-            kind: AppKind::Web,
-            multi_window,
+        let app = |app_id: &str, kind| Application {
+            app_id: app_id.into(),
+            label: app_id.into(),
+            command: "x".into(),
+            kind,
             ..Default::default()
         };
-        let mut shell = test_shell(vec![win(5, "web-1", "Shortcut")], None, &[]);
-        shell.on_application(app(false), true);
-        assert_eq!(shell.window_to_raise("web-1"), Some(5), "one window: it comes forward");
-
-        shell.on_application(app(true), true);
-        assert!(shell.tabs.is_grouped("web-1"));
-        assert_eq!(shell.window_to_raise("web-1"), None, "several: another opens");
-
-        shell.on_application(app(false), true);
-        assert!(!shell.tabs.is_grouped("web-1"));
+        let mut shell = test_shell(
+            vec![win(5, "web-1", "Shortcut"), win(6, "sola-mail", "Mail")],
+            None,
+            &[],
+        );
+        let _ = shell.applications.add(app("web-1", AppKind::Web));
+        let _ = shell.applications.add(app("sola-mail", AppKind::Command));
+        assert_eq!(shell.window_to_raise("web-1"), None);
+        assert_eq!(shell.window_to_raise("sola-mail"), Some(6));
     }
 
     #[test]

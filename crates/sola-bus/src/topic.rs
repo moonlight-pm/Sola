@@ -10,9 +10,9 @@ use crate::Message;
 ///
 /// Postcard is positional: adding fields to a payload breaks replay of
 /// stickies still encoded by an older bus. [`Application`] grew
-/// `kind`/`url`, then `profile`, then `multi_window` — if the current layout
-/// misses trailing fields, fall back to the record before `multi_window`,
-/// then before `profile`, then to the pre-wrapper four-string one.
+/// `kind`/`url`, then `profile` — if the current layout misses trailing
+/// fields, fall back to the record before `profile`, then to the
+/// pre-wrapper four-string one.
 pub fn decode_payload<T: DeserializeOwned + 'static>(msg: &Message) -> io::Result<T> {
     let bytes = msg
         .payload
@@ -44,35 +44,14 @@ fn decode_legacy_application<T: 'static>(bytes: &[u8]) -> Option<T> {
         url: Option<String>,
     }
     #[derive(Deserialize)]
-    struct ApplicationV3 {
-        app_id: String,
-        label: String,
-        command: String,
-        icon: String,
-        kind: AppKind,
-        url: Option<String>,
-        profile: Option<String>,
-    }
-    #[derive(Deserialize)]
     struct ApplicationV1 {
         app_id: String,
         label: String,
         command: String,
         icon: String,
     }
-    let app = if let Ok(v3) = postcard::from_bytes::<ApplicationV3>(bytes) {
-        Application {
-            app_id: v3.app_id,
-            label: v3.label,
-            command: v3.command,
-            icon: v3.icon,
-            kind: v3.kind,
-            url: v3.url,
-            profile: v3.profile,
-            multi_window: false,
-        }
-    } else if let Ok(v2) = postcard::from_bytes::<ApplicationV2>(bytes) {
-        Application {
+    let app = match postcard::from_bytes::<ApplicationV2>(bytes) {
+        Ok(v2) => Application {
             app_id: v2.app_id,
             label: v2.label,
             command: v2.command,
@@ -80,19 +59,18 @@ fn decode_legacy_application<T: 'static>(bytes: &[u8]) -> Option<T> {
             kind: v2.kind,
             url: v2.url,
             profile: None,
-            multi_window: false,
-        }
-    } else {
-        let v1: ApplicationV1 = postcard::from_bytes(bytes).ok()?;
-        Application {
-            app_id: v1.app_id,
-            label: v1.label,
-            command: v1.command,
-            icon: v1.icon,
-            kind: AppKind::Command,
-            url: None,
-            profile: None,
-            multi_window: false,
+        },
+        Err(_) => {
+            let v1: ApplicationV1 = postcard::from_bytes(bytes).ok()?;
+            Application {
+                app_id: v1.app_id,
+                label: v1.label,
+                command: v1.command,
+                icon: v1.icon,
+                kind: AppKind::Command,
+                url: None,
+                profile: None,
+            }
         }
     };
     let boxed: Box<dyn Any> = Box::new(app);

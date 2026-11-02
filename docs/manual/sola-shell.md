@@ -262,11 +262,12 @@ app's name while it has none); a tab with an icon of its own — a browser
 page's favicon — shows that instead.
 
 The apps that open a window per document — Browser (its pages),
-Projects, Terminal, Paint and Design — keep their windows together in a
-**group**: the app's name in small capitals, with its windows a step in
-under it, even when there is only one. Every other window is a row of
-its own — Mail, Settings, Calendar, web apps (though Browser runs them),
-Steam, games — and these rows come first, above every group. A group
+Projects, Terminal, Paint, Design and every [web app](web-apps.md) — keep
+their windows together in a **group** once a workspace has two of them: the
+app's name in small capitals, with its windows a step in under it. One
+window is a row of its own, as is every window of any other app (Mail,
+Settings, Calendar, Steam, games), and these rows come first, above every
+group. A group
 does not fold; a long one makes the bar scroll. A Projects window's row names three things,
 drawn apart: the project, the session in a quieter ink (when it is not the
 project's main one), and the computer the session runs on — this one too —
@@ -305,16 +306,17 @@ when that window is in the new one's group: a page opened with a link
 from a page, a Terminal tab from a terminal. Windows opened behind it
 from the same window stay in the order you opened them. Otherwise a
 window of a group goes to the end of its group (a link opened from
-Terminal puts its page at the end of Browser), and the first window of a
-group starts its group right after the group that had focus (at the top
-of the groups, when a row of its own had focus). A window of its own
+Terminal puts its page at the end of Browser), and an app's second window
+starts its group with the first, right after the group that had focus (at
+the top of the groups, when a row of its own had focus). A window of its own
 goes right after the row of its own that had focus, else at the end of
 those rows. A new Projects session goes after its project's other
 sessions.
 A dialog has no row: it rides above the window it belongs to.
 
-When a group's last window closes, the group keeps its place on that
-workspace, unseen, and the app's next window brings it back there.
+When a group is down to one window, that window becomes a row of its own.
+The group keeps its place on that workspace, unseen, and comes back there
+when the app has two windows again.
 
 The bar's layout (the workspaces, each window's place and zone, and the
 places of empty groups) is saved in `~/.config/sola/shell/tabs.yaml`. Windows that come back within
@@ -582,7 +584,7 @@ Super+Space opens the launcher; type to filter the apps and press Enter
 instead of starting again: its last used window is shown in its zone, on
 its workspace, and takes the keyboard. A hidden app is shown again rather
 than started twice. **Terminal** always opens a new tab, in a window of
-its own, right after the focused window. **Projects** and **Browser** ask
+its own, right after the focused window, and a web app opens another window. **Projects** and **Browser** ask
 first (below). Escape closes the launcher; so does a click outside the
 card.
 

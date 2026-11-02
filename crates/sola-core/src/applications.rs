@@ -60,12 +60,19 @@ pub struct Application {
     /// The browser profile a web app runs on (its id).
     #[serde(default)]
     pub profile: Option<String>,
-    /// A web app that opens several windows, as the apps that open a window
-    /// per document do: the launcher opens another (⌘N too), each window
-    /// takes its page's title, and they group in the bar under its name.
-    #[serde(default)]
-    pub multi_window: bool,
 }
+
+/// A web app's id: `web-` and something unique.
+pub fn web_app_id(unique: &str) -> String {
+    format!("{WEB_APP_ID_PREFIX}{unique}")
+}
+
+/// `app_id` is a web app's: a window can say so with no catalog at hand.
+pub fn is_web_app_id(app_id: &str) -> bool {
+    app_id.starts_with(WEB_APP_ID_PREFIX)
+}
+
+const WEB_APP_ID_PREFIX: &str = "web-";
 
 /// A web app's launcher argv: the browser opens (or brings up) its window.
 /// Dual-mode: `/bin/sola-browser` on Oath, `/opt/sola/bin/sola-browser` on
@@ -507,7 +514,6 @@ mod tests {
             kind: AppKind::Web,
             url: Some("https://app.slack.com".into()),
             profile: Some("p1".into()),
-            multi_window: false,
         };
         let bytes = postcard::to_allocvec(&wrap).unwrap();
         let back: Application = postcard::from_bytes(&bytes).unwrap();
@@ -542,7 +548,6 @@ mod tests {
             kind: AppKind::Web,
             url: Some("https://app.slack.com".into()),
             profile: Some("p1".into()),
-            multi_window: false,
         };
         let json = serde_json::to_string(&a).unwrap();
         let back: Application = serde_json::from_str(&json).unwrap();
@@ -578,7 +583,6 @@ mod tests {
             kind: AppKind::Web,
             url: Some("https://discord.com/app".into()),
             profile: None,
-            multi_window: false,
         };
         a.finalize();
         assert_eq!(a.command, web_command("discord"));

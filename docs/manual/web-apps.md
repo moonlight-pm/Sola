@@ -15,8 +15,7 @@ Page…** in the page's right-click menu. Both work only on an `http://` or
 
 A sheet asks for the app's **Name**, suggested from the page title: the
 site's part of it (*Slack* from "general - Acme - Slack"), else the
-title, else the site's domain, and whether it should **Open several
-windows** ([below](#several-windows)). **Wrap** (or Enter) turns the page into the
+title, else the site's domain. **Wrap** (or Enter) turns the page into the
 app in place: no reload and no new sign-in. Its window takes the app's
 name and menus, its row in the bar says the app's name, and the launcher
 lists it. **Cancel**, or a click beside the sheet, leaves the page as it
@@ -57,10 +56,9 @@ site is the apex domain, the name registered under its public suffix, so
 `app.slack.com` and `files.slack.com` are the same site, and `a.co.uk` and
 `b.co.uk`, or `a.github.io` and `b.github.io`, are not.
 
-A link you click to another site opens as a Browser page instead, unless an
-[app that opens several windows](#several-windows) starts on that site: then
-it opens as a window of that app, on that app's profile, in its group in the
-bar. The same goes for a link that opens a new window (`target=_blank`,
+A link you click to another site opens as a Browser page instead, unless
+another web app starts on that site: then it opens as a window of that app,
+on that app's profile, with its other windows in the bar. The same goes for a link that opens a new window (`target=_blank`,
 ⌘-click) from any page, a Browser page included. **Open in Browser** always
 opens a Browser page, and so do links from other applications.
 
@@ -74,29 +72,27 @@ its address in sight.
 Choose the app's name in the launcher. Its command is
 `/bin/sola-browser --app <app_id>`. If Browser is running, the app's
 window comes forward, or opens at its start page. Otherwise Browser
-starts (with its saved pages) and opens it. Launching it again brings the
-same window forward, unless the app opens several windows.
+starts (with its saved pages) and opens it, or brings forward a window it
+restored. Once Browser is up, launching the app again [opens another
+window](#several-windows).
 
 Browser's session keeps app windows as it keeps pages: after a restart
 they come back as the app, in their place in the bar.
 
 ## Several windows
 
-An app that **opens several windows** works like Browser pages or
-Terminal: for a site you keep more than one view of.
+A web app works like Browser pages or Terminal: open as many windows onto it
+as you like.
 
 - The launcher opens another window instead of bringing one forward, and
   **New Window** (⌘N) in the app's menu does too. A new window starts at the
   app's start page.
-- Its windows sit in the bar under the app's name, each named by its page's
-  title. Super+Backtick steps through them.
+- One window is a row of its own, named for the app. With two or more on a
+  workspace they group in the bar under the app's name, each named by its
+  page's title. Super+Backtick steps through them.
 - After a restart they all come back, each at its own page, in their place.
 - A link to its site from another app or a Browser page opens here
   ([above](#the-apps-window)).
-
-Choose it when you wrap the page, or later in **Settings → Applications →
-Web apps**. Turning it on regroups the app's window at once. It cannot be
-turned off while more than one window is open: close all but one first.
 
 ## Remove
 
@@ -106,8 +102,8 @@ windows. The sign-in stays in the Browser profile.
 
 **Settings → Applications → Web apps** lists them too, with the site
 each starts on. Open one there to rename it (**Save**; its menus take the
-new name), set whether it opens several windows, or **Remove** it (no
-question asked; its windows close, the sign-in stays).
+new name) or **Remove** it (no question asked; its windows close, the
+sign-in stays).
 
 ## Limits
 

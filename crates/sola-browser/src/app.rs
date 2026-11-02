@@ -115,7 +115,6 @@ pub enum Msg {
     /// Use as Desktop Background: its lightbox (`app/wallpaper.rs`).
     Wallpaper(wallpaper::Event),
     WrapName(String),
-    WrapMultiWindow(bool),
     WrapSubmit,
     WrapCancel,
     /// A web app's Remove Web App… sheet.
@@ -896,11 +895,6 @@ impl<E: Engine> App<E> {
             Msg::WrapName(name) => {
                 if let Some(draft) = &mut self.webapps.wrap {
                     draft.name = name;
-                }
-            }
-            Msg::WrapMultiWindow(on) => {
-                if let Some(draft) = &mut self.webapps.wrap {
-                    draft.multi_window = on;
                 }
             }
             Msg::WrapSubmit => return self.wrap_page(),
@@ -1854,13 +1848,13 @@ impl<E: Engine> App<E> {
     }
 
     /// The window title: the page's title and address; a web app's name, or
-    /// the page's title when it opens several windows (they must differ in
-    /// the bar).
+    /// the page's title while the app has several windows (their rows must
+    /// differ, under the app's name).
     pub fn title(&self, window: iced::window::Id) -> String {
         let tab = self.windows.tab_of(window);
         if let Some(app) = tab.and_then(|t| self.webapps.app_of(t)) {
             let page = tab
-                .filter(|_| app.multi_window)
+                .filter(|_| self.webapps.tabs_of(&app.app_id).len() > 1)
                 .and_then(|tab| self.cached_tabs.iter().find(|t| t.id == tab))
                 .map(|t| t.title.trim())
                 .filter(|t| !t.is_empty());

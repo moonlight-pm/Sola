@@ -10,27 +10,6 @@ use super::Stacks;
 use super::desk::Desk;
 
 impl Stacks {
-    /// Whether `app_id`'s windows group in the bar: an app that opens a
-    /// window per document, or a web app set to open several.
-    pub fn is_grouped(&self, app_id: &str) -> bool {
-        super::bar::grouped(app_id) || self.multi_window.contains(app_id)
-    }
-
-    /// The web apps set to open several windows. Their rows move on every
-    /// workspace; returns whether anything changed.
-    pub fn set_multi_window(&mut self, apps: std::collections::HashSet<String>) -> bool {
-        if apps == self.multi_window {
-            return false;
-        }
-        for app in self.multi_window.symmetric_difference(&apps) {
-            for desk in &mut self.desks {
-                desk.bar.regroup(app, apps.contains(app));
-            }
-        }
-        self.multi_window = apps;
-        true
-    }
-
     /// The workspaces in order.
     pub fn workspaces(&self) -> Vec<Workspace> {
         self.desks
