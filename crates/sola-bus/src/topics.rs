@@ -471,7 +471,9 @@ pub struct Workspaces {
 
 /// The workspace a window is on (shell → apps). Carried by the sticky
 /// `Topic::WindowWorkspace`, keyed by `window_id`; the shell retracts it
-/// when the window closes.
+/// when the window closes. Not said of a window that may still move to its
+/// tab's saved place (an app can act on this: the browser reopens a page
+/// under the workspace's profile).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowWorkspace {
     pub window_id: u32,

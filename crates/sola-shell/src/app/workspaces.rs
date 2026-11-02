@@ -29,6 +29,14 @@ pub struct WorkspaceState {
     pub menu_x: f32,
 }
 
+#[cfg(test)]
+impl WorkspaceState {
+    /// The workspace apps were last told `window_id` is on.
+    pub(crate) fn told(&self, window_id: u32) -> Option<&str> {
+        self.sent_windows.get(&window_id).map(String::as_str)
+    }
+}
+
 /// What the workspace menu can do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkspaceAction {
@@ -358,9 +366,19 @@ impl Shell {
                 let _ = bus.emit(Topic::PinnedTabs(pinned));
             });
         }
+        let now = std::time::Instant::now();
         let mut next: HashMap<u32, String> = HashMap::new();
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID {
+                continue;
+            }
+            // A window that may still move to its tab's place: saying where
+            // it is now would reopen a page under another profile. What was
+            // said of it stands.
+            if self.tabs.unsettled(w.window_id, now) {
+                if let Some(ws) = self.workspace.sent_windows.get(&w.window_id) {
+                    next.insert(w.window_id, ws.clone());
+                }
                 continue;
             }
             if let Some(ws) = self.tabs.workspace_of(w.window_id) {

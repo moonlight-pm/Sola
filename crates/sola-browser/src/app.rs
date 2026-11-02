@@ -79,9 +79,6 @@ const COPY_URL_FLASH: Duration = Duration::from_millis(1200);
 #[derive(Debug, Clone)]
 pub enum Msg {
     NewFrame,
-    /// The shell's workspace word settled: rebind pages to their workspace's
-    /// profile (if no newer word since).
-    RebindPages(u64),
     NavBack,
     NavForward,
     /// Press on back/forward — starts a hold timer for the history menu.
@@ -286,9 +283,6 @@ pub struct App<E: Engine> {
     /// Pages reopened under another profile: their old ids never come back
     /// from a helper's lagging tab list.
     retired_tabs: HashSet<TabId>,
-    /// Bumped on every workspace message; a settle timer acts only if it
-    /// still matches.
-    rebind_gen: u64,
     /// True after the helper has reported a non-empty tab list this run.
     /// When it later goes empty (helper death), chrome re-opens `cached_tabs`.
     engine_tabs_seen: bool,
@@ -432,7 +426,6 @@ impl<E: Engine> App<E> {
             cached_active: TabId(u64::MAX),
             closed_tabs: HashSet::new(),
             retired_tabs: HashSet::new(),
-            rebind_gen: 0,
             engine_tabs_seen: false,
             recently_closed,
             page_ids: HashMap::new(),
@@ -1383,15 +1376,11 @@ impl<E: Engine> App<E> {
                     let close = self.on_page_window(window, iced::window::Event::CloseRequested);
                     return Task::batch([restored, close]);
                 }
-                let rebind = self.on_workspace_message(&message);
+                self.on_workspace_message(&message);
                 return Task::batch([
                     restored,
-                    rebind,
                     crate::integration::handle_bus(self, message, self.app_id),
                 ]);
-            }
-            Msg::RebindPages(generation) => {
-                self.on_rebind_timer(generation);
             }
             Msg::CursorMoved(_x, y) => {
                 if self.devtools_dragging {

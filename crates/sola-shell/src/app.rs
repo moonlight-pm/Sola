@@ -3521,6 +3521,65 @@ mod hide_tests {
         assert_eq!(shell.tabs.zone_of(5), Some(Zone::Grid(3)));
     }
 
+    /// The bus restarted along with the shell, so a page window already up is
+    /// placed before the Browser has announced its tabs again, and lands
+    /// where you are for a moment. Told so, the Browser reopened the pages of
+    /// your other workspaces under this one's profile, whose cookies are not
+    /// theirs: the sites answered with their sign-in pages, and those were the
+    /// addresses the pages went back with (Joshua, 2026-11-02: "why did i
+    /// lose my logged in sessions in browser").
+    #[test]
+    fn a_kept_page_has_no_workspace_to_tell_until_its_tab_is_known() {
+        use sola_bus::topics::{Tab, TabLayout, TabLayoutZone, Topic, Workspace, Zone};
+        const BROWSER: &str = "sola-browser";
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        let send = |shell: &mut Shell, t: Topic| {
+            let mut m = t.to_message();
+            m.sticky = true;
+            let _ = shell.handle_bus(&m);
+        };
+        let pid = std::process::id();
+        let mut page = win(5, BROWSER, "Sonarr");
+        page.pid = Some(pid);
+        send(
+            &mut shell,
+            Topic::TabLayout(TabLayout {
+                zones: vec![TabLayoutZone {
+                    zone: Zone::Grid(1),
+                    apps: vec![format!("{BROWSER}/sonarr")],
+                    shown: Some(0),
+                    workspace: "main".into(),
+                }],
+                workspaces: vec![
+                    Workspace { id: "main".into(), name: "Main".into() },
+                    Workspace { id: "illuno".into(), name: "Illuno".into() },
+                ],
+                showing: "illuno".into(),
+                ..TabLayout::default()
+            }),
+        );
+
+        send(&mut shell, Topic::Windows(vec![page]));
+        shell.sync_workspaces();
+        assert_eq!(shell.tabs.workspace_of(5), Some("illuno"), "where you are, for now");
+        assert_eq!(shell.workspace.told(5), None, "and no app hears of it");
+
+        send(
+            &mut shell,
+            Topic::Tab(Tab {
+                key: format!("{BROWSER}/sonarr"),
+                app_id: BROWSER.into(),
+                pid,
+                seq: 1,
+                window_id: None,
+                background: true,
+                icon: None,
+            }),
+        );
+        assert_eq!(shell.tabs.workspace_of(5), Some("main"), "its own place");
+        assert_eq!(shell.workspace.told(5), Some("main"), "the first word is the true one");
+    }
+
     /// A session asks for a session while you are on another workspace: its
     /// window lands beside the one that asked and leaves you where you are.
     /// Asked for in front, it takes you there.

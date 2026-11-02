@@ -6,16 +6,11 @@
 //! same window. Sessions are saved per profile.
 
 use std::collections::HashMap;
-use std::time::Duration;
 
-use iced::Task;
 use sola_bus::Message;
 use sola_bus::topics::Topic;
 
-use super::{App, BLANK_URL, Msg};
-
-/// How long the shell's workspace word must stand before pages reopen.
-const REBIND_SETTLE: Duration = Duration::from_millis(600);
+use super::{App, BLANK_URL};
 use crate::engine::{Cmd, Engine, TabId, TabInfo};
 use crate::session;
 
@@ -40,10 +35,10 @@ impl<E: Engine> App<E> {
     }
 
     /// Fold `Workspaces` / `WindowWorkspace`. Pages whose workspace wants
-    /// another profile reopen under it once the shell's word has settled
-    /// ([`REBIND_SETTLE`]): a restarting shell moves windows for a moment
-    /// while it pairs them, and a page must not reopen for that.
-    pub(super) fn on_workspace_message(&mut self, msg: &Message) -> Task<Msg> {
+    /// another profile reopen under it. The shell says a window's workspace
+    /// only once the window is where it belongs: a restarting shell moves
+    /// windows for a moment while it pairs them, and says nothing of those.
+    pub(super) fn on_workspace_message(&mut self, msg: &Message) {
         match Topic::parse(msg) {
             Some(Topic::Workspaces(w)) => {
                 crate::profiles::adopt_workspaces(&w.workspaces, &w.showing);
@@ -58,25 +53,14 @@ impl<E: Engine> App<E> {
             // A window just paired with its sola-river id may already
             // have a workspace.
             Some(Topic::TabWindow(_)) => {}
-            _ => return Task::none(),
+            _ => return,
         }
-        self.rebind_gen = self.rebind_gen.wrapping_add(1);
-        let generation = self.rebind_gen;
-        Task::perform(tokio::time::sleep(REBIND_SETTLE), move |_| {
-            Msg::RebindPages(generation)
-        })
-    }
-
-    /// The settle timer fired: rebind unless the shell spoke again since.
-    pub(super) fn on_rebind_timer(&mut self, generation: u64) {
-        if generation == self.rebind_gen {
-            self.rebind_pages();
-        }
+        self.rebind_pages();
     }
 
     /// Every page whose window is on a workspace with another profile
     /// reopens under that workspace's profile.
-    pub(super) fn rebind_pages(&mut self) {
+    fn rebind_pages(&mut self) {
         let moves: Vec<(TabId, String)> = self
             .cached_tabs
             .iter()

@@ -688,6 +688,8 @@ impl Shell {
             self.emit_all_frames();
             self.emit_composition();
         }
+        // A window just named may have a workspace to tell, moved or not.
+        self.sync_workspaces();
         self.persist_tabs();
     }
 

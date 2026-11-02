@@ -244,7 +244,7 @@ What `sola-river` does with these is in [Compositor](compositor.md).
 | `CloseTab` | A tab's `key` | Shell (a bar row's stoplight) | The app that opened the tab: closes its window as its own close button would | Ephemeral |
 | `TabLayout` | The bar as last saved: `zones`, its runs in order (each a `zone`, its `apps` as tab keys, or app ids for windows that are not tabs, `shown`, the index of the tab the zone shows, and its `workspace`); `workspaces` (`id`, `name`); `showing`; `full` (the workspaces whose Full zone is on screen) | Shell | Shell, at its next start: returning windows take their places | Persistent |
 | `Workspaces` | The `workspaces` in order (`id`, `name`) and the one `showing` | Shell | Browser (a new page window opens under the showing workspace's profile) | Sticky |
-| `WindowWorkspace` | `window_id`, `workspace` | Shell; retracted when the window closes | Browser (a page whose workspace has another profile reopens under it) | Sticky by `window_id` |
+| `WindowWorkspace` | `window_id`, `workspace` | Shell, once the window is where it belongs (not while it may still move to its tab's saved place); retracted when the window closes | Browser (a page whose workspace has another profile reopens under it) | Sticky by `window_id` |
 | `PinnedTabs` | The `keys` of the tabs that stay where they show: every window on Common, while another workspace shows | Shell | The kit, in every app (the window's frame offers no close) | Sticky |
 | `FloatGeometry` | A floating app's last rectangle: `app_id`, `x`, `y`, `width`, `height` | Shell | Shell | Persistent by `app_id` |
 

@@ -307,6 +307,47 @@ fn saved_layout_restores_in_order_whatever_order_windows_come() {
 }
 
 #[test]
+fn a_window_is_unsettled_until_its_app_names_its_waiting_tab() {
+    let t = Instant::now();
+    let layout = TabLayout {
+        zones: vec![TabLayoutZone {
+            zone: LEFT,
+            apps: vec!["browser/a".into(), "browser/b".into()],
+            shown: Some(0),
+            workspace: "main".into(),
+        }],
+        workspaces: vec![
+            Workspace { id: "main".into(), name: "Main".into() },
+            Workspace { id: "other".into(), name: "Other".into() },
+        ],
+        showing: "other".into(),
+        ..TabLayout::default()
+    };
+    let mut s = Stacks::new();
+    s.load(&layout, t);
+
+    s.place(1, "browser", "browser", false, true, t);
+    s.place(2, "browser", "browser", false, true, t);
+    s.place(3, "mail", "mail", false, true, t);
+    assert_eq!(s.workspace_of(1), Some("other"), "where you are, for now");
+    assert!(s.unsettled(1, t), "a place waits for one of its app's tabs");
+    assert!(!s.unsettled(3, t), "nothing waits for mail's tabs");
+    assert!(!s.unsettled(9, t), "no such window");
+
+    s.set_key(1, "browser/a", t);
+    assert_eq!(s.workspace_of(1), Some("main"));
+    assert!(!s.unsettled(1, t), "named: it is where it belongs");
+    assert!(s.unsettled(2, t), "browser/b still waits");
+
+    s.set_key(2, "browser/b", t);
+    assert!(!s.unsettled(2, t));
+
+    // A window that is no tab of the ones saved settles when the wait ends.
+    s.place(4, "browser", "browser", false, true, t);
+    assert!(!s.unsettled(4, t), "nothing waits any more");
+}
+
+#[test]
 fn layout_keeps_places_still_waiting() {
     let t = Instant::now();
     let mut s = Stacks::new();

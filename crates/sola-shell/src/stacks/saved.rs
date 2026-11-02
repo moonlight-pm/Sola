@@ -284,6 +284,20 @@ impl Stacks {
         copies
     }
 
+    /// Whether `window_id` is where it is only for the moment: its app has
+    /// not said yet which tab it is, and places are waiting for that app's
+    /// tabs (a window already up when this shell started). When it says, the
+    /// window may move ([`Self::set_key`]).
+    pub fn unsettled(&self, window_id: u32, now: Instant) -> bool {
+        let Some(tab) = self.desk_of(window_id).and_then(|d| self.desks[d].tab(window_id)) else {
+            return false;
+        };
+        let its_tab = |key: &str| key != tab.app_id && app_of_key(key) == tab.app_id;
+        tab.key == tab.app_id
+            && (self.live_ghosts(now).any(|(g, _)| its_tab(&g.key))
+                || self.live_restore(now).any(|s| its_tab(&s.key)))
+    }
+
     /// Whether a place is waiting for `key`.
     pub(super) fn waiting(&self, key: &str, now: Instant) -> bool {
         self.live_ghosts(now).any(|(g, _)| g.key == key)
