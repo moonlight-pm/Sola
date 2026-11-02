@@ -16,6 +16,7 @@ use serde_json::Value;
 const NEVER_READ: &[&str] = &[
     ".github",
     "CHANGELOG.md",
+    "CHANGES.md",
     "Cargo.lock",
     "Cargo.toml.orig",
     "benches",
