@@ -32,6 +32,10 @@ use super::vendor;
 
 const WORK: &str = "target/oath/publish";
 
+/// What a build reads of the repo. A commit that touches nothing else (the
+/// docs) leaves `pkg:sola-src` and every plan as they were: nothing rebuilds.
+const SOURCES: &[&str] = &[".cargo", "Cargo.lock", "Cargo.toml", "cef-version", "crates"];
+
 /// `local`: build the plans here and upload nothing.
 pub fn publish(local: bool) -> Result<(), String> {
     let origin = if local { None } else { Some(Origin::from_env()?) };
@@ -161,7 +165,8 @@ fn source_tree(dir: &Path) -> Result<(), String> {
     let sola = dir.join("src/sola");
     fs::create_dir_all(&sola).map_err(|e| format!("{}: {e}", sola.display()))?;
     sh(&format!(
-        "git archive --format=tar HEAD | tar -x -C '{}'",
+        "git archive --format=tar HEAD {} | tar -x -C '{}'",
+        SOURCES.join(" "),
         sola.display()
     ))?;
     let share = dir.join("src/share");
