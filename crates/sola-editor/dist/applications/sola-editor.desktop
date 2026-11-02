@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Sola Editor
+Comment=Sola text editor with Emacs keys
+Exec=/opt/sola/bin/sola-editor --open %F
+Terminal=false
+Categories=Utility;TextEditor;Development;
+MimeType=text/plain;text/markdown;text/x-rust;text/x-python;text/x-shellscript;application/toml;application/x-yaml;
+StartupNotify=true
+StartupWMClass=sola-editor

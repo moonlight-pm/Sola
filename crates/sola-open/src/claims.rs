@@ -44,6 +44,14 @@ impl Claim {
     }
 }
 
+/// The source and config files Sola's editor opens by default.
+const TEXT_EXTENSIONS: &[&str] = &[
+    "rs", "toml", "md", "markdown", "py", "sh", "bash", "zsh", "fish", "js", "jsx", "ts", "tsx",
+    "css", "scss", "c", "h", "cc", "cpp", "hpp", "go", "rb", "lua", "java", "kt", "swift", "zig",
+    "yaml", "yml", "nix", "sql", "conf", "cfg", "ini", "env", "log", "lock", "thx", "diff",
+    "patch",
+];
+
 /// Sola's own apps' claims.
 pub fn builtin() -> Vec<Claim> {
     vec![
@@ -55,6 +63,8 @@ pub fn builtin() -> Vec<Claim> {
         Claim::new("sola-paint", &[], sola_core::open_image::IMAGE_EXTENSIONS),
         Claim::new("sola-calendar", &[], sola_core::open_calendar::CALENDAR_EXTENSIONS),
         Claim::new("sola-mail", &["mailto"], &[]),
+        // After the browser, which keeps txt, json and xml.
+        Claim::new("sola-editor", &[], TEXT_EXTENSIONS),
     ]
 }
 

@@ -16,7 +16,7 @@ pub mod target;
 
 use std::path::PathBuf;
 
-pub use deliver::{OPEN_METHOD, open_method};
+pub use deliver::{OPEN_METHOD, open_method, to_app};
 pub use target::{Kind, Target};
 
 #[derive(Debug)]

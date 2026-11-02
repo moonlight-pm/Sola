@@ -66,6 +66,13 @@ pub fn builtin_apps() -> Vec<Application> {
             ..Default::default()
         },
         Application {
+            app_id: "sola-editor".into(),
+            label: "Editor".into(),
+            command: kit_command("sola-editor"),
+            icon: "lucide/file-pen-line".into(),
+            ..Default::default()
+        },
+        Application {
             app_id: "sola-paint".into(),
             label: "Paint".into(),
             command: kit_command("sola-paint"),

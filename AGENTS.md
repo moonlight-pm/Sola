@@ -105,6 +105,7 @@ crates/
   sola-calendar/       # Kit-native calendar (local, Google, iCloud)
   sola-kvm/            # KVM / input bridge
   sola-lock/           # Lock screen (ext-session-lock-v1; Oath's login service)
+  sola-editor/         # Text editor (Emacs keys; `edit <file>…` opens files in it)
   sola-preview/        # Simple image viewer (argv)
   sola-paint/          # Default image viewer/editor (MIME; screenshots stay on preview)
   sola-design/         # HTML artboards on a canvas, edited by agents (CEF board tabs)

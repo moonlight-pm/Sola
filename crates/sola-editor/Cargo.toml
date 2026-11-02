@@ -1,0 +1,30 @@
+[package]
+name = "sola-editor"
+version.workspace = true
+edition.workspace = true
+description = "Kit text editor with Emacs keys; `edit <file>…` opens files in it"
+
+[[bin]]
+name = "sola-editor"
+path = "src/main.rs"
+
+# What people type: hands the files to the running editor.
+[[bin]]
+name = "edit"
+path = "src/edit.rs"
+
+[dependencies]
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+sola-open = { path = "../sola-open" }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "canvas", "advanced"] }
+notify = "8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+syntect = { version = "5.3", default-features = false, features = ["parsing", "regex-fancy"] }
+two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
+tokio = { version = "1", features = ["rt"] }
+tracing = "0.1"
+unicode-segmentation = "1"
+unicode-width = "0.2"
