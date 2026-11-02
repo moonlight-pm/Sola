@@ -347,6 +347,39 @@ fn a_window_is_unsettled_until_its_app_names_its_waiting_tab() {
     assert!(!s.unsettled(4, t), "nothing waits any more");
 }
 
+/// Browser restarted just after the shell: its old page windows went before
+/// they were named, and a link's new window came (Grok's sign-in, 2026-11-02).
+/// It took the place one of them left, behind, out of sight.
+#[test]
+fn a_window_that_leaves_unsettled_leaves_no_place_behind() {
+    let t = Instant::now();
+    let layout = TabLayout {
+        zones: vec![TabLayoutZone {
+            zone: LEFT,
+            apps: vec!["browser/a".into()],
+            shown: Some(0),
+            workspace: "main".into(),
+        }],
+        workspaces: vec![Workspace { id: "main".into(), name: "Main".into() }],
+        showing: "main".into(),
+        ..TabLayout::default()
+    };
+    let mut s = Stacks::new();
+    s.load(&layout, t);
+    s.place(7, "term", "term", false, false, t);
+
+    s.place(1, "browser", "browser", false, true, t);
+    assert!(s.unsettled(1, t));
+    s.remove(1, t);
+
+    let new = s.place(2, "browser", "browser/new", false, false, t);
+    assert!(!new.returning, "nothing of its own to return to");
+    assert!(new.shown, "it comes up in front");
+
+    s.place(3, "browser", "browser/a", false, true, t);
+    assert_eq!(s.zone_of(3), Some(LEFT), "the page's own place still waits for it");
+}
+
 #[test]
 fn layout_keeps_places_still_waiting() {
     let t = Instant::now();

@@ -79,6 +79,8 @@ const COPY_URL_FLASH: Duration = Duration::from_millis(1200);
 #[derive(Debug, Clone)]
 pub enum Msg {
     NewFrame,
+    /// Page window `.0` is up (iced's answer to opening it).
+    PageWindowUp(iced::window::Id),
     NavBack,
     NavForward,
     /// Press on back/forward — starts a hold timer for the history menu.
@@ -679,17 +681,14 @@ impl<E: Engine> App<E> {
     /// Open the restored pages and the `--app` web app (once its catalog
     /// entry is in). After `WindowReady`, and after the pages' light or
     /// dark is sent (or the bus has replayed without one, `Topic::Replayed`).
-    fn open_restored(&mut self) -> Task<Msg> {
+    fn open_restored(&mut self) {
         self.scheme_wait = false;
-        let mut hold = Task::none();
         if let Some((tabs, active_index)) = self.pending_session.take() {
             self.bootstrap_tabs(tabs, active_index);
-            hold = self.hold_restored_apps();
         }
         if let Some(id) = self.webapps.launch.clone() {
             self.open_app(&id);
         }
-        hold
     }
 
     /// Clear compositor env so WebKit child processes cannot open a Wayland
@@ -776,8 +775,10 @@ impl<E: Engine> App<E> {
     fn sync_windows(&mut self) -> Task<Msg> {
         let mut tasks = Vec::new();
         let ids: Vec<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
+        let bus_up = sola_kit::app::bus().lock().is_ok_and(|b| b.is_connected());
+        let replaying = !self.replayed && bus_up;
         for id in &ids {
-            if !self.windows.has(*id) && !self.webapps.holds(*id) {
+            if !self.windows.has(*id) && !self.webapps.holds(*id, replaying) {
                 let page_id = self.page_id(*id);
                 let background = *id != self.cached_active;
                 // A web app's page opens as the app.
@@ -785,7 +786,7 @@ impl<E: Engine> App<E> {
                 tasks.push(
                     self.windows
                         .open(&app_id, *id, &page_id, background)
-                        .map(|_| Msg::Noop),
+                        .map(Msg::PageWindowUp),
                 );
             }
         }
@@ -866,8 +867,10 @@ impl<E: Engine> App<E> {
                     self.scheme_wait = true;
                     return Task::none();
                 }
-                return self.open_restored();
+                self.open_restored();
+                return Task::none();
             }
+            Msg::PageWindowUp(window) => return self.windows.up(window).discard(),
             Msg::TitleDrag => return sola_kit::drag(self.windows.window_of(self.cached_active)),
             Msg::TitleResize(dir) => {
                 return sola_kit::drag_resize(self.windows.window_of(self.cached_active), dir);
@@ -1348,7 +1351,6 @@ impl<E: Engine> App<E> {
             Msg::Bus(message) => {
                 self.windows.update(&message);
                 use sola_bus::topics::Topic;
-                let mut restored = Task::none();
                 match Topic::parse(&message) {
                     Some(Topic::OutputGeometry(g)) if g.width > 0 && g.height > 0 => {
                         self.screen_size = Some((g.width as u32, g.height as u32));
@@ -1358,7 +1360,7 @@ impl<E: Engine> App<E> {
                         self.open_held_links();
                         if self.scheme_wait {
                             tracing::info!("no Appearance saved: restored pages open without light or dark");
-                            restored = self.open_restored();
+                            self.open_restored();
                         }
                     }
                     Some(Topic::Appearance(look)) if self.pages_light != Some(look.light) => {
@@ -1366,7 +1368,7 @@ impl<E: Engine> App<E> {
                         let _ = self.cmd_tx.send(Cmd::ColorScheme { light: look.light });
                         if self.scheme_wait {
                             // The scheme is queued ahead of the pages.
-                            restored = self.open_restored();
+                            self.open_restored();
                         }
                     }
                     _ => {}
@@ -1374,13 +1376,10 @@ impl<E: Engine> App<E> {
                 // The tab bar's stoplight: as the window's own close.
                 if let Some(window) = self.windows.close_request(&message) {
                     let close = self.on_page_window(window, iced::window::Event::CloseRequested);
-                    return Task::batch([restored, close]);
+                    return close;
                 }
                 self.on_workspace_message(&message);
-                return Task::batch([
-                    restored,
-                    crate::integration::handle_bus(self, message, self.app_id),
-                ]);
+                return crate::integration::handle_bus(self, message, self.app_id);
             }
             Msg::CursorMoved(_x, y) => {
                 if self.devtools_dragging {

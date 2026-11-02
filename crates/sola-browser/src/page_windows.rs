@@ -4,7 +4,7 @@
 //! (location bar, find, menus, dialogs, DevTools); the others show their
 //! page live under a read-only bar.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use iced::{Size, Task, window};
@@ -34,6 +34,33 @@ pub struct PageWindows<E: Engine> {
     pub focused: Option<window::Id>,
     /// The size a page window last took: new windows open at it.
     last_size: Option<Size>,
+    opening: Opening,
+}
+
+/// Windows asked for and not up yet. iced drops a close for a window it has
+/// not made, and then makes it: it would stay, with no page.
+#[derive(Default)]
+struct Opening {
+    asked: HashSet<window::Id>,
+    /// Their pages went while they were on the way.
+    unwanted: HashSet<window::Id>,
+}
+
+impl Opening {
+    /// `window` is to close: true when it can now, else it does when up.
+    fn close(&mut self, window: window::Id) -> bool {
+        if self.asked.contains(&window) {
+            self.unwanted.insert(window);
+            return false;
+        }
+        true
+    }
+
+    /// `window` is up: true when it is to close.
+    fn up(&mut self, window: window::Id) -> bool {
+        self.asked.remove(&window);
+        self.unwanted.remove(&window)
+    }
 }
 
 impl<E: Engine> PageWindows<E> {
@@ -46,6 +73,7 @@ impl<E: Engine> PageWindows<E> {
             template,
             focused: None,
             last_size: None,
+            opening: Opening::default(),
         }
     }
 
@@ -79,6 +107,7 @@ impl<E: Engine> PageWindows<E> {
             settings.size = size;
         }
         let (window, task) = self.tabs.open_as(app_id, page_id, settings, background);
+        self.opening.asked.insert(window);
         self.slots.lock().unwrap().push(slot.clone());
         self.pages.insert(
             tab,
@@ -100,7 +129,19 @@ impl<E: Engine> PageWindows<E> {
             return Task::none();
         };
         self.forget(page.window, &page.slot);
-        window::close(page.window)
+        if self.opening.close(page.window) {
+            return window::close(page.window);
+        }
+        Task::none()
+    }
+
+    /// A page window is up (the task [`Self::open`] returned): it closes now
+    /// if its page went on the way.
+    pub fn up(&mut self, window: window::Id) -> Task<window::Id> {
+        if self.opening.up(window) {
+            return window::close(window);
+        }
+        Task::none()
     }
 
     /// Page `old` reopened as `new` (another profile) in the same window:
@@ -241,5 +282,25 @@ impl<E: Engine> PageWindows<E> {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two pages closed in the update that asked for their windows stayed on
+    /// the desk as rows with nothing in them (2026-11-02).
+    #[test]
+    fn a_window_closed_before_it_is_up_closes_when_it_is() {
+        let mut opening = Opening::default();
+        let (early, plain) = (window::Id::unique(), window::Id::unique());
+        opening.asked.insert(early);
+        opening.asked.insert(plain);
+
+        assert!(!opening.close(early), "iced would drop this close");
+        assert!(opening.up(early), "up: now it can");
+        assert!(!opening.up(plain), "wanted: it stays");
+        assert!(opening.close(plain), "already up: it closes at once");
     }
 }

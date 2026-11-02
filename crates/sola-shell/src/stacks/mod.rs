@@ -461,21 +461,26 @@ impl Stacks {
         if self.focused == Some(window_id) {
             self.focused = None;
         }
+        // Unsettled, it was never in a place of its own: that one still waits
+        // under its tab's key, and a new window must not take this one.
+        let leaves_a_place = !self.unsettled(window_id, now);
         let mut left = None;
         // Common first: the first place a key finds says it was common.
         for desk in &mut self.desks {
             if let Some((zone, at, tab, shown)) = desk.take(window_id) {
                 left = Some(zone);
-                self.ghosts.push((
-                    Slot {
-                        workspace: desk.id.clone(),
-                        zone,
-                        key: tab.key,
-                        at,
-                        shown,
-                    },
-                    now,
-                ));
+                if leaves_a_place {
+                    self.ghosts.push((
+                        Slot {
+                            workspace: desk.id.clone(),
+                            zone,
+                            key: tab.key,
+                            at,
+                            shown,
+                        },
+                        now,
+                    ));
+                }
             }
         }
         left

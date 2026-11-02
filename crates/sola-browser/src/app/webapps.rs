@@ -8,7 +8,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use iced::widget::{Shader, Space, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Element, Length, Task, window};
@@ -32,11 +31,6 @@ pub const ACTION_OPEN_IN_BROWSER: &str = "web-open-in-browser";
 pub const ACTION_CLOSE_WINDOW: &str = "web-close-window";
 pub const ACTION_REMOVE: &str = "web-remove";
 
-/// How long a restored app page waits for its catalog entry before its
-/// window opens anyway, as a browser page (the app went while the browser
-/// was off).
-const CATALOG_WAIT: Duration = Duration::from_secs(2);
-
 /// What the browser knows of web apps.
 #[derive(Default)]
 pub struct WebApps {
@@ -48,8 +42,6 @@ pub struct WebApps {
     published: HashSet<String>,
     /// The start URL the engine has for each app page (`Cmd::AppSite`).
     sites_sent: HashMap<TabId, String>,
-    /// Restored app pages wait for their app's catalog entry until then.
-    hold_until: Option<Instant>,
     /// Each page's latest favicon (PNG): a wrapped app's icon.
     pub favicons: HashMap<TabId, Vec<u8>>,
     /// The Wrap This Page sheet.
@@ -78,10 +70,11 @@ impl WebApps {
     }
 
     /// Page `tab`'s window waits: it is an app's whose catalog entry has
-    /// not come in yet (a restore beats the catalog).
-    pub fn holds(&self, tab: TabId) -> bool {
-        self.hold_until.is_some_and(|until| Instant::now() < until)
-            && self.tabs.get(&tab).is_some_and(|app| !self.apps.contains_key(app))
+    /// not come in yet, and the bus is still `replaying` the catalog (a
+    /// restore beats it). An entry the replay did not bring is an app that
+    /// went while the browser was off: the page opens as a browser page.
+    pub fn holds(&self, tab: TabId, replaying: bool) -> bool {
+        replaying && self.tabs.get(&tab).is_some_and(|app| !self.apps.contains_key(app))
     }
 
     pub fn hosts(&self, app_id: &str) -> bool {
@@ -396,21 +389,9 @@ impl<E: Engine> App<E> {
         Task::batch(tabs.into_iter().map(|t| self.update(Msg::CloseTab(t))))
     }
 
-    /// After a restore: app pages' windows wait for their apps, so they
-    /// open as the app and the shell puts them back in their place. Sync
-    /// again when the wait is over.
-    pub(crate) fn hold_restored_apps(&mut self) -> Task<Msg> {
-        let web = &self.webapps;
-        if web.tabs.values().all(|app| web.apps.contains_key(app)) {
-            return Task::none();
-        }
-        self.webapps.hold_until = Some(Instant::now() + CATALOG_WAIT);
-        Task::perform(tokio::time::sleep(CATALOG_WAIT), |_| Msg::Noop)
-    }
-
     /// App `app_id`'s pages whose windows opened before the browser knew
-    /// the app (its entry came after the wait): they reopen as the app's
-    /// on the next sync.
+    /// the app (wrapped just now, or its entry came after the replay): they
+    /// reopen as the app's on the next sync.
     fn reopen_as_app(&mut self, app_id: &str) -> Task<Msg> {
         let stale: Vec<TabId> = self
             .webapps
@@ -785,6 +766,24 @@ mod tests {
         assert_eq!(home(&web, 2, "https://app.shortcut.com/story/1").as_deref(), Some("shortcut"));
         // From a browser page too.
         assert_eq!(home(&web, 9, "https://files.slack.com/x").as_deref(), Some("slack"));
+    }
+
+    /// Creating two dozen restored windows kept the browser from reading the
+    /// bus for 3 s, and a wait of 2 s ran out with the last entries unread:
+    /// two app pages opened as browser pages (2026-11-02).
+    #[test]
+    fn an_app_page_waits_for_its_entry_until_the_replay_is_over() {
+        let mut web = WebApps::default();
+        let page = TabId(1);
+        web.tabs.insert(page, "shortcut".into());
+        assert!(web.holds(page, true), "the entry may still be on its way");
+        assert!(!web.holds(page, false), "the replay is over: the app went");
+        assert!(!web.holds(TabId(2), true), "a browser page does not wait");
+        web.apps.insert(
+            "shortcut".into(),
+            web_app("shortcut", "Shortcut", "https://app.shortcut.com"),
+        );
+        assert!(!web.holds(page, true), "its entry is in");
     }
 
     #[test]
