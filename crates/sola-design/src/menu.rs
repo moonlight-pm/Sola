@@ -41,7 +41,7 @@ pub fn app_menu(closed: &[(String, String)]) -> AppMenuPayload {
             MenuDefinition {
                 label: "Design".into(),
                 // Only the window: the project stays (Open).
-                items: vec![action(CLOSE_WINDOW, "Close Window", Some(KeyCode::W.meta_shift()))],
+                items: vec![action(CLOSE_WINDOW, "Close Window", Some(sola_kit::menu::CLOSE_WINDOW_KEY))],
             },
             MenuDefinition {
                 label: "Project".into(),

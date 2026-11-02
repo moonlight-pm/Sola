@@ -3719,11 +3719,12 @@ mod hide_tests {
         let close = |s: &Shell| s.shell_key_chords().contains(&KeyCode::W.meta());
         assert!(close(&shell), "Steam's Super+W is the shell's Close Window");
         shell.focused_app_id = Some("sola-terminal".into());
-        assert!(!close(&shell), "Terminal keeps its own Super+W");
+        assert!(!close(&shell), "an app with a menu declares its own Super+W");
     }
 
-    /// Super is Meta in the editor (`sola-editor`'s `keymap`): Super+W copies
-    /// there and Super+F moves a word, so the system must grab none of them.
+    /// Super is Meta in the editor, and only there (`sola-editor`'s `keymap`):
+    /// Super+W copies there and Super+F moves a word, so while it has focus the
+    /// system must grab none of them.
     #[test]
     fn the_system_grabs_none_of_the_editors_meta_keys() {
         let mut shell = desktop();

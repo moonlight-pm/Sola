@@ -304,8 +304,8 @@ const fn kp(keycode: KeyCode) -> KeyChord {
 
 /// The menu action that closes the focused window, which the shell carries
 /// out for every app: a tab's window through its app, any other as the bar's
-/// close does. An app's own menu lists it ([`close_window_item`]); an app
-/// that reads Super for itself (Editor's Meta) leaves its key out.
+/// close does. An app's own menu lists it ([`close_window_item`]). Editor
+/// alone leaves its key out: Super is Meta there, and there only.
 pub const ACTION_CLOSE_WINDOW: &str = "_close_window";
 
 /// The key for [`ACTION_CLOSE_WINDOW`].

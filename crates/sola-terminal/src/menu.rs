@@ -18,14 +18,7 @@ pub fn terminal_menu() -> AppMenuPayload {
                         checked: false,
                     },
                     MenuItem::Divider,
-                    // No key: ⌘W means "Copy" here, as below.
-                    MenuItem::Action {
-                        id: sola_kit::menu::ACTION_CLOSE_WINDOW.into(),
-                        label: "Close Window".into(),
-                        shortcut: None,
-                        disabled: false,
-                        checked: false,
-                    },
+                    sola_kit::menu::close_window_menu_item(),
                 ],
             },
             MenuDefinition {
@@ -58,8 +51,7 @@ pub fn terminal_menu() -> AppMenuPayload {
                         checked: false,
                     },
                     MenuItem::Divider,
-                    // ⌘⇧W : kill the active pane (⌘W is intentionally
-                    // unbound — it means "Copy" in muscle memory).
+                    // ⌘⇧W : kill the active pane (⌘W closes the window).
                     MenuItem::Action {
                         id: "close_pane".into(),
                         label: "Close Pane".into(),
@@ -96,6 +88,19 @@ pub fn terminal_menu() -> AppMenuPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn super_w_closes_the_window_and_super_shift_w_the_pane() {
+        let items: Vec<_> = terminal_menu().menus.into_iter().flat_map(|m| m.items).collect();
+        let key_of = |want: &str| {
+            items.iter().find_map(|i| match i {
+                MenuItem::Action { id, shortcut, .. } if id == want => *shortcut,
+                _ => None,
+            })
+        };
+        assert_eq!(key_of(sola_kit::menu::ACTION_CLOSE_WINDOW), Some(KeyCode::W.meta()));
+        assert_eq!(key_of("close_pane"), Some(KeyCode::W.meta_shift()));
+    }
 
     #[test]
     fn no_tab_list_and_new_tab_is_cmd_t() {

@@ -841,8 +841,8 @@ impl App {
         let modifiers = input::merge_modifiers(event_mods, tracked_mods, keys_held);
 
         // ⌘/Super shortcuts are handled by the shell (menu → MenuAction). A
-        // Super-modified key must never encode to the PTY, so ⌘W (unbound) and
-        // friends stay inert and don't leak bytes to the shell.
+        // Super-modified key must never encode to the PTY, so one the shell
+        // does not take stays inert and leaks no bytes to the shell.
         if modifiers.logo() {
             return Task::none();
         }

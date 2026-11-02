@@ -118,7 +118,7 @@ Two Design windows can be on screen at once (Left and Right, say), each with
 its own canvas, view, pick, tour and notes. The one you last touched takes
 the keys and the View and Share menus; moving between them loses nothing.
 
-**Design → Close Window** (⌘⇧W) closes only the window; **Project → Open
+**Design → Close Window** (⌘W) closes only the window; **Project → Open
 *name*** brings it back. Closing the last window quits Design. **Project →
 Drop Project** forgets the active window's project and closes its window
 (with no project left, the window offering **Add project** comes back), and

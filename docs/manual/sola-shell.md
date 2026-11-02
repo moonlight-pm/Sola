@@ -86,9 +86,9 @@ The desk works by windows, not apps: there is no Quit. **Close Window**
 (Super+W) closes the focused window, as its bar row's × does, and an app
 ends when its last window closes. It is in each app's own menu; an app that
 isn't Sola's has no menu of its own, so the Shell gives it one with this
-item. Browser pages, Paint and Projects give Super+W their own close.
-Editor, where Super is Meta, and Terminal leave it for Copy (their menus have
-the item, with no key), and Design closes a window on Super+Shift+W.
+item. Browser pages, Paint and Projects give Super+W their own close, which
+does the same. Editor alone is different: Super is Emacs's Meta there, and
+there only, so Super+W copies (its menu has the item, with no key).
 
 ### Focus
 
