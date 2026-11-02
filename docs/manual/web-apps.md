@@ -36,15 +36,14 @@ The titlebar shows the app's name and its menus:
 
 | Menu | Items |
 |---|---|
-| *App name* | Open in Browser · Reload (⌘R) · Close Window (⌘W) · Remove Web App… · Quit *name* (⌘Q) |
+| *App name* | Open in Browser · Reload (⌘R) · Close Window (⌘W) · Remove Web App… |
 | Edit | Cut · Copy · Paste · Select All (⌘X / ⌘C / ⌘V / ⌘A) |
 | Window | The Window menu every Sola application has |
 
 - **Open in Browser** opens the app's current page as a Browser page
   beside it, on the same profile.
-- **Close Window** closes this window of the app; **Quit** *name* closes
-  all of them. Browser itself quits only when those were its last
-  windows.
+- **Close Window** closes this window of the app. Browser itself ends only
+  when that was its last window.
 
 The page's own dialogs open in the app's window: JavaScript dialogs,
 HTTP sign-in, camera and microphone, notifications, and file uploads. Its

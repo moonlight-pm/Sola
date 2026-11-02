@@ -61,14 +61,7 @@ pub fn app_menu() -> AppMenuPayload {
                         disabled: false,
                         checked: false,
                     },
-                    MenuItem::Divider,
-                    MenuItem::Action {
-                        id: "quit".into(),
-                        label: "Quit Projects".into(),
-                        shortcut: Some(KeyCode::Q.meta()),
-                        disabled: false,
-                        checked: false,
-                    },
+
                 ],
             },
             MenuDefinition {

@@ -17,7 +17,6 @@ use iced::{Alignment, Background, Element, Length, Padding, Subscription, Task, 
 use sola_bus::topics::SplitDir;
 use sola_bus::topics::TopicKind;
 use sola_bus::Message;
-use sola_core::KeyCode;
 use sola_kit::app::{
     apply_theme_update, bus_subscription, is_self_quit, startup, window_settings_transparent,
     BusSetup,
@@ -55,7 +54,7 @@ fn main() -> iced::Result {
 
     BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
-        .app_menu("Oath", [("quit", "Quit Oath", KeyCode::Q.meta())])
+        .app_menu("Oath", [sola_kit::menu::close_window_item()])
         .install();
 
     let app = iced::application(App::boot, App::update, App::view)

@@ -20,7 +20,6 @@ pub enum Act {
     Launcher,
     Shortcuts,
     Lock,
-    CloseApp,
     Hide,
     /// The focused app's next window on this workspace (Super+\`).
     NextTab,
@@ -128,7 +127,6 @@ pub fn system_actions(zones: Vec<SysAction>) -> Vec<SysAction> {
         sys(Act::Launcher, "launcher", "Shell", "Launch Application", KeyCode::SPACE.meta()),
         sys(Act::Shortcuts, "shortcuts", "Shell", "Keyboard Shortcuts", KeyCode::K.meta()),
         sys(Act::Lock, crate::lock::ACTION_LOCK, "Shell", "Lock Screen", KeyCode::L.meta()),
-        sys(Act::CloseApp, "close-app", "Shell", "Close App", KeyCode::Q.meta()),
         sys(Act::Hide, "hide", "Shell", "Hide App", KeyCode::H.meta()),
         sys(Act::NextTab, "tab.next", "Shell", "Next Window of App", KeyCode::GRAVE.meta()),
         sys(

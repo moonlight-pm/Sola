@@ -230,9 +230,11 @@ impl Shell {
     /// click focused that app's window, so act on the focused window as the
     /// shortcut would. Other actions are the app's own and never reach here.
     fn on_titlebar_menu_action(&mut self, a: MenuActionPayload) -> Task<Msg> {
-        let Some(action) = sola_kit::parse_window_action(&a.action_id) else {
+        let close = a.action_id == sola_kit::menu::ACTION_CLOSE_WINDOW;
+        let action = sola_kit::parse_window_action(&a.action_id);
+        if !close && action.is_none() {
             return Task::none();
-        };
+        }
         if self.focused_app_id.as_deref() != Some(a.app_id.as_str()) {
             tracing::warn!(
                 app_id = %a.app_id,
@@ -242,7 +244,13 @@ impl Shell {
             );
             return Task::none();
         }
-        self.handle_window_action(action)
+        match action {
+            Some(action) => self.handle_window_action(action),
+            None => match self.focused_window_id {
+                Some(window) => Task::done(Msg::CloseWindow(window)),
+                None => Task::none(),
+            },
+        }
     }
 
     /// Menubar whisper (Opening… / screenshot). Not a notification.
@@ -1127,15 +1135,6 @@ impl Shell {
             Act::Shortcuts if self.shortcuts.active => Task::done(Msg::CloseShortcuts),
             Act::Shortcuts => Task::done(Msg::OpenShortcuts),
             Act::Lock => self.lock_screen("key"),
-            Act::CloseApp => {
-                if let Some(focused) = self.focused_app_id.clone() {
-                    tracing::info!(app_id = %focused, "close focused app");
-                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                        let _ = bus.emit(Topic::CloseApp(focused));
-                    }
-                }
-                Task::none()
-            }
             Act::Hide => {
                 self.hide_focused_app();
                 Task::none()

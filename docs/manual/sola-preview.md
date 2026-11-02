@@ -14,7 +14,7 @@ bytes.
   **Recent**.
 
 Preview's window floats by default. Its titlebar has the **Preview** menu
-(Quit Preview, ⌘Q).
+(Close Window, ⌘W).
 
 F13, F14 and F15 copy screenshots to the clipboard; they do **not** open Preview.
 `solactl compositor screenshot` writes a PNG and prints the path; it does

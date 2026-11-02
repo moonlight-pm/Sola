@@ -23,7 +23,7 @@ Paint.
 
 ## Windows
 
-The titlebar carries Paint's menus: **Paint** (Quit Paint, ⌘Q), **File**,
+The titlebar carries Paint's menus: **File**,
 **Edit**, and **View**, then the Window menu. The tools, keys and menus act
 on the window you are in.
 

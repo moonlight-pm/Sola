@@ -156,7 +156,7 @@ For Sola:
 
 ### 2.8 Content and voice
 
-- Labels name **user concepts** (Quit Terminal, Wi‑Fi), not internal IDs.
+- Labels name **user concepts** (Close Window, Wi‑Fi), not internal IDs.
 - Active voice on actions (“Save”, not “Submit”).
 - Errors say what failed and what to do next; no apologies.
 - Empty states invite the next action.

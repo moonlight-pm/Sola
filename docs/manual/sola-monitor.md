@@ -32,7 +32,7 @@ not put RPC on the bus.
   to resume.
 - Each plane keeps its last 5,000 entries.
 
-Quit is **Monitor → Quit Monitor** (⌘Q), in the titlebar.
+Close it with **Monitor → Close Window** (⌘W), in the titlebar.
 
 ## Limits
 

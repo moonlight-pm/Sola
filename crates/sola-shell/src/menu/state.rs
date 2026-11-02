@@ -15,14 +15,13 @@ use sola_core::{KeyChord, KeyCode};
 /// hasn't shipped its own menu.
 pub const SYNTHESIZED_CLOSE_ACTION: &str = "_close";
 
-/// Action id of the synthesized "Close Window" item: the shell closes the
-/// focused window, as the tab bar's close does.
-pub const SYNTHESIZED_CLOSE_WINDOW_ACTION: &str = "_close_window";
+/// Action id of the "Close Window" item: the shell closes the focused
+/// window, as the tab bar's close does.
+pub const SYNTHESIZED_CLOSE_WINDOW_ACTION: &str = sola_kit::menu::ACTION_CLOSE_WINDOW;
 
-/// Its key. Quit's Super+Q is a system key; this one is grabbed only while
-/// an app without a menu of its own has focus (Sola's apps give Super+W
-/// their own meaning).
-pub const SYNTHESIZED_CLOSE_WINDOW_KEY: KeyChord = KeyCode::W.meta();
+/// Its key, in an app's own menu or (for an app without a menu of its own)
+/// grabbed while that app has focus.
+pub const SYNTHESIZED_CLOSE_WINDOW_KEY: KeyChord = sola_kit::menu::CLOSE_WINDOW_KEY;
 
 /// The flower's item that opens Settings.
 pub const ACTION_SETTINGS: &str = "settings";
@@ -108,28 +107,18 @@ pub fn fill_window_menu(
     }
 }
 
-/// Build a default menu for an external app that hasn't shipped its own.
-/// Single menu labeled `<label>`: "Close Window" (Super+W) and "Quit
-/// <label>" (Super+Q, a system key).
+/// Build a default menu for an external app that hasn't shipped its own:
+/// **Close Window** (Super+W), under its name.
 pub fn synthesized_menu(app_id: &str, label: &str) -> AppMenuPayload {
     AppMenuPayload {
         app_id: app_id.to_string(),
         menus: vec![MenuDefinition {
             label: label.to_string(),
-            items: vec![
-                action(
-                    SYNTHESIZED_CLOSE_WINDOW_ACTION,
-                    "Close Window",
-                    Some(SYNTHESIZED_CLOSE_WINDOW_KEY),
-                ),
-                MenuItem::Action {
-                    id: SYNTHESIZED_CLOSE_ACTION.to_string(),
-                    label: format!("Quit {label}"),
-                    shortcut: Some(KeyCode::Q.meta()),
-                    disabled: false,
-                    checked: false,
-                },
-            ],
+            items: vec![action(
+                SYNTHESIZED_CLOSE_WINDOW_ACTION,
+                "Close Window",
+                Some(SYNTHESIZED_CLOSE_WINDOW_KEY),
+            )],
         }],
     }
 }
@@ -287,14 +276,14 @@ mod tests {
                 crate::power::ACTION_SHUT_DOWN,
             ]
         );
-        // Super+Q is CloseApp, not session or machine power.
+        // No key for session or machine power.
         for item in &menu.items {
             if let MenuItem::Action { id, shortcut, .. } = item {
                 if id == "quit"
                     || id == crate::power::ACTION_RESTART_COMPUTER
                     || id == crate::power::ACTION_SHUT_DOWN
                 {
-                    assert!(shortcut.is_none(), "{id} must not steal Super+Q");
+                    assert!(shortcut.is_none(), "{id} must have no key");
                 }
             }
         }
@@ -319,13 +308,13 @@ mod tests {
     }
 
     #[test]
-    fn synthesized_menu_has_close_window_and_quit() {
+    fn synthesized_menu_only_closes_the_window() {
         let payload = synthesized_menu("firefox", "Firefox");
         assert_eq!(payload.app_id, "firefox");
         assert_eq!(payload.menus.len(), 1);
         let menu = &payload.menus[0];
         assert_eq!(menu.label, "Firefox");
-        assert_eq!(menu.items.len(), 2);
+        assert_eq!(menu.items.len(), 1);
         match &menu.items[0] {
             MenuItem::Action { id, label, shortcut, .. } => {
                 assert_eq!(id, SYNTHESIZED_CLOSE_WINDOW_ACTION);
@@ -334,58 +323,24 @@ mod tests {
             }
             other => panic!("expected Action item, got {other:?}"),
         }
-        match &menu.items[1] {
-            MenuItem::Action {
-                id,
-                label,
-                shortcut,
-                disabled,
-                checked,
-            } => {
-                assert_eq!(id, SYNTHESIZED_CLOSE_ACTION);
-                assert_eq!(label, "Quit Firefox");
-                assert!(!disabled);
-                assert!(!checked);
-                let chord = shortcut.as_ref().expect("quit item must have shortcut");
-                assert_eq!(chord.keycode, KeyCode::Q);
-                assert!(chord.meta);
-                assert!(!chord.alt);
-                assert!(!chord.ctrl);
-                assert!(!chord.shift);
-            }
-            other => panic!("expected Action item, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn synthesized_menu_label_in_quit_string() {
-        // "Quit <label>" must use the provided label, not the app_id.
-        let payload = synthesized_menu("sola-browser", "Sola Browser");
-        let label = match &payload.menus[0].items[1] {
-            MenuItem::Action { label, .. } => label.clone(),
-            _ => panic!("expected Action"),
-        };
-        assert_eq!(label, "Quit Sola Browser");
     }
 
     #[test]
     fn menu_cache_lookup_shortcut_finds_registered_chord() {
         let mut cache = MenuCache::new();
         cache.set_menu(synthesized_menu("firefox", "Firefox"));
-        let chord = KeyCode::Q.meta();
-        let hit = cache.lookup_shortcut(&chord, "firefox");
-        assert!(hit.is_some());
-        let action = hit.unwrap();
+        let chord = KeyCode::W.meta();
+        let action = cache.lookup_shortcut(&chord, "firefox").expect("its Close Window");
         assert_eq!(action.app_id, "firefox");
-        assert_eq!(action.action_id, SYNTHESIZED_CLOSE_ACTION);
+        assert_eq!(action.action_id, SYNTHESIZED_CLOSE_WINDOW_ACTION);
+        assert!(cache.lookup_shortcut(&KeyCode::Q.meta(), "firefox").is_none(), "no Quit");
     }
 
     #[test]
     fn menu_cache_lookup_shortcut_misses_wrong_app() {
         let mut cache = MenuCache::new();
         cache.set_menu(synthesized_menu("firefox", "Firefox"));
-        let chord = KeyCode::Q.meta();
-        assert!(cache.lookup_shortcut(&chord, "zed").is_none());
+        assert!(cache.lookup_shortcut(&KeyCode::W.meta(), "zed").is_none());
     }
 
     #[test]

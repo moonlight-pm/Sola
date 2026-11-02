@@ -3,7 +3,7 @@
 //! Steam does when its window closes — would run on with nothing to show
 //! for it. Once such an app has had a window and has had none for
 //! [`GRACE`] ([`STARTING_GRACE`] while it starts), or has shown none
-//! [`FIRST_WINDOW`] after it started, it quits the way Super+Q quits it
+//! [`FIRST_WINDOW`] after it started, it quits as a `CloseApp` quits it
 //! ([`crate::quit`]). Closing its last window from Sola quits it at once
 //! (`session/foreign.rs`); this is for the rest: its own close button, a
 //! crash.

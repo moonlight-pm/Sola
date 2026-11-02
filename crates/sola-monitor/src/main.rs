@@ -11,7 +11,6 @@
 
 mod app;
 
-use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, startup, window_settings_transparent};
 use sola_kit::fonts;
 
@@ -24,7 +23,7 @@ fn main() -> iced::Result {
 
     BusSetup::new(APP_ID)
         .subscribe(sola_bus::topics::TopicKind::ALL)
-        .app_menu("Monitor", [("quit", "Quit Monitor", KeyCode::Q.meta())])
+        .app_menu("Monitor", [sola_kit::menu::close_window_item()])
         .install();
     sola_kit::install_observer(APP_ID);
 

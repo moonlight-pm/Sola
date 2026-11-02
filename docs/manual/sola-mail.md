@@ -110,7 +110,7 @@ These keys do nothing while you are typing in a field.
 
 | Menu | Items |
 |---|---|
-| Mail | Get New Mail (⌘⇧N), Quit Mail (⌘Q) |
+| Mail | Get New Mail (⌘⇧N), Close Window (⌘W) |
 | Edit | Undo, Redo (⌘Z / ⌘⇧Z), Cut, Copy, Paste, Select All (⌘X / ⌘C / ⌘V / ⌘A), Copy Message, Search Mail (⌘F) |
 | Mailbox | Inbox, Sent, Drafts, Archive, Junk, Trash, Erase Junk Mail…, Erase Deleted Items… |
 | Message | New Message (⌘N), Save Draft (⌘S), Attach Files… (⌘⇧A), Reply (⌘R), Reply All (⌘⇧R), Forward (⌘⇧F), Mark as Read / Unread (⌘⇧U), Flag / Unflag (⌘⇧L), Archive, Move to Inbox, Move to Junk, Delete, Undo Move |

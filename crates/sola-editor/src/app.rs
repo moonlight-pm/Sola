@@ -60,7 +60,17 @@ pub fn run() -> iced::Result {
 
     let mut setup = BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
-        .app_menu("Editor", [("quit", "Quit Editor", KeyCode::Q.meta())]);
+        .app_menu_definition(MenuDefinition {
+            label: "Editor".into(),
+            // No key: Super is Meta here, and M-w is Copy.
+            items: vec![MenuItem::Action {
+                id: sola_kit::menu::ACTION_CLOSE_WINDOW.into(),
+                label: "Close Window".into(),
+                shortcut: None,
+                disabled: false,
+                checked: false,
+            }],
+        });
     for menu in menus() {
         setup = setup.app_menu_definition(menu);
     }

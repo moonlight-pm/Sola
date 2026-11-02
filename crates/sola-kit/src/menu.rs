@@ -173,7 +173,7 @@ pub fn action_for_key(key: KeyChord) -> Option<String> {
                 shortcut: Some(k),
                 disabled: false,
                 ..
-            } if *k == key && parse_window_action(id).is_none() => Some(id.clone()),
+            } if *k == key && !is_shell_action(id) => Some(id.clone()),
             _ => None,
         })
 }
@@ -184,14 +184,15 @@ fn forget_current() {
     *CURRENT.write().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
-/// Act on a titlebar menu choice. Window items are the shell's (it acts on
-/// the focused window); the rest go to this app as its own `MenuAction`.
+/// Act on a titlebar menu choice. Window items and Close Window are the
+/// shell's (it acts on the focused window); the rest go to this app as its
+/// own `MenuAction`.
 pub fn choose(app_id: &str, action_id: &str) {
     let topic = Topic::MenuAction(MenuActionPayload {
         app_id: app_id.to_string(),
         action_id: action_id.to_string(),
     });
-    if parse_window_action(action_id).is_some() {
+    if is_shell_action(action_id) {
         if let Some(Ok(mut bus)) = crate::app::try_bus().map(|b| b.lock()) {
             if let Err(e) = bus.emit(topic) {
                 tracing::warn!(action_id, "window menu action failed: {e}");
@@ -299,6 +300,36 @@ const fn kp(keycode: KeyCode) -> KeyChord {
         ctrl: false,
         shift: false,
     }
+}
+
+/// The menu action that closes the focused window, which the shell carries
+/// out for every app: a tab's window through its app, any other as the bar's
+/// close does. An app's own menu lists it ([`close_window_item`]); an app
+/// that reads Super for itself (Editor's Meta) leaves its key out.
+pub const ACTION_CLOSE_WINDOW: &str = "_close_window";
+
+/// The key for [`ACTION_CLOSE_WINDOW`].
+pub const CLOSE_WINDOW_KEY: KeyChord = KeyCode::W.meta();
+
+/// **Close Window** (Super+W), for [`crate::app::BusSetup::app_menu`].
+pub const fn close_window_item() -> (&'static str, &'static str, KeyChord) {
+    (ACTION_CLOSE_WINDOW, "Close Window", CLOSE_WINDOW_KEY)
+}
+
+/// [`close_window_item`] as a [`MenuItem`].
+pub fn close_window_menu_item() -> MenuItem {
+    MenuItem::Action {
+        id: ACTION_CLOSE_WINDOW.into(),
+        label: "Close Window".into(),
+        shortcut: Some(CLOSE_WINDOW_KEY),
+        disabled: false,
+        checked: false,
+    }
+}
+
+/// A menu action the shell carries out rather than the app.
+fn is_shell_action(id: &str) -> bool {
+    id == ACTION_CLOSE_WINDOW || parse_window_action(id).is_some()
 }
 
 /// Default Window menu for [`crate::app::BusSetup::app_menu_definition`].

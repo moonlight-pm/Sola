@@ -255,7 +255,7 @@ The bar is described in [Shell § The bar](sola-shell.md#the-bar), its zones in 
 | `LaunchApp` | `app_id`, `command` | Shell (launcher), Browser (`--app` when no browser is running; **Open in Vault** when `vault.open` does not answer), `sola-vaultd` (`vault.open`) | `sola-session` | Ephemeral |
 | `LaunchResult` | `app_id`, `command`, `ok`, `error` | `sola-session` | Shell | Ephemeral |
 | `UserAppExited` | `app_id`, `command`, exit `code` or `signal` | `sola-session` | Shell | Ephemeral |
-| `CloseApp` | An `app_id` | Shell (Super+Q); kit apps closing themselves (a single-window app's close button, the Browser's last page) | `sola-session` (stops it), `sola-river` (asks its windows to close), the named app (quits), Browser (closes a web app's windows) | Ephemeral |
+| `CloseApp` | An `app_id` | `solactl desk close`; the session, as the desk ends; kit apps closing themselves (a single-window app's close button, the Browser's last page) | `sola-session` (stops it), `sola-river` (asks its windows to close), the named app (quits), Browser (closes a web app's windows) | Ephemeral |
 | `SessionApps` | Open apps: `app_id`, `command` | `sola-session` | `sola-session`, at its next start | Persistent |
 | `Application` | A launcher entry: `app_id`, `label`, `command`, `icon`, `kind`, `url`, `profile` | Settings; Browser (web apps) | Shell, Settings, Browser | Persistent by `app_id` |
 | `SetAppMenu` | `app_id` and its menus: labels and items (action id, label, shortcut, disabled, checked) or dividers | Each app with a menu, at start | Shell (registers the focused app's Super shortcuts; an app with no menu gets the compositor's rim) | Sticky by `app_id` |
@@ -380,7 +380,7 @@ In a kit app:
 sola_kit::app::startup(APP_ID);
 BusSetup::new(APP_ID)
     .subscribe(&[TopicKind::Theme, TopicKind::MenuAction, TopicKind::CloseApp])
-    .app_menu("Example", [("quit", "Quit Example", KeyCode::Q.meta())])
+    .app_menu("Example", [sola_kit::menu::close_window_item()])
     .install();
 
 // subscription():  sola_kit::app::bus_subscription().map(Msg::Bus)

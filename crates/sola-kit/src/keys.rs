@@ -144,8 +144,7 @@ pub fn reset(keys: &mut Keybindings, owner: &str, action: &str) {
 }
 
 /// The kit's shared actions ("Every app" in Settings): one key for the
-/// same menu item id in every app. Quit is not among them: it is the
-/// system's Close App (Super+Q), whose key every Quit item shows.
+/// same menu item id in every app.
 pub const COMMON_ACTIONS: &[(&str, &str, &str, KeyChord)] = &[
     ("undo", "Undo", "Edit", KeyCode::Z.meta()),
     ("redo", "Redo", "Edit", KeyCode::Z.meta_shift()),
@@ -173,13 +172,9 @@ pub fn common_declaration() -> KeyActions {
     }
 }
 
-/// The system action a menu item is, if any: the Window menu's items, and
-/// Quit (Close App).
+/// The system action a menu item is, if any: the Window menu's items.
 fn system_id(item: &str) -> Option<String> {
     use crate::menu::{WindowAction, parse_window_action};
-    if item == crate::app::QUIT_ACTION_ID {
-        return Some("close-app".into());
-    }
     Some(match parse_window_action(item)? {
         WindowAction::Hide => "hide".into(),
         WindowAction::Cycle => "tab.next".into(),
@@ -522,7 +517,6 @@ mod tests {
                     items: vec![
                         item("compose", Some(KeyCode::N.meta())),
                         item("about", None),
-                        item(crate::app::QUIT_ACTION_ID, Some(KeyCode::Q.meta())),
                     ],
                 },
                 MenuDefinition {

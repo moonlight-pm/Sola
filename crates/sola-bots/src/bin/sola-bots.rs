@@ -12,13 +12,7 @@ fn main() -> iced::Result {
         .subscribe(TopicKind::ALL)
         .app_menu_definition(MenuDefinition {
             label: "Bots".into(),
-            items: vec![MenuItem::Action {
-                id: "quit".into(),
-                label: "Quit Bots".into(),
-                shortcut: Some(KeyCode::Q.meta()),
-                disabled: false,
-                checked: false,
-            }],
+            items: vec![sola_kit::menu::close_window_menu_item()],
         })
         .app_menu_definition(MenuDefinition {
             label: "Edit".into(),

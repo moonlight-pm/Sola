@@ -60,13 +60,7 @@ fn main() -> iced::Result {
                 item("new_event", "New Event", Some(KeyCode::N.meta())),
                 item("refresh", "Refresh", Some(KeyCode::R.meta())),
                 MenuItem::Divider,
-                MenuItem::Action {
-                    id: "quit".into(),
-                    label: "Quit Calendar".into(),
-                    shortcut: Some(KeyCode::Q.meta()),
-                    disabled: false,
-                    checked: false,
-                },
+                sola_kit::menu::close_window_menu_item(),
             ],
         })
         .app_menu_definition(MenuDefinition {

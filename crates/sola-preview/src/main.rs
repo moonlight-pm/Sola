@@ -15,7 +15,6 @@ use iced::{
 
 use sola_bus::Message;
 use sola_bus::topics::{Topic, TopicKind};
-use sola_core::KeyCode;
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup,
     window_settings_transparent,
@@ -40,7 +39,7 @@ fn main() -> iced::Result {
 
     BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
-        .app_menu("Preview", [("quit", "Quit Preview", KeyCode::Q.meta())])
+        .app_menu("Preview", [sola_kit::menu::close_window_item()])
         .install();
 
     let app = iced::application(App::boot, App::update, App::view)

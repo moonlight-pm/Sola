@@ -1,4 +1,4 @@
-//! Quitting an app that isn't Sola's (Super+Q, its last window gone, the
+//! Quitting an app that isn't Sola's (`CloseApp`, its last window gone, the
 //! desk ending): ask it the way it asks itself — its own quit command when
 //! it has one (`steam -shutdown`, what Steam → Exit does) — give it
 //! [`CLEAN`] to go, then SIGTERM whatever still carries its tag

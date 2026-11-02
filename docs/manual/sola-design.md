@@ -94,7 +94,7 @@ Launcher → **Design**, or `solactl desk launch sola-design`. On Oath,
 Design is its own package, `pkg:sola-design`, and its pages run on Oath's
 CEF (`pkg:cef`). A second launch brings the active window up.
 
-Each window's titlebar carries Design's menus: **Design** (Quit), **Project**,
+Each window's titlebar carries Design's menus: **Design** (Close Window), **Project**,
 **Share**, and **View**, then the Window menu. Their shortcuts work while a
 page has the keyboard.
 

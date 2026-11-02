@@ -101,7 +101,7 @@ An app id names an application in four places:
 The shell matches windows to catalog entries exactly, then ignoring case,
 for icons, names, and the ghost row of an app that is starting.
 `sola-session` and `sola-river` match exactly. If a catalog id is `Orca`
-and the window says `orca`, Super+Q still closes the window, but
+and the window says `orca`, its bar row still closes the window, but
 `sola-session` does not stop the process it started, and a restart of
 `sola-session` starts the application again although its window is open. Use
 the window's own app id as the catalog id: the **Running, not in the
@@ -186,7 +186,7 @@ A process started any other way is not tracked: from a terminal, by
 `solactl open`, by another application, or by an earlier run of
 `sola-session`. It has no exit fact and no place in the saved set, and
 `solactl desk close` does not find it. Its windows are ordinary
-windows, and Super+Q still closes them through `sola-river`.
+windows, and their bar rows still close them through `sola-river`.
 
 ## Closing
 
@@ -203,7 +203,7 @@ A process that is stopping stays tracked until it exits, and then
 The call replies `{app_id, stopped}` with the number of processes stopped,
 or fails with `no live children for <app_id>` when nothing tracked matches.
 
-Super+Q sends `CloseApp` for the focused application, which reaches three
+`solactl desk close` sends `CloseApp` for an application, which reaches three
 receivers at once: `sola-session` stops the process, `sola-river` asks
 every window with that app id to close ([Compositor](compositor.md)), and
 a kit application quits by itself. `solactl desk close` does only the
@@ -242,7 +242,7 @@ its window comes back within a second, empty.
 | Its last window is closed from Sola: the bar's ×, Super+W (`CloseWindow`) | Yes, at once |
 | It had a window and has had none for 5 s (30 s in its first 2 minutes, while it starts): its own close button, its last window crashing | Yes |
 | It has shown no window 2 minutes after it started | Yes |
-| `CloseApp`: Super+Q, the `close` call | Yes, at once |
+| `CloseApp`: the `close` call | Yes, at once |
 | **Exit Sola** | Yes, within the 6 s every application gets |
 
 Quitting goes in steps until no process carries its `SOLA_APP`:

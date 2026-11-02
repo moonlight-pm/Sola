@@ -18,13 +18,7 @@ pub fn terminal_menu() -> AppMenuPayload {
                         checked: false,
                     },
                     MenuItem::Divider,
-                    MenuItem::Action {
-                        id: "quit".into(),
-                        label: "Quit Terminal".into(),
-                        shortcut: Some(KeyCode::Q.meta()),
-                        disabled: false,
-                        checked: false,
-                    },
+                    sola_kit::menu::close_window_menu_item(),
                 ],
             },
             MenuDefinition {

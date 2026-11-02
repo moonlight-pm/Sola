@@ -17,7 +17,7 @@ fn main() -> iced::Result {
 
     BusSetup::new(APP_ID)
         .subscribe(sola_bus::topics::TopicKind::ALL)
-        .app_menu("Scope", [("quit", "Quit Scope", KeyCode::Q.meta())])
+        .app_menu("Scope", [sola_kit::menu::close_window_item()])
         .app_menu(
             "View",
             [

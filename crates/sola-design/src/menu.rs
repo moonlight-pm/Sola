@@ -6,7 +6,6 @@ use sola_core::{KeyChord, KeyCode};
 
 use crate::APP_ID;
 
-pub const QUIT: &str = sola_kit::app::QUIT_ACTION_ID;
 pub const ADD_PROJECT: &str = "add-project";
 pub const NEW_CANVAS: &str = "new-canvas";
 pub const DROP_PROJECT: &str = "drop-project";
@@ -44,7 +43,7 @@ pub fn app_menu(closed: &[(String, String)]) -> AppMenuPayload {
         menus: vec![
             MenuDefinition {
                 label: "Design".into(),
-                items: vec![action(QUIT, "Quit Design", Some(KeyCode::Q.meta()))],
+                items: vec![sola_kit::menu::close_window_menu_item()],
             },
             MenuDefinition {
                 label: "Project".into(),

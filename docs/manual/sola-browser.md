@@ -523,7 +523,6 @@ the desk's theme, light or dark.
 | ⌘L | **Focus URL**: the location bar, its text selected |
 | ⌘← / ⌘→ | **Back** / **Forward** |
 | ⌘⌥I | **Developer Tools** (the console) |
-| ⌘Q | **Quit Browser** |
 | ⌘Z / ⌘⇧Z | Edit → **Undo** / **Redo** (in the focused field, else the page) |
 | ⌘X / ⌘C / ⌘V / ⌘A | Edit → **Cut** / **Copy** / **Paste** / **Select All** |
 | ⌘F / ⌘G / ⌘⇧G | Edit → **Find** / **Find Next** / **Find Previous** |

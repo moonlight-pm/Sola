@@ -2609,10 +2609,6 @@ impl Shell {
                         mark_clean_shutdown();
                         let _ = bus.emit(Topic::Shutdown);
                         return iced::exit();
-                    } else if action_id == crate::menu::state::SYNTHESIZED_CLOSE_ACTION {
-                        if let Some(ref focused) = self.focused_app_id.clone() {
-                            let _ = bus.emit(Topic::CloseApp(focused.clone()));
-                        }
                     } else {
                         let _ =
                             bus.emit(Topic::MenuAction(MenuActionPayload { app_id, action_id }));
