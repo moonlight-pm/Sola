@@ -13,7 +13,7 @@ use sola_kit::fonts;
 
 use crate::app::{Msg, Shell};
 use crate::menubar::view::{island, item};
-use crate::menubar::{CHROME_SIZE, EDGE, ISLAND_GAP, ISLAND_H, ISLAND_PAD_H};
+use crate::menubar::{CHROME_SIZE, ISLAND_GAP, ISLAND_PAD_H};
 use sola_kit::components::scroll;
 
 /// The card's reply field (focused when the card opens with one).
@@ -47,7 +47,7 @@ struct Laid<'a> {
 /// The islands that fit on the left, and how many did not.
 fn layout(shell: &Shell) -> (Vec<Laid<'_>>, usize) {
     let output_w = shell.output_size.map_or(1920.0, |(w, _)| w as f32);
-    let start = EDGE + ISLAND_H + ISLAND_GAP;
+    let start = crate::menubar::workspaces::row_end(shell) + ISLAND_GAP;
     let room = output_w / 2.0 - MIDDLE_MARGIN - start;
     let all = &shell.agents.islands;
     let mut laid = Vec::new();
@@ -128,7 +128,7 @@ fn label<'a>(isl: &AgentIsland, tail: String, size: f32, muted: Color) -> iced::
 }
 
 /// `s` cut with an ellipsis to `max` wide.
-fn fit(s: &str, max: f32) -> String {
+pub(crate) fn fit(s: &str, max: f32) -> String {
     let width = |t: &str| fonts::line_width(t, CHROME_SIZE, fonts::chrome());
     if width(s) <= max {
         return s.to_string();
@@ -144,7 +144,7 @@ fn fit(s: &str, max: f32) -> String {
     String::new()
 }
 
-fn name_font() -> Font {
+pub(crate) fn name_font() -> Font {
     Font {
         weight: iced::font::Weight::Medium,
         ..fonts::chrome()
@@ -203,7 +203,7 @@ fn card_open(shell: &Shell) -> bool {
 /// islands laid out, then the +N island.
 pub fn left_group_end(shell: &Shell) -> f32 {
     let (laid, more) = layout(shell);
-    let mut x = EDGE + ISLAND_H;
+    let mut x = crate::menubar::workspaces::row_end(shell);
     for l in &laid {
         x += ISLAND_GAP + l.width;
     }
@@ -217,7 +217,7 @@ pub fn left_group_end(shell: &Shell) -> f32 {
 /// island for `None`.
 pub fn anchor_x(shell: &Shell, key: Option<&str>) -> f32 {
     let (laid, _) = layout(shell);
-    let mut x = EDGE + ISLAND_H + ISLAND_GAP;
+    let mut x = crate::menubar::workspaces::row_end(shell) + ISLAND_GAP;
     for l in &laid {
         if key == Some(l.island.key.as_str()) {
             return x;

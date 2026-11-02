@@ -41,7 +41,7 @@ system key.
 | Super+Backtick | Show the focused app's next window on this workspace (Super+Shift+Backtick: the previous) |
 | Super+1 … Super+9 | Show workspace 1 to 9 |
 | Super+Ctrl+1 … Super+Ctrl+9 | Send the focused window to workspace 1 to 9 |
-| Super+Tab | Next workspace (Super+Shift+Tab: the previous) |
+| Super+Tab | Next workspace (Super+Shift+Tab: the previous); [as islands](#workspaces-as-islands), past those switched off |
 | Super+Keypad 0 | Move the focused window to Full |
 | Super+Keypad 4 | Move the focused window to the left column (the default layout's) |
 | Super+Keypad 6 | Move the focused window to the right column (the default layout's) |
@@ -341,6 +341,27 @@ then, for the current one:
   next one, for the first), in the same zones, at the end of its bar (a
   group's windows in that app's group there). The last workspace cannot
   be deleted.
+
+### Workspaces as islands
+
+Settings → Appearance → Workspaces → **Islands in the top row** takes the
+head off the bar and puts each workspace in an island of its own, right of
+the flower. An island shows the workspace's number (its place: Super+1 to
+Super+9), its name and a dot. On a workspace you are not on, a diamond means
+a window there waits on a decision, and a mail icon that you have unread mail
+and Mail is there. When other islands follow (Projects sessions asking or
+finished), a thin line sets the workspaces apart from them.
+
+- **Click** an island to show that workspace. Click the one showing for its
+  menu: New Workspace, Rename…, Delete.
+- **Drag** an island to reorder the workspaces; the numbers follow.
+- **The dot** says whether Super+Tab stops there: lit, it does. Click it to
+  change that. Unlit, Super+Tab and Super+Shift+Tab pass over the workspace;
+  Super+1 to Super+9 and a click still show it. With every other workspace
+  unlit, they stay where they are.
+
+Turning the setting off brings the head back, and Super+Tab steps through
+every workspace again. The dots are kept for the next time.
 
 ## Workspaces
 

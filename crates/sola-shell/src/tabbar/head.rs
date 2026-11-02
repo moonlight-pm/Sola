@@ -26,10 +26,12 @@ const OPEN_A: f32 = 0.14;
 const RADIUS: f32 = 7.0;
 const CHEVRON: u16 = 12;
 const CHEVRON_A: f32 = 0.55;
+/// The unread dot.
+const DOT: f32 = 6.0;
 
 /// What another workspace shows in the head.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mark {
+pub(crate) enum Mark {
     Waiting,
     Unread,
 }
@@ -64,12 +66,8 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     ]
     .spacing(6)
     .align_y(Alignment::Center);
-    match elsewhere(shell) {
-        Some(Mark::Waiting) => label = label.push(status_mark(SidebarIndicator::Waiting)),
-        Some(Mark::Unread) => {
-            label = label.push(dot(shell.theme.extended_palette().primary.base.color));
-        }
-        None => {}
+    if let Some(mark) = elsewhere(shell) {
+        label = label.push(mark_view(shell, mark));
     }
     button(container(label).height(Length::Fill).align_y(Alignment::Center))
         .padding(Padding::from([0.0, PAD_H]))
@@ -129,8 +127,16 @@ fn elsewhere(shell: &Shell) -> Option<Mark> {
     }
 }
 
+/// A mark as it shows.
+fn mark_view(shell: &Shell, mark: Mark) -> Element<'static, Msg> {
+    match mark {
+        Mark::Waiting => status_mark(SidebarIndicator::Waiting),
+        Mark::Unread => dot(shell.theme.extended_palette().primary.base.color),
+    }
+}
+
 /// What workspace `index` has waiting: a decision outranks unread mail.
-fn mark(shell: &Shell, index: usize) -> Option<Mark> {
+pub(crate) fn mark(shell: &Shell, index: usize) -> Option<Mark> {
     let windows = shell.tabs.windows_on(index);
     let waiting = windows.iter().any(|w| {
         shell
@@ -153,12 +159,12 @@ fn mark(shell: &Shell, index: usize) -> Option<Mark> {
 
 fn dot(color: Color) -> Element<'static, Msg> {
     container(text(""))
-        .width(Length::Fixed(6.0))
-        .height(Length::Fixed(6.0))
+        .width(Length::Fixed(DOT))
+        .height(Length::Fixed(DOT))
         .style(move |_| container::Style {
             background: Some(color.into()),
             border: Border {
-                radius: 3.0.into(),
+                radius: (DOT / 2.0).into(),
                 ..Border::default()
             },
             ..container::Style::default()

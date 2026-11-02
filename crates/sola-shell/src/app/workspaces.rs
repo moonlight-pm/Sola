@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use sola_bus::topics::{Topic, WindowWorkspace, Workspaces};
+use sola_bus::topics::{Topic, WindowWorkspace, WorkspacePrefs, Workspaces};
 
 use super::{Shell, with_bus};
 
@@ -20,6 +20,10 @@ pub struct WorkspaceState {
     sent_windows: HashMap<u32, String>,
     /// The workspace being renamed and the name typed so far.
     pub renaming: Option<(usize, String)>,
+    /// How the workspaces show and step (`Topic::WorkspacePrefs`).
+    prefs: WorkspacePrefs,
+    /// Where the menu of a workspace island hangs: the island's left edge.
+    pub menu_x: f32,
 }
 
 /// What the workspace menu can do.
@@ -30,6 +34,7 @@ pub enum WorkspaceAction {
     Rename(usize),
     MoveLeft(usize),
     MoveRight(usize),
+    Reorder { from: usize, to: usize },
     Delete(usize),
 }
 
@@ -45,10 +50,106 @@ impl Shell {
         self.focus_showing_workspace();
     }
 
-    /// Super+Tab / Super+Shift+Tab.
+    /// Super+Tab / Super+Shift+Tab. With the workspaces as islands it
+    /// passes over those whose dot is unlit; the switcher in the bar has no
+    /// dots, and steps through them all.
     pub(crate) fn step_workspace(&mut self, back: bool) {
-        let next = self.tabs.step_workspace(back);
+        let skipped: &[String] = if self.workspace_islands() {
+            &self.workspace.prefs.skipped
+        } else {
+            &[]
+        };
+        let next = self.tabs.step_workspace(back, skipped);
         self.show_workspace(next);
+    }
+
+    /// The workspaces are islands in the top row.
+    pub(crate) fn workspace_islands(&self) -> bool {
+        self.workspace.prefs.islands
+    }
+
+    /// Super+Tab passes over the workspace with this id.
+    pub(crate) fn workspace_skipped(&self, id: &str) -> bool {
+        self.workspace.prefs.skipped.iter().any(|s| s == id)
+    }
+
+    /// The showing workspace's menu or rename card is up.
+    pub(crate) fn workspace_menu_open(&self) -> bool {
+        self.menu_open
+            && matches!(
+                self.open_panel,
+                Some(super::Panel::Workspace(_) | super::Panel::RenameWorkspace)
+            )
+    }
+
+    /// `Topic::WorkspacePrefs` (`None`: retracted, the defaults). The bar
+    /// and the top row follow from it; a menu hanging from the old one goes.
+    pub(crate) fn on_workspace_prefs(&mut self, prefs: Option<WorkspacePrefs>) {
+        let prefs = prefs.unwrap_or_default();
+        if prefs.islands != self.workspace.prefs.islands && self.workspace_menu_open() {
+            let _ = self.dismiss_open_menu();
+            self.emit_overlay_frames();
+            self.emit_composition();
+            self.emit_registered_chords();
+        }
+        self.workspace.prefs = prefs;
+        self.emit_idle_keep(false);
+    }
+
+    /// An island's dot: Super+Tab stops at workspace `index`, or not.
+    pub(crate) fn toggle_workspace_cycle(&mut self, index: usize) {
+        let Some(id) = self.tabs.workspaces().into_iter().nth(index).map(|w| w.id) else {
+            return;
+        };
+        let skipped = &mut self.workspace.prefs.skipped;
+        if skipped.contains(&id) {
+            skipped.retain(|s| *s != id);
+        } else {
+            skipped.push(id);
+        }
+        self.emit_workspace_prefs();
+    }
+
+    fn emit_workspace_prefs(&self) {
+        let prefs = self.workspace.prefs.clone();
+        with_bus(|bus| {
+            let _ = bus.emit(Topic::WorkspacePrefs(prefs));
+        });
+    }
+
+    /// A click on a workspace island: show it; the showing one's menu.
+    pub(crate) fn on_workspace_island_click(&mut self, index: usize, x: f32) -> iced::Task<super::Msg> {
+        if index != self.tabs.showing() {
+            return self.on_workspace_menu(WorkspaceAction::Show(index));
+        }
+        self.workspace.menu_x = x;
+        self.toggle_workspace_menu(index);
+        iced::Task::none()
+    }
+
+    /// Open the showing workspace's menu, or close it.
+    pub(crate) fn toggle_workspace_menu(&mut self, index: usize) {
+        let open = self.menu_open && self.open_panel == Some(super::Panel::Workspace(index));
+        let _ = self.dismiss_open_menu();
+        if !open {
+            self.menu_open = true;
+            self.set_open_panel(Some(super::Panel::Workspace(index)));
+        }
+        self.emit_overlay_frames();
+        self.emit_composition();
+        self.emit_registered_chords();
+    }
+
+    /// A dragged workspace island passed another. A menu open under the
+    /// island would name the wrong place.
+    pub(crate) fn on_workspace_island_move(&mut self, from: usize, to: usize) {
+        if self.workspace_menu_open() {
+            let _ = self.dismiss_open_menu();
+            self.emit_overlay_frames();
+            self.emit_composition();
+            self.emit_registered_chords();
+        }
+        self.workspace_action(WorkspaceAction::Reorder { from, to });
     }
 
     /// Send the focused window to workspace `index` (Super+Ctrl+1…9). The
@@ -94,8 +195,16 @@ impl Shell {
             WorkspaceAction::MoveRight(index) => {
                 self.tabs.move_workspace(index, false);
             }
+            WorkspaceAction::Reorder { from, to } => {
+                self.tabs.reorder_workspace(from, to);
+            }
             WorkspaceAction::Delete(index) => {
+                let id = self.tabs.workspaces().into_iter().nth(index).map(|w| w.id);
                 if self.tabs.delete_workspace(index) {
+                    if let Some(id) = id.filter(|id| self.workspace_skipped(id)) {
+                        self.workspace.prefs.skipped.retain(|s| *s != id);
+                        self.emit_workspace_prefs();
+                    }
                     self.focus_showing_workspace();
                     self.emit_all_frames();
                 }
@@ -250,6 +359,8 @@ impl Shell {
         self.workspace.sent_windows = next;
         if list_changed {
             self.workspace.sent = Some(list.clone());
+            // A name or an island more moves what follows in the top row.
+            self.emit_idle_keep(false);
         }
         with_bus(|bus| {
             if list_changed {

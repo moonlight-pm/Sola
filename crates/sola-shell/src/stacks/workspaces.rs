@@ -55,14 +55,20 @@ impl Stacks {
         true
     }
 
-    /// The workspace after (or before) the showing one, wrapping.
-    pub fn step_workspace(&self, back: bool) -> usize {
+    /// The workspace after (or before) the showing one, wrapping, passing
+    /// over `skipped` (by id). The showing one when no other is left.
+    pub fn step_workspace(&self, back: bool, skipped: &[String]) -> usize {
         let n = self.desks.len();
-        if back {
-            (self.showing + n - 1) % n
-        } else {
-            (self.showing + 1) % n
-        }
+        (1..n)
+            .map(|step| {
+                if back {
+                    (self.showing + n - step) % n
+                } else {
+                    (self.showing + step) % n
+                }
+            })
+            .find(|&i| !skipped.contains(&self.desks[i].id))
+            .unwrap_or(self.showing)
     }
 
     /// Send `window_id` to workspace `index`: the same zone there, at the
@@ -118,6 +124,22 @@ impl Stacks {
         }
         let showing_id = self.showing_id().to_string();
         self.desks.swap(index, to);
+        self.showing = self
+            .desks
+            .iter()
+            .position(|d| d.id == showing_id)
+            .unwrap_or(0);
+        true
+    }
+
+    /// Move workspace `from` to place `to`, the ones between making room.
+    pub fn reorder_workspace(&mut self, from: usize, to: usize) -> bool {
+        if from == to || from >= self.desks.len() || to >= self.desks.len() {
+            return false;
+        }
+        let showing_id = self.showing_id().to_string();
+        let desk = self.desks.remove(from);
+        self.desks.insert(to, desk);
         self.showing = self
             .desks
             .iter()

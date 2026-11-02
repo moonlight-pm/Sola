@@ -245,6 +245,12 @@ pub enum Msg {
     /// Open (or close) the workspace menu (the tab bar's head) for the
     /// showing workspace.
     WorkspaceMenu(usize),
+    /// A click on a workspace island: its place, and its left edge.
+    WorkspaceIslandClick { index: usize, x: f32 },
+    /// A dragged workspace island passed another.
+    WorkspaceIslandMove { from: usize, to: usize },
+    /// A workspace island's dot: Super+Tab stops there, or not.
+    WorkspaceCycle(usize),
     /// The rename field changed.
     WorkspaceRenameInput(String),
     /// Return in the rename field.
@@ -2073,6 +2079,23 @@ impl Shell {
                     crate::audio::view::CARD_HEIGHT,
                 )
             }
+            // Under its island.
+            Some(Panel::Workspace(_)) if self.workspace_islands() => {
+                let w = crate::menu::view::MENU_WIDTH;
+                (
+                    clamp_x(self.workspace.menu_x, w),
+                    w,
+                    crate::menu::workspace::menu_height(self),
+                )
+            }
+            Some(Panel::RenameWorkspace) if self.workspace_islands() => {
+                let w = crate::menu::view::MENU_WIDTH;
+                (
+                    clamp_x(self.workspace.menu_x, w),
+                    w,
+                    crate::menu::workspace::RENAME_HEIGHT,
+                )
+            }
             // Under the tab bar's head, not the menubar.
             Some(Panel::Workspace(_)) => {
                 let (x, y) = crate::tabbar::head::menu_anchor();
@@ -3028,16 +3051,16 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::WorkspaceMenu(index) => {
-                if self.menu_open && self.open_panel == Some(Panel::Workspace(index)) {
-                    let _ = self.dismiss_open_menu();
-                } else {
-                    let _ = self.dismiss_open_menu();
-                    self.menu_open = true;
-                    self.set_open_panel(Some(Panel::Workspace(index)));
-                }
-                self.emit_overlay_frames();
-                self.emit_composition();
-                self.emit_registered_chords();
+                self.toggle_workspace_menu(index);
+                iced::Task::none()
+            }
+            Msg::WorkspaceIslandClick { index, x } => self.on_workspace_island_click(index, x),
+            Msg::WorkspaceIslandMove { from, to } => {
+                self.on_workspace_island_move(from, to);
+                iced::Task::none()
+            }
+            Msg::WorkspaceCycle(index) => {
+                self.toggle_workspace_cycle(index);
                 iced::Task::none()
             }
             Msg::WorkspaceRenameInput(name) => {
@@ -3307,6 +3330,61 @@ mod hide_tests {
     /// list came before the zone grid, and a window saved in a zone the
     /// default grid lacks went to Full. The list now waits for the bus to
     /// say it has replayed everything.
+    #[test]
+    fn super_tab_passes_over_switched_off_workspaces_only_with_the_islands() {
+        use sola_bus::topics::{Topic, WorkspacePrefs};
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        shell.tabs.add_workspace("Two");
+        shell.tabs.add_workspace("Three");
+        shell.tabs.show_workspace(0);
+        let two = shell.tabs.workspaces()[1].id.clone();
+        let prefs = |islands: bool, skipped: Vec<String>| {
+            let mut m = Topic::WorkspacePrefs(WorkspacePrefs { islands, skipped }).to_message();
+            m.sticky = true;
+            m
+        };
+
+        // The switcher in the bar has no switches: every workspace counts.
+        let _ = shell.handle_bus(&prefs(false, vec![two.clone()]));
+        assert!(!shell.workspace_islands());
+        shell.step_workspace(false);
+        assert_eq!(shell.tabs.showing(), 1);
+
+        shell.tabs.show_workspace(0);
+        let _ = shell.handle_bus(&prefs(true, vec![two.clone()]));
+        assert!(shell.workspace_islands());
+        shell.step_workspace(false);
+        assert_eq!(shell.tabs.showing(), 2, "passes over Two");
+
+        // Its switch puts it back.
+        shell.toggle_workspace_cycle(1);
+        assert!(!shell.workspace_skipped(&two));
+        shell.tabs.show_workspace(0);
+        shell.step_workspace(false);
+        assert_eq!(shell.tabs.showing(), 1);
+
+        // A workspace gone leaves nothing behind in the list.
+        shell.toggle_workspace_cycle(1);
+        assert!(shell.workspace_skipped(&two));
+        shell.workspace_action(workspaces::WorkspaceAction::Delete(1));
+        assert!(!shell.workspace_skipped(&two));
+    }
+
+    #[test]
+    fn a_click_on_a_workspace_island_shows_it_and_the_showing_one_opens_its_menu() {
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        shell.tabs.add_workspace("Two");
+        shell.tabs.show_workspace(0);
+        let _ = shell.on_workspace_island_click(1, 90.0);
+        assert_eq!(shell.tabs.showing(), 1);
+        assert!(!shell.workspace_menu_open());
+        let _ = shell.on_workspace_island_click(1, 90.0);
+        assert_eq!(shell.workspace.menu_x, 90.0);
+        assert!(shell.workspace_menu_open());
+        let _ = shell.on_workspace_island_click(1, 90.0);
+        assert!(!shell.workspace_menu_open(), "again closes it");
+    }
+
     #[test]
     fn kept_windows_wait_for_the_replay_and_take_their_saved_zones() {
         use sola_bus::topics::{GridZone, TabLayout, TabLayoutZone, Topic, Workspace, ZoneLayout};

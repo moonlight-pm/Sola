@@ -423,6 +423,18 @@ pub struct Workspace {
     pub name: String,
 }
 
+/// How the workspaces show and step (`Topic::WorkspacePrefs`, persistent;
+/// Settings and the shell). A topic of its own rather than fields on
+/// `Appearance` or `TabLayout`: a package from before it still reads those.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct WorkspacePrefs {
+    /// Each workspace an island in the top row, by the flower, in place of
+    /// the switcher at the head of the bar.
+    pub islands: bool,
+    /// The workspaces (by id) Super+Tab passes over, while `islands`.
+    pub skipped: Vec<String>,
+}
+
 /// The workspaces in order and which one is showing (shell → apps).
 /// Carried by the sticky `Topic::Workspaces`; the browser picks the
 /// profile of the one showing for a new window.
@@ -2434,6 +2446,11 @@ define_topics! {
     // window_id; retracted on close. Appended last.
     #[sticky(keys = [window_id])]
     WindowTab(WindowTab),
+
+    // How the workspaces show and step (Settings and the shell).
+    // Persistent. Appended last.
+    #[persistent]
+    WorkspacePrefs(WorkspacePrefs),
 }
 
 #[cfg(test)]
@@ -2463,6 +2480,25 @@ mod tests {
 
     /// The bus's encoding has no field names: a tab with no icon must
     /// still read back (a skipped field broke every such announcement).
+    #[test]
+    fn workspace_prefs_read_back_from_the_bus_and_the_file() {
+        let prefs = WorkspacePrefs {
+            islands: true,
+            skipped: vec!["ws-1".into()],
+        };
+        match Topic::parse(&Topic::WorkspacePrefs(prefs.clone()).to_message()) {
+            Some(Topic::WorkspacePrefs(read)) => assert_eq!(read, prefs),
+            other => panic!("read back as {other:?}"),
+        }
+        let value = Topic::WorkspacePrefs(prefs.clone())
+            .to_yaml_value()
+            .expect("persistent");
+        match Topic::from_yaml_section(TopicKind::WorkspacePrefs, value) {
+            Some(Topic::WorkspacePrefs(read)) => assert_eq!(read, prefs),
+            other => panic!("read back as {other:?}"),
+        }
+    }
+
     #[test]
     fn a_tab_with_no_icon_reads_back() {
         let tab = super::Tab {

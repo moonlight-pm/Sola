@@ -249,6 +249,9 @@ impl App {
                         self.appearance.look = if message.sticky { a } else { Default::default() };
                         appearance::settle(&mut self.appearance.look);
                     }
+                    Some(Topic::WorkspacePrefs(p)) => {
+                        self.appearance.workspaces = if message.sticky { p } else { Default::default() };
+                    }
                     Some(Topic::Theme(t)) => {
                         self.appearance.theme = Some(t);
                     }

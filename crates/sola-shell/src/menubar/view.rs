@@ -2,8 +2,10 @@
 //! per group").
 //!
 //! Layout (left-to-right), a gap in from every edge, the ground between:
-//!   (✿) (1 Main  2 Mail ◆)        (toast)        (✉ 🔔 ᛒ) (spectrum)
+//!   (✿) (1 Main) (2 Mail ◆)       (toast)        (✉ 🔔 ᛒ) (spectrum)
 //!                                            (CPU GPU MEM) (RX TX) (clock)
+//!
+//! The workspaces are here only when set to be islands ([`super::workspaces`]).
 //!
 //! Each group is one island: [`ISLAND_H`] tall, a pill, [`ISLAND_GAP`]
 //! apart, with a lit top edge. An island whose panel is showing lifts a
@@ -152,8 +154,11 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         index: 0,
         is_system: true,
     });
-    // Then an island per agent session that asks or has finished.
+    // Then the workspaces, when they are islands, and an island per agent
+    // session that asks or has finished.
     let left = row![flower]
+        .push(crate::menubar::workspaces::islands(shell))
+        .push(crate::menubar::workspaces::separator(shell))
         .extend(crate::agents::view::row_islands(shell))
         .spacing(ISLAND_GAP)
         .align_y(Alignment::Center);

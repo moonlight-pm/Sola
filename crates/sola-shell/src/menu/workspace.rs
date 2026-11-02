@@ -1,6 +1,8 @@
 //! The workspace menu and the rename card (Next slice 5), in the menu
 //! overlay under the tab bar's head: the workspaces (the showing one
-//! checked), then what to do with the showing one. Items are shell
+//! checked), then what to do with the showing one. Under a workspace island
+//! (`crate::menubar::workspaces`) it is only the latter: the islands are
+//! the list, and dragging one moves it. Items are shell
 //! `MenuAction`s (`workspace.<verb>.<index>`), routed by [`parse`].
 
 use iced::widget::{Id as WidgetId, column, text};
@@ -43,6 +45,14 @@ fn items(shell: &Shell, index: usize) -> Vec<MenuItem> {
         disabled,
         checked: false,
     };
+    if shell.workspace_islands() {
+        return vec![
+            item("new", "New Workspace", false),
+            item("rename", "Rename…", false),
+            MenuItem::Divider,
+            item("delete", "Delete", count < 2),
+        ];
+    }
     let mut items: Vec<MenuItem> = shell
         .tabs
         .workspaces()
