@@ -18,7 +18,7 @@ const APP_ID: &str = "sola-mail";
 
 fn main() -> iced::Result {
     // Rustls crypto provider (required before any TLS).
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     startup(APP_ID);
     // After logging init, so it chains to the log hook.

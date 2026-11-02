@@ -25,13 +25,13 @@ edition = "2024"
 
 [workspace.dependencies]
 base64 = "0.22"
-rustls = { version = "0.23", features = ["aws_lc_rs"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde_yaml_ng = "0.10"
 toml = "0.8"
 ureq = "3"
 # sola-mail protocol stack (lifted from apocrypha/apps/mail)
 imap = { version = "2", default-features = false }
-rustls-connector = { version = "0.21", features = ["native-certs"] }
+rustls-connector = { version = "0.21", default-features = false, features = ["native-certs", "rustls--ring"] }
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "rustls-tls", "hostname"] }
 mail-parser = "0.9"
 
