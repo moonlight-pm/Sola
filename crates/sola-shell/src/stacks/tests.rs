@@ -900,3 +900,27 @@ fn kept_windows_go_back_to_their_places_after_a_shell_restart() {
     let want: Vec<(Zone, Vec<String>)> = saved.zones.iter().map(|z| (z.zone, z.apps.clone())).collect();
     assert_eq!(zones, want);
 }
+
+#[test]
+fn a_multi_window_web_app_groups_and_its_next_window_joins() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    s.place(1, "firefox", "firefox", false, false, t);
+    s.place(2, "web-1", "web-1/a", false, false, t);
+    assert!(!s.is_grouped("web-1"));
+    assert!(matches!(s.blocks()[1], Block::Loose(_)));
+
+    let apps: std::collections::HashSet<String> = ["web-1".to_string()].into();
+    assert!(s.set_multi_window(apps.clone()));
+    assert!(!s.set_multi_window(apps), "nothing changed");
+    assert!(s.is_grouped("web-1"));
+    assert_eq!(bar(&s), [1, 2]);
+    assert!(matches!(&s.blocks()[1], Block::Group { app, .. } if app == "web-1"));
+
+    s.place(3, "web-1", "web-1/b", false, false, t);
+    assert!(matches!(&s.blocks()[1], Block::Group { tabs, .. } if tabs.len() == 2));
+
+    assert!(s.set_multi_window(Default::default()));
+    assert!(!s.is_grouped("web-1"));
+    assert!(s.blocks().iter().all(|b| matches!(b, Block::Loose(_))));
+}

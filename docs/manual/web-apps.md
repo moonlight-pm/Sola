@@ -15,7 +15,8 @@ Page…** in the page's right-click menu. Both work only on an `http://` or
 
 A sheet asks for the app's **Name**, suggested from the page title: the
 site's part of it (*Slack* from "general - Acme - Slack"), else the
-title, else the site's domain. **Wrap** (or Enter) turns the page into the
+title, else the site's domain, and whether it should **Open several
+windows** ([below](#several-windows)). **Wrap** (or Enter) turns the page into the
 app in place: no reload and no new sign-in. Its window takes the app's
 name and menus, its row in the bar says the app's name, and the launcher
 lists it. **Cancel**, or a click beside the sheet, leaves the page as it
@@ -66,10 +67,26 @@ Choose the app's name in the launcher. Its command is
 `/bin/sola-browser --app <app_id>`. If Browser is running, the app's
 window comes forward, or opens at its start page. Otherwise Browser
 starts (with its saved pages) and opens it. Launching it again brings the
-same window forward.
+same window forward, unless the app opens several windows.
 
 Browser's session keeps app windows as it keeps pages: after a restart
 they come back as the app, in their place in the bar.
+
+## Several windows
+
+An app that **opens several windows** works like Browser pages or
+Terminal: for a site you keep more than one view of.
+
+- The launcher opens another window instead of bringing one forward, and
+  **New Window** (⌘N) in the app's menu does too. A new window starts at the
+  app's start page.
+- Its windows sit in the bar under the app's name, each named by its page's
+  title. Super+Backtick steps through them.
+- After a restart they all come back, each at its own page, in their place.
+
+Choose it when you wrap the page, or later in **Settings → Applications →
+Web apps**. Turning it on regroups the app's window at once. It cannot be
+turned off while more than one window is open: close all but one first.
 
 ## Remove
 
@@ -79,8 +96,8 @@ windows. The sign-in stays in the Browser profile.
 
 **Settings → Applications → Web apps** lists them too, with the site
 each starts on. Open one there to rename it (**Save**; its menus take the
-new name) or **Remove** it (no question asked; its windows close, the
-sign-in stays).
+new name), set whether it opens several windows, or **Remove** it (no
+question asked; its windows close, the sign-in stays).
 
 ## Limits
 

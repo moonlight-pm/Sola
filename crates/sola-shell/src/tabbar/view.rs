@@ -30,7 +30,7 @@ use sola_kit::components::{
 
 use super::{group_row_id, row_id};
 use crate::app::{Msg, Shell};
-use crate::stacks::{Block, Tab, grouped};
+use crate::stacks::{Block, Tab};
 
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
     let hidden = |app: &str| shell.is_app_hidden(app);
@@ -44,7 +44,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     let ghost = shell.launch_ghost();
     // The ghost joins its group when the group is on the bar.
     let ghost_group = ghost.filter(|(_, _, app)| {
-        grouped(app)
+        shell.tabs.is_grouped(app)
             && shell.tabs.blocks().iter().any(
                 |b| matches!(b, Block::Group { app: a, tabs, .. } if a == app && !tabs.is_empty()),
             )

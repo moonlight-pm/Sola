@@ -1326,7 +1326,15 @@ impl Shell {
     /// brought forward instead (the Dock's way).
     const NEW_WINDOW_APPS: &'static [&'static str] = &["sola-browser", "sola-terminal"];
 
-    /// The window to bring forward for `app_id`: its last used, else its
+    /// The window the launcher brings forward for `app_id` instead of
+    /// starting it: none for an app whose launch is a new window.
+    pub fn window_to_raise(&self, app_id: &str) -> Option<u32> {
+        let new_window = Self::NEW_WINDOW_APPS.contains(&app_id)
+            || self.applications.get(app_id).is_some_and(|a| a.multi_window);
+        if new_window { None } else { self.running_window_of(app_id) }
+    }
+
+    /// The window of `app_id` to bring forward: its last used, else its
     /// newest.
     pub fn running_window_of(&self, app_id: &str) -> Option<u32> {
         let windows: Vec<&Window> = self
@@ -1366,9 +1374,7 @@ impl Shell {
                 self.emit_registered_chords();
                 return iced::Task::none();
             }
-            if !Self::NEW_WINDOW_APPS.contains(&id)
-                && let Some(wid) = self.running_window_of(id)
-            {
+            if let Some(wid) = self.window_to_raise(id) {
                 self.launcher.active = false;
                 self.emit_composition();
                 self.emit_registered_chords();
@@ -3307,6 +3313,29 @@ mod hide_tests {
     /// list came before the zone grid, and a window saved in a zone the
     /// default grid lacks went to Full. The list now waits for the bus to
     /// say it has replayed everything.
+    #[test]
+    fn the_launcher_opens_another_window_of_a_multi_window_app_and_raises_any_other() {
+        use sola_core::applications::{AppKind, Application};
+        let app = |multi_window| Application {
+            app_id: "web-1".into(),
+            label: "Shortcut".into(),
+            command: "/bin/sola-browser --app web-1".into(),
+            kind: AppKind::Web,
+            multi_window,
+            ..Default::default()
+        };
+        let mut shell = test_shell(vec![win(5, "web-1", "Shortcut")], None, &[]);
+        shell.on_application(app(false), true);
+        assert_eq!(shell.window_to_raise("web-1"), Some(5), "one window: it comes forward");
+
+        shell.on_application(app(true), true);
+        assert!(shell.tabs.is_grouped("web-1"));
+        assert_eq!(shell.window_to_raise("web-1"), None, "several: another opens");
+
+        shell.on_application(app(false), true);
+        assert!(!shell.tabs.is_grouped("web-1"));
+    }
+
     #[test]
     fn kept_windows_wait_for_the_replay_and_take_their_saved_zones() {
         use sola_bus::topics::{GridZone, TabLayout, TabLayoutZone, Topic, Workspace, ZoneLayout};

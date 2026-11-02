@@ -115,6 +115,7 @@ pub enum Msg {
     /// Use as Desktop Background: its lightbox (`app/wallpaper.rs`).
     Wallpaper(wallpaper::Event),
     WrapName(String),
+    WrapMultiWindow(bool),
     WrapSubmit,
     WrapCancel,
     /// A web app's Remove Web App… sheet.
@@ -897,6 +898,11 @@ impl<E: Engine> App<E> {
                     draft.name = name;
                 }
             }
+            Msg::WrapMultiWindow(on) => {
+                if let Some(draft) = &mut self.webapps.wrap {
+                    draft.multi_window = on;
+                }
+            }
             Msg::WrapSubmit => return self.wrap_page(),
             Msg::WrapCancel => self.webapps.wrap = None,
             Msg::RemoveAppConfirm => return self.remove_app(),
@@ -1224,7 +1230,7 @@ impl<E: Engine> App<E> {
                             );
                             launched = Task::batch([launched, opened]);
                         }
-                        crate::instance::Handoff::OpenApp(id) => self.open_app(&id),
+                        crate::instance::Handoff::OpenApp(id) => self.launch_app(&id),
                     }
                 }
                 #[cfg(feature = "vault")]
@@ -1855,11 +1861,18 @@ impl<E: Engine> App<E> {
             .map_or(sola_kit::Chrome::Tiled, |id| self.float.chrome(id))
     }
 
-    /// The window title: the page's title and address; a web app's name.
+    /// The window title: the page's title and address; a web app's name, or
+    /// the page's title when it opens several windows (they must differ in
+    /// the bar).
     pub fn title(&self, window: iced::window::Id) -> String {
         let tab = self.windows.tab_of(window);
         if let Some(app) = tab.and_then(|t| self.webapps.app_of(t)) {
-            return app.label.clone();
+            let page = tab
+                .filter(|_| app.multi_window)
+                .and_then(|tab| self.cached_tabs.iter().find(|t| t.id == tab))
+                .map(|t| t.title.trim())
+                .filter(|t| !t.is_empty());
+            return page.unwrap_or(&app.label).to_string();
         }
         match tab.and_then(|tab| self.cached_tabs.iter().find(|t| t.id == tab)) {
             Some(t) => crate::util::browser_window_title(&t.title, &t.url),

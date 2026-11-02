@@ -1061,7 +1061,7 @@ impl Shell {
     ///
     /// `sticky=false` is a retract (a Settings remove) — drop the catalog
     /// entry rather than re-adding an empty one.
-    fn on_application(&mut self, a: Application, sticky: bool) {
+    pub(crate) fn on_application(&mut self, a: Application, sticky: bool) {
         if !sticky {
             tracing::info!(app_id = %a.app_id, "Application retract");
             self.applications.remove(&a.app_id);
@@ -1069,6 +1069,16 @@ impl Shell {
             let _ = self.applications.update(&a.app_id.clone(), a);
         } else {
             let _ = self.applications.add(a);
+        }
+        let multi_window = self
+            .applications
+            .apps
+            .iter()
+            .filter(|a| a.multi_window)
+            .map(|a| a.app_id.clone())
+            .collect();
+        if self.tabs.set_multi_window(multi_window) {
+            self.persist_tabs();
         }
         if self.launcher.active {
             let apps = self.applications.clone();
