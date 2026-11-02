@@ -1212,6 +1212,10 @@ impl<E: Engine> App<E> {
                         crate::instance::Handoff::OpenUrl(url) => {
                             // Its window opens in front and takes focus.
                             tracing::info!(%url, "opening handed-off URL in this chrome");
+                            self.open_outside_link(url, true);
+                        }
+                        crate::instance::Handoff::OpenPage(url) => {
+                            tracing::info!(%url, "opening a page handed to this chrome");
                             self.open_tab(url, true);
                         }
                         crate::instance::Handoff::Launch => {
@@ -1358,6 +1362,7 @@ impl<E: Engine> App<E> {
                     }
                     Some(Topic::Replayed) => {
                         self.replayed = true;
+                        self.open_held_links();
                         if self.scheme_wait {
                             tracing::info!("no Appearance saved: restored pages open without light or dark");
                             restored = self.open_restored();

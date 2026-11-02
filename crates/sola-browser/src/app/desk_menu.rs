@@ -166,7 +166,9 @@ impl<E: Engine> App<E> {
                 // Behind, as the page menu always opened it: the page
                 // you clicked on stays in front.
                 if let Some(url) = ctx.link_url.filter(|u| !u.is_empty()) {
-                    self.open_tab(url, false);
+                    let opener = self.cached_active;
+                    let profile = self.profile_of(opener);
+                    self.open_link(opener, url, false, &profile);
                 }
                 Task::none()
             }

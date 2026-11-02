@@ -49,6 +49,22 @@ pub fn open(uri: &str) -> Result<(), String> {
     crate::opener::spawn(&bin, &uri)
 }
 
+/// Open `uri` as a Browser page even when it is on a web app's site: the
+/// user asked for the browser (the launcher's Browser field). [`open`] lets
+/// the browser send a link to the app its site belongs to. With no browser
+/// up it starts as [`open`] does, and the link goes the usual way.
+pub fn open_page(uri: &str) -> Result<(), String> {
+    let uri = uri.trim();
+    if !uri.is_empty() && try_handoff_running_chrome(&format!("{OPEN_PAGE} {uri}")) {
+        return Ok(());
+    }
+    open(uri)
+}
+
+/// The `chrome.sock` line for [`open_page`]. Must match `sola-browser`
+/// `instance::OPEN_PAGE`.
+const OPEN_PAGE: &str = "@page";
+
 /// If `s` is a local file path, return an absolute `file://` URL.
 ///
 /// `xdg-open` / terminal `open` pass `%u` as the original argument — often a

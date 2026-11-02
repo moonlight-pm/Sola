@@ -338,7 +338,7 @@ pub fn handle_bus<E: Engine>(
 pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Msg> {
     match intent {
         BrowserIntent::NewTab { url, activate } => {
-            app.open_tab(url, activate);
+            app.open_outside_link(url, activate);
             Task::none()
         }
         BrowserIntent::NewBlankTab => {

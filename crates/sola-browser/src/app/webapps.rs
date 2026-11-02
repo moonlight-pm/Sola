@@ -60,6 +60,9 @@ pub struct WebApps {
     /// A web app to open once its catalog entry is in and the session is
     /// restored (`--app <id>` started this chrome, or a handoff came early).
     pub launch: Option<String>,
+    /// Links from outside that came before the catalog did: where each goes
+    /// is known once the bus has replayed it (url, activate).
+    held_links: Vec<(String, bool)>,
 }
 
 /// The Wrap This Page sheet: the page and the name typed.
@@ -305,6 +308,33 @@ impl<E: Engine> App<E> {
         let tab = self.open_tab_beside(url, true, &profile);
         self.webapps.tabs.insert(tab, app_id.to_string());
         self.persist_session();
+    }
+
+    /// A link from outside the browser (Mail, a terminal, `solactl open`):
+    /// to the web app its site belongs to, on that app's profile, else a
+    /// Browser page. Waits for the catalog, when the browser has just
+    /// started for it.
+    pub(crate) fn open_outside_link(&mut self, url: String, activate: bool) {
+        let bus_up = sola_kit::app::bus().lock().is_ok_and(|b| b.is_connected());
+        if !self.replayed && bus_up {
+            self.webapps.held_links.push((url, activate));
+            return;
+        }
+        let Some(app) = self.webapps.app_for_site(&url).cloned() else {
+            self.open_tab(url, activate);
+            return;
+        };
+        tracing::info!(%url, activate, app = %app.app_id, "outside link → its app");
+        let tab = self.open_tab_beside(url, activate, &app_profile(&app));
+        self.webapps.tabs.insert(tab, app.app_id);
+        self.persist_session();
+    }
+
+    /// The bus has replayed the catalog: the links that waited for it.
+    pub(crate) fn open_held_links(&mut self) {
+        for (url, activate) in std::mem::take(&mut self.webapps.held_links) {
+            self.open_outside_link(url, activate);
+        }
     }
 
     /// A link from page `opener` opening a window of its own (⌘-click,
