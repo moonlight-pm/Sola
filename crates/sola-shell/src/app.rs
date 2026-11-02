@@ -3333,10 +3333,6 @@ mod hide_tests {
         }
     }
 
-    /// Today's failure: at a shell start with the apps kept, the window
-    /// list came before the zone grid, and a window saved in a zone the
-    /// default grid lacks went to Full. The list now waits for the bus to
-    /// say it has replayed everything.
     #[test]
     fn super_tab_passes_over_switched_off_workspaces_only_with_the_islands() {
         use sola_bus::topics::{Topic, WorkspacePrefs};
@@ -3390,6 +3386,9 @@ mod hide_tests {
         assert!(shell.workspace_menu_open());
         let _ = shell.on_workspace_island_click(1, 90.0);
         assert!(!shell.workspace_menu_open(), "again closes it");
+    }
+
+    #[test]
     fn a_query_no_app_matches_offers_the_browser_and_keeps_following_the_typing() {
         use crate::launcher::web::{Row, WebChooser};
         let mut shell = test_shell(Vec::new(), None, &[]);
@@ -3409,6 +3408,9 @@ mod hide_tests {
         shell.launcher_filter("example.com is");
         assert!(matches!(first(&shell), Some(Row::Go { address: false, .. })));
         assert_eq!(shell.launcher.selected, 0);
+    }
+
+    #[test]
     fn the_launcher_opens_another_window_of_a_web_app_and_raises_any_other() {
         use sola_core::applications::{AppKind, Application};
         let app = |app_id: &str, kind| Application {
@@ -3429,6 +3431,10 @@ mod hide_tests {
         assert_eq!(shell.window_to_raise("sola-mail"), Some(6));
     }
 
+    /// Today's failure: at a shell start with the apps kept, the window
+    /// list came before the zone grid, and a window saved in a zone the
+    /// default grid lacks went to Full. The list now waits for the bus to
+    /// say it has replayed everything.
     #[test]
     fn kept_windows_wait_for_the_replay_and_take_their_saved_zones() {
         use sola_bus::topics::{GridZone, TabLayout, TabLayoutZone, Topic, Workspace, ZoneLayout};
