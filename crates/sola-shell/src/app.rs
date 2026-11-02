@@ -1332,7 +1332,15 @@ impl Shell {
     /// brought forward instead (the Dock's way).
     const NEW_WINDOW_APPS: &'static [&'static str] = &["sola-browser", "sola-terminal"];
 
-    /// The window to bring forward for `app_id`: its last used, else its
+    /// The window the launcher brings forward for `app_id` instead of
+    /// starting it: none for an app whose launch is a new window.
+    pub fn window_to_raise(&self, app_id: &str) -> Option<u32> {
+        let new_window = Self::NEW_WINDOW_APPS.contains(&app_id)
+            || self.applications.get(app_id).is_some_and(|a| a.is_web());
+        if new_window { None } else { self.running_window_of(app_id) }
+    }
+
+    /// The window of `app_id` to bring forward: its last used, else its
     /// newest.
     pub fn running_window_of(&self, app_id: &str) -> Option<u32> {
         let windows: Vec<&Window> = self
@@ -1372,9 +1380,7 @@ impl Shell {
                 self.emit_registered_chords();
                 return iced::Task::none();
             }
-            if !Self::NEW_WINDOW_APPS.contains(&id)
-                && let Some(wid) = self.running_window_of(id)
-            {
+            if let Some(wid) = self.window_to_raise(id) {
                 self.launcher.active = false;
                 self.emit_composition();
                 self.emit_registered_chords();
@@ -3403,6 +3409,24 @@ mod hide_tests {
         shell.launcher_filter("example.com is");
         assert!(matches!(first(&shell), Some(Row::Go { address: false, .. })));
         assert_eq!(shell.launcher.selected, 0);
+    fn the_launcher_opens_another_window_of_a_web_app_and_raises_any_other() {
+        use sola_core::applications::{AppKind, Application};
+        let app = |app_id: &str, kind| Application {
+            app_id: app_id.into(),
+            label: app_id.into(),
+            command: "x".into(),
+            kind,
+            ..Default::default()
+        };
+        let mut shell = test_shell(
+            vec![win(5, "web-1", "Shortcut"), win(6, "sola-mail", "Mail")],
+            None,
+            &[],
+        );
+        let _ = shell.applications.add(app("web-1", AppKind::Web));
+        let _ = shell.applications.add(app("sola-mail", AppKind::Command));
+        assert_eq!(shell.window_to_raise("web-1"), None);
+        assert_eq!(shell.window_to_raise("sola-mail"), Some(6));
     }
 
     #[test]

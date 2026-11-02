@@ -45,7 +45,7 @@ impl Shell {
         tracing::info!(%url, "launcher: open in the browser");
         // A socket write to a running browser, or a spawn: off the iced thread.
         std::thread::spawn(move || {
-            if let Err(e) = sola_core::open_url::open(&url) {
+            if let Err(e) = sola_core::open_url::open_page(&url) {
                 tracing::warn!(%url, "launcher: open failed: {e}");
             }
         });

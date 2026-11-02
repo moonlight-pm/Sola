@@ -98,9 +98,14 @@ pub fn is_offsite_http(opener: &str, target: &str) -> bool {
 }
 
 fn offsite_hosts(a: &str, b: &str) -> bool {
+    !same_site(a, b)
+}
+
+/// Both are http(s) URLs on one apex domain (another subdomain counts).
+pub fn same_site(a: &str, b: &str) -> bool {
     match (popup_host(a), popup_host(b)) {
-        (Some(ha), Some(hb)) => !ha.eq_ignore_ascii_case(&hb) && popup_apex(&ha) != popup_apex(&hb),
-        _ => true,
+        (Some(ha), Some(hb)) => apex(&ha) == apex(&hb),
+        _ => false,
     }
 }
 
@@ -130,21 +135,39 @@ fn popup_host(url: &str) -> Option<String> {
     }
 }
 
-fn popup_apex(host: &str) -> &str {
-    if host.parse::<std::net::Ipv4Addr>().is_ok() {
+/// Domains under which unrelated parties register: `a.co.uk` and `b.co.uk`
+/// are not one site, nor `a.github.io` and `b.github.io`. The ones people
+/// meet, not the whole public suffix list (a large table for what it adds
+/// here): a site under one missing from this list reads as its suffix's.
+const SHARED_SUFFIXES: &[&str] = &[
+    // Country second levels.
+    "ac.jp", "ac.nz", "ac.uk", "co.il", "co.in", "co.jp", "co.kr", "co.nz", "co.uk", "co.za",
+    "com.ar", "com.au", "com.br", "com.cn", "com.hk", "com.mx", "com.sg", "com.tr", "com.tw",
+    "edu.au", "gov.au", "gov.uk", "me.uk", "ne.jp", "net.au", "net.nz", "net.uk", "or.jp",
+    "org.au", "org.nz", "org.uk",
+    // Hosts that give each customer a subdomain.
+    "amazonaws.com", "azurewebsites.net", "cloudfront.net", "fly.dev", "firebaseapp.com",
+    "github.io", "gitlab.io", "herokuapp.com", "netlify.app", "onrender.com", "pages.dev",
+    "vercel.app", "web.app", "workers.dev",
+];
+
+/// A host's apex domain: the name registered under its public suffix
+/// (`files.slack.com` → `slack.com`, `a.b.co.uk` → `b.co.uk`). An address
+/// is its own.
+pub fn apex(host: &str) -> &str {
+    if host.parse::<std::net::IpAddr>().is_ok() {
         return host;
     }
-    let mut iter = host.rsplitn(3, '.');
-    let Some(tld) = iter.next() else {
+    // Where the second and third labels from the end start.
+    let mut starts = host.rmatch_indices('.').map(|(i, _)| i + 1).skip(1);
+    let Some(second) = starts.next() else {
         return host;
     };
-    match iter.next() {
-        Some(sld) => {
-            let start = host.len() - sld.len() - 1 - tld.len();
-            &host[start..]
-        }
-        None => host,
+    let last_two = &host[second..];
+    if !SHARED_SUFFIXES.contains(&last_two) {
+        return last_two;
     }
+    starts.next().map_or(host, |third| &host[third..])
 }
 
 #[cfg(test)]
@@ -312,6 +335,32 @@ mod tests {
             ),
             PopupAction::Cancel
         );
+    }
+
+    #[test]
+    fn an_apex_is_what_was_registered() {
+        assert_eq!(apex("files.slack.com"), "slack.com");
+        assert_eq!(apex("slack.com"), "slack.com");
+        assert_eq!(apex("localhost"), "localhost");
+        assert_eq!(apex("a.b.example.co.uk"), "example.co.uk");
+        assert_eq!(apex("example.co.uk"), "example.co.uk");
+        assert_eq!(apex("co.uk"), "co.uk");
+        assert_eq!(apex("me.github.io"), "me.github.io");
+        assert_eq!(apex("exit-app.group.workers.dev"), "group.workers.dev");
+        assert_eq!(apex("10.0.0.146"), "10.0.0.146");
+        assert_eq!(apex("::1"), "::1");
+    }
+
+    #[test]
+    fn a_shared_suffix_is_not_one_site() {
+        assert!(same_site("https://app.shortcut.com/x", "https://api.shortcut.com/y"));
+        assert!(!same_site("https://shortcut.com", "https://github.com"));
+        assert!(!same_site("https://a.co.uk", "https://b.co.uk"));
+        assert!(same_site("https://www.a.co.uk", "https://a.co.uk/x"));
+        assert!(!same_site("https://a.github.io", "https://b.github.io"));
+        assert!(!same_site("about:blank", "about:blank"));
+        // The port and the case do not make another site.
+        assert!(same_site("https://Example.com:8443/", "http://example.com/"));
     }
 
     #[test]

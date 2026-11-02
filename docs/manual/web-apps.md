@@ -52,24 +52,48 @@ notifications carry the app's name; clicking one brings its window
 forward.
 
 Links stay in the app's window while they stay on the app's site. The
-site is the last two parts of the host name, so `app.slack.com` and
-`files.slack.com` are the same site. A link you click to another site
-opens as a Browser page instead. Redirects, such as the round trip of a
-sign-in, stay in the window. A page opened in a new window
-(`target=_blank`, ⌘-click) stays in the app when it is on the app's site,
-else it opens as a Browser page. A popup the page opens with
-`window.open` (a call's window, say) is the app's.
+site is the apex domain, the name registered under its public suffix, so
+`app.slack.com` and `files.slack.com` are the same site, and `a.co.uk` and
+`b.co.uk`, or `a.github.io` and `b.github.io`, are not.
+
+A link you click to another site opens as a Browser page instead, unless
+another web app starts on that site: then it opens as a window of that app,
+on that app's profile, with its other windows in the bar. The same goes for a link that opens a new window (`target=_blank`,
+⌘-click) from any page, a Browser page included, and for a link from outside
+Browser: Mail, a terminal, `solactl open`. **Open in Browser** and the
+launcher's Browser field always open a Browser page.
+
+Redirects, such as the round trip of a sign-in, stay in the window. A popup
+the page opens with `window.open` (a call's window, say) is the app's while
+it is blank or on the app's site; on another site it is a Browser page, with
+its address in sight.
 
 ## Launch
 
 Choose the app's name in the launcher. Its command is
 `/bin/sola-browser --app <app_id>`. If Browser is running, the app's
 window comes forward, or opens at its start page. Otherwise Browser
-starts (with its saved pages) and opens it. Launching it again brings the
-same window forward.
+starts (with its saved pages) and opens it, or brings forward a window it
+restored. Once Browser is up, launching the app again [opens another
+window](#several-windows).
 
 Browser's session keeps app windows as it keeps pages: after a restart
 they come back as the app, in their place in the bar.
+
+## Several windows
+
+A web app works like Browser pages or Terminal: open as many windows onto it
+as you like.
+
+- The launcher opens another window instead of bringing one forward, and
+  **New Window** (⌘N) in the app's menu does too. A new window starts at the
+  app's start page.
+- One window is a row of its own, named for the app. With two or more on a
+  workspace they group in the bar under the app's name, each named by its
+  page's title. Super+Backtick steps through them.
+- After a restart they all come back, each at its own page, in their place.
+- A link to its site from another app or a Browser page opens here
+  ([above](#the-apps-window)).
 
 ## Remove
 

@@ -2,9 +2,10 @@
 //! switches workspaces, [`super::head`]; none when the workspaces are
 //! islands in the top row), then a row per window (app icon,
 //! title) in the workspace's bar order — one list, not grouped by zone. The
-//! windows of each app that opens a window per document sit in that app's
-//! group, under its name in small capitals, one step in; the group does
-//! not fold. Every loose row comes before the groups (spec § App groups
+//! windows of each app that opens a window per document, from its second on
+//! the workspace, sit in that app's group, under its name in small capitals,
+//! one step in; the group does not fold. Every loose row comes before the
+//! groups (spec § App groups
 //! and keys; `design/bar-groups/`, way A). Board 05's rows: the focused window is
 //! the pill; a tiled zone's shown tab is lifted a step while its zone is
 //! on screen and bright while it is not (Full while the halves are up, or

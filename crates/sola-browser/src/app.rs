@@ -1212,6 +1212,10 @@ impl<E: Engine> App<E> {
                         crate::instance::Handoff::OpenUrl(url) => {
                             // Its window opens in front and takes focus.
                             tracing::info!(%url, "opening handed-off URL in this chrome");
+                            self.open_outside_link(url, true);
+                        }
+                        crate::instance::Handoff::OpenPage(url) => {
+                            tracing::info!(%url, "opening a page handed to this chrome");
                             self.open_tab(url, true);
                         }
                         crate::instance::Handoff::Launch => {
@@ -1224,7 +1228,7 @@ impl<E: Engine> App<E> {
                             );
                             launched = Task::batch([launched, opened]);
                         }
-                        crate::instance::Handoff::OpenApp(id) => self.open_app(&id),
+                        crate::instance::Handoff::OpenApp(id) => self.launch_app(&id),
                     }
                 }
                 #[cfg(feature = "vault")]
@@ -1336,19 +1340,11 @@ impl<E: Engine> App<E> {
                 for req in bg {
                     // The page that asked: the active one (it was clicked).
                     let opener = self.cached_active;
-                    let url = req.url.clone();
-                    let tab = if crate::popup::is_devtools_url(&req.url) {
+                    if crate::popup::is_devtools_url(&req.url) {
                         tracing::info!(url = %req.url, "ignoring DevTools as a strip tab");
                         continue;
-                    } else if req.activate {
-                        tracing::info!(url = %req.url, "popup / target=_blank → tab");
-                        self.open_tab_beside(req.url, true, &req.profile)
-                    } else {
-                        tracing::info!(url = %req.url, "cmd-click → background tab");
-                        self.open_tab_beside(req.url, false, &req.profile)
-                    };
-                    // On a web app's site it stays in the app.
-                    self.adopt_if_same_site(opener, tab, &url);
+                    }
+                    self.open_link(opener, req.url, req.activate, &req.profile);
                 }
                 // Drain any page-selection / in-page copy the engine extracted.
                 // The engine's own clipboard can't reach Wayland; iced's can.
@@ -1366,6 +1362,7 @@ impl<E: Engine> App<E> {
                     }
                     Some(Topic::Replayed) => {
                         self.replayed = true;
+                        self.open_held_links();
                         if self.scheme_wait {
                             tracing::info!("no Appearance saved: restored pages open without light or dark");
                             restored = self.open_restored();
@@ -1855,11 +1852,18 @@ impl<E: Engine> App<E> {
             .map_or(sola_kit::Chrome::Tiled, |id| self.float.chrome(id))
     }
 
-    /// The window title: the page's title and address; a web app's name.
+    /// The window title: the page's title and address; a web app's name, or
+    /// the page's title while the app has several windows (their rows must
+    /// differ, under the app's name).
     pub fn title(&self, window: iced::window::Id) -> String {
         let tab = self.windows.tab_of(window);
         if let Some(app) = tab.and_then(|t| self.webapps.app_of(t)) {
-            return app.label.clone();
+            let page = tab
+                .filter(|_| self.webapps.tabs_of(&app.app_id).len() > 1)
+                .and_then(|tab| self.cached_tabs.iter().find(|t| t.id == tab))
+                .map(|t| t.title.trim())
+                .filter(|t| !t.is_empty());
+            return page.unwrap_or(&app.label).to_string();
         }
         match tab.and_then(|tab| self.cached_tabs.iter().find(|t| t.id == tab)) {
             Some(t) => crate::util::browser_window_title(&t.title, &t.url),

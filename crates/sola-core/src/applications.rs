@@ -62,6 +62,18 @@ pub struct Application {
     pub profile: Option<String>,
 }
 
+/// A web app's id: `web-` and something unique.
+pub fn web_app_id(unique: &str) -> String {
+    format!("{WEB_APP_ID_PREFIX}{unique}")
+}
+
+/// `app_id` is a web app's: a window can say so with no catalog at hand.
+pub fn is_web_app_id(app_id: &str) -> bool {
+    app_id.starts_with(WEB_APP_ID_PREFIX)
+}
+
+const WEB_APP_ID_PREFIX: &str = "web-";
+
 /// A web app's launcher argv: the browser opens (or brings up) its window.
 /// Dual-mode: `/bin/sola-browser` on Oath, `/opt/sola/bin/sola-browser` on
 /// NixOS (`paths::bin_path`).

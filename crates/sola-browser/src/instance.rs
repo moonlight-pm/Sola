@@ -21,13 +21,19 @@ use crate::profiles;
 const ACTIVATE: &str = "@activate";
 /// `@app <id>`: open (or bring up) web app `<id>`.
 const OPEN_APP: &str = "@app";
+/// `@page <url>`: open it as a Browser page, whatever site it is on. Must
+/// match `sola_core::open_url`'s.
+const OPEN_PAGE: &str = "@page";
 
 static HANDOFF_TX: OnceLock<Sender<Handoff>> = OnceLock::new();
 static HANDOFF_RX: OnceLock<Mutex<Receiver<Handoff>>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub enum Handoff {
+    /// A link: to the web app its site belongs to, else a Browser page.
     OpenUrl(String),
+    /// A Browser page, whatever site it is on.
+    OpenPage(String),
     /// A bare launch: open a new page window.
     Launch,
     /// Open web app `<id>`'s window, or bring it up.
@@ -156,6 +162,8 @@ fn parse_line(line: &str) -> Option<Handoff> {
     {
         let id = rest.trim();
         (!id.is_empty()).then(|| Handoff::OpenApp(id.to_string()))
+    } else if let Some(rest) = line.strip_prefix(OPEN_PAGE).and_then(|r| r.strip_prefix(' ')) {
+        Some(Handoff::OpenPage(rest.trim().to_string()))
     } else {
         Some(Handoff::OpenUrl(line.to_string()))
     }
@@ -244,6 +252,10 @@ mod tests {
         }
         match parse_line("@app web-1\n") {
             Some(Handoff::OpenApp(id)) => assert_eq!(id, "web-1"),
+            other => panic!("{other:?}"),
+        }
+        match parse_line("@page https://app.shortcut.com/x") {
+            Some(Handoff::OpenPage(u)) => assert_eq!(u, "https://app.shortcut.com/x"),
             other => panic!("{other:?}"),
         }
         assert!(parse_line("@app ").is_none());

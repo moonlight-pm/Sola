@@ -59,12 +59,13 @@ fn a_window_opened_from_elsewhere_goes_to_the_end_of_its_group() {
     open(&mut s, 1, BROWSER, t);
     open(&mut s, 2, BROWSER, t);
     open(&mut s, 3, TERMINAL, t);
+    assert_eq!(bar(&s), vec![3, 1, 2]);
     // A link from the terminal: a page at the end of Browser.
     s.place(4, BROWSER, BROWSER, false, false, t);
-    assert_eq!(bar(&s), vec![1, 2, 4, 3]);
+    assert_eq!(bar(&s), vec![3, 1, 2, 4]);
     // The next link from the same terminal follows the first.
     s.place(5, BROWSER, BROWSER, false, false, t);
-    assert_eq!(bar(&s), vec![1, 2, 4, 5, 3]);
+    assert_eq!(bar(&s), vec![3, 1, 2, 4, 5]);
 }
 
 #[test]
@@ -96,15 +97,23 @@ fn a_new_group_lands_after_the_focused_group() {
     let t = Instant::now();
     let mut s = Stacks::new();
     open(&mut s, 1, BROWSER, t);
+    open(&mut s, 6, BROWSER, t);
     open(&mut s, 2, TERMINAL, t);
+    open(&mut s, 7, TERMINAL, t);
     open(&mut s, 3, MAIL, t);
-    s.focus(1);
-    s.place(4, DESIGN, DESIGN, false, false, t);
-    assert_eq!(bar(&s), vec![3, 1, 4, 2]);
+    open(&mut s, 4, DESIGN, t);
+    // Terminal's second window came from its lone row: the top of the groups.
+    assert_eq!(bar(&s), vec![3, 4, 2, 7, 1, 6]);
+    // Design's second makes the group, after the group that has focus.
+    s.focus(2);
+    s.place(8, DESIGN, DESIGN, false, false, t);
+    assert_eq!(bar(&s), vec![3, 2, 7, 4, 8, 1, 6]);
     // From a loose row: the top of the groups.
     s.focus(3);
     s.place(5, PAINT, PAINT, false, false, t);
-    assert_eq!(bar(&s), vec![3, 5, 1, 4, 2]);
+    assert_eq!(bar(&s), vec![3, 5, 2, 7, 4, 8, 1, 6]);
+    s.place(9, PAINT, PAINT, false, false, t);
+    assert_eq!(bar(&s), vec![3, 5, 9, 2, 7, 4, 8, 1, 6]);
 }
 
 #[test]
@@ -113,10 +122,16 @@ fn the_landing_slot_is_where_a_grouped_window_lands() {
     let mut s = Stacks::new();
     open(&mut s, 1, MAIL, t);
     open(&mut s, 2, TERMINAL, t);
+    open(&mut s, 4, TERMINAL, t);
     open(&mut s, 3, BROWSER, t);
-    s.remove(2, t);
-    // Terminal's emptied group: its place, whatever has focus.
+    open(&mut s, 5, BROWSER, t);
     s.focus(3);
+    // Terminal's group down to one: the next makes it again, in its place.
+    s.remove(2, t);
+    assert_eq!(bar(&s), vec![1, 4, 3, 5]);
+    assert_eq!(s.landing_slot(TERMINAL, false).1, 4);
+    // None left: its next window is a loose row, at their end.
+    s.remove(4, t);
     assert_eq!(s.landing_slot(TERMINAL, false).1, 1);
     // A loose app from a group: the end of the loose rows.
     assert_eq!(s.landing_slot(SETTINGS, false).1, 1);
@@ -146,17 +161,18 @@ fn rows_move_within_their_group_and_groups_among_groups() {
     open(&mut s, 1, BROWSER, t);
     open(&mut s, 2, BROWSER, t);
     open(&mut s, 3, TERMINAL, t);
+    open(&mut s, 5, TERMINAL, t);
     open(&mut s, 4, MAIL, t);
-    assert_eq!(bar(&s), vec![4, 1, 2, 3]);
+    assert_eq!(bar(&s), vec![4, 3, 5, 1, 2]);
     assert!(s.reorder(2, Some(1)));
-    assert_eq!(bar(&s), vec![4, 2, 1, 3]);
+    assert_eq!(bar(&s), vec![4, 3, 5, 2, 1]);
     // Not out of its group: before Terminal is its group's end.
     assert!(s.reorder(2, Some(3)));
-    assert_eq!(bar(&s), vec![4, 1, 2, 3]);
-    assert!(s.move_block(&BlockId::Group(TERMINAL.into()), Some(&BlockId::Group(BROWSER.into()))));
-    assert_eq!(bar(&s), vec![4, 3, 1, 2]);
+    assert_eq!(bar(&s), vec![4, 3, 5, 1, 2]);
+    assert!(s.move_block(&BlockId::Group(BROWSER.into()), Some(&BlockId::Group(TERMINAL.into()))));
+    assert_eq!(bar(&s), vec![4, 1, 2, 3, 5]);
     // Not above the loose rows, and Mail not below the groups.
-    assert!(!s.move_block(&BlockId::Group(TERMINAL.into()), Some(&BlockId::Window(4))));
+    assert!(!s.move_block(&BlockId::Group(BROWSER.into()), Some(&BlockId::Window(4))));
     assert!(!s.move_block(&BlockId::Window(4), None));
 }
 
@@ -204,12 +220,10 @@ fn a_window_sent_away_joins_its_group_there() {
     open(&mut s, 3, TERMINAL, t);
     s.show_workspace(main);
     assert!(s.send(1, other));
-    assert_eq!(s.bar_on(other).iter().map(|t| t.window_id).collect::<Vec<_>>(), vec![2, 1, 3]);
-    // Main keeps the browser's place for its next window.
-    assert_eq!(
-        s.blocks().iter().filter(|b| matches!(b, Block::Group { .. })).count(),
-        1
-    );
+    // There it is the browser's second window: a group, under the terminal.
+    assert_eq!(s.bar_on(other).iter().map(|t| t.window_id).collect::<Vec<_>>(), vec![3, 2, 1]);
+    // Here it was a lone window: nothing left, no group to keep.
+    assert!(s.blocks().is_empty());
 }
 
 fn main_layout(zones: Vec<(Zone, Vec<&str>, Option<u32>)>, groups: Vec<(&str, u32)>) -> TabLayout {
@@ -246,8 +260,13 @@ fn an_empty_group_is_saved_and_comes_back_in_its_place() {
     let mut s = Stacks::new();
     open(&mut s, 1, MAIL, t);
     open(&mut s, 2, TERMINAL, t);
+    open(&mut s, 4, TERMINAL, t);
     open(&mut s, 3, BROWSER, t);
+    open(&mut s, 5, BROWSER, t);
+    assert!(s.move_block(&BlockId::Group(TERMINAL.into()), Some(&BlockId::Group(BROWSER.into()))));
+    assert_eq!(bar(&s), vec![1, 2, 4, 3, 5]);
     s.remove(2, t);
+    s.remove(4, t);
     let later = t + GHOST_GRACE + std::time::Duration::from_secs(1);
     let saved = s.layout(later);
     assert_eq!(
@@ -259,15 +278,19 @@ fn an_empty_group_is_saved_and_comes_back_in_its_place() {
         }]
     );
 
-    // A fresh shell: Mail and Browser come back, then a new terminal.
+    // A fresh shell: Mail and Browser come back, then two new terminals:
+    // the first a loose row, the second back in the group's place.
     let mut s = Stacks::new();
     s.load(&saved, later);
     s.clear();
     s.place(3, BROWSER, BROWSER, false, true, later);
+    s.place(5, BROWSER, BROWSER, false, true, later);
     s.place(1, MAIL, MAIL, false, true, later);
-    assert_eq!(bar(&s), vec![1, 3]);
+    assert_eq!(bar(&s), vec![1, 3, 5]);
     s.place(9, TERMINAL, TERMINAL, false, false, later);
-    assert_eq!(bar(&s), vec![1, 9, 3]);
+    assert_eq!(bar(&s), vec![1, 9, 3, 5]);
+    s.place(10, TERMINAL, TERMINAL, false, false, later);
+    assert_eq!(bar(&s), vec![1, 9, 10, 3, 5]);
 }
 
 #[test]
