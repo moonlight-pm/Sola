@@ -28,7 +28,7 @@ vault = [
 ]
 
 [dependencies]
-iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "image", "canvas"] }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "image-without-codecs", "canvas"] }
 iced_futures = { version = "0.14", features = ["tokio"] }
 sola-bus = { path = "../sola-bus" }
 sola-call = { path = "../sola-call" }

@@ -61,7 +61,10 @@ pub fn build_script(bins: &[&str], src_hash: &str, crates_hash: &str, version: &
     s += "export CARGO_HOME=/tmp/cargo HOME=/tmp/home\n";
     s += "export RUSTFLAGS=\"-C link-arg=-Wl,--enable-new-dtags\"\n";
     s += "mkdir -p \"$CARGO_HOME\" \"$HOME/.cache/sola\"\n";
-    s += "sed \"s|@VENDOR@|$CRATES/vendor|\" \"$CRATES/vendor.toml\" >\"$CARGO_HOME/config.toml\"\n";
+    // Panic messages name their source files: under the pack's own path, its
+    // hash would be in every program, and any crate's bump would move them all.
+    s += "ln -s \"$CRATES/vendor\" /tmp/vendor\n";
+    s += "sed \"s|@VENDOR@|/tmp/vendor|\" \"$CRATES/vendor.toml\" >\"$CARGO_HOME/config.toml\"\n";
     s += "cp -R \"$SRC/sola\" /tmp/sola\n";
     s += "cd /tmp/sola\n";
     // The CEF programs link pkg:cef and name its Release/ in RUNPATH.
@@ -123,6 +126,7 @@ mod tests {
         assert!(s.starts_with("#!/bin/sh\nset -eu\n"));
         assert!(s.contains("SRC=/oath/store/pkg/sola-src/sha256-s/src"));
         assert!(s.contains("-p sola-shell") && s.contains("-p sola-browser"));
+        assert!(s.contains("s|@VENDOR@|/tmp/vendor|"), "the crates' path names no hash");
         assert!(s.contains("-p sola-bots") && !s.contains("-p sola-botsd"));
         assert!(s.contains(" sola-botsd"), "the daemon is still copied out");
         assert_eq!(s.matches("cargo build").count(), 1);

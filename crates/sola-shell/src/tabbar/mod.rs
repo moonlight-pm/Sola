@@ -43,16 +43,21 @@ pub fn window_of_row(id: &str) -> Option<u32> {
     id.strip_prefix('w')?.parse().ok()
 }
 
-/// A group header's id: its app.
-pub fn group_row_id(app: &str) -> String {
-    format!("g:{app}")
+/// A group header's id: its workspace and its app. The bar animates a row it
+/// knows moving, so an app's group on another workspace must be another row:
+/// showing that workspace puts it in place at once.
+pub fn group_row_id(workspace: &str, app: &str) -> String {
+    format!("g:{workspace}:{app}")
 }
 
 /// The block a row or a group header stands for.
 pub fn block_of_row(id: &str) -> Option<crate::stacks::BlockId> {
     use crate::stacks::BlockId;
     match id.strip_prefix("g:") {
-        Some(app) => Some(BlockId::Group(app.to_string())),
+        Some(group) => {
+            let (_, app) = group.split_once(':')?;
+            Some(BlockId::Group(app.to_string()))
+        }
         None => window_of_row(id).map(BlockId::Window),
     }
 }
@@ -66,12 +71,20 @@ mod tests {
         use crate::stacks::BlockId;
         assert_eq!(window_of_row(&row_id(42)), Some(42));
         assert_eq!(window_of_row("ghost"), None);
-        assert_eq!(window_of_row(&group_row_id("sola-browser")), None);
+        assert_eq!(window_of_row(&group_row_id("ws-1", "sola-browser")), None);
         assert_eq!(
-            block_of_row(&group_row_id("sola-browser")),
+            block_of_row(&group_row_id("ws-1", "sola-browser")),
             Some(BlockId::Group("sola-browser".into()))
         );
         assert_eq!(block_of_row(&row_id(7)), Some(BlockId::Window(7)));
         assert_eq!(block_of_row("ghost"), None);
+    }
+
+    #[test]
+    fn an_app_s_group_is_another_row_on_another_workspace() {
+        assert_ne!(
+            group_row_id("ws-1", "sola-terminal"),
+            group_row_id("ws-2", "sola-terminal")
+        );
     }
 }

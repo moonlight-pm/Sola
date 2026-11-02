@@ -109,7 +109,7 @@ fn group_section<'a>(
     items: Vec<SidebarItem<'a, Msg>>,
 ) -> SidebarSection<'a, Msg> {
     let mut section = SidebarSection::new(app_label(shell, app), items)
-        .id(group_row_id(app))
+        .id(group_row_id(shell.tabs.showing_id(), app))
         .caption();
     if shell.is_app_hidden(app) {
         section = section.note("hidden");

@@ -28,7 +28,7 @@ use crate::ui::App;
 const APP_ID: &str = "sola-calendar";
 
 fn main() -> iced::Result {
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     startup(APP_ID);
     // An opener's launch with no Calendar up: the session starts Calendar,
