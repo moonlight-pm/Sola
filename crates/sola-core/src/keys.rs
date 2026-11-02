@@ -110,6 +110,13 @@ impl KeyCode {
     pub const F10: Self = Self(76);
     pub const F11: Self = Self(95);
     pub const F12: Self = Self(96);
+    pub const F13: Self = Self(191);
+    pub const F14: Self = Self(192);
+    pub const F15: Self = Self(193);
+    pub const F16: Self = Self(194);
+    pub const F17: Self = Self(195);
+    pub const F18: Self = Self(196);
+    pub const F19: Self = Self(197);
 
     // --- Alphanumeric ---
     pub const KEY_0: Self = Self(19);
@@ -203,6 +210,12 @@ impl KeyCode {
     /// off (KP_4 is KP_Left). Bindings register both.
     pub fn keysym_alt(self) -> Option<u32> {
         self.key().and_then(|k| k.alt)
+    }
+
+    /// A key no app types or expects (F13 to F19): a system action may have
+    /// it with no modifier.
+    pub const fn stands_alone(self) -> bool {
+        self.0 >= Self::F13.0 && self.0 <= Self::F19.0
     }
 
     /// The key that sends `sym` (either of a number-pad key's keysyms).
@@ -324,6 +337,13 @@ pub const KEYS: &[Key] = &[
     key(KeyCode::F10, 0xFFC7, "F10"),
     key(KeyCode::F11, 0xFFC8, "F11"),
     key(KeyCode::F12, 0xFFC9, "F12"),
+    key(KeyCode::F13, 0xFFCA, "F13"),
+    key(KeyCode::F14, 0xFFCB, "F14"),
+    key(KeyCode::F15, 0xFFCC, "F15"),
+    key(KeyCode::F16, 0xFFCD, "F16"),
+    key(KeyCode::F17, 0xFFCE, "F17"),
+    key(KeyCode::F18, 0xFFCF, "F18"),
+    key(KeyCode::F19, 0xFFD0, "F19"),
     // The number pad: NumLock on, then off.
     kp(KeyCode::KP_0, 0xFFB0, 0xFF9E, "KP0"), // KP_Insert
     kp(KeyCode::KP_1, 0xFFB1, 0xFF9C, "KP1"), // KP_End

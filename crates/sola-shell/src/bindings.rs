@@ -176,19 +176,19 @@ pub fn system_actions(zones: Vec<SysAction>) -> Vec<SysAction> {
             &format!("workspace.send.{}", i + 1),
             "Workspaces",
             &format!("Send Window to Workspace {}", i + 1),
-            k.meta().ctrl(),
+            k.meta_shift(),
         ));
     }
     all.extend([
-        sys(Act::ScreenshotFull, "screenshot.screen", "Capture", "Screenshot Screen", KeyCode::KEY_3.meta_shift()),
+        sys(Act::ScreenshotFull, "screenshot.screen", "Capture", "Screenshot Screen", KeyCode::F13.chord()),
         sys(
             Act::ScreenshotRegion,
             "screenshot.selection",
             "Capture",
             "Screenshot Selection",
-            KeyCode::KEY_4.meta_shift(),
+            KeyCode::F14.chord(),
         ),
-        sys(Act::ScreenshotWindow, "screenshot.window", "Capture", "Screenshot Window", KeyCode::KEY_5.meta_shift()),
+        sys(Act::ScreenshotWindow, "screenshot.window", "Capture", "Screenshot Window", KeyCode::F15.chord()),
     ]);
     all.extend(zones);
     all
@@ -332,7 +332,11 @@ mod tests {
     fn defaults_are_today_s_keys() {
         let b = Bindings::default();
         assert_eq!(b.act_for(&KeyCode::SPACE.meta()), Some(Act::Launcher));
-        assert_eq!(b.act_for(&KeyCode::KEY_3.meta().ctrl()), Some(Act::SendToWorkspace(2)));
+        assert_eq!(b.act_for(&KeyCode::KEY_3.meta_shift()), Some(Act::SendToWorkspace(2)));
+        assert_eq!(b.act_for(&KeyCode::KEY_3.meta().ctrl()), None);
+        assert_eq!(b.act_for(&KeyCode::F13.chord()), Some(Act::ScreenshotFull));
+        assert_eq!(b.act_for(&KeyCode::F14.chord()), Some(Act::ScreenshotRegion));
+        assert_eq!(b.act_for(&KeyCode::F15.chord()), Some(Act::ScreenshotWindow));
         assert_eq!(b.act_for(&KeyCode::KP_4.meta()), Some(Act::Zone(Zone::Grid(1))));
         assert_eq!(b.key(Act::Lock), Some(KeyCode::L.meta()));
         assert_eq!(b.act_for(&KeyCode::CAPS_LOCK.meta()), Some(Act::NextHere));

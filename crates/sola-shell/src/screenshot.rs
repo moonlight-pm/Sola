@@ -1,6 +1,6 @@
 //! Shell-initiated capture via `compositor.screenshot` (not the bus).
 //!
-//! Super+Shift+3/4/5 advertise `image/png` immediately, then Fastest-encode
+//! The screenshot keys (F13, F14, F15) advertise `image/png` immediately, then Fastest-encode
 //! in the background (shell owns the offer). Paste waits on the pipe.
 //! No file, no Preview. `solactl compositor screenshot` still writes a PNG.
 

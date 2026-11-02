@@ -11,6 +11,13 @@ xkb_keymap {
       symbols[Group1]= [ Caps_Lock ],
       actions[Group1]= [ NoAction() ]
     };
+    // F13 to F18 are themselves, not inet's XF86Tools and XF86Launch5 to 9.
+    override key <FK13> { [ F13 ] };
+    override key <FK14> { [ F14 ] };
+    override key <FK15> { [ F15 ] };
+    override key <FK16> { [ F16 ] };
+    override key <FK17> { [ F17 ] };
+    override key <FK18> { [ F18 ] };
   };
   xkb_geometry  { include "pc(pc105)" };
 };

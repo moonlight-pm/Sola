@@ -18,7 +18,7 @@ comes up instead. Launching Paint again with no path brings its window up.
 
 Paint keeps at most 32 images open; opening a 33rd closes the oldest.
 
-Super+Shift+3/4/5 screenshots copy to the clipboard; they do not open
+Screenshots (F13, F14, F15) copy to the clipboard; they do not open
 Paint.
 
 ## Windows

@@ -257,9 +257,9 @@ pub enum Msg {
     WorkspaceRenameCommit,
     /// Tab bar pointer / drag gesture.
     TabBar(sola_kit::components::SidebarMsg),
-    /// Super+Shift+4: freeze the output, then open the selection marquee.
+    /// A selection screenshot: freeze the output, then open the selection marquee.
     OpenSelection,
-    /// RGBA freeze for Super+Shift+4 finished (call plane). Overlay opens
+    /// RGBA freeze for a selection screenshot finished (call plane). Overlay opens
     /// only after this so menus/selections stay in the still.
     SelectionFreeze {
         generation: u64,
@@ -498,7 +498,7 @@ pub struct Shell {
     /// Menubar mouse battery chip (Lamzu receiver over hidraw).
     pub mouse: crate::mouse::Ui,
     /// Window that should keep keyboard after a shell-initiated capture
-    /// finishes. Set when a Super+Shift+3/4/5 capture starts.
+    /// finishes. Set when a screenshot capture starts.
     pub screenshot_return_focus: Option<u32>,
     /// When `Some(app_id)`, the next `on_windows` "new app mapped" focus
     /// steal for that app is skipped (screenshot cold-launch of preview

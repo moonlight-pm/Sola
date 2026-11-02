@@ -6,7 +6,7 @@ pub const MIN_REGION: f32 = 2.0;
 #[derive(Clone, Default)]
 pub struct SelectionState {
     pub active: bool,
-    /// Super+Shift+4 has started a freeze capture; overlay is not shown yet.
+    /// A selection screenshot has started a freeze capture; overlay is not shown yet.
     pub pending: bool,
     /// Drop freeze replies whose generation does not match (Escape mid-capture).
     pub freeze_generation: u64,

@@ -1,6 +1,6 @@
-//! Interactive screen-selection overlay for Super+Shift+4.
+//! Interactive screen-selection overlay for a selection screenshot (F14).
 //!
-//! Super+Shift+4 first freezes the live output (RGBA dump, no PNG encode)
+//! It first freezes the live output (RGBA dump, no PNG encode)
 //! so menus and text selections stay in the shot, then shows that still
 //! full-output (no dim — it is the desktop) with a cyan marquee while
 //! dragging. The overlay joins composition only after the freeze texture

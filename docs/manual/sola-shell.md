@@ -40,16 +40,16 @@ system key.
 | Super+CapsLock | Show the next window in the zone under the pointer (Super+Shift+CapsLock: the previous) |
 | Super+Backtick | Show the focused app's next window on this workspace (Super+Shift+Backtick: the previous) |
 | Super+1 … Super+9 | Show workspace 1 to 9 |
-| Super+Ctrl+1 … Super+Ctrl+9 | Send the focused window to workspace 1 to 9 |
+| Super+Shift+1 … Super+Shift+9 | Send the focused window to workspace 1 to 9 |
 | Super+Tab | Next workspace (Super+Shift+Tab: the previous); [as islands](#workspaces-as-islands), past those switched off |
 | Super+Keypad 0 | Move the focused window to Full |
 | Super+Keypad 4 | Move the focused window to the left column (the default layout's) |
 | Super+Keypad 6 | Move the focused window to the right column (the default layout's) |
 | Super+Keypad Multiply | Float the focused window |
 | Super+Keypad Enter | Move the focused window to Cinema |
-| Super+Shift+3 | Screenshot of the whole output, to the clipboard |
-| Super+Shift+4 | Screenshot of a selection, to the clipboard |
-| Super+Shift+5 | Screenshot of the focused window, to the clipboard |
+| F13 | Screenshot of the whole output, to the clipboard |
+| F14 | Screenshot of a selection, to the clipboard |
+| F15 | Screenshot of the focused window, to the clipboard |
 | Escape | Close the open launcher, overlay, menu or panel; cancel a selection |
 | Play/Pause, Next, Previous | Media players (MPRIS) |
 | Mute, Volume Up, Volume Down | The default output: mute toggles, volume steps 5% (up to 100%) |
@@ -370,7 +370,7 @@ you are on is on screen. A fresh desk starts with one, **Main**.
 
 - **Super+1 … Super+9** shows a workspace; its last focused window takes
   the keyboard.
-- **Super+Ctrl+1 … Super+Ctrl+9** sends the focused window there, into
+- **Super+Shift+1 … Super+Shift+9** sends the focused window there, into
   the same zone, at the end of its app's group there (at the end of that
   workspace's bar, when it has none), shown in its zone. You stay where
   you are.
@@ -682,18 +682,18 @@ missed.**
 
 ## Screenshots
 
-Super+Shift+3, 4 and 5 copy a PNG to the clipboard and show
+F13, F14 and F15 copy a PNG to the clipboard and show
 **Screenshot copied** in the top row. They write no file and open no
 viewer. The clipboard is offered at once, so you can paste right away;
 the paste waits until encoding finishes.
 
-- **Super+Shift+3** copies the whole output.
-- **Super+Shift+4** first freezes the output as it is (open menus, panels
+- **F13** copies the whole output.
+- **F14** first freezes the output as it is (open menus, panels
   and text selections stay in the still), then shows a marquee on that
   still at full brightness, with no dim. Drag a rectangle to copy it;
   Escape, or a drag too small to be a rectangle, cancels. The crop comes
   from the freeze, not from a second capture.
-- **Super+Shift+5** copies the focused window's own buffer. The window
+- **F15** copies the focused window's own buffer. The window
   does not come forward. `solactl compositor screenshot --app` does the
   same but writes a PNG file
   ([solactl](solactl.md#compositor-solactl-compositor)).

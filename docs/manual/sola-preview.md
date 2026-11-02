@@ -16,7 +16,7 @@ bytes.
 Preview's window floats by default. Its titlebar has the **Preview** menu
 (Quit Preview, ⌘Q).
 
-Super+Shift+3/4/5 copy to the clipboard; they do **not** open Preview.
+F13, F14 and F15 copy screenshots to the clipboard; they do **not** open Preview.
 `solactl compositor screenshot` writes a PNG and prints the path; it does
 not open Preview either. MIME and `solactl open` send image files to
 **Paint**.
