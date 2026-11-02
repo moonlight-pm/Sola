@@ -1,5 +1,6 @@
 //! The tab bar's view: a head with the showing workspace's name (its menu
-//! switches workspaces, [`super::head`]), then a row per window (app icon,
+//! switches workspaces, [`super::head`]; none when the workspaces are
+//! islands in the top row), then a row per window (app icon,
 //! title) in the workspace's bar order — one list, not grouped by zone. The
 //! windows of each app that opens a window per document sit in that app's
 //! group, under its name in small capitals, one step in; the group does
@@ -89,13 +90,15 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         sections.push(SidebarSection::unlabeled(loose));
     }
 
-    let panel = SidebarPanel::new(sections)
+    let mut panel = SidebarPanel::new(sections)
         .controller(&shell.tabbar.gestures, Msg::TabBar)
         .reorder_within_sections()
         .loose_first()
-        .fill_width()
-        .header(super::head::view(shell))
-        .build();
+        .fill_width();
+    if !shell.workspace_islands() {
+        panel = panel.header(super::head::view(shell));
+    }
+    let panel = panel.build();
     // An island in the grid's left column (board 06): rounded, rimmed,
     // its corners cleared to the ground.
     island(panel)

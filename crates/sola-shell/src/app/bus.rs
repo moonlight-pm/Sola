@@ -55,6 +55,10 @@ impl Shell {
                 self.on_zone_layout(message.sticky.then_some(l));
                 Task::none()
             }
+            Topic::WorkspacePrefs(p) => {
+                self.on_workspace_prefs(message.sticky.then_some(p));
+                Task::none()
+            }
             Topic::FullscreenRequest(r) => {
                 self.on_fullscreen_request(r);
                 Task::none()

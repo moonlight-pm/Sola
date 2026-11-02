@@ -698,8 +698,8 @@ fn rename_and_reorder_keep_the_showing_one() {
     assert_eq!(s.showing(), 0);
     assert_eq!(s.showing_id(), s.workspaces()[0].id);
     assert!(!s.move_workspace(0, true));
-    assert_eq!(s.step_workspace(false), 1);
-    assert_eq!(s.step_workspace(true), 1);
+    assert_eq!(s.step_workspace(false, &[]), 1);
+    assert_eq!(s.step_workspace(true, &[]), 1);
 }
 
 #[test]
@@ -899,4 +899,48 @@ fn kept_windows_go_back_to_their_places_after_a_shell_restart() {
     let zones: Vec<(Zone, Vec<String>)> = l.zones.iter().map(|z| (z.zone, z.apps.clone())).collect();
     let want: Vec<(Zone, Vec<String>)> = saved.zones.iter().map(|z| (z.zone, z.apps.clone())).collect();
     assert_eq!(zones, want);
+}
+
+fn three_workspaces() -> (Stacks, Vec<String>) {
+    let mut s = Stacks::new();
+    s.add_workspace("Two");
+    s.add_workspace("Three");
+    s.show_workspace(0);
+    let ids = s.workspaces().into_iter().map(|w| w.id).collect();
+    (s, ids)
+}
+
+#[test]
+fn stepping_passes_over_the_skipped_workspaces() {
+    let (mut s, ids) = three_workspaces();
+    let skip_two = [ids[1].clone()];
+    assert_eq!(s.step_workspace(false, &skip_two), 2);
+    assert_eq!(s.step_workspace(true, &skip_two), 2);
+    s.show_workspace(2);
+    assert_eq!(s.step_workspace(false, &skip_two), 0);
+    // Skipped itself: it can be left, in either direction.
+    s.show_workspace(1);
+    assert_eq!(s.step_workspace(false, &skip_two), 2);
+    assert_eq!(s.step_workspace(true, &skip_two), 0);
+}
+
+#[test]
+fn stepping_stays_put_when_every_other_workspace_is_skipped() {
+    let (s, ids) = three_workspaces();
+    let others = [ids[1].clone(), ids[2].clone()];
+    assert_eq!(s.step_workspace(false, &others), 0);
+    assert_eq!(s.step_workspace(true, &others), 0);
+}
+
+#[test]
+fn reordering_keeps_the_showing_workspace_showing() {
+    let (mut s, ids) = three_workspaces();
+    s.show_workspace(1);
+    assert!(s.reorder_workspace(2, 0));
+    let order: Vec<String> = s.workspaces().into_iter().map(|w| w.id).collect();
+    assert_eq!(order, [ids[2].clone(), ids[0].clone(), ids[1].clone()]);
+    assert_eq!(s.showing_id(), ids[1]);
+    assert_eq!(s.showing(), 2);
+    assert!(!s.reorder_workspace(1, 1));
+    assert!(!s.reorder_workspace(0, 9));
 }

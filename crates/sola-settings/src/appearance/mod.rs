@@ -1,7 +1,8 @@
 //! Appearance: light or dark (the desk and web pages), the background picture and
 //! the ones kept before ([`pictures`]), whether the theme's colors follow
 //! it (and which of its schemes), the looks you make with your own colors,
-//! how opaque the desk is over the picture, and the idle fade and dim. A
+//! how opaque the desk is over the picture, how the workspaces show, and
+//! the idle fade and dim. A
 //! new picture is set from Paint (File → Set as Background) or `solactl
 //! background`; here a kept one is set again, forgotten, or cleared.
 //! The settings are `Topic::Appearance`: the shell acts on the colors,
@@ -13,7 +14,7 @@ mod pictures;
 
 use iced::widget::{container, row, slider, text, toggler};
 use iced::{Alignment, Element, Length, Task};
-use sola_bus::topics::{Appearance, Background, ThemeVariations, Topic};
+use sola_bus::topics::{Appearance, Background, ThemeVariations, Topic, WorkspacePrefs};
 use sola_kit::app::bus;
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::color_picker::{ColorPicker, Message as PickerMsg};
@@ -30,6 +31,8 @@ pub use pictures::refresh;
 pub enum AppearanceMsg {
     /// Light (`true`) or dark, for web pages.
     Light(bool),
+    /// The workspaces as islands in the top row, on / off.
+    WorkspaceIslands(bool),
     /// Adapt colors to the background on / off.
     Adapt(bool),
     /// The strength slider moved: sent as it moves (at most every
@@ -86,6 +89,8 @@ pub enum AppearanceMsg {
 pub struct AppearanceState {
     pub picture: Option<Background>,
     pub look: Appearance,
+    /// How the workspaces show (`Topic::WorkspacePrefs`).
+    pub workspaces: WorkspacePrefs,
     pub variations: Option<ThemeVariations>,
     /// The live theme (`Topic::Theme`), for showing the colors as they are.
     pub theme: Option<sola_core::theme::Theme>,
@@ -105,6 +110,12 @@ const LIVE_EVERY: std::time::Duration = std::time::Duration::from_millis(40);
 pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) -> Task<AppearanceMsg> {
     let look = &mut state.look;
     match msg {
+        AppearanceMsg::WorkspaceIslands(on) => {
+            state.workspaces.islands = on;
+            let topic = Topic::WorkspacePrefs(state.workspaces.clone());
+            send(|b| b.emit(topic));
+            return Task::none();
+        }
         AppearanceMsg::Light(on) => look.light = on,
         AppearanceMsg::Adapt(on) => look.adapt_theme = on,
         AppearanceMsg::Strength(v) | AppearanceMsg::Opacity(v) => {
@@ -208,6 +219,7 @@ pub fn view(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
         looks::colors(state),
         looks::yours(state),
         desk(state),
+        workspaces(state),
         idle(state),
     ])
 }
@@ -253,6 +265,26 @@ fn desk(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
         Some(
             "How opaque the windows, the bar and the top row are over the \
              background. The idle fade starts from here."
+                .into(),
+        ),
+    )
+}
+
+fn workspaces(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
+    page::section(
+        "Workspaces",
+        None,
+        page::group(vec![page::setting(
+            "Islands in the top row",
+            toggler(state.workspaces.islands)
+                .on_toggle(AppearanceMsg::WorkspaceIslands)
+                .style(toggle_style),
+        )]),
+        Some(
+            "Each workspace an island by the flower, instead of the switcher \
+             at the head of the bar. Click one to show it, the one showing for \
+             its menu; drag one to reorder. Its switch says whether Super+Tab \
+             stops there."
                 .into(),
         ),
     )
