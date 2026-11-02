@@ -9,7 +9,8 @@
 //!   oath apply`s them together. PID 1 restarts the services that run from
 //!   a package that moved. It keeps what is live: a live pin made from this
 //!   repo at a commit this tree lacks refuses it ([`provenance`]; `--force`
-//!   drops that work). Only with the owner's go-ahead (`oath-packages`).
+//!   drops that work). Named packages (`apply sola`) stage and move alone.
+//!   Only with the owner's go-ahead (`oath-packages`).
 //! - `publish` builds each package from a plan in `oath build`'s sandbox
 //!   and uploads packs, plans and sources to Oath's origin
 //!   ([`publish`]). Outward-facing: only with the owner's go-ahead.
@@ -29,8 +30,9 @@ use stage::Staged;
 
 pub enum Action {
     Stage,
-    /// `true`: pin over live work this tree lacks.
-    Apply { force: bool },
+    /// `force`: pin over live work this tree lacks. `only`: these
+    /// packages (by name), or every one when empty.
+    Apply { force: bool, only: Vec<String> },
     /// `true`: build the plans here, upload nothing.
     Publish { local: bool },
 }
@@ -47,8 +49,12 @@ pub fn run(action: Action, release: bool) {
         }
         return;
     }
-    let staged = stage::stage(release);
-    if let Action::Apply { force } = action
+    let only = match &action {
+        Action::Apply { only, .. } => only.as_slice(),
+        _ => &[],
+    };
+    let staged = stage::stage(release, only);
+    if let Action::Apply { force, .. } = action
         && let Err(e) = apply(&staged, force)
     {
         eprintln!("cargo make oath apply: {e}");

@@ -22,18 +22,20 @@ pub struct Staged {
     pub dir: PathBuf,
 }
 
-/// Build, then stage every package. Exits on failure.
-pub fn stage(release: bool) -> Vec<Staged> {
+/// Build, then stage every package (or the ones `only` names, `sola` or
+/// `pkg:sola`). Exits on failure.
+pub fn stage(release: bool, only: &[String]) -> Vec<Staged> {
+    let packages = chosen(only);
     link_cef_cache();
-    build(release);
+    build(release, &packages);
     let share_cache = Path::new(STAGE_ROOT).join("share-cache");
     crate::assets::sync_into(&share_cache, false);
     // The crate's version, never the commit: where a tree came from is its
     // source record (`provenance`), so a package nothing touched keeps
     // its hash and does not move.
     let version = env!("CARGO_PKG_VERSION");
-    PACKAGES
-        .iter()
+    packages
+        .into_iter()
         .map(|pkg| Staged {
             pkg,
             dir: stage_one(pkg, release, &share_cache, &version),
@@ -64,13 +66,29 @@ fn link_cef_cache() {
     println!("[oath] {} -> {OATH_CEF}", link.display());
 }
 
-fn build(release: bool) {
+/// The packages `only` names, every one when it names none.
+fn chosen(only: &[String]) -> Vec<&'static Package> {
+    if only.is_empty() {
+        return PACKAGES.iter().collect();
+    }
+    only.iter()
+        .map(|name| {
+            let name = name.strip_prefix("pkg:").unwrap_or(name);
+            PACKAGES.iter().find(|p| p.name == name).unwrap_or_else(|| {
+                let names: Vec<&str> = PACKAGES.iter().map(|p| p.name).collect();
+                fail(format!("no package {name} (one of: {})", names.join(", ")))
+            })
+        })
+        .collect()
+}
+
+fn build(release: bool, packages: &[&Package]) {
     let mut cmd = Command::new("cargo");
     cmd.arg("build").env("SOLA_CEF_DIR", OATH_CEF);
     if release {
         cmd.arg("--release");
     }
-    for krate in build_crates(PACKAGES.iter().flat_map(|p| p.bins.iter().copied())) {
+    for krate in build_crates(packages.iter().flat_map(|p| p.bins.iter().copied())) {
         cmd.args(["-p", krate]);
     }
     let status = cmd.status().unwrap_or_else(|e| fail(format!("cargo: {e}")));

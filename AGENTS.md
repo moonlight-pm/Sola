@@ -230,7 +230,7 @@ cargo make install <app>…                         # Release-build + install on
 cargo make install <app> --debug                  # Debug install
 cargo make install <app> --watch                  # Watch + reinstall (release)
 cargo make oath stage [--debug]                   # Oath: build + assemble package trees
-cargo make oath apply [--debug]                   # Oath: stage + oath store/set/apply (permission)
+cargo make oath apply [<pkg>…] [--debug]          # Oath: stage + oath store/set/apply (permission); named packages alone
 cargo make oath publish                           # Oath: plan builds + upload to the origin (permission)
 cargo make oath publish --local                   # Oath: the plan builds only, nothing uploaded
 ```
