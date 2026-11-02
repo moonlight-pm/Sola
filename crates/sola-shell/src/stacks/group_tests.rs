@@ -12,6 +12,7 @@ const TERMINAL: &str = "sola-terminal";
 const PROJECTS: &str = "sola-projects";
 const DESIGN: &str = "sola-design";
 const PAINT: &str = "sola-paint";
+const EDITOR: &str = "sola-editor";
 const MAIL: &str = "sola-mail";
 const SETTINGS: &str = "sola-settings";
 
@@ -321,4 +322,25 @@ fn a_saved_bar_with_groups_restores_whatever_order_windows_come() {
     s.place(3, TERMINAL, "sola-terminal/x", false, true, t);
     assert_eq!(bar(&s), vec![1, 2, 3, 4]);
     assert_eq!(s.layout(t), layout);
+}
+
+/// Editor opens a window per file, so its windows group, under the name its
+/// launcher row gives the group's caption.
+#[test]
+fn the_editor_has_a_launcher_row_and_groups_under_it() {
+    let row = crate::builtins::builtin_apps()
+        .into_iter()
+        .find(|a| a.app_id == EDITOR)
+        .expect("Editor is in the launcher");
+    assert_eq!(row.label, "Editor");
+
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    open(&mut s, 1, EDITOR, t);
+    open(&mut s, 2, MAIL, t);
+    open(&mut s, 3, EDITOR, t);
+    assert_eq!(
+        blocks(&s),
+        vec![(None, vec![2]), (Some(EDITOR.to_string()), vec![1, 3])]
+    );
 }

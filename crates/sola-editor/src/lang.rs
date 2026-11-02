@@ -23,7 +23,7 @@ pub fn comment(path: Option<&Path>) -> Option<&'static str> {
 }
 
 /// Spaces per indent where the text doesn't say: 2, as Zed had it, but for
-/// the languages whose own style is 4 (Thoxa among them, as in his Zed).
+/// the languages whose own style is 4 (Thoxa among them, as in Joshua's Zed).
 pub fn tab_size(path: Option<&Path>) -> usize {
     match path.map(name_of).as_deref() {
         Some("rs" | "py" | "thx" | "java" | "kt" | "swift" | "cs" | "php" | "go" | "c" | "h" | "cpp") => 4,

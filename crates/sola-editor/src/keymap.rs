@@ -1,7 +1,7 @@
 //! The keys: Emacs, as Joshua has them. Meta is Super.
 //!
 //! [`BINDINGS`] is Zed's Emacs base keymap (`assets/keymaps/linux/emacs.json`)
-//! trimmed to what is used, then the overrides from his Zed `keymap.json`:
+//! trimmed to what is used, then the overrides from Joshua's Zed `keymap.json`:
 //!
 //! | Key | Here | Zed base |
 //! |-----|------|----------|

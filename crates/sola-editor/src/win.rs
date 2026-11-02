@@ -15,7 +15,7 @@ use crate::session;
 use crate::syntax::Highlight;
 use crate::view::{Colors, SCROLLBAR};
 
-/// Zed's `buffer_font_size`, as he had it.
+/// Joshua's `buffer_font_size` in Zed.
 const FONT_SIZE: f32 = 15.0;
 
 /// The monospace grid text sits on. The cell is as wide as the font says,
