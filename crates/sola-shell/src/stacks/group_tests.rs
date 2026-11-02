@@ -237,10 +237,16 @@ fn main_layout(zones: Vec<(Zone, Vec<&str>, Option<u32>)>, groups: Vec<(&str, u3
                 workspace: "main".into(),
             })
             .collect(),
-        workspaces: vec![Workspace {
-            id: "main".into(),
-            name: "Main".into(),
-        }],
+        workspaces: vec![
+            Workspace {
+                id: COMMON_WORKSPACE.0.into(),
+                name: COMMON_WORKSPACE.1.into(),
+            },
+            Workspace {
+                id: "main".into(),
+                name: "Main".into(),
+            },
+        ],
         showing: "main".into(),
         groups: groups
             .into_iter()

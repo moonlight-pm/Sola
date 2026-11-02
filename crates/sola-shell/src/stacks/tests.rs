@@ -8,6 +8,8 @@ use super::*;
 const LEFT: Zone = Zone::Grid(1);
 const RIGHT: Zone = Zone::Grid(2);
 
+/// A fresh desk's first ordinary workspace, after Common.
+const MAIN: usize = COMMON + 1;
 
 fn none(_: &str) -> bool {
     false
@@ -277,10 +279,16 @@ fn saved_layout_restores_in_order_whatever_order_windows_come() {
                 workspace: "main".into(),
             },
         ],
-        workspaces: vec![Workspace {
-            id: "main".into(),
-            name: "Main".into(),
-        }],
+        workspaces: vec![
+            Workspace {
+                id: COMMON_WORKSPACE.0.into(),
+                name: COMMON_WORKSPACE.1.into(),
+            },
+            Workspace {
+                id: "main".into(),
+                name: "Main".into(),
+            },
+        ],
         showing: "main".into(),
         ..TabLayout::default()
     };
@@ -598,13 +606,23 @@ fn layout_of(zones: Vec<(&str, Zone, Vec<&str>, Option<u32>)>, workspaces: &[(&s
                 workspace: ws.into(),
             })
             .collect(),
+        // As saved: Common first, when it lists any.
         workspaces: workspaces
             .iter()
             .map(|(id, name)| Workspace {
                 id: (*id).into(),
                 name: (*name).into(),
             })
-            .collect(),
+            .fold(Vec::new(), |mut list: Vec<Workspace>, w| {
+                if list.is_empty() {
+                    list.push(Workspace {
+                        id: COMMON_WORKSPACE.0.into(),
+                        name: COMMON_WORKSPACE.1.into(),
+                    });
+                }
+                list.push(w);
+                list
+            }),
         showing: showing.into(),
         ..TabLayout::default()
     }
@@ -624,7 +642,7 @@ fn readers_answer_for_the_showing_workspace() {
     assert_eq!(s.zone_of(1), Some(FULL));
     assert!(!s.on_showing(1));
     assert!(s.on_showing(2));
-    assert!(s.show_workspace(0));
+    assert!(s.show_workspace(MAIN));
     assert_eq!(ids(&s, FULL), vec![1]);
     assert_eq!(s.bar_on(second)[0].window_id, 2);
 }
@@ -637,13 +655,13 @@ fn showing_a_window_shows_its_workspace() {
     s.add_workspace("Mail");
     s.place(2, "mail", "mail", false, false, t);
     assert!(s.show(1));
-    assert_eq!(s.showing(), 0);
+    assert_eq!(s.showing(), MAIN);
     // A dialog shows its parent's workspace.
     s.place(3, "mail", "mail", false, false, t);
     s.set_parent(3, 2);
     assert_eq!(s.workspace_of(3), s.workspace_of(2));
     assert!(s.show(3));
-    assert_eq!(s.showing(), 1);
+    assert_eq!(s.showing(), MAIN + 1);
 }
 
 #[test]
@@ -655,7 +673,7 @@ fn sending_a_window_keeps_its_zone_and_shows_it_there() {
     s.move_to(2, RIGHT);
     s.place(3, "scope", "scope", true, false, t);
     let mail = s.add_workspace("Mail");
-    s.show_workspace(0);
+    s.show_workspace(MAIN);
     assert!(s.send(2, mail));
     assert!(s.send(3, mail));
     assert!(!s.send(3, mail), "already there");
@@ -666,7 +684,7 @@ fn sending_a_window_keeps_its_zone_and_shows_it_there() {
     assert_eq!(s.shown(RIGHT), Some(2));
     assert_eq!(s.float_order(), &[3]);
     // A tab sent to Full brings Full up there.
-    s.show_workspace(0);
+    s.show_workspace(MAIN);
     assert!(s.send(1, mail));
     s.show_workspace(mail);
     assert_eq!(s.on_screen(&none), vec![FULL]);
@@ -680,11 +698,12 @@ fn deleting_a_workspace_moves_its_windows_back_one() {
     let mail = s.add_workspace("Mail");
     s.place(2, "mail", "mail", false, false, t);
     assert!(s.delete_workspace(mail));
-    assert_eq!(s.workspace_count(), 1);
-    assert_eq!(s.showing(), 0);
+    assert_eq!(s.workspace_count(), MAIN + 1);
+    assert_eq!(s.showing(), MAIN);
     assert_eq!(ids(&s, FULL), vec![1, 2]);
     assert_eq!(s.shown(FULL), Some(2));
-    assert!(!s.delete_workspace(0), "the last one stays");
+    assert!(!s.delete_workspace(MAIN), "the last one stays");
+    assert!(!s.delete_workspace(COMMON), "Common stays");
 }
 
 #[test]
@@ -694,12 +713,12 @@ fn rename_and_reorder_keep_the_showing_one() {
     assert!(s.rename_workspace(mail, "  Post "));
     assert!(!s.rename_workspace(mail, "   "));
     assert!(s.move_workspace(mail, true));
-    assert_eq!(s.workspaces()[0].name, "Post");
-    assert_eq!(s.showing(), 0);
-    assert_eq!(s.showing_id(), s.workspaces()[0].id);
-    assert!(!s.move_workspace(0, true));
-    assert_eq!(s.step_workspace(false, &[]), 1);
-    assert_eq!(s.step_workspace(true, &[]), 1);
+    assert_eq!(s.workspaces()[MAIN].name, "Post");
+    assert_eq!(s.showing(), MAIN);
+    assert_eq!(s.showing_id(), s.workspaces()[MAIN].id);
+    assert!(!s.move_workspace(MAIN, true), "not before Common");
+    assert_eq!(s.step_workspace(false, &[COMMON_WORKSPACE.0.into()]), MAIN + 1);
+    assert_eq!(s.step_workspace(true, &[COMMON_WORKSPACE.0.into()]), MAIN + 1);
 }
 
 #[test]
@@ -716,7 +735,7 @@ fn the_saved_layout_brings_every_workspace_back() {
     );
     let mut s = Stacks::new();
     s.load(&layout, t);
-    assert_eq!(s.showing(), 1);
+    assert_eq!(s.showing(), MAIN + 1);
     s.place(1, "calendar", "calendar", false, true, t);
     s.place(2, "term", "term", false, true, t);
     s.place(3, "mail", "mail", false, true, t);
@@ -748,9 +767,9 @@ fn the_saved_layout_remembers_which_side_is_up() {
         s.place(w, app, app, false, true, t);
     }
     assert_eq!(s.on_screen(&none), vec![LEFT]);
-    s.show_workspace(1);
+    s.show_workspace(MAIN + 1);
     assert_eq!(s.on_screen(&none), vec![FULL]);
-    s.show_workspace(0);
+    s.show_workspace(MAIN);
     // An older file's `full` comes back as the workspace's pick order.
     layout.picks = vec![sola_bus::topics::WorkspacePicks {
         workspace: "ws-mail".into(),
@@ -784,12 +803,12 @@ fn a_restarting_app_comes_back_to_its_workspace() {
     s.place(1, "term", "term", false, false, t);
     s.add_workspace("Mail");
     s.place(2, "mail", "mail", false, false, t);
-    s.show_workspace(0);
+    s.show_workspace(MAIN);
     s.remove(2, t);
     let p = s.place(7, "mail", "mail", false, false, t + Duration::from_secs(2));
     assert!(p.returning);
-    assert_eq!(s.workspace_of(7), Some(s.workspaces()[1].id.as_str()));
-    assert_eq!(s.showing(), 0);
+    assert_eq!(s.workspace_of(7), Some(s.workspaces()[MAIN + 1].id.as_str()));
+    assert_eq!(s.showing(), MAIN);
 }
 
 #[test]
@@ -905,42 +924,45 @@ fn three_workspaces() -> (Stacks, Vec<String>) {
     let mut s = Stacks::new();
     s.add_workspace("Two");
     s.add_workspace("Three");
-    s.show_workspace(0);
-    let ids = s.workspaces().into_iter().map(|w| w.id).collect();
+    s.show_workspace(MAIN);
+    // Past Common: these step among the three.
+    let ids = s.workspaces().into_iter().skip(MAIN).map(|w| w.id).collect();
     (s, ids)
 }
 
 #[test]
 fn stepping_passes_over_the_skipped_workspaces() {
     let (mut s, ids) = three_workspaces();
-    let skip_two = [ids[1].clone()];
-    assert_eq!(s.step_workspace(false, &skip_two), 2);
-    assert_eq!(s.step_workspace(true, &skip_two), 2);
-    s.show_workspace(2);
-    assert_eq!(s.step_workspace(false, &skip_two), 0);
+    let skip_two = [COMMON_WORKSPACE.0.to_string(), ids[1].clone()];
+    assert_eq!(s.step_workspace(false, &skip_two), MAIN + 2);
+    assert_eq!(s.step_workspace(true, &skip_two), MAIN + 2);
+    s.show_workspace(MAIN + 2);
+    assert_eq!(s.step_workspace(false, &skip_two), MAIN);
     // Skipped itself: it can be left, in either direction.
-    s.show_workspace(1);
-    assert_eq!(s.step_workspace(false, &skip_two), 2);
-    assert_eq!(s.step_workspace(true, &skip_two), 0);
+    s.show_workspace(MAIN + 1);
+    assert_eq!(s.step_workspace(false, &skip_two), MAIN + 2);
+    assert_eq!(s.step_workspace(true, &skip_two), MAIN);
 }
 
 #[test]
 fn stepping_stays_put_when_every_other_workspace_is_skipped() {
     let (s, ids) = three_workspaces();
-    let others = [ids[1].clone(), ids[2].clone()];
-    assert_eq!(s.step_workspace(false, &others), 0);
-    assert_eq!(s.step_workspace(true, &others), 0);
+    let others = [COMMON_WORKSPACE.0.to_string(), ids[1].clone(), ids[2].clone()];
+    assert_eq!(s.step_workspace(false, &others), MAIN);
+    assert_eq!(s.step_workspace(true, &others), MAIN);
 }
 
 #[test]
 fn reordering_keeps_the_showing_workspace_showing() {
     let (mut s, ids) = three_workspaces();
-    s.show_workspace(1);
-    assert!(s.reorder_workspace(2, 0));
-    let order: Vec<String> = s.workspaces().into_iter().map(|w| w.id).collect();
+    s.show_workspace(MAIN + 1);
+    assert!(s.reorder_workspace(MAIN + 2, MAIN));
+    let order: Vec<String> = s.workspaces().into_iter().skip(MAIN).map(|w| w.id).collect();
     assert_eq!(order, [ids[2].clone(), ids[0].clone(), ids[1].clone()]);
     assert_eq!(s.showing_id(), ids[1]);
-    assert_eq!(s.showing(), 2);
-    assert!(!s.reorder_workspace(1, 1));
-    assert!(!s.reorder_workspace(0, 9));
+    assert_eq!(s.showing(), MAIN + 2);
+    assert!(!s.reorder_workspace(MAIN + 1, MAIN + 1));
+    assert!(!s.reorder_workspace(MAIN, 9));
+    assert!(!s.reorder_workspace(MAIN, COMMON), "Common stays first");
+    assert!(!s.reorder_workspace(COMMON, MAIN), "Common stays first");
 }

@@ -3,6 +3,8 @@
 //! showed before it), the order its zones were picked, the floats'
 //! stacking, and the zone last looked at.
 
+use std::collections::HashMap;
+
 use sola_bus::topics::{Zone, ZoneLayout};
 
 use super::bar::Bar;
@@ -48,6 +50,9 @@ pub(super) struct Desk {
     /// The tiled zone last looked at (focused, or picked): where a new
     /// window goes.
     pub last_zone: Zone,
+    /// Saved index in this bar of each restored window, so windows that
+    /// come back in any order still line up as saved.
+    ranks: HashMap<u32, usize>,
 }
 
 impl Desk {
@@ -60,6 +65,7 @@ impl Desk {
             float_z: Vec::new(),
             picks: Vec::new(),
             last_zone: FULL,
+            ranks: HashMap::new(),
         }
     }
 
@@ -150,6 +156,15 @@ impl Desk {
         }
     }
 
+    /// Whether `window_id` is what its zone shows (every float is).
+    pub fn shows(&self, window_id: u32) -> bool {
+        match self.zone_of(window_id) {
+            Some(Zone::Float) => true,
+            Some(zone) => self.column(zone).shown == Some(window_id),
+            None => false,
+        }
+    }
+
     /// A tab in tiled `zone` was shown: it comes first, and pushes off
     /// whatever overlaps it.
     pub fn pick(&mut self, zone: Zone) {
@@ -179,16 +194,52 @@ impl Desk {
 
     /// Put back `tab`, saved at index `rank` of the bar, among the windows
     /// already back ([`Bar::insert_ranked`]).
-    pub fn insert_ranked(
-        &mut self,
-        tab: Tab,
-        rank: usize,
-        rank_of: &dyn Fn(u32) -> Option<usize>,
-        show: bool,
-    ) -> bool {
+    pub fn insert_ranked(&mut self, tab: Tab, rank: usize, show: bool) -> bool {
         let (window_id, zone) = (tab.window_id, tab.zone);
-        self.bar.insert_ranked(tab, rank, rank_of);
+        let ranks = &self.ranks;
+        self.bar.insert_ranked(tab, rank, &|w| ranks.get(&w).copied());
+        self.ranks.insert(window_id, rank);
         self.placed(window_id, zone, show)
+    }
+
+    /// Move `window_id` to `zone`, its row where it is in the bar; `zone`
+    /// shows it when `show` (or when it showed nothing). The zone it left
+    /// shows what it showed before.
+    pub fn rezone(&mut self, window_id: u32, zone: Zone, show: bool) -> bool {
+        let Some(at) = self.bar.index_of(window_id) else {
+            return false;
+        };
+        let Some(from) = self.zone_of(window_id) else {
+            return false;
+        };
+        self.float_z.retain(|&w| w != window_id);
+        self.vacate(window_id, from, at);
+        if let Some(tab) = self.bar.tabs_mut().find(|t| t.window_id == window_id) {
+            tab.zone = zone;
+        }
+        self.placed(window_id, zone, show);
+        true
+    }
+
+    /// `window_id` leaves `zone`'s column (its row was at index `at`): the
+    /// zone then shows the tab it showed before, else its next in the bar,
+    /// else its previous. Returns whether it showed `window_id`.
+    fn vacate(&mut self, window_id: u32, zone: Zone, at: usize) -> bool {
+        let tabs: Vec<&Tab> = self.bar.tabs().filter(|t| t.window_id != window_id).collect();
+        let at = at.min(tabs.len());
+        let next = tabs[at..].iter().find(|t| t.zone == zone);
+        let prev = tabs[..at].iter().rev().find(|t| t.zone == zone);
+        let fallback = next.or(prev).map(|t| t.window_id);
+        let col = self.column_mut(zone);
+        col.recent.retain(|&w| w != window_id);
+        let was_shown = col.shown == Some(window_id);
+        if was_shown {
+            col.shown = col.recent.last().copied().or(fallback);
+            if let Some(w) = col.shown {
+                col.show(w);
+            }
+        }
+        was_shown
     }
 
     /// A tab was put in the bar: stack a float, show a tiled one when
@@ -211,26 +262,16 @@ impl Desk {
     /// before (else its next in the bar, else its previous).
     pub fn take(&mut self, window_id: u32) -> Option<(Zone, usize, Tab, bool)> {
         self.float_z.retain(|&w| w != window_id);
+        self.ranks.remove(&window_id);
         let (at, tab) = self.bar.remove(window_id)?;
         let zone = tab.zone;
-        let tabs: Vec<&Tab> = self.bar.tabs().collect();
-        let next = tabs[at..].iter().find(|t| t.zone == zone);
-        let prev = tabs[..at].iter().rev().find(|t| t.zone == zone);
-        let fallback = next.or(prev).map(|t| t.window_id);
-        let col = self.column_mut(zone);
-        col.recent.retain(|&w| w != window_id);
-        let was_shown = col.shown == Some(window_id);
-        if was_shown {
-            col.shown = col.recent.last().copied().or(fallback);
-            if let Some(w) = col.shown {
-                col.show(w);
-            }
-        }
+        let was_shown = self.vacate(window_id, zone, at);
         Some((zone, at, tab, was_shown))
     }
 
     pub fn clear(&mut self) {
         self.bar.clear();
+        self.ranks.clear();
         for c in &mut self.columns {
             c.shown = None;
             c.recent.clear();

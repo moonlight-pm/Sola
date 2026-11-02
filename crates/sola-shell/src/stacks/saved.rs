@@ -9,7 +9,7 @@ use sola_bus::topics::{TabLayout, TabLayoutGroup, TabLayoutZone, Workspace, Work
 
 use super::bar::{Bar, Block, app_of_key, grouped};
 use super::desk::Desk;
-use super::{FULL, GHOST_GRACE, RESTORE_GRACE, Stacks};
+use super::{COMMON, COMMON_WORKSPACE, FIRST_WORKSPACE, FULL, GHOST_GRACE, RESTORE_GRACE, Stacks};
 
 /// A remembered place: a workspace, a zone, a key, its index in that
 /// workspace's bar, and whether the zone showed it.
@@ -36,16 +36,26 @@ impl Stacks {
     /// groups regroups at each app's first row).
     pub fn load(&mut self, layout: &TabLayout, now: Instant) {
         if !layout.workspaces.is_empty() {
-            self.desks = layout
-                .workspaces
-                .iter()
-                .map(|w| Desk::new(w.id.clone(), w.name.clone(), &self.layout.zones()))
-                .collect();
+            let zones = self.layout.zones();
+            // Common is first whatever was saved (a file from before it has
+            // none); it keeps its name.
+            let mut desks = vec![Desk::new(COMMON_WORKSPACE.0, COMMON_WORKSPACE.1, &zones)];
+            desks.extend(
+                layout
+                    .workspaces
+                    .iter()
+                    .filter(|w| w.id != COMMON_WORKSPACE.0)
+                    .map(|w| Desk::new(w.id.clone(), w.name.clone(), &zones)),
+            );
+            if desks.len() == 1 {
+                desks.push(Desk::new(FIRST_WORKSPACE.0, FIRST_WORKSPACE.1, &zones));
+            }
+            self.desks = desks;
             self.showing = self
                 .desks
                 .iter()
                 .position(|d| d.id == layout.showing)
-                .unwrap_or(0);
+                .unwrap_or(COMMON + 1);
         }
         for d in &mut self.desks {
             d.picks = match layout.picks.iter().find(|p| p.workspace == d.id) {
@@ -57,7 +67,7 @@ impl Stacks {
                 d.last_zone = z;
             }
         }
-        let first = self.desks[0].id.clone();
+        let first = self.desks[COMMON + 1].id.clone();
         self.restore.clear();
         // Each workspace's next index in its bar, and its groups: (index,
         // after the tabs saved there, app). An empty group sits before the
@@ -234,6 +244,44 @@ impl Stacks {
         }
         let i = self.restore.iter().position(|s| s.key == key)?;
         Some(self.restore.remove(i))
+    }
+
+    /// `slot`, just claimed, is a common window's place on Common: its places
+    /// on the other workspaces, that a window left.
+    pub(super) fn claim_ghost_copies(&mut self, slot: &Slot, now: Instant) -> Vec<Slot> {
+        if slot.workspace != COMMON_WORKSPACE.0 {
+            return Vec::new();
+        }
+        let mut copies = Vec::new();
+        for desk in 1..self.desks.len() {
+            let id = &self.desks[desk].id;
+            let found = self.ghosts.iter().position(|(g, left)| {
+                now < *left + GHOST_GRACE && g.key == slot.key && g.workspace == *id
+            });
+            if let Some(i) = found {
+                copies.push(self.ghosts.remove(i).0);
+            }
+        }
+        copies
+    }
+
+    /// [`Self::claim_ghost_copies`], from the saved layout.
+    pub(super) fn claim_restore_copies(&mut self, slot: &Slot) -> Vec<Slot> {
+        if slot.workspace != COMMON_WORKSPACE.0 {
+            return Vec::new();
+        }
+        let mut copies = Vec::new();
+        for desk in 1..self.desks.len() {
+            let id = &self.desks[desk].id;
+            let found = self
+                .restore
+                .iter()
+                .position(|s| s.key == slot.key && s.workspace == *id);
+            if let Some(i) = found {
+                copies.push(self.restore.remove(i));
+            }
+        }
+        copies
     }
 
     /// Whether a place is waiting for `key`.
