@@ -21,6 +21,7 @@ mod origin;
 mod packages;
 mod plan;
 mod provenance;
+mod prune;
 mod publish;
 mod stage;
 mod vendor;
