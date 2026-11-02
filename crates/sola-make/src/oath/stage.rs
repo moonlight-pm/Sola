@@ -83,7 +83,7 @@ fn chosen(only: &[String]) -> Vec<&'static Package> {
 }
 
 fn build(release: bool, packages: &[&Package]) {
-    let mut cmd = Command::new("cargo");
+    let mut cmd = super::cpus::limited("cargo");
     cmd.arg("build").env("SOLA_CEF_DIR", OATH_CEF);
     if release {
         cmd.arg("--release");

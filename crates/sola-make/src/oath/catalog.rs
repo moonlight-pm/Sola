@@ -56,7 +56,7 @@ pub fn set_plan(name: &str, plan: &Path) -> Result<String, String> {
 
 /// `oath build plan:<name>` in its sandbox; returns the product's hash.
 pub fn build(name: &str) -> Result<String, String> {
-    let out = run(Command::new("sudo").args(["oath", "--json", "build", &format!("plan:{name}")]))?;
+    let out = run(super::cpus::limited("sudo").args(["oath", "--json", "build", &format!("plan:{name}")]))?;
     let v: serde_json::Value =
         serde_json::from_slice(&out.stdout).map_err(|e| format!("oath build plan:{name}: {e}"))?;
     v["product"]

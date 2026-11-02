@@ -16,6 +16,7 @@
 //!   ([`publish`]). Outward-facing: only with the owner's go-ahead.
 
 mod catalog;
+mod cpus;
 mod origin;
 mod packages;
 mod plan;
