@@ -7,7 +7,7 @@ Do not implement from this folder without promotion.
 
 | Idea | Notes |
 |------|--------|
-| [common-send-feedback](2026-11-02-common-send-feedback.md) | Parked (2026-11-02). Ways to show that a send to Common happened, since nothing moves: row pulse, island pulse, window flash, flying icon, toast, and a shake for refused actions. Waits on whether Common stays at all. |
+| [common-send-feedback](2026-11-02-common-send-feedback.md) | Overtaken (2026-11-02): pinned windows replace Common, and a pin shows on the row. Kept for its options, should a pin want more: row pulse, window flash, flying icon, toast. |
 | [signal-client](2026-10-31-signal-client.md) | Parked (2026-10-31). Research only: a kit Signal client as a linked device. Feasible, never set-and-forget. If unparked: signal-cli (JSON-RPC, no D-Bus) under a Vault-shaped `sola-signald` + kit app, engine-neutral so presage can replace it. No history on link and no calls with either engine. Earlier attempt not found. |
 | [vault-later](2026-10-31-vault-later.md) | Parked (2026-10-31). Vault's later pieces: an SSH agent with a prompt per signature, Mail passwords from the vault, import, attachments, Send, the right-click menu over other applications' windows (V4), the username generator's own options, the shell's own fields, memory locking (needs an Oath rlimit on `svc:`). Declined: vault search in the launcher. |
 | [design-memory-budget](2026-10-13-design-memory-budget.md) | Partly promoted → sola-design **slice 7** (budget in free memory, discard idle boards with picture kept, refuse the agent with the reason, `canvas.close`, `status` memory — built 2026-10-14). Still parked: renderer-death recovery, cheaper boards (1× off screen), shared renderers, cgroup fence, keep the previous log. |

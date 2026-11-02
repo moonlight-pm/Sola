@@ -255,6 +255,14 @@ pub struct TabOpener {
     pub opener: String,
 }
 
+/// Whether the focused window is pinned to every workspace (shell → apps):
+/// the check on the Window menu's Pin item in a titlebar, which an app draws
+/// itself. Carried by the sticky `Topic::FocusPinned`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct FocusPinned {
+    pub pinned: bool,
+}
+
 /// Which sola-river window a [`Tab`] is (shell → apps). Sticky, keyed by
 /// `key`; retracted when the window closes. Sent again when `shown` changes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -443,18 +451,19 @@ pub struct WorkspacePrefs {
     pub islands: bool,
     /// The workspaces (by id) Super+Tab passes over, while `islands`.
     pub skipped: Vec<String>,
-    /// Super+Tab stops at Common, which it passes over until asked.
+    /// Retired with the Common workspace; kept for the layout on the wire.
     #[serde(default)]
     pub stops_at_common: bool,
 }
 
-/// The id of Common, the workspace whose windows are on every workspace.
-pub const COMMON_WORKSPACE_ID: &str = "common";
+/// Where a saved layout (`Topic::TabLayout`) lists the pinned windows, a row
+/// each under this workspace id, apart from their rows on each workspace. It
+/// was the id of the Common workspace, so a layout saved then comes back with
+/// Common's windows pinned.
+pub const PINNED_LAYOUT_ID: &str = "common";
 
-/// The tabs that stay where they show, by [`Tab::key`]: every window on
-/// Common, seen from any other workspace (shell → apps). Their frames offer
-/// no close. Carried by the sticky `Topic::PinnedTabs`, the whole list each
-/// time.
+/// Retired with the Common workspace; nothing sends it. Kept because a
+/// topic's place in the list is its number on the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PinnedTabs {
     pub keys: Vec<String>,
@@ -2479,18 +2488,33 @@ define_topics! {
     #[persistent]
     WorkspacePrefs(WorkspacePrefs),
 
-    // The tabs that stay where they show (shell → apps). Sticky. Appended
-    // last.
+    // Retired with the Common workspace (shell → apps). Sticky.
     #[sticky]
     PinnedTabs(PinnedTabs),
 
     // The tab a new tab was opened from (app → shell). Appended last.
     TabOpener(TabOpener),
+
+    // Whether the focused window is pinned (shell → apps). Sticky. Appended
+    // last.
+    #[sticky]
+    FocusPinned(FocusPinned),
 }
 
 #[cfg(test)]
 mod tests {
     use super::{split_app_id, tab_token};
+
+    #[test]
+    fn whether_the_focused_window_is_pinned_reads_back_and_is_kept() {
+        let pinned = super::FocusPinned { pinned: true };
+        let msg = super::Topic::FocusPinned(pinned).to_message();
+        assert!(super::TopicKind::FocusPinned.behavior().is_sticky());
+        match super::Topic::parse(&msg) {
+            Some(super::Topic::FocusPinned(back)) => assert_eq!(back, pinned),
+            other => panic!("read back as {other:?}"),
+        }
+    }
 
     #[test]
     fn a_tab_opener_reads_back_and_is_not_kept() {

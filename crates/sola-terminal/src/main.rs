@@ -615,7 +615,7 @@ impl App {
             self.chrome(window),
             self.title(window),
             Msg::TitleDrag(window),
-            self.tab_windows.closable(window).then_some(Msg::TitleClose(window)),
+            Some(Msg::TitleClose(window)),
             move |dir| Msg::TitleResize(window, dir),
             framed,
         )
@@ -1432,22 +1432,9 @@ impl App {
 
     fn close_active_pane(&mut self) -> Task<Msg> {
         match self.active_pane() {
-            Some(pane) if !self.pane_holds_a_pinned_window(&pane) => self.close_pane_by_id(&pane),
-            _ => Task::none(),
+            Some(pane) => self.close_pane_by_id(&pane),
+            None => Task::none(),
         }
-    }
-
-    /// `pane` is the last of its tab, whose window stays where it shows
-    /// (a common window on another workspace).
-    fn pane_holds_a_pinned_window(&self, pane: &str) -> bool {
-        let Some(tab) = self.tabs.tab_of_pane(pane) else {
-            return false;
-        };
-        let last = self
-            .tabs
-            .get_tab(&tab)
-            .is_some_and(|t| state::close_leaf(t.layout.clone(), pane).is_none());
-        last && self.window_of.get(&tab).is_some_and(|w| !self.tab_windows.closable(*w))
     }
 
     /// Close one pane: kill its tmux, drop its runtime, promote its sibling.

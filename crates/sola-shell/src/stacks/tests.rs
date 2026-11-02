@@ -8,8 +8,8 @@ use super::*;
 const LEFT: Zone = Zone::Grid(1);
 const RIGHT: Zone = Zone::Grid(2);
 
-/// A fresh desk's first ordinary workspace, after Common.
-const MAIN: usize = COMMON + 1;
+/// A fresh desk's workspace.
+const MAIN: usize = 0;
 
 fn none(_: &str) -> bool {
     false
@@ -280,10 +280,6 @@ fn saved_layout_restores_in_order_whatever_order_windows_come() {
             },
         ],
         workspaces: vec![
-            Workspace {
-                id: COMMON_WORKSPACE.0.into(),
-                name: COMMON_WORKSPACE.1.into(),
-            },
             Workspace {
                 id: "main".into(),
                 name: "Main".into(),
@@ -680,23 +676,13 @@ fn layout_of(zones: Vec<(&str, Zone, Vec<&str>, Option<u32>)>, workspaces: &[(&s
                 workspace: ws.into(),
             })
             .collect(),
-        // As saved: Common first, when it lists any.
         workspaces: workspaces
             .iter()
             .map(|(id, name)| Workspace {
                 id: (*id).into(),
                 name: (*name).into(),
             })
-            .fold(Vec::new(), |mut list: Vec<Workspace>, w| {
-                if list.is_empty() {
-                    list.push(Workspace {
-                        id: COMMON_WORKSPACE.0.into(),
-                        name: COMMON_WORKSPACE.1.into(),
-                    });
-                }
-                list.push(w);
-                list
-            }),
+            .collect(),
         showing: showing.into(),
         ..TabLayout::default()
     }
@@ -777,7 +763,6 @@ fn deleting_a_workspace_moves_its_windows_back_one() {
     assert_eq!(ids(&s, FULL), vec![1, 2]);
     assert_eq!(s.shown(FULL), Some(2));
     assert!(!s.delete_workspace(MAIN), "the last one stays");
-    assert!(!s.delete_workspace(COMMON), "Common stays");
 }
 
 #[test]
@@ -790,9 +775,9 @@ fn rename_and_reorder_keep_the_showing_one() {
     assert_eq!(s.workspaces()[MAIN].name, "Post");
     assert_eq!(s.showing(), MAIN);
     assert_eq!(s.showing_id(), s.workspaces()[MAIN].id);
-    assert!(!s.move_workspace(MAIN, true), "not before Common");
-    assert_eq!(s.step_workspace(false, &[COMMON_WORKSPACE.0.into()]), MAIN + 1);
-    assert_eq!(s.step_workspace(true, &[COMMON_WORKSPACE.0.into()]), MAIN + 1);
+    assert!(!s.move_workspace(MAIN, true), "nothing before the first");
+    assert_eq!(s.step_workspace(false, &[]), MAIN + 1);
+    assert_eq!(s.step_workspace(true, &[]), MAIN + 1);
 }
 
 #[test]
@@ -999,7 +984,6 @@ fn three_workspaces() -> (Stacks, Vec<String>) {
     s.add_workspace("Two");
     s.add_workspace("Three");
     s.show_workspace(MAIN);
-    // Past Common: these step among the three.
     let ids = s.workspaces().into_iter().skip(MAIN).map(|w| w.id).collect();
     (s, ids)
 }
@@ -1007,7 +991,7 @@ fn three_workspaces() -> (Stacks, Vec<String>) {
 #[test]
 fn stepping_passes_over_the_skipped_workspaces() {
     let (mut s, ids) = three_workspaces();
-    let skip_two = [COMMON_WORKSPACE.0.to_string(), ids[1].clone()];
+    let skip_two = [ids[1].clone()];
     assert_eq!(s.step_workspace(false, &skip_two), MAIN + 2);
     assert_eq!(s.step_workspace(true, &skip_two), MAIN + 2);
     s.show_workspace(MAIN + 2);
@@ -1021,7 +1005,7 @@ fn stepping_passes_over_the_skipped_workspaces() {
 #[test]
 fn stepping_stays_put_when_every_other_workspace_is_skipped() {
     let (s, ids) = three_workspaces();
-    let others = [COMMON_WORKSPACE.0.to_string(), ids[1].clone(), ids[2].clone()];
+    let others = [ids[1].clone(), ids[2].clone()];
     assert_eq!(s.step_workspace(false, &others), MAIN);
     assert_eq!(s.step_workspace(true, &others), MAIN);
 }
@@ -1037,6 +1021,4 @@ fn reordering_keeps_the_showing_workspace_showing() {
     assert_eq!(s.showing(), MAIN + 2);
     assert!(!s.reorder_workspace(MAIN + 1, MAIN + 1));
     assert!(!s.reorder_workspace(MAIN, 9));
-    assert!(!s.reorder_workspace(MAIN, COMMON), "Common stays first");
-    assert!(!s.reorder_workspace(COMMON, MAIN), "Common stays first");
 }

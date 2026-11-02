@@ -266,10 +266,10 @@ every zone too ([Shell § Window menu](sola-shell.md#window-menu)).
 Every key is changeable (Settings → Keybindings; zone keys in Settings →
 Zones).
 
-Each workspace is a desk of its own (Super+0…9 shows one, Super+Tab
+Each workspace is a desk of its own (Super+1…9 shows one, Super+Tab
 steps through them). The shell composes only the showing workspace; the
-compositor hides the windows on the others, and they keep running. A window
-on Common is on every workspace ([Shell § Common](sola-shell.md#common)).
+compositor hides the windows on the others, and they keep running. A pinned
+window is on every workspace ([Shell § Pinned windows](sola-shell.md#pinned-windows)).
 
 ### Moving and resizing
 

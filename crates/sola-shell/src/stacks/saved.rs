@@ -5,11 +5,13 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use sola_bus::topics::{TabLayout, TabLayoutGroup, TabLayoutZone, Workspace, WorkspacePicks, Zone};
+use sola_bus::topics::{
+    PINNED_LAYOUT_ID, TabLayout, TabLayoutGroup, TabLayoutZone, Workspace, WorkspacePicks, Zone,
+};
 
 use super::bar::{Bar, Block, app_of_key, grouped};
 use super::desk::Desk;
-use super::{COMMON, COMMON_WORKSPACE, FIRST_WORKSPACE, FULL, GHOST_GRACE, RESTORE_GRACE, Stacks};
+use super::{FIRST_WORKSPACE, FULL, GHOST_GRACE, RESTORE_GRACE, Stacks};
 
 /// A remembered place: a workspace, a zone, a key, its index in that
 /// workspace's bar, and whether the zone showed it.
@@ -20,6 +22,8 @@ pub(super) struct Slot {
     pub key: String,
     pub at: usize,
     pub shown: bool,
+    /// A pinned window's: it has a place on each workspace.
+    pub pinned: bool,
 }
 
 impl Stacks {
@@ -33,21 +37,19 @@ impl Stacks {
     /// come. Each workspace's app groups wait in their saved places — at
     /// their first window's index, or the place an empty one kept — so
     /// windows that come back line up around them (a bar saved before
-    /// groups regroups at each app's first row).
+    /// groups regroups at each app's first row). The rows under
+    /// [`PINNED_LAYOUT_ID`] say which keys are pinned.
     pub fn load(&mut self, layout: &TabLayout, now: Instant) {
         if !layout.workspaces.is_empty() {
             let zones = self.layout.zones();
-            // Common is first whatever was saved (a file from before it has
-            // none); it keeps its name.
-            let mut desks = vec![Desk::new(COMMON_WORKSPACE.0, COMMON_WORKSPACE.1, &zones)];
-            desks.extend(
-                layout
-                    .workspaces
-                    .iter()
-                    .filter(|w| w.id != COMMON_WORKSPACE.0)
-                    .map(|w| Desk::new(w.id.clone(), w.name.clone(), &zones)),
-            );
-            if desks.len() == 1 {
+            // A file from when Common was a workspace lists it.
+            let mut desks: Vec<Desk> = layout
+                .workspaces
+                .iter()
+                .filter(|w| w.id != PINNED_LAYOUT_ID)
+                .map(|w| Desk::new(w.id.clone(), w.name.clone(), &zones))
+                .collect();
+            if desks.is_empty() {
                 desks.push(Desk::new(FIRST_WORKSPACE.0, FIRST_WORKSPACE.1, &zones));
             }
             self.desks = desks;
@@ -55,7 +57,7 @@ impl Stacks {
                 .desks
                 .iter()
                 .position(|d| d.id == layout.showing)
-                .unwrap_or(COMMON + 1);
+                .unwrap_or(0);
         }
         for d in &mut self.desks {
             d.picks = match layout.picks.iter().find(|p| p.workspace == d.id) {
@@ -67,7 +69,7 @@ impl Stacks {
                 d.last_zone = z;
             }
         }
-        let first = self.desks[COMMON + 1].id.clone();
+        let first = self.desks[0].id.clone();
         self.restore.clear();
         // Each workspace's next index in its bar, and its groups: (index,
         // after the tabs saved there, app). An empty group sits before the
@@ -81,7 +83,12 @@ impl Stacks {
                 .or_default()
                 .push((g.at as usize, false, g.app.clone()));
         }
+        let mut pins: Vec<(Zone, &String)> = Vec::new();
         for z in &layout.zones {
+            if z.workspace == PINNED_LAYOUT_ID {
+                pins.extend(z.apps.iter().map(|key| (z.zone, key)));
+                continue;
+            }
             let workspace = if z.workspace.is_empty() {
                 first.clone()
             } else {
@@ -100,9 +107,32 @@ impl Stacks {
                     key: key.clone(),
                     at: *start + i,
                     shown: z.shown == Some(i as u32),
+                    pinned: false,
                 });
             }
             *start += z.apps.len();
+        }
+        for (zone, key) in pins {
+            let mut found = Vec::new();
+            for slot in self.restore.iter_mut().filter(|s| s.key == *key) {
+                if !found.contains(&slot.workspace) {
+                    found.push(slot.workspace.clone());
+                    slot.pinned = true;
+                }
+            }
+            // No workspace has its row (Common alone did): the first gets one.
+            if found.is_empty() {
+                let at = next.entry(first.clone()).or_default();
+                self.restore.push(Slot {
+                    workspace: first.clone(),
+                    zone,
+                    key: key.clone(),
+                    at: *at,
+                    shown: false,
+                    pinned: true,
+                });
+                *at += 1;
+            }
         }
         for d in &mut self.desks {
             let mut ws_groups = groups.remove(&d.id).unwrap_or_default();
@@ -192,6 +222,28 @@ impl Stacks {
                 run.apps.push(key);
             }
         }
+        // Which keys are pinned, in an order that does not depend on the order
+        // their windows came in.
+        let live = self
+            .pinned
+            .iter()
+            .filter_map(|w| self.desks.iter().find_map(|d| d.tab(*w)))
+            .map(|t| (t.key.clone(), t.zone));
+        let waiting = self
+            .live_ghosts(now)
+            .map(|(g, _)| g)
+            .chain(self.live_restore(now))
+            .filter(|s| s.pinned)
+            .map(|s| (s.key.clone(), s.zone));
+        let mut pins: Vec<(String, Zone)> = live.chain(waiting).collect();
+        pins.sort_by(|a, b| a.0.cmp(&b.0));
+        pins.dedup_by(|a, b| a.0 == b.0);
+        zones.extend(pins.into_iter().map(|(key, zone)| TabLayoutZone {
+            zone,
+            apps: vec![key],
+            shown: None,
+            workspace: PINNED_LAYOUT_ID.to_string(),
+        }));
         TabLayout {
             zones,
             workspaces: self
@@ -246,17 +298,17 @@ impl Stacks {
         Some(self.restore.remove(i))
     }
 
-    /// `slot`, just claimed, is a common window's place on Common: its places
-    /// on the other workspaces, that a window left.
+    /// `slot`, just claimed, may be a pinned window's: its places on the other
+    /// workspaces, that a window left.
     pub(super) fn claim_ghost_copies(&mut self, slot: &Slot, now: Instant) -> Vec<Slot> {
-        if slot.workspace != COMMON_WORKSPACE.0 {
+        if !slot.pinned {
             return Vec::new();
         }
         let mut copies = Vec::new();
-        for desk in 1..self.desks.len() {
+        for desk in 0..self.desks.len() {
             let id = &self.desks[desk].id;
             let found = self.ghosts.iter().position(|(g, left)| {
-                now < *left + GHOST_GRACE && g.key == slot.key && g.workspace == *id
+                now < *left + GHOST_GRACE && g.pinned && g.key == slot.key && g.workspace == *id
             });
             if let Some(i) = found {
                 copies.push(self.ghosts.remove(i).0);
@@ -267,16 +319,16 @@ impl Stacks {
 
     /// [`Self::claim_ghost_copies`], from the saved layout.
     pub(super) fn claim_restore_copies(&mut self, slot: &Slot) -> Vec<Slot> {
-        if slot.workspace != COMMON_WORKSPACE.0 {
+        if !slot.pinned {
             return Vec::new();
         }
         let mut copies = Vec::new();
-        for desk in 1..self.desks.len() {
+        for desk in 0..self.desks.len() {
             let id = &self.desks[desk].id;
             let found = self
                 .restore
                 .iter()
-                .position(|s| s.key == slot.key && s.workspace == *id);
+                .position(|s| s.pinned && s.key == slot.key && s.workspace == *id);
             if let Some(i) = found {
                 copies.push(self.restore.remove(i));
             }

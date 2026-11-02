@@ -257,11 +257,6 @@ impl<E: Engine> PageWindows<E> {
         self.tabs.river_id(window)
     }
 
-    /// [`sola_kit::tabs::TabWindows::closable`].
-    pub fn closable(&self, window: window::Id) -> bool {
-        self.tabs.closable(window)
-    }
-
     /// Ask the shell to show page `tab`'s window and focus it.
     pub fn show(&self, tab: TabId) {
         if let Some(window) = self.window_of(tab) {

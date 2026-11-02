@@ -170,12 +170,10 @@ fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab, in_group: bool) -> SidebarI
         .bright(current && !showing)
         .stoplight(true)
         .leading(leading);
-    // A common window stays, on any workspace but Common.
-    item = if shell.tabs.is_pinned_here(t.window_id) {
-        item.pinned()
-    } else {
-        item.on_close(Msg::CloseWindow(t.window_id))
-    };
+    item = item.on_close(Msg::CloseWindow(t.window_id));
+    if shell.tabs.is_pinned(t.window_id) {
+        item = item.pinned();
+    }
     if let Some(p) = parts {
         if let Some(session) = p.session {
             item = item.detail(session);

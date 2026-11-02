@@ -102,8 +102,10 @@ so renaming a workspace changes nothing about its profile.
   under that workspace's profile; its back history and form state do not
   come along. A desk restart moves no page: each stays on its workspace,
   under its profile.
-- A new workspace starts with a new, empty profile. So does
-  [Common](sola-shell.md#common): a page sent there reloads signed out.
+- A new workspace starts with a new, empty profile.
+- A [pinned](sola-shell.md#pinned-windows) page keeps the profile it has, on
+  every workspace. Unpinned, it reopens under the profile of the workspace it
+  stays on, if that is another.
 - A deleted workspace's profile stays on disk with its sign-ins and saved
   pages, but nothing opens it.
 - A web app keeps the profile it was wrapped from, wherever its window

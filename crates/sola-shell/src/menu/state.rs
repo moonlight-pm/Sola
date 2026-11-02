@@ -100,7 +100,7 @@ pub fn fill_window_menu(
                 Some(WindowAction::Hide) => Act::Hide,
                 Some(WindowAction::Cycle) => Act::NextTab,
                 Some(WindowAction::Zone(z)) => Act::Zone(z),
-                None => continue,
+                Some(WindowAction::Pin) | None => continue,
             };
             *shortcut = keys.key(act);
         }

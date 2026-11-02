@@ -155,6 +155,7 @@ pub fn prepare(payload: AppMenuPayload) -> AppMenuPayload {
         .unwrap_or_default();
     if let Some(menu) = payload.menus.iter_mut().find(|m| m.label == WINDOW_MENU_LABEL) {
         fill_window_menu(menu, &layout);
+        check_pin(menu, crate::pinned::focus_is_pinned());
     }
     crate::keys::apply(&payload)
 }
@@ -176,6 +177,23 @@ pub fn action_for_key(key: KeyChord) -> Option<String> {
             } if *k == key && !is_shell_action(id) => Some(id.clone()),
             _ => None,
         })
+}
+
+/// Check the Window menu's Pin item, or not.
+pub fn check_pin(menu: &mut MenuDefinition, pinned: bool) {
+    for item in &mut menu.items {
+        if let MenuItem::Action { id, checked, .. } = item {
+            if id == ACTION_PIN {
+                *checked = pinned;
+            }
+        }
+    }
+}
+
+/// The focused window was pinned or unpinned, or another took focus: the
+/// check on the Pin item.
+pub(crate) fn focus_pin_changed() {
+    forget_current();
 }
 
 /// [`current`] made again on its next call (the menus, the keys or the
@@ -212,6 +230,8 @@ pub const ACTION_CYCLE: &str = "window.cycle";
 pub const ACTION_FLOAT: &str = "window.float";
 pub const ACTION_FULLSCREEN: &str = "window.fullscreen";
 pub const ACTION_CINEMA: &str = "window.cinema";
+/// On every workspace, or back on the showing one alone.
+pub const ACTION_PIN: &str = "window.pin";
 /// A grid zone's item: `window.zone.<id>` (the layout's zones are the
 /// shell's; it adds their items to the menus it draws).
 pub const ACTION_GRID_PREFIX: &str = "window.zone.";
@@ -226,6 +246,7 @@ pub fn grid_action_id(id: u32) -> String {
 pub enum WindowAction {
     Hide,
     Cycle,
+    Pin,
     Zone(Zone),
 }
 
@@ -234,7 +255,7 @@ pub enum WindowAction {
 pub struct WindowMenuItem {
     pub id: &'static str,
     pub label: &'static str,
-    pub shortcut: KeyChord,
+    pub shortcut: Option<KeyChord>,
     pub action: WindowAction,
 }
 
@@ -256,7 +277,7 @@ const fn item(
     WindowMenuEntry::Item(WindowMenuItem {
         id,
         label,
-        shortcut,
+        shortcut: Some(shortcut),
         action,
     })
 }
@@ -270,6 +291,12 @@ pub const WINDOW_MENU_ENTRIES: &[WindowMenuEntry] = &[
         KeyCode::GRAVE.meta(),
         WindowAction::Cycle,
     ),
+    WindowMenuEntry::Item(WindowMenuItem {
+        id: ACTION_PIN,
+        label: "Pin to All Workspaces",
+        shortcut: None,
+        action: WindowAction::Pin,
+    }),
     WindowMenuEntry::Divider,
     item(
         ACTION_FLOAT,
@@ -327,25 +354,6 @@ pub fn close_window_menu_item() -> MenuItem {
     }
 }
 
-/// Whether menu action `id` closes its window, whichever app's it is: the
-/// shell's, or the app's own.
-pub fn closes_window(id: &str) -> bool {
-    [ACTION_CLOSE_WINDOW, "close-window", "close_tab", "close-tab", "web-close-window"].contains(&id)
-}
-
-/// Disable the rows of `menus` that close the window: it stays where it is.
-pub fn disable_close(menus: &mut AppMenuPayload) {
-    for menu in &mut menus.menus {
-        for item in &mut menu.items {
-            if let MenuItem::Action { id, disabled, .. } = item {
-                if closes_window(id) {
-                    *disabled = true;
-                }
-            }
-        }
-    }
-}
-
 /// A menu action the shell carries out rather than the app.
 fn is_shell_action(id: &str) -> bool {
     id == ACTION_CLOSE_WINDOW || parse_window_action(id).is_some()
@@ -362,7 +370,7 @@ pub fn window_menu() -> MenuDefinition {
                 WindowMenuEntry::Item(i) => MenuItem::Action {
                     id: i.id.into(),
                     label: i.label.into(),
-                    shortcut: Some(i.shortcut),
+                    shortcut: i.shortcut,
                     disabled: false,
                     checked: false,
                 },
@@ -397,6 +405,24 @@ pub fn ensure_window_menu(mut payload: AppMenuPayload) -> AppMenuPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pin_item_is_the_shell_s_and_shows_whether_the_window_is_pinned() {
+        assert_eq!(parse_window_action(ACTION_PIN), Some(WindowAction::Pin));
+        assert!(is_shell_action(ACTION_PIN));
+        let mut menu = window_menu();
+        let checked = |menu: &MenuDefinition| {
+            menu.items.iter().find_map(|i| match i {
+                MenuItem::Action { id, checked, .. } if id == ACTION_PIN => Some(*checked),
+                _ => None,
+            })
+        };
+        assert_eq!(checked(&menu), Some(false));
+        check_pin(&mut menu, true);
+        assert_eq!(checked(&menu), Some(true));
+        check_pin(&mut menu, false);
+        assert_eq!(checked(&menu), Some(false));
+    }
 
     #[test]
     fn window_menu_covers_every_zone() {
@@ -464,7 +490,7 @@ mod tests {
     #[test]
     fn window_menu_float_is_super_kp_multiply() {
         let chord = WINDOW_MENU_ENTRIES.iter().find_map(|e| match e {
-            WindowMenuEntry::Item(i) if i.id == ACTION_FLOAT => Some(i.shortcut),
+            WindowMenuEntry::Item(i) if i.id == ACTION_FLOAT => i.shortcut,
             _ => None,
         });
         let chord = chord.expect("float item");

@@ -38,11 +38,9 @@ system key.
 | Super+L | Lock the screen (needs a password: [Security](security.md#locking)) |
 | Super+CapsLock | Show the next window in the zone under the pointer (Super+Shift+CapsLock: the previous) |
 | Super+Backtick | Show the focused app's next window on this workspace (Super+Shift+Backtick: the previous) |
-| Super+0 | Show [Common](#common) |
 | Super+1 … Super+9 | Show workspace 1 to 9 |
-| Super+Shift+0 | Send the focused window to [Common](#common) |
 | Super+Shift+1 … Super+Shift+9 | Send the focused window to workspace 1 to 9 |
-| Super+Tab | Next workspace (Super+Shift+Tab: the previous), past Common until its dot is lit; [as islands](#workspaces-as-islands), past those switched off |
+| Super+Tab | Next workspace (Super+Shift+Tab: the previous); [as islands](#workspaces-as-islands), past those switched off |
 | Super+Keypad 0 | Move the focused window to Full |
 | Super+Keypad 4 | Move the focused window to the left column (the default layout's) |
 | Super+Keypad 6 | Move the focused window to the right column (the default layout's) |
@@ -334,7 +332,7 @@ name means a window on another workspace waits on a decision; a dot, that
 a Mail window on another workspace has unread mail.
 
 Click the head for the workspace menu: every workspace (the current one
-checked, Super+0 to Super+9 beside the first ten; click one to show it),
+checked, Super+1 to Super+9 beside the first nine; click one to show it),
 then, for the current one:
 
 - **New Workspace** adds "Workspace N" after the current one and shows
@@ -342,19 +340,17 @@ then, for the current one:
 - **Rename…** turns the menu into a field: Return renames, Escape
   cancels. An empty name keeps the old one.
 - **Move Left** and **Move Right** move it in the order (dimmed at the
-  ends; nothing goes before Common).
+  ends).
 - **Delete** removes it. Its windows join the workspace before it (the
   next one, for the first), in the same zones, at the end of its bar (a
   group's windows in that app's group there). The last workspace cannot
   be deleted.
 
-On Common only New Workspace is live: it cannot be renamed, moved or deleted.
-
 ### Workspaces as islands
 
 Settings → Appearance → Workspaces → **Islands in the top row** takes the
 head off the bar and puts each workspace in an island of its own, right of
-the flower. An island shows the workspace's number (its place: Super+0 to
+the flower. An island shows the workspace's number (its place: Super+1 to
 Super+9), its name and a dot. On a workspace you are not on, a diamond means
 a window there waits on a decision, and a mail icon that you have unread mail
 and Mail is there. When other islands follow (Projects sessions asking or
@@ -362,64 +358,59 @@ finished), a thin line sets the workspaces apart from them.
 
 - **Click** an island to show that workspace. Click the one showing for its
   menu: New Workspace, Rename…, Delete.
-- **Drag** an island to reorder the workspaces; the numbers follow. Common
-  stays first.
+- **Drag** an island to reorder the workspaces; the numbers follow.
 - **The dot** says whether Super+Tab stops there: lit, it does. Click it to
   change that. Unlit, Super+Tab and Super+Shift+Tab pass over the workspace;
-  Super+0 to Super+9 and a click still show it. With every other workspace
-  unlit, they stay where they are. Common's starts unlit.
+  Super+1 to Super+9 and a click still show it. With every other workspace
+  unlit, they stay where they are.
 
 Turning the setting off brings the head back, and Super+Tab steps through
-every workspace but Common again, or Common too if its dot is lit. The dots
-are kept for the next time.
+every workspace again. The dots are kept for the next time.
 
 ## Workspaces
 
 Each workspace has its own windows and its own bar; only the workspace
-you are on is on screen. A fresh desk starts with **Common** (number 0, on
-the left) and **Main** (number 1).
+you are on is on screen, along with any [pinned windows](#pinned-windows). A
+fresh desk starts with **Main** (number 1).
 
-- **Super+0 … Super+9** shows a workspace; its last focused window takes
+- **Super+1 … Super+9** shows a workspace; its last focused window takes
   the keyboard.
-- **Super+Shift+0 … Super+Shift+9** sends the focused window there, into
+- **Super+Shift+1 … Super+Shift+9** sends the focused window there, into
   the same zone, at the end of its app's group there (at the end of that
   workspace's bar, when it has none), shown in its zone. You stay where
   you are.
 - **Super+Tab** and **Super+Shift+Tab** step through the workspaces,
-  wrapping, past Common until its dot is lit.
+  wrapping.
 
 Showing a window that is on another workspace (from a notification, an
 agent island, Mail's chip) shows that workspace.
 
-### Common
+### Pinned windows
 
-A window on Common is on every workspace: each has a row for it, in that
-app's group there, and it counts toward the group (one Terminal of your own
-and one common Terminal make a group). Common cannot be renamed, moved or
-deleted.
+A pinned window is on every workspace. **Window → Pin to All Workspaces**
+pins the focused window, any window, and leaves you where you are; the item
+shows a check while it is pinned, and choosing it again unpins it. It has no
+key for now.
 
-- **Putting one there:** send a window there (Super+Shift+0), or open it
-  while on Common. Sent from elsewhere, it stays on screen where you are.
-- **On each workspace,** the row's place and what is on top are that
-  workspace's own: a common window landing on a workspace goes to the end of
+- **On each workspace** it has a row with a small pin, in that app's group
+  there, and it counts toward the group (one Terminal of your own and one
+  pinned Terminal make a group). The row's place and what is on top are that
+  workspace's own: a pinned window landing on a workspace goes to the end of
   its bar, and does not cover what shows there unless its zone shows nothing.
-  A new workspace starts with Common's windows. Clicking a common row stays
+  A new workspace starts with the pinned windows. Clicking a pinned row stays
   on the workspace you are on.
 - **One zone:** the window is in the same zone everywhere. Moving it on one
   workspace moves it on all, and brings it up only where you are.
-- **Taking one out** happens only on Common. There, Super+Shift+N sends it to
-  workspace N, where it becomes an ordinary window, and closing it closes it.
-  On any other workspace it stays: its row has a small pin and no close, and
-  Super+W, its titlebar's close dot, its menu's Close Window, closing a
-  Terminal's last pane and sending it elsewhere do nothing. An app's own close
-  button outside Sola, a page closing itself and a crash still end the window.
-- **Marks:** a common window's waiting mark shows on Common's island, and its
-  own row keeps it.
+- **Unpinning** leaves it on the workspace you are on, and it leaves the rest.
+- **Super+Shift+N** sends it to workspace N and unpins it.
+- **Closing** works from any workspace, the usual ways, and closes it
+  everywhere.
 
-Each workspace's places for its common windows are saved with the rest of
-the bar, so they come back after a restart. A Browser page on Common runs
-Common's own profile, signed out at first (see
-[Profiles](sola-browser.md#profiles)); a web app keeps its own.
+Each workspace's places for its pinned windows are saved with the rest of the
+bar, so they come back pinned after a restart. A Browser page keeps the profile
+it has while pinned, so it stays signed in; unpinned, it runs the profile of
+the workspace it stays on, like a page sent there (see
+[Profiles](sola-browser.md#profiles)). A web app keeps its own.
 
 Each workspace has a browser profile of its own, which goes by the
 workspace, not its name. Browser pages on a workspace share its
@@ -457,7 +448,7 @@ app whose window you floated, until you tile it again.
 A Projects session started by another session opens on that session's
 workspace, in the zone last used there, with its row after that session's
 and behind what the zone shows; you stay where you are. With `--select` it
-takes you there. A session whose window is on Common, or that has no window
+takes you there. A session whose window is pinned, or that has no window
 here, starts its new one on the workspace you are on.
 
 - **A zone's key** (Super with the key you gave it; Keypad 0, 4 and 6 by
@@ -514,10 +505,10 @@ shortcuts work on them as on any window.
 ### Window menu
 
 An app's last menu is the **Window** menu (an app can replace it). It
-holds **Hide** (Super+H), **Cycle Windows** (Super+Backtick),
-**Float**, the grid's zones (named by their place), **Full** and
-**Cinema**, each with its key now, so each of those keys also has a mouse
-path. The Shell acts on the focused window.
+holds **Hide** (Super+H), **Cycle Windows** (Super+Backtick), **Pin to All
+Workspaces** ([pinned windows](#pinned-windows)), **Float**, the grid's zones
+(named by their place), **Full** and **Cinema**, each with its key now, so
+each of those keys also has a mouse path. The Shell acts on the focused window.
 
 ## The right-click menu
 

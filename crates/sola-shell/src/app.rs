@@ -765,6 +765,8 @@ impl Shell {
             .find(|m| m.label == sola_kit::menu::WINDOW_MENU_LABEL)
         {
             crate::menu::state::fill_window_menu(menu, self.tabs.zone_layout(), &self.keys);
+            let pinned = self.focused_window_id.is_some_and(|w| self.tabs.is_pinned(w));
+            sola_kit::menu::check_pin(menu, pinned);
         }
         payload
     }
@@ -903,6 +905,10 @@ impl Shell {
                 iced::Task::none()
             }
             sola_kit::WindowAction::Cycle => iced::Task::done(Msg::CycleApp { back: false }),
+            sola_kit::WindowAction::Pin => {
+                self.toggle_pin_focused();
+                iced::Task::none()
+            }
             sola_kit::WindowAction::Zone(zone) => self.snap_focused_zone(zone),
         }
     }
@@ -1797,11 +1803,12 @@ impl Shell {
         };
         let mut frames = Vec::new();
         let layout = self.tabs.zone_layout();
+        let mut pinned_framed = std::collections::HashSet::new();
         // Every workspace, so showing one needs no resize either.
         for ws in 0..self.tabs.workspace_count() {
             for t in self.tabs.bar_on(ws) {
-                // A common window's rows have one zone, and Common has one.
-                if ws != crate::stacks::COMMON && self.tabs.is_common(t.window_id) {
+                // A pinned window's rows have one zone: one frame.
+                if self.tabs.is_pinned(t.window_id) && !pinned_framed.insert(t.window_id) {
                     continue;
                 }
                 match t.zone {
@@ -3119,10 +3126,6 @@ impl Shell {
             Msg::AgentIslandShow => self.agent_island_act(sola_bus::topics::IslandAction::Show),
             Msg::AdaptSampled(picture, scheme) => self.adapt_sampled(picture, scheme),
             Msg::CloseWindow(wid) => {
-                if self.tabs.is_pinned_here(wid) {
-                    tracing::debug!(window_id = wid, "common window stays");
-                    return iced::Task::none();
-                }
                 // A tab's window: its app closes it (not through the
                 // compositor, whose close requests also mean "quit").
                 let close = match self.pairing.key_of(wid) {
@@ -3342,11 +3345,25 @@ mod hide_tests {
         }
     }
 
+    impl Shell {
+        /// Whether the app's Window menu has its Pin item checked.
+        fn effective_app_menu_pinned(&self, app_id: &str) -> bool {
+            self.effective_app_menu(app_id)
+                .menus
+                .iter()
+                .flat_map(|m| &m.items)
+                .any(|i| matches!(
+                    i,
+                    sola_bus::topics::MenuItem::Action { id, checked: true, .. }
+                        if id == sola_kit::menu::ACTION_PIN
+                ))
+        }
+    }
+
     #[test]
     fn super_tab_passes_over_switched_off_workspaces_only_with_the_islands() {
         use sola_bus::topics::{Topic, WorkspacePrefs};
-        // Past Common: Main, Two, Three.
-        const MAIN: usize = crate::stacks::COMMON + 1;
+        const MAIN: usize = 0;
         let mut shell = test_shell(Vec::new(), None, &[]);
         shell.tabs.add_workspace("Two");
         shell.tabs.add_workspace("Three");
@@ -3389,34 +3406,9 @@ mod hide_tests {
         assert!(!shell.workspace_skipped(&two));
     }
 
-    /// Common's dot starts unlit, with the switcher in the bar too; lit, the
-    /// step stops there.
-    #[test]
-    fn super_tab_passes_over_common_until_its_dot_is_lit() {
-        use crate::stacks::{COMMON, COMMON_WORKSPACE};
-        const MAIN: usize = COMMON + 1;
-        let mut shell = test_shell(Vec::new(), None, &[]);
-        shell.tabs.add_workspace("Two");
-        shell.tabs.show_workspace(MAIN);
-        assert!(shell.workspace_skipped(COMMON_WORKSPACE.0));
-        shell.step_workspace(true);
-        assert_eq!(shell.tabs.showing(), MAIN + 1, "back past Common");
-        shell.step_workspace(false);
-        assert_eq!(shell.tabs.showing(), MAIN, "round past Common");
-
-        shell.toggle_workspace_cycle(COMMON);
-        assert!(!shell.workspace_skipped(COMMON_WORKSPACE.0));
-        shell.step_workspace(true);
-        assert_eq!(shell.tabs.showing(), COMMON);
-        // It can be left whichever way.
-        shell.toggle_workspace_cycle(COMMON);
-        shell.step_workspace(false);
-        assert_eq!(shell.tabs.showing(), MAIN);
-    }
-
     #[test]
     fn a_click_on_a_workspace_island_shows_it_and_the_showing_one_opens_its_menu() {
-        const MAIN: usize = crate::stacks::COMMON + 1;
+        const MAIN: usize = 0;
         let mut shell = test_shell(Vec::new(), None, &[]);
         shell.tabs.add_workspace("Two");
         shell.tabs.show_workspace(MAIN);
@@ -3578,6 +3570,41 @@ mod hide_tests {
         );
         assert_eq!(shell.tabs.workspace_of(5), Some("main"), "its own place");
         assert_eq!(shell.workspace.told(5), Some("main"), "the first word is the true one");
+    }
+
+    /// Window → Pin to All Workspaces, and again. No app hears a pinned window
+    /// is on a workspace, so a browser page keeps its profile and stays signed
+    /// in; unpinned, it is on the one showing. The row's close stays, there
+    /// being no other place to close it from now.
+    #[test]
+    fn the_menu_pins_the_focused_window_and_no_app_hears_of_a_workspace() {
+        use sola_bus::topics::Topic;
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        shell.tab_layout_loaded = true;
+        let mut m = Topic::Windows(vec![win(5, "sola-mail", "Mail")]).to_message();
+        m.sticky = true;
+        let _ = shell.handle_bus(&m);
+        shell.focused_window_id = Some(5);
+        shell.sync_workspaces();
+        let main = shell.tabs.showing_id().to_string();
+        assert_eq!(shell.workspace.told(5), Some(main.as_str()));
+        shell.tabs.add_workspace("Two");
+        let two = shell.tabs.showing_id().to_string();
+        shell.tabs.show_workspace(0);
+        assert!(!shell.effective_app_menu_pinned("sola-mail"));
+
+        let _ = shell.handle_window_action(sola_kit::WindowAction::Pin);
+        assert!(shell.tabs.is_pinned(5));
+        assert_eq!(shell.workspace.told(5), None);
+        assert!(shell.effective_app_menu_pinned("sola-mail"), "the item shows it");
+        assert_eq!(shell.tabs.bar_on(1).len(), 1, "on the other workspace too");
+
+        shell.tabs.show_workspace(1);
+        let _ = shell.handle_window_action(sola_kit::WindowAction::Pin);
+        assert!(!shell.tabs.is_pinned(5));
+        assert_eq!(shell.workspace.told(5), Some(two.as_str()));
+        assert_eq!(shell.tabs.bar_on(0).len(), 0, "gone from the other");
+        assert!(!shell.effective_app_menu_pinned("sola-mail"));
     }
 
     /// A session asks for a session while you are on another workspace: its

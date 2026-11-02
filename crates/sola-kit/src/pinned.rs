@@ -1,36 +1,26 @@
-//! Windows that stay where they show (`Topic::PinnedTabs`): a window on the
-//! Common workspace, seen from any other, is not closed from there. The kit
-//! keeps the list for the app, whatever it subscribes to; a frame offers no
-//! close for a pinned window ([`crate::window_frame`] for an app with one
-//! window, [`crate::tabs::TabWindows::closable`] for one with a window per
-//! tab).
+//! Whether the focused window is pinned to every workspace
+//! (`Topic::FocusPinned`), for the check on the Window menu's Pin item in the
+//! titlebars an app draws ([`crate::menu::prepare`]). The kit keeps it for
+//! the app, whatever it subscribes to.
 
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use sola_bus::Message;
 use sola_bus::topics::Topic;
 
-static KEYS: RwLock<Vec<String>> = RwLock::new(Vec::new());
+static FOCUS_PINNED: AtomicBool = AtomicBool::new(false);
 
-/// Take the list from a bus delivery that carries it.
-pub(crate) fn observe(msg: &Message) {
+/// Take it from a bus delivery that carries it. True when it changed.
+pub(crate) fn observe(msg: &Message) -> bool {
     // By name first: every message passes here.
-    if msg.topic != "PinnedTabs" {
-        return;
+    if msg.topic != "FocusPinned" {
+        return false;
     }
-    if let Some(Topic::PinnedTabs(pinned)) = Topic::parse(msg) {
-        if let Ok(mut keys) = KEYS.write() {
-            *keys = pinned.keys;
-        }
-    }
+    let pinned = matches!(Topic::parse(msg), Some(Topic::FocusPinned(p)) if p.pinned && msg.sticky);
+    FOCUS_PINNED.swap(pinned, Ordering::Relaxed) != pinned
 }
 
-/// Whether the tab with this key stays where it shows.
-pub fn is_pinned(key: &str) -> bool {
-    KEYS.read().is_ok_and(|keys| keys.iter().any(|k| k == key))
-}
-
-/// Whether this app's window, a tab of no key of its own, stays.
-pub(crate) fn this_app() -> bool {
-    crate::app::app_id().is_some_and(is_pinned)
+/// Whether the focused window is pinned.
+pub(crate) fn focus_is_pinned() -> bool {
+    FOCUS_PINNED.load(Ordering::Relaxed)
 }

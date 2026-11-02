@@ -1,9 +1,8 @@
 # Common: showing that a send happened
 
-**Status:** parked (Joshua, 2026-11-02: "Let's hold off on that for now --
-now that i'm using the common workspace, i'm not entirely sure i want to keep
-it"). Whether Common stays comes first; settle that before building any of
-this.
+**Status:** overtaken (2026-11-02). Joshua replaced Common with pinned windows,
+toggled from the Window menu, with a pin on the row. Kept for the options,
+should pinning a window want more of a sign. Super+Shift+0 no longer exists.
 
 ## The problem
 

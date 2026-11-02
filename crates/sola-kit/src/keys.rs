@@ -178,6 +178,8 @@ fn system_id(item: &str) -> Option<String> {
     Some(match parse_window_action(item)? {
         WindowAction::Hide => "hide".into(),
         WindowAction::Cycle => "tab.next".into(),
+        // The shell's, with no key for now.
+        WindowAction::Pin => "pin".into(),
         WindowAction::Zone(sola_bus::topics::Zone::Fullscreen) => "zone.full".into(),
         WindowAction::Zone(sola_bus::topics::Zone::Cinema) => "zone.cinema".into(),
         WindowAction::Zone(sola_bus::topics::Zone::Float) => "zone.float".into(),

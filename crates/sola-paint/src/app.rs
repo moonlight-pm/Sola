@@ -1044,7 +1044,7 @@ impl App {
             self.chrome(window),
             self.title(window),
             Msg::TitleDrag,
-            self.windows.closable(window).then_some(Msg::TitleClose),
+            Some(Msg::TitleClose),
             Msg::TitleResize,
             content.into(),
         );

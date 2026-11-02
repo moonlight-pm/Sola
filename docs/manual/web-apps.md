@@ -36,12 +36,14 @@ The titlebar shows the app's name and its menus:
 
 | Menu | Items |
 |---|---|
-| *App name* | Open in Browser · Reload (⌘R) · Close Window (⌘W) · Remove Web App… |
+| *App name* | Open in Browser · Copy Link · Reload (⌘R) · Close Window (⌘W) · Remove Web App… |
 | Edit | Cut · Copy · Paste · Select All (⌘X / ⌘C / ⌘V / ⌘A) |
 | Window | The Window menu every Sola application has |
 
 - **Open in Browser** opens the app's current page as a Browser page
   beside it, on the same profile.
+- **Copy Link** copies the address of the page in this window, since a web
+  app has no location bar.
 - **Close Window** closes this window of the app. Browser itself ends only
   when that was its last window.
 

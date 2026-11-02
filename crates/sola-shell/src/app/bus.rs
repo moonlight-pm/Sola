@@ -585,6 +585,7 @@ impl Shell {
         super::with_bus(|bus| {
             let _ = bus.emit(Topic::Focus(FocusTarget { window_id: wid }));
         });
+        self.sync_focus_pinned();
     }
 
     /// River named a dialog's parent (or took it back). A dialog leaves the
@@ -923,6 +924,7 @@ impl Shell {
         self.focused_window_id = Some(window_id);
         self.tabs.focus(window_id);
         self.emit_focus(window_id, prev_window);
+        self.sync_focus_pinned();
     }
 
     /// Raise `app_id` as if the user clicked it (MRU + composition + seat).
@@ -981,6 +983,7 @@ impl Shell {
         self.focused_window_id = Some(window_id);
         self.mru_window_by_app.insert(app_id, window_id);
         self.emit_focus(window_id, prev_focused);
+        self.sync_focus_pinned();
         // Always re-`place_top`. If the app was already MRU-front the
         // order is unchanged and `emit_composition` would skip — River
         // can still have another surface (same zone) visually on top.
@@ -1306,11 +1309,6 @@ impl Shell {
                     action_id: crate::menu::state::SYNTHESIZED_CLOSE_WINDOW_ACTION.into(),
                 });
             if let Some(action) = self.menus.lookup_shortcut(&chord, &focused).or(synthesized) {
-                // A common window stays, on any workspace but Common.
-                let pinned = self.focused_window_id.is_some_and(|w| self.tabs.is_pinned_here(w));
-                if pinned && sola_kit::menu::closes_window(&action.action_id) {
-                    return Task::none();
-                }
                 tracing::info!(
                     app_id = %action.app_id,
                     action_id = %action.action_id,

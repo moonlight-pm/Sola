@@ -3,7 +3,7 @@
 //! switcher at the head of the bar: each shows its number, its name, what
 //! it has waiting (a workspace not showing), and a dot, lit when Super+Tab
 //! stops there. Click one to show it, the showing one for its menu; drag one
-//! to reorder (Common stays first). A line sets them apart from the islands
+//! to reorder. A line sets them apart from the islands
 //! that follow.
 
 use iced::widget::{Space, button, container, row, text};
@@ -60,7 +60,7 @@ pub fn islands(shell: &Shell) -> Option<Element<'_, Msg>> {
             let quiet = Color { a: QUIET_A, ..fg };
             let name = crate::agents::view::fit(&ws.name, NAME_MAX);
             let mut body = row![
-                text(i.to_string())
+                text((i + 1).to_string())
                     .font(fonts::chrome())
                     .size(CHROME_SIZE)
                     .color(if here { accent } else { quiet }),
@@ -87,7 +87,7 @@ pub fn islands(shell: &Shell) -> Option<Element<'_, Msg>> {
         IslandRow::new(
             islands,
             ISLAND_GAP,
-            crate::stacks::COMMON + 1,
+            0,
             |index, x| Msg::WorkspaceIslandClick { index, x },
             |from, to| Msg::WorkspaceIslandMove { from, to },
         )

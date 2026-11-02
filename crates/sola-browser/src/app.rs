@@ -1827,7 +1827,7 @@ impl<E: Engine> App<E> {
             self.window_chrome(window),
             info.map(|t| t.title.clone()).unwrap_or_default(),
             Msg::TitleDrag,
-            self.windows.closable(window).then_some(Msg::TitleClose),
+            Some(Msg::TitleClose),
             Msg::TitleResize,
             content,
         )
@@ -1963,7 +1963,7 @@ impl<E: Engine> App<E> {
             self.window_chrome(window),
             self.title(window),
             Msg::TitleDrag,
-            self.windows.closable(window).then_some(Msg::TitleClose),
+            Some(Msg::TitleClose),
             Msg::TitleResize,
             content,
         )

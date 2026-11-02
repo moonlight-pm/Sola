@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sola_bus::topics::{Workspace, Zone};
 
 use super::desk::Desk;
-use super::{COMMON, Stacks};
+use super::Stacks;
 
 impl Stacks {
     /// The workspaces in order.
@@ -33,23 +33,23 @@ impl Stacks {
         self.desks.len()
     }
 
-    /// The id of the workspace `window_id` is on: Common for a common window,
-    /// though it shows on them all.
+    /// The id of the workspace `window_id` is on. A pinned window has none:
+    /// it is on them all.
     pub fn workspace_of(&self, window_id: u32) -> Option<&str> {
-        if self.is_common(window_id) {
-            return Some(self.desks[COMMON].id.as_str());
+        if self.is_pinned(window_id) {
+            return None;
         }
         self.desk_of(window_id).map(|d| self.desks[d].id.as_str())
     }
 
-    /// The windows that are workspace `index`'s own (its tabs; not their
-    /// dialogs): a common window is only Common's.
+    /// The windows that are workspace `index`'s own (its tabs, not their
+    /// dialogs), which a pinned window is not.
     pub fn windows_on(&self, index: usize) -> Vec<u32> {
         self.desks.get(index).map_or_else(Vec::new, |d| {
             d.bar
                 .tabs()
                 .map(|t| t.window_id)
-                .filter(|w| index == COMMON || !self.is_common(*w))
+                .filter(|w| !self.is_pinned(*w))
                 .collect()
         })
     }
@@ -85,24 +85,15 @@ impl Stacks {
     /// (a float stays a float; Full or the halves come up with it).
     /// Returns false when nothing moved.
     ///
-    /// A window sent to Common stays where it is and joins every other
-    /// workspace too. A common window leaves only from Common, for one other
-    /// workspace, which keeps its row; it is gone from the rest.
+    /// A pinned window is unpinned: that workspace keeps its row, and it is
+    /// gone from the rest.
     pub fn send(&mut self, window_id: u32, index: usize) -> bool {
         let window_id = self.parent_of(window_id).unwrap_or(window_id);
         if index >= self.desks.len() {
             return false;
         }
-        if self.is_common(window_id) {
-            return self.send_common_away(window_id, index);
-        }
-        if index == COMMON {
-            let Some(tab) = self.desk_of(window_id).and_then(|d| self.desks[d].tab(window_id)) else {
-                return false;
-            };
-            let tab = tab.clone();
-            self.desks[COMMON].push(tab, false);
-            self.spread(window_id);
+        if self.pinned.remove(&window_id) {
+            self.send_pinned(window_id, index);
             return true;
         }
         if self.desk_of(window_id) == Some(index) {
@@ -116,12 +107,9 @@ impl Stacks {
         true
     }
 
-    /// A common window, sent from Common to workspace `index`: there it
-    /// stays, shown, and it leaves every other. Only Common can let it go.
-    fn send_common_away(&mut self, window_id: u32, index: usize) -> bool {
-        if self.showing != COMMON || index == COMMON {
-            return false;
-        }
+    /// A window just unpinned, sent to workspace `index`: there it stays,
+    /// shown, and it leaves every other.
+    fn send_pinned(&mut self, window_id: u32, index: usize) {
         for (i, desk) in self.desks.iter_mut().enumerate() {
             if i != index {
                 desk.take(window_id);
@@ -134,16 +122,15 @@ impl Stacks {
             }
             desk.pick(zone);
         }
-        true
     }
 
-    /// Add a workspace after the showing one and show it, with Common's
+    /// Add a workspace after the showing one and show it, with the pinned
     /// windows on it. Returns its index.
     pub fn add_workspace(&mut self, name: &str) -> usize {
         let id = self.fresh_id();
         let at = self.showing + 1;
         let mut desk = Desk::new(id, name, &self.layout.zones());
-        for tab in self.desks[COMMON].bar.tabs() {
+        for tab in self.desks[self.showing].bar.tabs().filter(|t| self.pinned.contains(&t.window_id)) {
             desk.push(tab.clone(), false);
         }
         self.desks.insert(at, desk);
@@ -151,12 +138,9 @@ impl Stacks {
         at
     }
 
-    /// Rename workspace `index`. Common keeps its name.
+    /// Rename workspace `index`.
     pub fn rename_workspace(&mut self, index: usize, name: &str) -> bool {
         let name = name.trim();
-        if index == COMMON {
-            return false;
-        }
         match self.desks.get_mut(index) {
             Some(d) if !name.is_empty() && d.name != name => {
                 d.name = name.to_string();
@@ -166,8 +150,7 @@ impl Stacks {
         }
     }
 
-    /// Move workspace `index` one place left (`back`) or right. Common stays
-    /// first.
+    /// Move workspace `index` one place left (`back`) or right.
     pub fn move_workspace(&mut self, index: usize, back: bool) -> bool {
         let to = if back {
             index.checked_sub(1)
@@ -177,7 +160,7 @@ impl Stacks {
         let Some(to) = to else {
             return false;
         };
-        if index >= self.desks.len() || index == COMMON || to == COMMON {
+        if index >= self.desks.len() {
             return false;
         }
         let showing_id = self.showing_id().to_string();
@@ -191,10 +174,8 @@ impl Stacks {
     }
 
     /// Move workspace `from` to place `to`, the ones between making room.
-    /// Common stays first.
     pub fn reorder_workspace(&mut self, from: usize, to: usize) -> bool {
-        let fixed = from == COMMON || to == COMMON;
-        if fixed || from == to || from >= self.desks.len() || to >= self.desks.len() {
+        if from == to || from >= self.desks.len() || to >= self.desks.len() {
             return false;
         }
         let showing_id = self.showing_id().to_string();
@@ -210,19 +191,19 @@ impl Stacks {
 
     /// Delete workspace `index`; its own windows join the workspace before
     /// it (the next, for the first) in the same zones, at the end of its bar.
-    /// The last workspace stays, and Common is never deleted.
+    /// The last workspace stays.
     pub fn delete_workspace(&mut self, index: usize) -> bool {
-        if self.desks.len() < COMMON + 3 || index >= self.desks.len() || index == COMMON {
+        if self.desks.len() < 2 || index >= self.desks.len() {
             return false;
         }
         let showing_id = self.showing_id().to_string();
         let gone = self.desks.remove(index);
-        let heir = index.saturating_sub(1).max(COMMON + 1);
-        // Common's windows are on the heir already.
+        let heir = index.saturating_sub(1);
+        // The pinned windows are on the heir already.
         let own: Vec<&super::Tab> = gone
             .bar
             .tabs()
-            .filter(|t| self.desks[COMMON].tab(t.window_id).is_none())
+            .filter(|t| !self.pinned.contains(&t.window_id))
             .collect();
         let shown: Vec<bool> = own
             .iter()

@@ -14,7 +14,6 @@ use sola_kit::fonts;
 
 use crate::app::workspaces::WorkspaceAction;
 use crate::app::{Msg, Shell};
-use crate::stacks::COMMON;
 
 pub const RENAME_INPUT_ID: &str = "workspace-rename";
 pub const RENAME_HEIGHT: f32 = 120.0;
@@ -24,8 +23,7 @@ const DIVIDER_H: f32 = 10.0;
 const CARD_PAD: f32 = 40.0;
 
 /// The menu for workspace `index` (the showing one): every workspace to
-/// show (Super+0…9), then New, Rename, Move and Delete for this one. Common
-/// is not renamed, moved or deleted, and nothing goes before it.
+/// show (Super+1…9), then New, Rename, Move and Delete for this one.
 pub fn menu(shell: &Shell, index: usize) -> Element<'static, Msg> {
     super::view::items_card(items(shell, index), Shell::APP_ID.to_string())
 }
@@ -40,9 +38,7 @@ pub fn menu_height(shell: &Shell) -> f32 {
 
 fn items(shell: &Shell, index: usize) -> Vec<MenuItem> {
     let count = shell.tabs.workspace_count();
-    let common = index == COMMON;
-    // Common and one other: that one stays.
-    let last = count <= COMMON + 2;
+    let last = count <= 1;
     let item = |verb: &str, label: &str, disabled: bool| MenuItem::Action {
         id: format!("workspace.{verb}.{index}"),
         label: label.into(),
@@ -53,9 +49,9 @@ fn items(shell: &Shell, index: usize) -> Vec<MenuItem> {
     if shell.workspace_islands() {
         return vec![
             item("new", "New Workspace", false),
-            item("rename", "Rename…", common),
+            item("rename", "Rename…", false),
             MenuItem::Divider,
-            item("delete", "Delete", common || last),
+            item("delete", "Delete", last),
         ];
     }
     let mut items: Vec<MenuItem> = shell
@@ -74,12 +70,12 @@ fn items(shell: &Shell, index: usize) -> Vec<MenuItem> {
     items.extend([
         MenuItem::Divider,
         item("new", "New Workspace", false),
-        item("rename", "Rename…", common),
+        item("rename", "Rename…", false),
         MenuItem::Divider,
-        item("left", "Move Left", index <= COMMON + 1),
-        item("right", "Move Right", common || index + 1 >= count),
+        item("left", "Move Left", index == 0),
+        item("right", "Move Right", index + 1 >= count),
         MenuItem::Divider,
-        item("delete", "Delete", common || last),
+        item("delete", "Delete", last),
     ]);
     items
 }

@@ -98,16 +98,6 @@ impl<'a, Message> WindowFrame<'a, Message> {
         self
     }
 
-    /// The window stays where it shows: no close dot, and its menus' rows
-    /// that close it are disabled. After [`Self::menus`].
-    pub fn stays(mut self) -> Self {
-        self.on_close = None;
-        if let Some(menus) = &mut self.menus {
-            crate::menu::disable_close(menus);
-        }
-        self
-    }
-
     pub fn on_resize(mut self, f: impl Fn(Direction) -> Message + 'a) -> Self {
         self.on_resize = Some(Box::new(f));
         self

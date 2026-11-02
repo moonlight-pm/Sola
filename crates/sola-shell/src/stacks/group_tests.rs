@@ -239,10 +239,6 @@ fn main_layout(zones: Vec<(Zone, Vec<&str>, Option<u32>)>, groups: Vec<(&str, u3
             .collect(),
         workspaces: vec![
             Workspace {
-                id: COMMON_WORKSPACE.0.into(),
-                name: COMMON_WORKSPACE.1.into(),
-            },
-            Workspace {
                 id: "main".into(),
                 name: "Main".into(),
             },
@@ -417,17 +413,13 @@ fn a_session_whose_opener_has_no_window_lands_where_you_are() {
 }
 
 #[test]
-fn a_session_started_from_a_common_window_lands_where_you_are() {
+fn a_session_started_from_a_pinned_window_lands_where_you_are() {
     let t = Instant::now();
     let (mut s, main, other) = away_from_a_session(t);
-    assert!(s.send(2, COMMON));
+    assert_eq!(s.toggle_pin(2), Some(true));
     s.show_workspace(main);
     s.place_near(3, PROJECTS, "sola-projects/b", false, true, &[], Some(2), t);
     assert!(bar_on(&s, main).contains(&3));
     assert!(!bar_on(&s, other).contains(&3));
-    assert!(!s.is_common(3));
-    // On Common itself it is a common window, like anything opened there.
-    s.show_workspace(COMMON);
-    s.place_near(4, PROJECTS, "sola-projects/c", false, true, &[], Some(2), t);
-    assert!(s.is_common(4));
+    assert!(!s.is_pinned(3));
 }

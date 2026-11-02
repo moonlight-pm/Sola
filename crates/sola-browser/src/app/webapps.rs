@@ -28,6 +28,7 @@ use crate::integration::{self, EDIT_MENU_ITEMS};
 /// The app's own menu.
 pub const ACTION_NEW_WINDOW: &str = "web-new-window";
 pub const ACTION_OPEN_IN_BROWSER: &str = "web-open-in-browser";
+pub const ACTION_COPY_LINK: &str = "web-copy-link";
 pub const ACTION_CLOSE_WINDOW: &str = "web-close-window";
 pub const ACTION_REMOVE: &str = "web-remove";
 
@@ -121,6 +122,7 @@ pub fn app_menu(app: &Application) -> AppMenuPayload {
         action(ACTION_NEW_WINDOW, "New Window".into(), Some(KeyCode::N.meta())),
         MenuItem::Divider,
         action(ACTION_OPEN_IN_BROWSER, "Open in Browser".into(), None),
+        action(ACTION_COPY_LINK, "Copy Link".into(), None),
         action(integration::ACTION_RELOAD, "Reload".into(), Some(KeyCode::R.meta())),
         MenuItem::Divider,
         action(ACTION_CLOSE_WINDOW, "Close Window".into(), Some(KeyCode::W.meta())),
@@ -369,6 +371,12 @@ impl<E: Engine> App<E> {
                 }
                 Task::none()
             }
+            ACTION_COPY_LINK => {
+                match tab.and_then(|t| self.cached_tabs.iter().find(|i| i.id == t)) {
+                    Some(t) => iced::clipboard::write(t.url.clone()),
+                    None => Task::none(),
+                }
+            }
             ACTION_CLOSE_WINDOW => match tab {
                 Some(t) => self.update(Msg::CloseTab(t)),
                 None => Task::none(),
@@ -600,11 +608,7 @@ impl<E: Engine> App<E> {
             .on_drag(Msg::WindowDrag(window))
             .on_resize(move |dir| Msg::WindowResize(window, dir))
             .menus(app_menu(app));
-        if self.windows.closable(window) {
-            frame.on_close(Msg::WindowClose(window)).into()
-        } else {
-            frame.stays().into()
-        }
+        frame.on_close(Msg::WindowClose(window)).into()
     }
 
     /// The Wrap This Page sheet: the app's name, then Wrap.
@@ -709,8 +713,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_pinned_window_s_menu_offers_no_close() {
-        assert!(sola_kit::menu::closes_window(ACTION_CLOSE_WINDOW));
+    fn a_web_app_s_menu_copies_the_link_of_its_page() {
+        let menu = app_menu(&web_app("shortcut", "Shortcut", "https://app.shortcut.com"));
+        let own = &menu.menus[0];
+        assert_eq!(own.label, "Shortcut");
+        assert!(own.items.iter().any(|i| matches!(
+            i,
+            MenuItem::Action { id, label, .. } if id == ACTION_COPY_LINK && label == "Copy Link"
+        )));
     }
 
     #[test]

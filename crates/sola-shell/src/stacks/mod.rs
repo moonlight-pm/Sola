@@ -20,7 +20,7 @@
 
 mod bar;
 #[cfg(test)]
-mod common_tests;
+mod pin_tests;
 mod desk;
 #[cfg(test)]
 mod group_tests;
@@ -29,7 +29,7 @@ mod saved;
 mod tests;
 mod workspaces;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use sola_bus::topics::{Zone, ZoneLayout};
@@ -45,11 +45,6 @@ pub const FULL: Zone = Zone::Fullscreen;
 
 /// The workspace a fresh desk starts with.
 pub const FIRST_WORKSPACE: (&str, &str) = ("main", "Main");
-
-/// The workspace whose windows are on every workspace, its place in the
-/// list (always first, and numbered 0), and its id and name.
-pub const COMMON: usize = 0;
-pub const COMMON_WORKSPACE: (&str, &str) = (sola_bus::topics::COMMON_WORKSPACE_ID, "Common");
 
 /// How long a departed window's place waits for its app to come back
 /// (a restart, a re-exec after install).
@@ -86,6 +81,9 @@ pub struct Stacks {
     /// In workspace order; never empty.
     desks: Vec<Desk>,
     showing: usize,
+    /// Windows on every workspace: a row on each, in one zone, with each
+    /// workspace's own order and what it shows.
+    pinned: HashSet<u32>,
     /// child → parent.
     parents: HashMap<u32, u32>,
     /// Places from the saved layout not yet taken.
@@ -120,12 +118,10 @@ impl Stacks {
     pub fn new() -> Self {
         let layout = ZoneLayout::default();
         Self {
-            desks: vec![
-                Desk::new(COMMON_WORKSPACE.0, COMMON_WORKSPACE.1, &layout.zones()),
-                Desk::new(FIRST_WORKSPACE.0, FIRST_WORKSPACE.1, &layout.zones()),
-            ],
+            desks: vec![Desk::new(FIRST_WORKSPACE.0, FIRST_WORKSPACE.1, &layout.zones())],
             layout,
-            showing: 1,
+            showing: 0,
+            pinned: HashSet::new(),
             parents: HashMap::new(),
             restore: Vec::new(),
             restore_until: None,
@@ -164,6 +160,7 @@ impl Stacks {
         for d in &mut self.desks {
             d.clear();
         }
+        self.pinned.clear();
     }
 
     // ---------------------------------------------------------------------
@@ -212,7 +209,29 @@ impl Stacks {
         opener: Option<u32>,
         now: Instant,
     ) -> Placed {
+        // Placed again (its tab's place came up): still pinned.
+        let was_pinned = self.pinned.remove(&window_id);
         self.take(window_id);
+        let placed = self.place_tab(window_id, app_id, key, floats, returning, kin, opener, now);
+        if was_pinned {
+            self.pinned.insert(window_id);
+            self.spread(window_id);
+        }
+        placed
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn place_tab(
+        &mut self,
+        window_id: u32,
+        app_id: &str,
+        key: &str,
+        floats: bool,
+        returning: bool,
+        kin: &[u32],
+        opener: Option<u32>,
+        now: Instant,
+    ) -> Placed {
         let tab = |zone| Tab {
             window_id,
             app_id: app_id.to_string(),
@@ -260,9 +279,6 @@ impl Stacks {
             desk.pick(zone);
         }
         self.opened = opener.map(|f| (f, window_id));
-        if d == COMMON {
-            self.spread(window_id);
-        }
         Placed {
             zone,
             shown,
@@ -337,15 +353,15 @@ impl Stacks {
             self.came_back.remove(&tab.app_id);
             return None;
         };
-        let common = self.is_common(leader);
-        let d = if common { COMMON } else { d };
+        let pinned = self.is_pinned(leader);
         let window_id = tab.window_id;
         let desk = &mut self.desks[d];
         tab.zone = if floats { Zone::Float } else { desk.zone_of(leader)? };
         let zone = tab.zone;
         let at = desk.bar.index_of(leader).map_or(desk.bar.len(), |i| i + 1);
         let shown = desk.insert(tab, at, true);
-        if common {
+        if pinned {
+            self.pinned.insert(window_id);
             self.spread(window_id);
         }
         Some(Placed {
@@ -355,9 +371,8 @@ impl Stacks {
         })
     }
 
-    /// Put `tab` in its remembered place. A place on Common is a common
-    /// window's: it goes back to each other workspace too, where `copies`
-    /// says it was there, else at the end.
+    /// Put `tab` in its remembered place. A pinned window's goes back to each
+    /// other workspace too, where `copies` says it was there, else at the end.
     fn insert_slot(&mut self, mut tab: Tab, slot: &Slot, ranked: bool, copies: &[Slot]) -> Placed {
         // A zone the layout no longer has: the end of Full.
         if !self.layout.contains(tab.zone) {
@@ -367,12 +382,13 @@ impl Stacks {
         let window_id = tab.window_id;
         let d = self.desk_index(&slot.workspace).unwrap_or(self.showing);
         let mut shown = self.put_back(d, tab.clone(), slot, ranked);
-        if d == COMMON {
+        if slot.pinned {
             for copy in copies {
-                if let Some(i) = self.desk_index(&copy.workspace).filter(|i| *i != COMMON) {
+                if let Some(i) = self.desk_index(&copy.workspace) {
                     self.put_back(i, tab.clone(), copy, ranked);
                 }
             }
+            self.pinned.insert(window_id);
             self.spread(window_id);
             shown = self.desks[self.showing].shows(window_id);
         }
@@ -394,39 +410,43 @@ impl Stacks {
         }
     }
 
-    /// A window on Common: on every other workspace too, at the end of its
-    /// bar where it has no row (a zone showing something goes on showing it).
+    /// A pinned window: on every workspace, at the end of the bar where it
+    /// has no row (a zone showing something goes on showing it).
     fn spread(&mut self, window_id: u32) {
-        let Some(tab) = self.desks[COMMON].tab(window_id).cloned() else {
+        let Some(tab) = self.desks.iter().find_map(|d| d.tab(window_id)).cloned() else {
             return;
         };
-        for desk in &mut self.desks[COMMON + 1..] {
+        for desk in &mut self.desks {
             if desk.tab(window_id).is_none() {
                 desk.push(tab.clone(), false);
             }
         }
     }
 
-    /// Whether `window_id` is on Common, and so on every workspace (a dialog:
-    /// its parent).
-    pub fn is_common(&self, window_id: u32) -> bool {
+    /// Whether `window_id` is on every workspace (a dialog: its parent).
+    pub fn is_pinned(&self, window_id: u32) -> bool {
         let window_id = self.parent_of(window_id).unwrap_or(window_id);
-        self.desks[COMMON].tab(window_id).is_some()
+        self.pinned.contains(&window_id)
     }
 
-    /// The showing workspace is not Common, and `window_id` is on Common: it
-    /// stays, so it cannot be closed or sent away from here. Its dialogs can
-    /// close.
-    pub fn is_pinned_here(&self, window_id: u32) -> bool {
-        self.showing != COMMON && self.desks[COMMON].tab(window_id).is_some()
-    }
-
-    /// The tabs [`Self::is_pinned_here`] says stay, by key.
-    pub fn pinned_keys(&self) -> Vec<String> {
-        if self.showing == COMMON {
-            return Vec::new();
+    /// Pin `window_id` (a dialog: its parent) to every workspace; where it
+    /// joins, it does not cover what shows. Pinned already, it stays on the
+    /// showing workspace alone. Returns whether it is pinned now, `None` when
+    /// it is not placed.
+    pub fn toggle_pin(&mut self, window_id: u32) -> Option<bool> {
+        let window_id = self.parent_of(window_id).unwrap_or(window_id);
+        let here = self.desk_of(window_id)?;
+        if self.pinned.remove(&window_id) {
+            for (i, desk) in self.desks.iter_mut().enumerate() {
+                if i != here {
+                    desk.take(window_id);
+                }
+            }
+            return Some(false);
         }
-        self.desks[COMMON].bar.tabs().map(|t| t.key.clone()).collect()
+        self.pinned.insert(window_id);
+        self.spread(window_id);
+        Some(true)
     }
 
     /// `window_id` turns out to be the tab `key` (paired after it was
@@ -464,8 +484,8 @@ impl Stacks {
         // Unsettled, it was never in a place of its own: that one still waits
         // under its tab's key, and a new window must not take this one.
         let leaves_a_place = !self.unsettled(window_id, now);
+        let pinned = self.pinned.remove(&window_id);
         let mut left = None;
-        // Common first: the first place a key finds says it was common.
         for desk in &mut self.desks {
             if let Some((zone, at, tab, shown)) = desk.take(window_id) {
                 left = Some(zone);
@@ -477,6 +497,7 @@ impl Stacks {
                             key: tab.key,
                             at,
                             shown,
+                            pinned,
                         },
                         now,
                     ));
@@ -501,6 +522,7 @@ impl Stacks {
     /// its parent. Returns true when it was a tab.
     pub fn set_parent(&mut self, child: u32, parent: u32) -> bool {
         self.parents.insert(child, parent);
+        self.pinned.remove(&child);
         self.take(child).is_some()
     }
 
@@ -590,7 +612,7 @@ impl Stacks {
         let Some(d) = self.desk_of(window_id) else {
             return false;
         };
-        // A common window has one zone: every workspace's row moves with it.
+        // A pinned window has one zone: every workspace's row moves with it.
         // Only here does it come up; elsewhere it goes on as it was.
         for (i, desk) in self.desks.iter_mut().enumerate() {
             let here = i == d;
@@ -745,7 +767,7 @@ impl Stacks {
     /// parent's).
     pub fn desk_of(&self, window_id: u32) -> Option<usize> {
         let window_id = self.parent_of(window_id).unwrap_or(window_id);
-        // A common window is on every workspace, so on the one showing.
+        // A pinned window is on every workspace, so on the one showing.
         if self.desks[self.showing].tab(window_id).is_some() {
             return Some(self.showing);
         }

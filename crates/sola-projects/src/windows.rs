@@ -149,11 +149,6 @@ impl SessionWindows {
         self.tabs.river_id(window)
     }
 
-    /// [`sola_kit::tabs::TabWindows::closable`].
-    pub fn closable(&self, window: window::Id) -> bool {
-        self.tabs.closable(window)
-    }
-
     /// Ask the shell to show session `tab_id`'s window and focus it.
     pub fn show(&self, tab_id: &str) {
         if let Some(window) = self.window_of(tab_id) {
