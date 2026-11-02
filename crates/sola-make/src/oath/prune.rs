@@ -11,7 +11,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
-/// Never read when a crate is built as a dependency.
+/// Not read when a crate is built as a dependency, unless its own sources
+/// point there ([`named_by_sources`]).
 const NEVER_READ: &[&str] = &[
     ".github",
     "CHANGELOG.md",
@@ -157,11 +158,17 @@ fn stub(dir: &Path) -> Result<(), String> {
 
 /// A crate this target compiles, without what the compile never reads.
 fn strip(dir: &Path, name: &str, host: &str) -> Result<(), String> {
+    let sources = rust_sources(&dir.join("src"));
+    for path in NEVER_READ {
+        if !named_by_sources(&sources, path) {
+            remove(&dir.join(path))?;
+        }
+    }
     let own = NEVER_READ_BY
         .iter()
         .filter(|(krate, _)| is_crate(name, krate))
         .flat_map(|(_, paths)| paths.iter());
-    for path in NEVER_READ.iter().chain(own) {
+    for path in own {
         remove(&dir.join(path))?;
     }
     for (krate, dirs) in FILE_PER_TARGET {
@@ -190,6 +197,31 @@ fn strip(dir: &Path, name: &str, host: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Every `.rs` file under `dir`, as text.
+fn rust_sources(dir: &Path) -> Vec<String> {
+    let mut sources = Vec::new();
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(dir) = todo.pop() {
+        for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                todo.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                // A file that is not UTF-8 cannot name a path for a macro.
+                sources.extend(fs::read_to_string(&path));
+            }
+        }
+    }
+    sources
+}
+
+/// A crate's sources may read a top-level entry at compile time, as
+/// `include_str!("../examples/a.rs")` or `#[path = "../tests/a.rs"]`: it stays.
+fn named_by_sources(sources: &[String], entry: &str) -> bool {
+    let named = format!("../{entry}");
+    sources.iter().any(|source| source.contains(&named))
 }
 
 /// Cargo refuses a manifest whose targets name a file that is gone.
@@ -336,6 +368,20 @@ mod tests {
         let sums: Value = serde_json::from_slice(&fs::read(dir.join(".cargo-checksum.json")).unwrap()).unwrap();
         assert_eq!(sums["package"], "abc");
         assert_eq!(sums["files"], serde_json::json!({}));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_directory_the_sources_read_stays() {
+        let dir = temp("named");
+        fs::create_dir_all(dir.join("src/_topic")).unwrap();
+        fs::create_dir_all(dir.join("examples")).unwrap();
+        fs::create_dir_all(dir.join("benches")).unwrap();
+        fs::write(dir.join("src/lib.rs"), "").unwrap();
+        fs::write(dir.join("src/_topic/a.rs"), r#"include!("../../examples/a.rs");"#).unwrap();
+        strip(&dir, "a-1.0.0", "x86_64-unknown-linux-gnu").unwrap();
+        assert!(dir.join("examples").exists());
+        assert!(!dir.join("benches").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 
