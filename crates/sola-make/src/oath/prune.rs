@@ -124,6 +124,7 @@ fn stub(dir: &Path) -> Result<(), String> {
         lib.insert("path".into(), "src/lib.rs".into());
     }
     if let Some(package) = manifest.get_mut("package").and_then(toml::Value::as_table_mut) {
+        package.remove("default-run");
         if package.get("build").is_some_and(toml::Value::is_str) {
             package.insert("build".into(), "build.rs".into());
         }
@@ -310,7 +311,7 @@ mod tests {
         fs::write(dir.join("src/big.rs"), "x").unwrap();
         fs::write(
             dir.join("Cargo.toml"),
-            "[package]\nname = \"a\"\nversion = \"1.0.0\"\nbuild = \"tools/b.rs\"\n\n\
+            "[package]\nname = \"a\"\nversion = \"1.0.0\"\nbuild = \"tools/b.rs\"\ndefault-run = \"a\"\n\n\
              [lib]\npath = \"lib/a.rs\"\n",
         )
         .unwrap();
@@ -322,6 +323,7 @@ mod tests {
         let manifest = read_manifest(&dir).unwrap();
         assert_eq!(manifest["lib"]["path"].as_str(), Some("src/lib.rs"));
         assert_eq!(manifest["package"]["build"].as_str(), Some("build.rs"));
+        assert!(manifest["package"].get("default-run").is_none());
         let sums: Value = serde_json::from_slice(&fs::read(dir.join(".cargo-checksum.json")).unwrap()).unwrap();
         assert_eq!(sums["package"], "abc");
         assert_eq!(sums["files"], serde_json::json!({}));
