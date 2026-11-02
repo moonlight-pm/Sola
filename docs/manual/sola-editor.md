@@ -22,7 +22,9 @@ file already open brings its window up.
 
 ## Keys
 
-Emacs, as set up in Zed. `C-` is Ctrl, `M-` is Alt, `s-` is Super.
+Emacs, with **Super as Meta**. `C-` is Ctrl, `M-` is Super (Alt works too), so
+Super+W copies here and doesn't close the window, and Super+F moves a word
+rather than finding. That holds only while Editor has focus.
 
 | Move | |
 |---|---|
@@ -32,7 +34,7 @@ Emacs, as set up in Zed. `C-` is Ctrl, `M-` is Alt, `s-` is Super.
 | `M-f` `M-b`, `M-→` `M-←` | Word |
 | `M-{` `M-}`, `C-↑` `C-↓` | Paragraph |
 | `C-v`, Page Down | Page down, cursor centered |
-| `s-v` `M-v`, Page Up | Page up, cursor centered |
+| `M-v`, Page Up | Page up, cursor centered |
 | `M-<` `M->`, `C-Home` `C-End`, `C-x [` `C-x ]` | Start, end of file |
 | `C-l` | Center the cursor |
 | `M-g g` | Go to line (`12` or `12:5`) |
@@ -42,7 +44,7 @@ Emacs, as set up in Zed. `C-` is Ctrl, `M-` is Alt, `s-` is Super.
 | `C-space` | Set the mark: moves extend the region until `C-g` |
 | `C-g`, Escape | Drop the mark, or leave a chord, find or palette |
 | `C-x C-x` | Swap point and mark |
-| `s-a`, `C-x h` | Select all |
+| `M-a`, `C-x h` | Select all |
 | Shift + a move, drag | Select |
 
 | Edit | |
@@ -51,10 +53,10 @@ Emacs, as set up in Zed. `C-` is Ctrl, `M-` is Alt, `s-` is Super.
 | `M-d`; `M-Backspace` | Delete a word, forward; back |
 | `C-k` | Kill to the line's end, then the newline. Runs of `C-k` add up on the clipboard |
 | `C-w` | Cut the region, or the whole line |
-| `M-w` `s-w` | Copy the region, or the whole line, and drop the mark |
+| `M-w` | Copy the region, or the whole line, and drop the mark |
 | `C-y` | Paste the clipboard |
 | `C-t` | Transpose characters |
-| `s-/` `M-;` | Toggle comment |
+| `M-/` `M-;` | Toggle comment |
 | Tab, Shift+Tab | Indent; dedent the line or region |
 | `C-/` `C-_` `C-x u` | Undo |
 | Super+Shift+Z | Redo |
@@ -67,11 +69,16 @@ Emacs, as set up in Zed. `C-` is Ctrl, `M-` is Alt, `s-` is Super.
 | `C-x C-w` | Save as |
 | `C-x k` | Close the file |
 | `C-x C-c` | Quit |
-| `s-S-p` `M-x` | Command palette |
+| `M-S-p` `M-x` | Command palette |
 
-Super keys on a menu (Super+S, Super+Z, Super+F and the like) work as in every
-Sola app. Super+V and Super+W are the exceptions, kept for page up and copy, so
-Editor has no key for Paste or Close Window on its menus.
+Super keys that aren't Meta chords stay as in every Sola app: Super+S saves,
+Super+O opens, Super+Z and Super+Shift+Z undo and redo, Super+C copies. Find, Cut
+and Paste have no Super key, since Super+F, Super+X and Super+V are `M-f`, `M-x`
+and `M-v`, and neither does closing a file.
+
+The desk's own Super keys are the desk's: `M-h`, `M-k`, `M-l`, `M-q`, Space, Tab
+and the digits never reach Editor, unless you move them in Settings →
+Keybindings.
 
 The bindings are one table in `crates/sola-editor/src/keymap.rs`, and aren't yet
 in Settings → Keybindings.

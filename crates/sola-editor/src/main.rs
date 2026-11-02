@@ -47,6 +47,8 @@ pub enum Msg {
         status: event::Status,
     },
     Modifiers(keyboard::Modifiers),
+    /// A modifier key came up.
+    ModifierUp(keyboard::Modifiers),
     Loaded(Result<files::Loaded, String>),
     Picker(sola_kit::components::file_picker::Message),
     Pasted(window::Id, Option<String>),

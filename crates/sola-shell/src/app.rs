@@ -3557,6 +3557,47 @@ mod hide_tests {
         assert!(!close(&shell), "Terminal keeps its own Super+W");
     }
 
+    /// Super is Meta in the editor (`sola-editor`'s `keymap`): Super+W copies
+    /// there and Super+F moves a word, so the system must grab none of them.
+    #[test]
+    fn the_system_grabs_none_of_the_editors_meta_keys() {
+        let mut shell = desktop();
+        shell.menus.set_menu(sola_bus::topics::AppMenuPayload {
+            app_id: "sola-editor".into(),
+            menus: vec![],
+        });
+        shell.focused_app_id = Some("sola-editor".into());
+        let grabbed = shell.shell_key_chords();
+        for key in [
+            KeyCode::W,
+            KeyCode::V,
+            KeyCode::F,
+            KeyCode::B,
+            KeyCode::D,
+            KeyCode::M,
+            KeyCode::G,
+            KeyCode::X,
+            KeyCode::A,
+            KeyCode::SEMICOLON,
+            KeyCode::SLASH,
+            KeyCode::BACKSPACE,
+            KeyCode::DELETE,
+            KeyCode::LEFT,
+            KeyCode::RIGHT,
+        ] {
+            assert!(!grabbed.contains(&key.meta()), "Super+{key:?}");
+        }
+        for key in [
+            KeyCode::COMMA,
+            KeyCode::PERIOD,
+            KeyCode::BRACKET_LEFT,
+            KeyCode::BRACKET_RIGHT,
+            KeyCode::P,
+        ] {
+            assert!(!grabbed.contains(&key.meta_shift()), "Super+Shift+{key:?}");
+        }
+    }
+
     #[test]
     fn the_launcher_leaves_the_focused_apps_paste_to_its_field() {
         let mut shell = desktop();

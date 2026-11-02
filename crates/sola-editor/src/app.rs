@@ -21,7 +21,7 @@ use crate::command::{Command, Motion};
 use crate::editor::Out;
 use crate::files::{self, Loaded};
 use crate::instance;
-use crate::keymap::{Feed, Keymap, Stroke, StrokeKey};
+use crate::keymap::{self, Feed, Keymap, Stroke, StrokeKey};
 use crate::overlay::{self, Answer, Mini, MiniKind, Palette, Prompt};
 use crate::search;
 use crate::session::{self, Session};
@@ -102,10 +102,11 @@ fn item(id: &str, label: &str, shortcut: Option<KeyChord>) -> MenuItem {
     }
 }
 
-/// The menus. A Super key on a menu is the shell's to grab, and arrives as
-/// the menu item; one on no menu reaches `keymap` as a key. So Paste has no
-/// key here and a different id than the shared one (which would bring
-/// Super+V with it): Super+V is page up, and Close has none: Super+W copies.
+/// The menus. Super is Meta here, and a Super key on a menu is the shell's to
+/// grab: it arrives as the menu item and `keymap` never sees it. So no item may
+/// have a Meta key that does something else. Find, Cut and Paste go without a
+/// key, under ids of their own since the shared ones (`find`, `cut`, `paste`)
+/// bring Super+F, Super+X and Super+V with them. Close has none: Super+W copies.
 fn menus() -> Vec<MenuDefinition> {
     vec![
         MenuDefinition {
@@ -124,12 +125,12 @@ fn menus() -> Vec<MenuDefinition> {
                 item("undo", "Undo", Some(KeyCode::Z.meta())),
                 item("redo", "Redo", Some(KeyCode::Z.meta_shift())),
                 MenuItem::Divider,
-                item("cut", "Cut", Some(KeyCode::X.meta())),
+                item("cut_text", "Cut", None),
                 item("copy", "Copy", Some(KeyCode::C.meta())),
                 item("yank", "Paste", None),
                 item("select_all", "Select All", Some(KeyCode::A.meta())),
                 MenuItem::Divider,
-                item("find", "Find", Some(KeyCode::F.meta())),
+                item("find_text", "Find", None),
                 item("go_to_line", "Go to Line", None),
                 item("toggle_comment", "Toggle Comment", Some(KeyCode::SLASH.meta())),
             ],
@@ -150,11 +151,11 @@ fn command_of_menu(action: &str) -> Option<Command> {
         "close_file" => Command::CloseFile,
         "undo" => Command::Undo,
         "redo" => Command::Redo,
-        "cut" => Command::Cut,
+        "cut_text" => Command::Cut,
         "copy" => Command::Copy,
         "yank" => Command::Yank,
         "select_all" => Command::SelectAll,
-        "find" => Command::Find,
+        "find_text" => Command::Find,
         "go_to_line" => Command::GotoLine,
         "toggle_comment" => Command::ToggleComment,
         "palette" => Command::Palette,
@@ -178,8 +179,10 @@ pub struct App {
     float: sola_kit::FloatState,
     keymap: Keymap,
     picker: Option<(PickerKind, FilePicker, window::Id)>,
-    /// The modifiers as last announced: an event's own mask can miss some.
+    /// The modifiers as last announced (see `keymap::merged_modifiers`).
     modifiers: keyboard::Modifiers,
+    /// The modifier keys seen going down and not yet up.
+    held: keyboard::Modifiers,
     /// What C-s C-s searches for again.
     last_find: String,
     next_untitled: u64,
@@ -199,6 +202,7 @@ impl App {
             keymap: Keymap::new(),
             picker: None,
             modifiers: keyboard::Modifiers::empty(),
+            held: keyboard::Modifiers::empty(),
             last_find: String::new(),
             next_untitled: 1,
             highlight_queued: false,
@@ -335,6 +339,9 @@ impl App {
                         status,
                     })
                 }
+                Event::Keyboard(keyboard::Event::KeyReleased { modified_key, .. }) => {
+                    keymap::modifier_bit(&modified_key).map(Msg::ModifierUp)
+                }
                 Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
                     Some(Msg::Modifiers(modifiers))
                 }
@@ -419,6 +426,10 @@ impl App {
             }
             Msg::Modifiers(modifiers) => {
                 self.modifiers = modifiers;
+                Task::none()
+            }
+            Msg::ModifierUp(bit) => {
+                self.held = self.held & !bit;
                 Task::none()
             }
             Msg::Loaded(result) => self.on_loaded(result),
@@ -547,6 +558,7 @@ impl App {
                 }
                 // The Super of a chord that took focus away never comes back up.
                 self.modifiers = keyboard::Modifiers::empty();
+                self.held = keyboard::Modifiers::empty();
                 Task::none()
             }
             window::Event::CloseRequested => self.request_close(window),
@@ -571,11 +583,12 @@ impl App {
         if self.picker.is_some() {
             return Task::none();
         }
-        // Super from the event alone: a chord the shell took can leave it
-        // stuck in what was announced (see sola-terminal's `merge_modifiers`).
-        let latchable = keyboard::Modifiers::SHIFT | keyboard::Modifiers::CTRL | keyboard::Modifiers::ALT;
-        let mods = modifiers | (self.modifiers & latchable);
-        let Some(stroke) = Stroke::from_iced(key, mods.control(), mods.alt(), mods.logo(), mods.shift()) else {
+        if let Some(bit) = keymap::modifier_bit(key) {
+            self.held = self.held | bit;
+            return Task::none();
+        }
+        let mods = keymap::merged_modifiers(modifiers, self.modifiers, self.held);
+        let Some(stroke) = Stroke::from_iced(key, mods) else {
             return Task::none();
         };
         let Some(win) = self.wins.get_mut(&window) else {
@@ -1150,7 +1163,7 @@ fn note_of(win: &mut Win, out: Out) {
 }
 
 /// A page moves the point and keeps it mid-window, which is what `C-v` and
-/// `s-v` did in Zed (`pagedown ctrl-l`); `C-l` is that alone.
+/// `M-v` did in Zed (`pagedown ctrl-l`); `C-l` is that alone.
 fn follow_of(command: Command) -> Follow {
     match command {
         Command::Center | Command::Move(Motion::PageDown | Motion::PageUp) => Follow::Center,
@@ -1159,10 +1172,7 @@ fn follow_of(command: Command) -> Follow {
 }
 
 fn is_key(stroke: &Stroke, letter: char) -> bool {
-    stroke.ctrl
-        && !stroke.alt
-        && !stroke.logo
-        && stroke.key == StrokeKey::Char(letter)
+    stroke.ctrl && !stroke.meta && stroke.key == StrokeKey::Char(letter)
 }
 
 /// C-g or Escape.
@@ -1204,24 +1214,65 @@ mod tests {
 
     #[test]
     fn every_menu_item_runs_a_command() {
-        for id in ["quit", "open", "save", "save_as", "close_file", "undo", "redo", "cut", "copy",
-            "yank", "select_all", "find", "go_to_line", "toggle_comment", "palette"]
-        {
-            assert!(command_of_menu(id).is_some(), "{id}");
+        assert!(command_of_menu("quit").is_some());
+        for menu in menus() {
+            for item in &menu.items {
+                if let MenuItem::Action { id, .. } = item {
+                    assert!(command_of_menu(id).is_some(), "{id}");
+                }
+            }
         }
     }
 
-    /// The Super keys he had in Zed for scrolling and copying must stay on
-    /// no menu, or the shell would take them before `keymap` sees them.
+    /// A menu's Super key goes to the menu item, so it had better be the same
+    /// command `keymap` has on that key. A shared id gets its shared key
+    /// whatever we declare, so that one is what counts.
     #[test]
-    fn super_v_and_super_w_are_on_no_menu() {
+    fn no_menu_takes_a_meta_key_for_something_else() {
+        let mut map = Keymap::new();
         for menu in menus() {
             for item in &menu.items {
-                if let MenuItem::Action { shortcut: Some(key), id, .. } = item {
-                    assert_ne!(*key, KeyCode::V.meta(), "{id} has Super+V");
-                    assert_ne!(*key, KeyCode::W.meta(), "{id} has Super+W");
+                let MenuItem::Action { id, shortcut, .. } = item else {
+                    continue;
+                };
+                let common = sola_kit::keys::COMMON_ACTIONS
+                    .iter()
+                    .find(|(action, ..)| action == id)
+                    .map(|(.., key)| *key);
+                let Some(key) = common.or(*shortcut).filter(|k| k.meta) else {
+                    continue;
+                };
+                let letter = key.keycode.keysym().and_then(char::from_u32).expect("a key");
+                let stroke = Stroke {
+                    ctrl: false,
+                    meta: true,
+                    shift: key.shift,
+                    key: StrokeKey::Char(letter.to_ascii_lowercase()),
+                };
+                if let Feed::Run(command) = map.feed(stroke) {
+                    assert_eq!(Some(command), command_of_menu(id), "{id} has {letter}");
                 }
+                map.clear();
             }
+        }
+    }
+
+    #[test]
+    fn super_w_and_the_other_meta_keys_are_on_no_menu() {
+        let keys: Vec<KeyChord> = menus()
+            .iter()
+            .flat_map(|menu| menu.items.iter())
+            .filter_map(|item| match item {
+                MenuItem::Action { id, shortcut, .. } => sola_kit::keys::COMMON_ACTIONS
+                    .iter()
+                    .find(|(action, ..)| action == id)
+                    .map(|(.., key)| *key)
+                    .or(*shortcut),
+                _ => None,
+            })
+            .collect();
+        for code in [KeyCode::W, KeyCode::V, KeyCode::F, KeyCode::B, KeyCode::D, KeyCode::X, KeyCode::G, KeyCode::M] {
+            assert!(!keys.contains(&code.meta()), "{code:?}");
         }
     }
 }

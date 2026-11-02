@@ -1,33 +1,35 @@
-//! The keys: Emacs, as Joshua had them in Zed.
+//! The keys: Emacs, as Joshua has them. Meta is Super.
 //!
 //! [`BINDINGS`] is Zed's Emacs base keymap (`assets/keymaps/linux/emacs.json`)
 //! trimmed to what is used, then the overrides from his Zed `keymap.json`:
 //!
 //! | Key | Here | Zed base |
 //! |-----|------|----------|
-//! | `s-v` | Page up, centered | |
+//! | `M-v` | Page up, centered | page up |
 //! | `C-v` | Page down, centered | page down |
 //! | `C-l` | Center the cursor | center/top/bottom cycle |
 //! | `C-y` | Paste the clipboard | yank the kill ring |
-//! | `s-w` | Copy, then drop the mark | |
-//! | `s-a` | Select all | |
-//! | `s-/` | Toggle comment | |
-//! | `s-S-p` | Command palette | |
+//! | `M-w` | Copy, then drop the mark | copy |
+//! | `M-a` | Select all | |
+//! | `M-/` | Toggle comment | |
+//! | `M-S-p` | Command palette | |
 //!
-//! `s-` is Super, which is what `cmd-` meant to Zed on Linux. The shell only
-//! grabs a Super key an app has on its menu, so a Super key that is on no
-//! menu arrives here like any other (see `app::menus`). The rest of Zed's
-//! override file names keys it already has, or menus an editor without LSP
-//! doesn't show.
+//! `M-` is Super, in every row ("i use SUPER as meta", so Super+W copies and
+//! doesn't close the window). Alt counts as well, being Meta to everything else.
+//! The shell only grabs a Super key an app has on its menu or one of its own
+//! (Space, H, K, L, Q, Tab, the digits…), so a Super key on neither arrives
+//! here like any other: keep these off the menus (`app::menus`, and its test).
+//! The rest of Zed's override file names keys it already has, or popups an
+//! editor without LSP doesn't show.
 //!
 //! Tune it here: one row is one binding.
 
-use iced::keyboard::Key;
 use iced::keyboard::key::Named;
+use iced::keyboard::{Key, Modifiers};
 
 use crate::command::{Command, Motion};
 
-/// `C-` Ctrl, `M-` Alt, `s-` Super, `S-` Shift, as Emacs writes them.
+/// `C-` Ctrl, `M-` Meta (Super), `S-` Shift, as Emacs writes them.
 pub const BINDINGS: &[(&str, Command)] = {
     use Command::*;
     use Motion::*;
@@ -62,7 +64,6 @@ pub const BINDINGS: &[(&str, Command)] = {
         ("C-x ]", Move(BufferEnd)),
         ("C-v", Move(PageDown)),
         ("<next>", Move(PageDown)),
-        ("s-v", Move(PageUp)),
         ("M-v", Move(PageUp)),
         ("<prior>", Move(PageUp)),
         ("C-l", Center),
@@ -82,7 +83,7 @@ pub const BINDINGS: &[(&str, Command)] = {
         ("<escape>", Cancel),
         ("C-x C-x", SwapPointAndMark),
         ("C-x h", SelectAll),
-        ("s-a", SelectAll),
+        ("M-a", SelectAll),
         // Editing.
         ("<return>", Newline),
         ("S-<return>", Newline),
@@ -98,10 +99,9 @@ pub const BINDINGS: &[(&str, Command)] = {
         ("C-k", KillLine),
         ("C-w", Cut),
         ("M-w", Copy),
-        ("s-w", Copy),
         ("C-y", Yank),
         ("C-t", Transpose),
-        ("s-/", ToggleComment),
+        ("M-/", ToggleComment),
         ("M-;", ToggleComment),
         ("C-x C-;", ToggleComment),
         ("C-/", Undo),
@@ -112,7 +112,7 @@ pub const BINDINGS: &[(&str, Command)] = {
         ("C-r", Find),
         ("M-g g", GotoLine),
         ("M-g M-g", GotoLine),
-        ("s-S-p", Palette),
+        ("M-S-p", Palette),
         ("M-x", Palette),
         // Files.
         ("C-x C-f", OpenFile),
@@ -123,12 +123,31 @@ pub const BINDINGS: &[(&str, Command)] = {
     ]
 };
 
+/// The modifier `key` is, if it is one: what tracks it going down and up.
+pub fn modifier_bit(key: &Key) -> Option<Modifiers> {
+    match key {
+        Key::Named(Named::Shift) => Some(Modifiers::SHIFT),
+        Key::Named(Named::Control) => Some(Modifiers::CTRL),
+        Key::Named(Named::Alt) => Some(Modifiers::ALT),
+        Key::Named(Named::Super | Named::Meta | Named::Hyper) => Some(Modifiers::LOGO),
+        _ => None,
+    }
+}
+
+/// What's held during a press, from three sources, as sola-terminal has it.
+/// The press's own mask can miss a modifier that is down on this Wayland stack,
+/// so the keys seen going down count too. What was last announced counts for
+/// all but Super: River can eat Super's release, which would leave it stuck.
+pub fn merged_modifiers(event: Modifiers, announced: Modifiers, held: Modifiers) -> Modifiers {
+    event | held | (announced & (Modifiers::SHIFT | Modifiers::CTRL | Modifiers::ALT))
+}
+
 /// One key press, as bindings name it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stroke {
     pub ctrl: bool,
-    pub alt: bool,
-    pub logo: bool,
+    /// Super, or Alt.
+    pub meta: bool,
     pub shift: bool,
     pub key: StrokeKey,
 }
@@ -145,7 +164,8 @@ impl Stroke {
     /// A press as iced reports it. `modified` is the key with Shift applied,
     /// so `M-<` and `C-_` work on any layout. `None` for a key no binding
     /// could name (a modifier alone, say).
-    pub fn from_iced(modified: &Key, ctrl: bool, alt: bool, logo: bool, shift: bool) -> Option<Self> {
+    pub fn from_iced(modified: &Key, modifiers: Modifiers) -> Option<Self> {
+        let shift = modifiers.shift();
         let (key, shift) = match modified {
             Key::Character(s) => {
                 let mut chars = s.chars();
@@ -182,17 +202,21 @@ impl Stroke {
             Key::Named(named) => (StrokeKey::Named(*named), shift),
             Key::Unidentified => return None,
         };
-        Some(Self { ctrl, alt, logo, shift, key })
+        Some(Self {
+            ctrl: modifiers.control(),
+            meta: modifiers.logo() || modifiers.alt(),
+            shift,
+            key,
+        })
     }
 
-    /// Parse one key of a binding: `C-x`, `s-S-p`, `<return>`.
-    fn parse(mut spec: &str) -> Option<Self> {
-        let (mut ctrl, mut alt, mut logo, mut shift) = (false, false, false, false);
+    /// Parse one key of a binding: `C-x`, `M-S-p`, `<return>`.
+    pub fn parse(mut spec: &str) -> Option<Self> {
+        let (mut ctrl, mut meta, mut shift) = (false, false, false);
         loop {
             match spec.as_bytes() {
                 [b'C', b'-', _, ..] => ctrl = true,
-                [b'M', b'-', _, ..] => alt = true,
-                [b's', b'-', _, ..] => logo = true,
+                [b'M', b'-', _, ..] => meta = true,
                 [b'S', b'-', _, ..] => shift = true,
                 _ => break,
             }
@@ -222,22 +246,17 @@ impl Stroke {
                 StrokeKey::Char(c)
             }
         };
-        Some(Self { ctrl, alt, logo, shift, key })
+        Some(Self { ctrl, meta, shift, key })
     }
 
-    /// No Ctrl, Alt or Super: this press types, unless a binding has it.
+    /// No Ctrl or Meta: this press types, unless a binding has it.
     pub fn is_plain(&self) -> bool {
-        !self.ctrl && !self.alt && !self.logo
+        !self.ctrl && !self.meta
     }
 
     fn describe(&self) -> String {
         let mut out = String::new();
-        for (on, prefix) in [
-            (self.ctrl, "C-"),
-            (self.alt, "M-"),
-            (self.logo, "s-"),
-            (self.shift, "S-"),
-        ] {
+        for (on, prefix) in [(self.ctrl, "C-"), (self.meta, "M-"), (self.shift, "S-")] {
             if on {
                 out.push_str(prefix);
             }
@@ -371,15 +390,15 @@ mod tests {
         for (key, want) in [
             ("C-g", Command::Cancel),
             ("C-n", Command::Move(Motion::Down)),
-            ("s-/", Command::ToggleComment),
+            ("M-/", Command::ToggleComment),
             ("C-y", Command::Yank),
-            ("s-v", Command::Move(Motion::PageUp)),
+            ("M-v", Command::Move(Motion::PageUp)),
             ("C-v", Command::Move(Motion::PageDown)),
             ("C-l", Command::Center),
             ("C-w", Command::Cut),
-            ("s-w", Command::Copy),
-            ("s-a", Command::SelectAll),
-            ("s-S-p", Command::Palette),
+            ("M-w", Command::Copy),
+            ("M-a", Command::SelectAll),
+            ("M-S-p", Command::Palette),
         ] {
             assert_eq!(press(&mut map, key), Feed::Run(want), "{key}");
         }
@@ -441,24 +460,58 @@ mod tests {
         let mut map = Keymap::new();
         assert_eq!(press(&mut map, "a"), Feed::Plain);
         assert_eq!(press(&mut map, "C-q"), Feed::Undefined("C-q".into()));
-        assert_eq!(press(&mut map, "s-q"), Feed::Undefined("s-q".into()));
+        assert_eq!(press(&mut map, "M-q"), Feed::Undefined("M-q".into()));
     }
 
     #[test]
     fn symbols_take_their_shift_from_the_key_they_made() {
-        let meta_less = Stroke::from_iced(&Key::Character("<".into()), false, true, false, true);
-        assert_eq!(meta_less, Stroke::parse("M-<"));
-        let underscore = Stroke::from_iced(&Key::Character("_".into()), true, false, false, true);
-        assert_eq!(underscore, Stroke::parse("C-_"));
+        let meta_shift = Modifiers::LOGO | Modifiers::SHIFT;
+        assert_eq!(Stroke::from_iced(&Key::Character("<".into()), meta_shift), Stroke::parse("M-<"));
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        assert_eq!(Stroke::from_iced(&Key::Character("_".into()), ctrl_shift), Stroke::parse("C-_"));
         // A letter keeps it: Super+Shift+P is not Super+P.
-        let palette = Stroke::from_iced(&Key::Character("P".into()), false, false, true, true);
-        assert_eq!(palette, Stroke::parse("s-S-p"));
+        assert_eq!(Stroke::from_iced(&Key::Character("P".into()), meta_shift), Stroke::parse("M-S-p"));
+    }
+
+    #[test]
+    fn super_is_meta_and_so_is_alt() {
+        let w = Key::Character("w".into());
+        assert_eq!(Stroke::from_iced(&w, Modifiers::LOGO), Stroke::parse("M-w"));
+        assert_eq!(Stroke::from_iced(&w, Modifiers::ALT), Stroke::parse("M-w"));
+        let mut map = Keymap::new();
+        for key in ["M-f", "M-b", "M-d", "M-v", "M-w", "M-x", "M-<", "M->", "M-{", "M-}", "M-;", "M-m"] {
+            let stroke = Stroke::parse(key).expect("a key");
+            assert!(stroke.meta, "{key}");
+            assert!(matches!(map.feed(stroke), Feed::Run(_)), "{key}");
+        }
+    }
+
+    #[test]
+    fn super_held_is_meta_even_when_the_press_does_not_say_so() {
+        let held = merged_modifiers(Modifiers::empty(), Modifiers::empty(), Modifiers::LOGO);
+        let w = Stroke::from_iced(&Key::Character("w".into()), held).expect("a key");
+        assert!(!w.is_plain(), "Super+W must not type a w");
+    }
+
+    #[test]
+    fn a_super_only_announced_is_stale_and_does_not_count() {
+        let merged = merged_modifiers(Modifiers::empty(), Modifiers::LOGO, Modifiers::empty());
+        assert!(!merged.logo());
+        let merged = merged_modifiers(Modifiers::empty(), Modifiers::SHIFT, Modifiers::empty());
+        assert!(merged.shift());
+    }
+
+    #[test]
+    fn only_modifier_keys_have_a_bit() {
+        assert_eq!(modifier_bit(&Key::Named(Named::Super)), Some(Modifiers::LOGO));
+        assert_eq!(modifier_bit(&Key::Named(Named::Meta)), Some(Modifiers::LOGO));
+        assert_eq!(modifier_bit(&Key::Character("w".into())), None);
     }
 
     #[test]
     fn space_is_one_key_however_it_is_reported() {
-        let named = Stroke::from_iced(&Key::Named(Named::Space), true, false, false, false);
-        let typed = Stroke::from_iced(&Key::Character(" ".into()), true, false, false, false);
+        let named = Stroke::from_iced(&Key::Named(Named::Space), Modifiers::CTRL);
+        let typed = Stroke::from_iced(&Key::Character(" ".into()), Modifiers::CTRL);
         assert_eq!(named, Stroke::parse("C-<space>"));
         assert_eq!(typed, Stroke::parse("C-<space>"));
     }
@@ -466,14 +519,13 @@ mod tests {
     #[test]
     fn a_modifier_alone_is_no_key_so_a_chord_survives_it() {
         for named in [Named::Control, Named::Shift, Named::Alt, Named::Super] {
-            let press = Stroke::from_iced(&Key::Named(named), true, false, false, false);
-            assert_eq!(press, None, "{named:?}");
+            assert_eq!(Stroke::from_iced(&Key::Named(named), Modifiers::CTRL), None, "{named:?}");
         }
     }
 
     #[test]
     fn key_of_names_the_shortest_binding() {
-        assert_eq!(Keymap::key_of(Command::SelectAll), Some("s-a"));
+        assert_eq!(Keymap::key_of(Command::SelectAll), Some("M-a"));
         assert_eq!(Keymap::key_of(Command::Save), Some("C-x C-s"));
     }
 }
