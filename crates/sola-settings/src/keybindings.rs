@@ -162,10 +162,11 @@ pub fn update(msg: KeysMsg, state: &mut KeysState) -> Task<KeysMsg> {
             let Some((owner, action)) = state.open.clone() else {
                 return Task::none();
             };
-            if needs_super(state, &owner, &action) && !chord.meta {
+            let alone = owner == SYSTEM && chord.keycode.stands_alone();
+            if needs_super(state, &owner, &action) && !chord.meta && !alone {
                 state.note = Some(if owner == SYSTEM {
                     format!(
-                        "{} has no Super: a system key needs it, so it never takes a key apps type with.",
+                        "{} has no Super: a system key needs it, unless it is F13 to F19, so it never takes a key apps type with.",
                         chord.display()
                     )
                 } else {
@@ -212,7 +213,7 @@ pub fn update(msg: KeysMsg, state: &mut KeysState) -> Task<KeysMsg> {
 }
 
 /// Whether `owner`'s `action` takes only keys with Super: every system
-/// key, and an app's menu keys (the Shell grabs and hands those over),
+/// key (F13 to F19 may stand alone, no app types them), and an app's menu keys (the Shell grabs and hands those over),
 /// except actions whose own default has none (keys the app reads itself,
 /// as Mail's letters).
 fn needs_super(state: &KeysState, owner: &str, action: &str) -> bool {
@@ -343,7 +344,9 @@ fn row<'a>(state: &'a KeysState, b: &Binding) -> Vec<Element<'a, KeysMsg>> {
 
 fn editor<'a>(state: &'a KeysState, b: &Binding) -> Element<'a, KeysMsg> {
     if state.capturing {
-        let hint = if needs_super(state, &b.owner, &b.action) {
+        let hint = if b.owner == SYSTEM {
+            "Press the new key, with Super (F13 to F19 need none). Esc cancels."
+        } else if needs_super(state, &b.owner, &b.action) {
             "Press the new key, with Super. Esc cancels."
         } else {
             "Press the new key. Esc cancels."

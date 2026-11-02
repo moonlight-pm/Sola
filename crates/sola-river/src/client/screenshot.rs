@@ -480,7 +480,7 @@ fn resolve_path(path: Option<PathBuf>) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// RGBA freeze dump: tmpfs first so Super+Shift+4 does not wait on disk.
+/// RGBA freeze dump: tmpfs first so a selection screenshot does not wait on disk.
 fn resolve_rgba_path(path: Option<PathBuf>) -> Result<PathBuf, String> {
     let path = match path {
         Some(p) => p,
@@ -929,7 +929,7 @@ fn write_png(path: &PathBuf, width: u32, height: u32, rgba: &[u8]) -> Result<(),
 ///
 /// Uses the event's `stride` (not `width * bpp`) so 3-bpp formats like
 /// `Bgr888` work correctly. Large frames (selection freeze, 5K PNG) split
-/// rows across threads so Super+Shift+4 is not stuck on a single core.
+/// rows across threads so a selection screenshot is not stuck on a single core.
 fn pixels_to_rgba8(
     src: &[u8],
     format: wl_shm::Format,

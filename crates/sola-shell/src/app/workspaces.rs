@@ -51,7 +51,7 @@ impl Shell {
         self.show_workspace(next);
     }
 
-    /// Send the focused window to workspace `index` (Super+Ctrl+1…9). The
+    /// Send the focused window to workspace `index` (Super+Shift+1…9). The
     /// showing workspace keeps focus on what is left.
     pub(crate) fn send_focused_to_workspace(&mut self, index: usize) {
         let Some(wid) = self.focused_window_id else {
