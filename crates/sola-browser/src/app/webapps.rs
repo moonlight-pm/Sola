@@ -307,7 +307,7 @@ impl<E: Engine> App<E> {
         self.persist_session();
     }
 
-    /// A link from outside the browser (Mail, a terminal, `solactl open`):
+    /// A link from outside the browser (Mail, a terminal, Projects, `solactl open`):
     /// to the web app its site belongs to, on that app's profile, else a
     /// Browser page. Waits for the catalog, when the browser has just
     /// started for it.

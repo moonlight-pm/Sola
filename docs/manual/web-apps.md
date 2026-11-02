@@ -59,7 +59,7 @@ A link you click to another site opens as a Browser page instead, unless
 another web app starts on that site: then it opens as a window of that app,
 on that app's profile, with its other windows in the bar. The same goes for a link that opens a new window (`target=_blank`,
 ⌘-click) from any page, a Browser page included, and for a link from outside
-Browser: Mail, a terminal, `solactl open`. **Open in Browser** and the
+Browser: Mail, a terminal, Projects, `solactl open`. **Open in Browser** and the
 launcher's Browser field always open a Browser page.
 
 Redirects, such as the round trip of a sign-in, stay in the window. A popup

@@ -14,6 +14,8 @@ Do not invent product policy.
 
 ## Now
 
+**A link through Sola's opener goes to its web app too (Joshua, 2026-11-02: "I just clicked a link in a project window, a github link, and even though i have github group, it opened in its own separate window").** The Browser's `open` call always opened a plain page, and this morning's "a link from anywhere" work had routed only the other two ways in. Built, not yet applied; needs `pkg:sola-browser`.
+
 **A session opens on the workspace of the session that started it (Joshua: "When a projects session starts a new session, the window for the new session appears in whatever workspace i'm in... The new session should instead appear in the same workspace as the one that created it").** Projects already knew the parent (`$SOLA_PANE_ID`) and never told the shell. It now sends ephemeral `TabOpener` (kit `TabWindows::open_from`) just before the `Tab`, and the shell places the window on that session's workspace, after it, behind, without moving you or taking focus; `--select` takes you there. Built with tests, not yet applied or tried on the desk; needs `pkg:sola` and `pkg:sola-projects`.
 
 **Whether Common stays is open (Joshua, 2026-11-02, after first use: "now that i'm using the common workspace, i'm not entirely sure i want to keep it").** Showing that a send happened is parked until that is settled: [common-send-feedback](docs/ideas/2026-11-02-common-send-feedback.md).

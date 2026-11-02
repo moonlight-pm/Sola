@@ -295,12 +295,12 @@ impl<E: Engine> App<E> {
             "wait" => self.cli_wait(inc),
             sola_kit::sola_open::OPEN_METHOD => {
                 // A link or a page from Sola's opener: in front, as a
-                // handed-off URL is.
+                // handed-off URL is, in the web app its site belongs to.
                 match sola_kit::opener::open_target(&inc) {
                     Some(target) => {
                         let url = crate::util::normalize_url(&target);
                         tracing::info!(%url, "open: a link from Sola's opener");
-                        self.open_tab(url, true);
+                        self.open_outside_link(url, true);
                         inc.reply.ok(serde_json::json!({ "opened": true }));
                     }
                     None => inc.reply.err("open needs a target"),
