@@ -53,13 +53,21 @@ notifications carry the app's name; clicking one brings its window
 forward.
 
 Links stay in the app's window while they stay on the app's site. The
-site is the last two parts of the host name, so `app.slack.com` and
-`files.slack.com` are the same site. A link you click to another site
-opens as a Browser page instead. Redirects, such as the round trip of a
-sign-in, stay in the window. A page opened in a new window
-(`target=_blank`, ⌘-click) stays in the app when it is on the app's site,
-else it opens as a Browser page. A popup the page opens with
-`window.open` (a call's window, say) is the app's.
+site is the apex domain, the name registered under its public suffix, so
+`app.slack.com` and `files.slack.com` are the same site, and `a.co.uk` and
+`b.co.uk`, or `a.github.io` and `b.github.io`, are not.
+
+A link you click to another site opens as a Browser page instead, unless an
+[app that opens several windows](#several-windows) starts on that site: then
+it opens as a window of that app, on that app's profile, in its group in the
+bar. The same goes for a link that opens a new window (`target=_blank`,
+⌘-click) from any page, a Browser page included. **Open in Browser** always
+opens a Browser page, and so do links from other applications.
+
+Redirects, such as the round trip of a sign-in, stay in the window. A popup
+the page opens with `window.open` (a call's window, say) is the app's while
+it is blank or on the app's site; on another site it is a Browser page, with
+its address in sight.
 
 ## Launch
 
@@ -83,6 +91,8 @@ Terminal: for a site you keep more than one view of.
 - Its windows sit in the bar under the app's name, each named by its page's
   title. Super+Backtick steps through them.
 - After a restart they all come back, each at its own page, in their place.
+- A link to its site from another app or a Browser page opens here
+  ([above](#the-apps-window)).
 
 Choose it when you wrap the page, or later in **Settings → Applications →
 Web apps**. Turning it on regroups the app's window at once. It cannot be

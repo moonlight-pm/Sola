@@ -89,6 +89,25 @@ impl WebApps {
     }
 
     /// App `app_id`'s pages.
+    /// The app whose group `url` belongs in: an app that opens several
+    /// windows, on that site. If two are, the first by name.
+    fn group_for(&self, url: &str) -> Option<&Application> {
+        self.apps
+            .values()
+            .filter(|a| a.multi_window)
+            .filter(|a| a.url.as_deref().is_some_and(|start| same_site(start, url)))
+            .min_by(|a, b| (&a.label, &a.app_id).cmp(&(&b.label, &b.app_id)))
+    }
+
+    /// The app a link from page `opener` opens in, as a window of its own:
+    /// the opener's, on its site; else an app with a group for that site.
+    /// `None`: a browser page.
+    fn app_for_link(&self, opener: TabId, url: &str) -> Option<&Application> {
+        self.app_of(opener)
+            .filter(|a| a.url.as_deref().is_some_and(|start| same_site(start, url)))
+            .or_else(|| self.group_for(url))
+    }
+
     pub fn tabs_of(&self, app_id: &str) -> Vec<TabId> {
         self.tabs
             .iter()
@@ -153,21 +172,24 @@ fn host(url: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
-/// The last two labels of a host (`files.slack.com` → `slack.com`).
-fn site(host: &str) -> &str {
-    let mut dots = host.rmatch_indices('.');
-    match (dots.next(), dots.next()) {
-        (Some(_), Some((i, _))) => &host[i + 1..],
-        _ => host,
-    }
-}
-
 /// `url` is on the same site as `start` (another subdomain counts).
 pub fn same_site(start: &str, url: &str) -> bool {
-    match (host(start), host(url)) {
-        (Some(a), Some(b)) => site(&a) == site(&b),
-        _ => false,
-    }
+    crate::popup::same_site(start, url)
+}
+
+/// A popup is the app's while it has no address yet (a huddle's window opens
+/// blank) or one on the app's site; else it is a browser page, its address
+/// in sight.
+fn popup_is_the_apps(start: &str, url: &str) -> bool {
+    crate::popup::is_blank_popup_url(url) || same_site(start, url)
+}
+
+/// The profile an app runs on: its own, else (gone) the one showing.
+fn app_profile(app: &Application) -> String {
+    app.profile
+        .clone()
+        .filter(|p| crate::profiles::list().iter().any(|q| q.id == *p))
+        .unwrap_or_else(crate::profiles::showing_profile)
 }
 
 /// A page's title as an app's name: the site's part of it (titles end
@@ -185,7 +207,7 @@ pub fn suggested_name(title: &str, url: &str) -> String {
     if !name.is_empty() {
         return name.to_string();
     }
-    host(url).map_or_else(|| "Web App".into(), |h| site(&h).to_string())
+    host(url).map_or_else(|| "Web App".into(), |h| crate::popup::apex(&h).to_string())
 }
 
 /// Where wrapped apps' icons are kept.
@@ -283,14 +305,29 @@ impl<E: Engine> App<E> {
             return;
         };
         let url = app.url.clone().unwrap_or_default();
-        let profile = app
-            .profile
-            .clone()
-            .filter(|p| crate::profiles::list().iter().any(|q| q.id == *p))
-            .unwrap_or_else(crate::profiles::showing_profile);
+        let profile = app_profile(&app);
         tracing::info!(app = %app_id, %url, %profile, "web app opens a window");
         let tab = self.open_tab_beside(url, true, &profile);
         self.webapps.tabs.insert(tab, app_id.to_string());
+        self.persist_session();
+    }
+
+    /// A link from page `opener` opening a window of its own (⌘-click,
+    /// `target=_blank`, a web app's link off its site): in the app its site
+    /// belongs to ([`WebApps::app_for_link`]), on that app's profile, else
+    /// a browser page on the opener's.
+    pub(crate) fn open_link(&mut self, opener: TabId, url: String, activate: bool, profile: &str) {
+        let Some(app) = self.webapps.app_for_link(opener, &url).cloned() else {
+            tracing::info!(%url, activate, "link → browser page");
+            self.open_tab_beside(url, activate, profile);
+            return;
+        };
+        tracing::info!(%url, activate, app = %app.app_id, "link → its app");
+        // A link within the app is on the page's own profile.
+        let own = self.webapps.tabs.get(&opener) == Some(&app.app_id);
+        let profile = if own { profile.to_string() } else { app_profile(&app) };
+        let tab = self.open_tab_beside(url, activate, &profile);
+        self.webapps.tabs.insert(tab, app.app_id);
         self.persist_session();
     }
 
@@ -397,26 +434,18 @@ impl<E: Engine> App<E> {
     /// New pages the engine opened (popups, a huddle's `about:blank`) from
     /// page `opener`: an app's are the app's too.
     pub(crate) fn adopt_popups(&mut self, opener: TabId, new: &[TabId]) {
-        let Some(app) = self.webapps.tabs.get(&opener).cloned() else {
-            return;
-        };
-        for tab in new {
-            tracing::info!(tab = tab.0, %app, "web app popup");
-            self.webapps.tabs.insert(*tab, app.clone());
-        }
-    }
-
-    /// Page `tab` opened at `url` from page `opener` (`target=_blank`,
-    /// ⌘-click): the opener's app keeps it when it is on the app's site;
-    /// anything else is a browser page.
-    pub(crate) fn adopt_if_same_site(&mut self, opener: TabId, tab: TabId, url: &str) {
-        let Some(app) = self.webapps.app_of(opener) else {
+        let Some(app) = self.webapps.app_of(opener).cloned() else {
             return;
         };
         let start = app.url.clone().unwrap_or_default();
-        if same_site(&start, url) {
-            let id = app.app_id.clone();
-            self.webapps.tabs.insert(tab, id);
+        for tab in new {
+            let url = self.cached_tabs.iter().find(|t| t.id == *tab).map_or("", |t| t.url.as_str());
+            if popup_is_the_apps(&start, url) {
+                tracing::info!(tab = tab.0, app = %app.app_id, "web app popup");
+                self.webapps.tabs.insert(*tab, app.app_id.clone());
+            } else {
+                tracing::info!(tab = tab.0, %url, "popup off the app's site: a browser page");
+            }
         }
     }
 
@@ -697,6 +726,73 @@ mod tests {
         assert_eq!(suggested_name("Inbox (3) | Fastmail", "https://app.fastmail.com"), "Fastmail");
         assert_eq!(suggested_name("Linear", "https://linear.app"), "Linear");
         assert_eq!(suggested_name("", "https://app.slack.com/x"), "slack.com");
+    }
+
+    fn web_app(id: &str, label: &str, url: &str, multi_window: bool) -> Application {
+        Application {
+            app_id: id.into(),
+            label: label.into(),
+            url: Some(url.into()),
+            kind: AppKind::Web,
+            multi_window,
+            ..Default::default()
+        }
+    }
+
+    fn catalog() -> WebApps {
+        let mut web = WebApps::default();
+        for app in [
+            web_app("shortcut", "Shortcut", "https://app.shortcut.com/acme", true),
+            web_app("slack", "Slack", "https://acme.slack.com", false),
+        ] {
+            web.apps.insert(app.app_id.clone(), app);
+        }
+        web.tabs.insert(TabId(1), "shortcut".into());
+        web.tabs.insert(TabId(2), "slack".into());
+        web
+    }
+
+    fn home(web: &WebApps, opener: u64, url: &str) -> Option<String> {
+        web.app_for_link(TabId(opener), url).map(|a| a.app_id.clone())
+    }
+
+    #[test]
+    fn a_link_stays_in_its_app_on_its_apex_and_finds_a_group_elsewhere() {
+        let web = catalog();
+        // On the app's apex, any subdomain.
+        assert_eq!(home(&web, 1, "https://api.shortcut.com/x").as_deref(), Some("shortcut"));
+        // A single-window app keeps its own too.
+        assert_eq!(home(&web, 2, "https://files.slack.com/x").as_deref(), Some("slack"));
+        // Another app's group.
+        assert_eq!(home(&web, 2, "https://app.shortcut.com/story/1").as_deref(), Some("shortcut"));
+        // From a browser page too.
+        assert_eq!(home(&web, 9, "https://app.shortcut.com/story/1").as_deref(), Some("shortcut"));
+    }
+
+    #[test]
+    fn any_other_link_is_a_browser_page() {
+        let web = catalog();
+        assert_eq!(home(&web, 1, "https://github.com/sola"), None);
+        // A single-window app has no group to join.
+        assert_eq!(home(&web, 1, "https://acme.slack.com/x"), None);
+        assert_eq!(home(&web, 9, "https://acme.slack.com/x"), None);
+    }
+
+    #[test]
+    fn two_apps_on_a_site_settle_on_the_first_by_name() {
+        let mut web = catalog();
+        let other = web_app("board", "Board", "https://app.shortcut.com/other", true);
+        web.apps.insert(other.app_id.clone(), other);
+        assert_eq!(home(&web, 9, "https://app.shortcut.com/x").as_deref(), Some("board"));
+    }
+
+    #[test]
+    fn a_popup_is_the_app_s_while_blank_or_on_its_site() {
+        let start = "https://app.shortcut.com/acme";
+        assert!(popup_is_the_apps(start, ""));
+        assert!(popup_is_the_apps(start, "about:blank"));
+        assert!(popup_is_the_apps(start, "https://huddle.shortcut.com/x"));
+        assert!(!popup_is_the_apps(start, "https://accounts.google.com/signin"));
     }
 
     #[test]

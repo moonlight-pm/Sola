@@ -1342,19 +1342,11 @@ impl<E: Engine> App<E> {
                 for req in bg {
                     // The page that asked: the active one (it was clicked).
                     let opener = self.cached_active;
-                    let url = req.url.clone();
-                    let tab = if crate::popup::is_devtools_url(&req.url) {
+                    if crate::popup::is_devtools_url(&req.url) {
                         tracing::info!(url = %req.url, "ignoring DevTools as a strip tab");
                         continue;
-                    } else if req.activate {
-                        tracing::info!(url = %req.url, "popup / target=_blank → tab");
-                        self.open_tab_beside(req.url, true, &req.profile)
-                    } else {
-                        tracing::info!(url = %req.url, "cmd-click → background tab");
-                        self.open_tab_beside(req.url, false, &req.profile)
-                    };
-                    // On a web app's site it stays in the app.
-                    self.adopt_if_same_site(opener, tab, &url);
+                    }
+                    self.open_link(opener, req.url, req.activate, &req.profile);
                 }
                 // Drain any page-selection / in-page copy the engine extracted.
                 // The engine's own clipboard can't reach Wayland; iced's can.
