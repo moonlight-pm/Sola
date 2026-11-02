@@ -17,6 +17,7 @@ const GROUPED: &[&str] = &[
     "sola-projects",
     "sola-terminal",
     "sola-paint",
+    "sola-editor",
     "sola-design",
 ];
 

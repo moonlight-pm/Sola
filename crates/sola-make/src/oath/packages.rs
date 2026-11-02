@@ -83,6 +83,7 @@ pub fn crate_of(bin: &str) -> &str {
     match bin {
         "sola-botsd" => "sola-bots",
         "xdg-open" => "sola-open",
+        "edit" => "sola-editor",
         other => other,
     }
 }
@@ -141,6 +142,7 @@ pub const PACKAGES: &[Package] = &[
     app("sola-terminal", &["sola-terminal"], &["tmux", "wl-clipboard"]),
     app("sola-projects", &["sola-projects"], &["tmux", "wl-clipboard"]),
     app("sola-paint", &["sola-paint"], &[]),
+    app("sola-editor", &["sola-editor", "edit"], &[]),
     app("sola-preview", &["sola-preview"], &[]),
     app("sola-scope", &["sola-scope"], &[]),
     app("sola-monitor", &["sola-monitor"], &[]),

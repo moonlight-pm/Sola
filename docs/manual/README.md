@@ -25,7 +25,7 @@ two lists the same).
 
 Application notes — kept here, linked from the Applications chapter, not on
 the page: [Browser](sola-browser.md), [Mail](sola-mail.md),
-[Calendar](sola-calendar.md), [Vault](sola-vault.md), [Paint](sola-paint.md), [Preview](sola-preview.md), [Web apps](web-apps.md), [Design](sola-design.md),
+[Calendar](sola-calendar.md), [Vault](sola-vault.md), [Editor](sola-editor.md), [Paint](sola-paint.md), [Preview](sola-preview.md), [Web apps](web-apps.md), [Design](sola-design.md),
 [Monitor](sola-monitor.md), [Scope](sola-scope.md),
 [KVM](sola-kvm-operator.md), [Fonts](distribution.md). They follow the same
 rules.
