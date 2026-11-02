@@ -245,6 +245,16 @@ pub struct Tab {
     pub icon: Option<String>,
 }
 
+/// The tab a new tab was opened from (app → shell), sent just before its
+/// [`Tab`]: a session started by another session. The window lands on that
+/// tab's workspace, whichever one is showing. Ephemeral. Its own topic, so
+/// `Tab`'s layout stays as every build reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabOpener {
+    pub key: String,
+    pub opener: String,
+}
+
 /// Which sola-river window a [`Tab`] is (shell → apps). Sticky, keyed by
 /// `key`; retracted when the window closes. Sent again when `shown` changes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2471,11 +2481,28 @@ define_topics! {
     // last.
     #[sticky]
     PinnedTabs(PinnedTabs),
+
+    // The tab a new tab was opened from (app → shell). Appended last.
+    TabOpener(TabOpener),
 }
 
 #[cfg(test)]
 mod tests {
     use super::{split_app_id, tab_token};
+
+    #[test]
+    fn a_tab_opener_reads_back_and_is_not_kept() {
+        let opener = super::TabOpener {
+            key: "sola-projects/ws-b".into(),
+            opener: "sola-projects/ws-a".into(),
+        };
+        let msg = super::Topic::TabOpener(opener.clone()).to_message();
+        assert!(!super::TopicKind::TabOpener.behavior().is_sticky());
+        match super::Topic::parse(&msg) {
+            Some(super::Topic::TabOpener(back)) => assert_eq!(back, opener),
+            other => panic!("read back as {other:?}"),
+        }
+    }
 
     /// A rule with no destination (delete, mark read) must read back: a
     /// skipped `dest` broke postcard decoding of the whole config.

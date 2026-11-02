@@ -146,11 +146,11 @@ fn a_session_lands_after_its_project() {
     open(&mut s, 3, PROJECTS, t);
     open(&mut s, 4, MAIL, t);
     // Window 1 is the new one's project; focus is on Mail.
-    s.place_near(5, PROJECTS, PROJECTS, false, false, &[1], t);
+    s.place_near(5, PROJECTS, PROJECTS, false, false, &[1], None, t);
     assert_eq!(bar(&s), vec![4, 1, 5, 2, 3]);
     // Opened from its project's own window: after that one.
     s.focus(5);
-    s.place_near(6, PROJECTS, PROJECTS, false, false, &[1, 5], t);
+    s.place_near(6, PROJECTS, PROJECTS, false, false, &[1, 5], None, t);
     assert_eq!(bar(&s), vec![4, 1, 5, 6, 2, 3]);
 }
 
@@ -372,4 +372,62 @@ fn the_editor_has_a_launcher_row_and_groups_under_it() {
         blocks(&s),
         vec![(None, vec![2]), (Some(EDITOR.to_string()), vec![1, 3])]
     );
+}
+
+fn bar_on(s: &Stacks, workspace: usize) -> Vec<u32> {
+    s.bar_on(workspace).iter().map(|t| t.window_id).collect()
+}
+
+/// Window 1 of Projects on Main; showing Other, with Mail focused on it.
+fn away_from_a_session(t: Instant) -> (Stacks, usize, usize) {
+    let mut s = Stacks::new();
+    let main = s.showing();
+    s.place(1, PROJECTS, PROJECTS, false, false, t);
+    let other = s.add_workspace("Other");
+    s.place(2, "sola-mail", "sola-mail", false, false, t);
+    s.focus(2);
+    (s, main, other)
+}
+
+#[test]
+fn a_session_lands_on_the_workspace_of_the_one_that_started_it() {
+    let t = Instant::now();
+    let (mut s, main, other) = away_from_a_session(t);
+    let placed = s.place_near(3, PROJECTS, "sola-projects/b", false, true, &[1], Some(1), t);
+    assert!(!placed.shown, "behind the session that started it");
+    assert_eq!(s.showing(), other, "you stay where you are");
+    assert_eq!(bar_on(&s, main), vec![1, 3]);
+    assert_eq!(bar_on(&s, other), vec![2]);
+    // The next one it starts goes after that one.
+    s.place_near(4, PROJECTS, "sola-projects/c", false, true, &[1, 3], Some(1), t);
+    assert_eq!(bar_on(&s, main), vec![1, 3, 4]);
+    // Asked for in front: shown there.
+    assert!(s.place_near(5, PROJECTS, "sola-projects/d", false, false, &[1, 3, 4], Some(1), t).shown);
+    assert_eq!(bar_on(&s, main), vec![1, 3, 4, 5]);
+    assert_eq!(s.showing(), other, "the shell goes there, on focus");
+}
+
+#[test]
+fn a_session_whose_opener_has_no_window_lands_where_you_are() {
+    let t = Instant::now();
+    let (mut s, main, other) = away_from_a_session(t);
+    s.place_near(3, PROJECTS, "sola-projects/b", false, true, &[], Some(99), t);
+    assert_eq!(bar_on(&s, main), vec![1]);
+    assert!(bar_on(&s, other).contains(&3));
+}
+
+#[test]
+fn a_session_started_from_a_common_window_lands_where_you_are() {
+    let t = Instant::now();
+    let (mut s, main, other) = away_from_a_session(t);
+    assert!(s.send(2, COMMON));
+    s.show_workspace(main);
+    s.place_near(3, PROJECTS, "sola-projects/b", false, true, &[], Some(2), t);
+    assert!(bar_on(&s, main).contains(&3));
+    assert!(!bar_on(&s, other).contains(&3));
+    assert!(!s.is_common(3));
+    // On Common itself it is a common window, like anything opened there.
+    s.show_workspace(COMMON);
+    s.place_near(4, PROJECTS, "sola-projects/c", false, true, &[], Some(2), t);
+    assert!(s.is_common(4));
 }

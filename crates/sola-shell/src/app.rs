@@ -382,6 +382,9 @@ pub struct Shell {
     /// Each tab's own icon (a page's favicon), by tab key: its row shows it
     /// in place of the app's.
     pub tab_icons: HashMap<String, String>,
+    /// New tabs waiting for their windows, by key: the tab each was opened
+    /// from (`Topic::TabOpener`).
+    pub tab_openers: HashMap<String, String>,
     /// The tab each window names (`Topic::WindowTab`), by window id: its
     /// tab's token, which pairing goes by first.
     pub window_tabs: HashMap<u32, String>,
@@ -598,6 +601,7 @@ impl Shell {
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
             tab_icons: HashMap::new(),
+            tab_openers: HashMap::new(),
             window_tabs: HashMap::new(),
             replayed: false,
             held_windows: None,
@@ -3222,6 +3226,7 @@ mod pending_launch_tests {
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
             tab_icons: HashMap::new(),
+            tab_openers: HashMap::new(),
             window_tabs: HashMap::new(),
             replayed: true,
             held_windows: None,
@@ -3516,6 +3521,76 @@ mod hide_tests {
         assert_eq!(shell.tabs.zone_of(5), Some(Zone::Grid(3)));
     }
 
+    /// A session asks for a session while you are on another workspace: its
+    /// window lands beside the one that asked and leaves you where you are.
+    /// Asked for in front, it takes you there.
+    #[test]
+    fn a_session_opens_on_the_workspace_of_the_session_that_started_it() {
+        use sola_bus::topics::{Tab, TabOpener, Topic};
+        const PROJECTS: &str = "sola-projects";
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        shell.windows_seen = true;
+        let send = |shell: &mut Shell, t: Topic| {
+            let mut m = t.to_message();
+            m.sticky = true;
+            let _ = shell.handle_bus(&m);
+        };
+        let pid = std::process::id();
+        let tab = |id: &str, seq, background| {
+            Topic::Tab(Tab {
+                key: format!("{PROJECTS}/{id}"),
+                app_id: PROJECTS.into(),
+                pid,
+                seq,
+                window_id: None,
+                background,
+                icon: None,
+            })
+        };
+        let session = |wid: u32, title: &str| {
+            let mut w = win(wid, PROJECTS, title);
+            w.pid = Some(pid);
+            w
+        };
+        let opened_by_a = |id: &str| {
+            Topic::TabOpener(TabOpener {
+                key: format!("{PROJECTS}/{id}"),
+                opener: format!("{PROJECTS}/a"),
+            })
+        };
+        let main = shell.tabs.showing();
+
+        send(&mut shell, tab("a", 1, false));
+        let mut windows = vec![session(5, "A | novus")];
+        send(&mut shell, Topic::Windows(windows.clone()));
+        assert_eq!(shell.tabs.desk_of(5), Some(main));
+
+        let other = shell.tabs.add_workspace("Other");
+        let mut mail = win(6, "sola-mail", "Mail");
+        mail.pid = Some(pid);
+        windows.push(mail);
+        send(&mut shell, Topic::Windows(windows.clone()));
+        assert_eq!(shell.tabs.desk_of(6), Some(other));
+        assert_eq!(shell.focused_window_id, Some(6));
+
+        send(&mut shell, opened_by_a("b"));
+        send(&mut shell, tab("b", 2, true));
+        windows.push(session(7, "B | novus"));
+        send(&mut shell, Topic::Windows(windows.clone()));
+        assert_eq!(shell.tabs.desk_of(7), Some(main));
+        assert_eq!(shell.tabs.showing(), other);
+        assert_eq!(shell.focused_window_id, Some(6));
+        assert!(shell.tab_openers.is_empty());
+
+        send(&mut shell, opened_by_a("c"));
+        send(&mut shell, tab("c", 3, false));
+        windows.push(session(8, "C | novus"));
+        send(&mut shell, Topic::Windows(windows));
+        assert_eq!(shell.tabs.desk_of(8), Some(main));
+        assert_eq!(shell.tabs.showing(), main);
+        assert_eq!(shell.focused_window_id, Some(8));
+    }
+
     fn test_shell(windows: Vec<Window>, focused: Option<&str>, mru: &[&str]) -> Shell {
         let mut window_id_by_key = HashMap::new();
         let mut mru_window_by_app = HashMap::new();
@@ -3547,6 +3622,7 @@ mod hide_tests {
             pairing: crate::pairing::Pairing::default(),
             tab_activity: HashMap::new(),
             tab_icons: HashMap::new(),
+            tab_openers: HashMap::new(),
             window_tabs: HashMap::new(),
             replayed: true,
             held_windows: None,

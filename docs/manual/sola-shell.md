@@ -454,6 +454,12 @@ window of a workspace goes to Full, and so does one opened while Cinema
 is up. Scope, Preview and gamescope float from the start, and so does an
 app whose window you floated, until you tile it again.
 
+A Projects session started by another session opens on that session's
+workspace, in the zone last used there, with its row after that session's
+and behind what the zone shows; you stay where you are. With `--select` it
+takes you there. A session whose window is on Common, or that has no window
+here, starts its new one on the workspace you are on.
+
 - **A zone's key** (Super with the key you gave it; Keypad 0, 4 and 6 by
   default) moves the focused window there. It shows there and keeps the
   keyboard; its row stays where it is. Nothing toggles: to change a

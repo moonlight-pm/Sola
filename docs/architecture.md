@@ -240,7 +240,9 @@ restart or a session restore takes its app's place from the persistent
 per tab announces each window before it opens (sticky `Topic::Tab`: key, pid,
 `seq`); the shell pairs a process's tabs with its new windows in order
 (`pairing.rs`), answers sticky `Topic::TabWindow` (key → sola-river id), and
-remembers the tab by its key. An app marks a tab's row with sticky
+remembers the tab by its key. A tab opened from another says so first
+(ephemeral `Topic::TabOpener`, kit `TabWindows::open_from`; Projects, for a
+session a session starts), and lands on that tab's workspace. An app marks a tab's row with sticky
 `Topic::TabActivity` (key → idle / working / waiting; kit
 `TabWindows::set_activity`): the bar draws the mark in the row's icon slot.
 Projects sends each project window's roll-up (a tab waiting on a decision

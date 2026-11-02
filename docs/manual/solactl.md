@@ -211,7 +211,8 @@ Other arguments are sent as typed.
 
 - `projects whoami` without `--pane` or `--path` sends `$SOLA_PANE_ID`
   and `$SOLA_WS_PATH`.
-- `projects session.new` without `--parent` sends `$SOLA_PANE_ID`.
+- `projects session.new` without `--parent` sends `$SOLA_PANE_ID`. The new
+  window opens on the parent's workspace, not the one showing.
 - `design canvas.new` without `--path` sends your working directory.
 
 ### Bot rules

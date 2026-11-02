@@ -137,6 +137,10 @@ impl Shell {
                 self.on_tab_layout(l);
                 Task::none()
             }
+            Topic::TabOpener(o) => {
+                self.tab_openers.insert(o.key, o.opener);
+                Task::none()
+            }
             Topic::Tab(t) => {
                 self.on_tab(t, message.sticky);
                 Task::none()
@@ -457,7 +461,11 @@ impl Shell {
             // A background tab joins behind the shown one, like a returning one.
             let behind = first_list || self.pairing.background(*wid);
             let kin = self.project_kin(*wid, app_id);
-            let placed = self.tabs.place_near(*wid, app_id, &key, floats, behind, &kin, now);
+            let opener = self
+                .tab_openers
+                .remove(&key)
+                .and_then(|k| self.pairing.window_of(&k));
+            let placed = self.tabs.place_near(*wid, app_id, &key, floats, behind, &kin, opener, now);
             placed_any = true;
             tracing::info!(window_id = wid, %app_id, ?placed, "placed window");
             if placed.zone == Zone::Float {
@@ -466,7 +474,11 @@ impl Shell {
             }
             if !placed.returning {
                 take_focus = Some((*wid, app_id.clone()));
-            } else if placed.shown && placed.zone != Zone::Float && first_shown.is_none() {
+            } else if placed.shown
+                && placed.zone != Zone::Float
+                && first_shown.is_none()
+                && self.tabs.on_showing(*wid)
+            {
                 first_shown = Some((*wid, app_id.clone()));
             }
         }
@@ -509,8 +521,11 @@ impl Shell {
                 self.mru_window_by_app.insert(app_id, wid);
                 let keep = self.screenshot_return_focus;
                 self.restore_app_focus(keep);
-            } else {
+            } else if self.tabs.on_showing(wid) {
                 self.focus_window(wid, &app_id);
+            } else {
+                // Asked for in front, on another workspace: go there.
+                self.raise_window_from_click(wid);
             }
         } else if focused_closed {
             let hidden = |app: &str| self.is_app_hidden(app);
@@ -644,6 +659,7 @@ impl Shell {
     fn on_tab(&mut self, tab: sola_bus::topics::Tab, sticky: bool) {
         if !sticky {
             self.tab_icons.remove(&tab.key);
+            self.tab_openers.remove(&tab.key);
             if let Some(wid) = self.pairing.retract(&tab.key) {
                 tracing::info!(window_id = wid, key = %tab.key, "tab closed");
                 retract_tab_window(tab.key);

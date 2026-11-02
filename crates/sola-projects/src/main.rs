@@ -1057,7 +1057,7 @@ impl App {
         if self.windows.has(tab_id) {
             return Task::none();
         }
-        let open = self.windows.open(APP_ID, tab_id, background).map(|_| Msg::Ignore);
+        let open = self.windows.open(APP_ID, tab_id, None, background).map(|_| Msg::Ignore);
         let attach = self.attach_pane(tab_id, &[]);
         self.publish_menu();
         Task::batch([open, attach])
@@ -2274,9 +2274,13 @@ impl App {
             (None, None) => None,
         };
         let new = self.plan_tab(project, name, parent, agent, title, select)?;
+        let opener = new.tab.parent.clone();
         let id = self.add_planned_tab(new);
-        // Its own window, behind unless `--select`.
-        let open = self.windows.open(APP_ID, &id, !select).map(|_| Msg::Ignore);
+        // Its own window, on its parent's workspace, behind unless `--select`.
+        let open = self
+            .windows
+            .open(APP_ID, &id, opener.as_deref(), !select)
+            .map(|_| Msg::Ignore);
         self.publish_menu();
         let attach = if let Some(a) = agent {
             let args = cli::agent_argv(a, prompt.as_deref());

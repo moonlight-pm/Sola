@@ -51,16 +51,21 @@ impl SessionWindows {
     }
 
 
-    /// Open session `tab_id`'s window. A `background` window joins its
-    /// zone behind, unfocused.
+    /// Open session `tab_id`'s window, on the workspace of the session
+    /// `opener` that started it. A `background` window joins its zone
+    /// behind, unfocused.
     pub fn open(
         &mut self,
         app_id: &'static str,
         tab_id: &str,
+        opener: Option<&str>,
         background: bool,
     ) -> Task<window::Id> {
         let settings = sola_kit::app::window_settings_transparent(app_id);
-        let (window, task) = self.tabs.open(tab_id, settings, background);
+        let (window, task) = match opener {
+            Some(opener) => self.tabs.open_from(opener, tab_id, settings, background),
+            None => self.tabs.open(tab_id, settings, background),
+        };
         self.by_tab.insert(tab_id.to_string(), window);
         self.by_window.insert(window, tab_id.to_string());
         if self.focused.is_none() {

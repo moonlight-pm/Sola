@@ -191,12 +191,15 @@ impl Stacks {
         returning: bool,
         now: Instant,
     ) -> Placed {
-        self.place_near(window_id, app_id, key, floats, returning, &[], now)
+        self.place_near(window_id, app_id, key, floats, returning, &[], None, now)
     }
 
     /// [`Self::place`], for a window that belongs next to `kin` (a Projects
     /// session beside its project's others): with no remembered place and
-    /// its opener not among them, it lands after the last of them.
+    /// its opener not among them, it lands after the last of them. `opener`
+    /// is the window that asked for this one (a session starting a session):
+    /// with no remembered place it lands on that window's workspace, opened
+    /// from there, instead of the showing one's focused tab.
     #[allow(clippy::too_many_arguments)]
     pub fn place_near(
         &mut self,
@@ -206,6 +209,7 @@ impl Stacks {
         floats: bool,
         returning: bool,
         kin: &[u32],
+        opener: Option<u32>,
         now: Instant,
     ) -> Placed {
         self.take(window_id);
@@ -238,8 +242,12 @@ impl Stacks {
                 return placed;
             }
         }
-        let (zone, mut at, opener) = self.landing_slot(app_id, floats);
-        let desk = &mut self.desks[self.showing];
+        let (d, from) = match opener.and_then(|o| Some((self.desk_of(o)?, o))) {
+            Some((d, o)) => (d, Some(o)),
+            None => (self.showing, self.focused),
+        };
+        let (zone, mut at, opener) = self.landing_on(d, from, app_id, floats);
+        let desk = &mut self.desks[d];
         let opener_is_kin = opener.is_some_and(|o| kin.contains(&o));
         if !opener_is_kin {
             if let Some(end) = kin.iter().filter_map(|&w| desk.bar.index_of(w)).max() {
@@ -252,7 +260,7 @@ impl Stacks {
             desk.pick(zone);
         }
         self.opened = opener.map(|f| (f, window_id));
-        if self.showing == COMMON {
+        if d == COMMON {
             self.spread(window_id);
         }
         Placed {
@@ -274,10 +282,21 @@ impl Stacks {
     /// right after a loose opener, else at the end of the loose rows. The
     /// launcher's ghost row stands there while an app starts.
     pub fn landing_slot(&self, app_id: &str, floats: bool) -> (Zone, usize, Option<u32>) {
-        let desk = &self.desks[self.showing];
+        self.landing_on(self.showing, self.focused, app_id, floats)
+    }
+
+    /// [`Self::landing_slot`] on workspace `d`, opened from `from`.
+    fn landing_on(
+        &self,
+        d: usize,
+        from: Option<u32>,
+        app_id: &str,
+        floats: bool,
+    ) -> (Zone, usize, Option<u32>) {
+        let desk = &self.desks[d];
         let zone = if floats { Zone::Float } else { desk.landing(&self.layout) };
         let bar = &desk.bar;
-        let opener = self.focused.filter(|&f| bar.index_of(f).is_some());
+        let opener = from.filter(|&f| bar.index_of(f).is_some());
         let after = match (opener, self.opened) {
             (Some(f), Some((from, last))) if from == f && bar.index_of(last).is_some() => {
                 Some(last)

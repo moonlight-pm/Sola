@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use iced::{Task, window};
 use sola_bus::Message;
-use sola_bus::topics::{Activity, ShowTab, Tab, TabActivity, TabWindow, Topic};
+use sola_bus::topics::{Activity, ShowTab, Tab, TabActivity, TabOpener, TabWindow, Topic};
 
 struct Entry {
     key: String,
@@ -66,6 +66,24 @@ impl TabWindows {
         background: bool,
     ) -> (window::Id, Task<window::Id>) {
         self.open_as(self.app_id, id, settings, background)
+    }
+
+    /// [`Self::open`], for a tab opened from the app's tab `opener`: it lands
+    /// on that tab's workspace, whichever one is showing.
+    pub fn open_from(
+        &mut self,
+        opener: &str,
+        id: &str,
+        settings: window::Settings,
+        background: bool,
+    ) -> (window::Id, Task<window::Id>) {
+        let (key, opener) = (self.key(id), self.key(opener));
+        if let Ok(mut bus) = crate::app::bus().lock() {
+            if let Err(e) = bus.emit(Topic::TabOpener(TabOpener { key, opener })) {
+                tracing::warn!(tab = %id, "announce tab opener failed: {e:?}");
+            }
+        }
+        self.open(id, settings, background)
     }
 
     /// Open tab `id`'s window as app `app_id`: the tab is that app's (its

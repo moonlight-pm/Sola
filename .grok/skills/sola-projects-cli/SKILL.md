@@ -56,7 +56,8 @@ job: brief it to make one, or make it yourself in your session.
 
 ## Focus (locked)
 
-CLI spawn is **background**: the new window lands behind. Pass `--select`
+CLI spawn is **background**: the new window lands behind, on the workspace
+of the session that started it. Pass `--select`
 only when the user asks to jump to it. `session.exec`, `pane.send`,
 `pane.read`, `pane.wait` never select. `session.select` is the only interrupt.
 
