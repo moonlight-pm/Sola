@@ -14,6 +14,8 @@ Do not invent product policy.
 
 ## Now
 
+**`x-www-browser`, for programs that never call `xdg-open` (Joshua, 2026-11-02: "i've got grok open in a terminal, i'm trying to authenticate an mcp (shortcut) -- its saying 'authenticating' but nothing happens").** Grok opens a browser through Rust's `webbrowser` crate, which tries `$BROWSER`, `xdg-settings`, a known desktop's tools and `x-www-browser`, and none of those is here, so its sign-in waited on a browser that never came. `pkg:sola` now ships the opener under that name too. Built, not yet applied or tried; until it is, `BROWSER=xdg-open grok` should get past it.
+
 **A link through Sola's opener goes to its web app too (Joshua, 2026-11-02: "I just clicked a link in a project window, a github link, and even though i have github group, it opened in its own separate window").** The Browser's `open` call always opened a plain page, and this morning's "a link from anywhere" work had routed only the other two ways in. Built, not yet applied; needs `pkg:sola-browser`.
 
 **A session opens on the workspace of the session that started it (Joshua: "When a projects session starts a new session, the window for the new session appears in whatever workspace i'm in... The new session should instead appear in the same workspace as the one that created it").** Projects already knew the parent (`$SOLA_PANE_ID`) and never told the shell. It now sends ephemeral `TabOpener` (kit `TabWindows::open_from`) just before the `Tab`, and the shell places the window on that session's workspace, after it, behind, without moving you or taking focus; `--select` takes you there. Built with tests, not yet applied or tried on the desk; needs `pkg:sola` and `pkg:sola-projects`.

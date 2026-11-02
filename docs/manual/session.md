@@ -488,7 +488,9 @@ program that calls xdg-open reaches the same handlers. `xdg-open
 <file|URL>` exits 0 when opened, 1 on a usage error, 2 when the file is
 not there, 3 when nothing opens it, and 4 when its handler failed;
 `--help` and `--version` print and exit 0. `solactl open <target>` does the
-same and exits 3 on any failure.
+same and exits 3 on any failure. `/bin/x-www-browser` is the same opener: the
+last name Rust's `webbrowser` crate tries, and it never calls `xdg-open`, so
+that is how a program built on it (`grok`'s MCP sign-in) reaches a browser.
 
 ```bash
 xdg-open https://example.com
@@ -497,7 +499,8 @@ solactl open "mailto:someone@example.com?subject=Hello"
 ```
 
 A relative path is taken from the caller's working directory. `$BROWSER`
-is not set on the desk; programs that read it fall back to `xdg-open`.
+is not set on the desk; programs that read it fall back to `xdg-open` or
+`x-www-browser`.
 
 ## Bus topics and call methods
 

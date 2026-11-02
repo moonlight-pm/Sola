@@ -4,10 +4,12 @@
 //! Apps claim link schemes and file types ([`claims`]); you choose among
 //! them ([`defaults`]); [`resolve`] picks the handler and the target goes to
 //! it — a Sola app through its `open` method, a `.desktop` handler by its
-//! command. `/bin/xdg-open` (this crate's binary), `solactl open` and
+//! command. `/bin/xdg-open` and `/bin/x-www-browser` (this crate's
+//! binaries), `solactl open` and
 //! `sola_kit::open` all come here.
 
 pub mod claims;
+pub mod cli;
 pub mod defaults;
 mod deliver;
 pub mod desktop;

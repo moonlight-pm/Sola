@@ -8,6 +8,10 @@ description = "Opening links and files: the handlers Sola keeps, and xdg-open"
 name = "xdg-open"
 path = "src/main.rs"
 
+[[bin]]
+name = "x-www-browser"
+path = "src/x_www_browser.rs"
+
 [dependencies]
 sola-core = { path = "../sola-core" }
 sola-bus = { path = "../sola-bus" }
