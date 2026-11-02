@@ -347,17 +347,21 @@ then, for the current one:
 Settings → Appearance → Workspaces → **Islands in the top row** takes the
 head off the bar and puts each workspace in an island of its own, right of
 the flower. An island shows the workspace's number (its place: Super+1 to
-Super+9), its name, the diamond or dot for what waits there, and a switch.
+Super+9), its name and a dot. On a workspace you are not on, a diamond means
+a window there waits on a decision, and a mail icon that you have unread mail
+and Mail is there. When other islands follow (Projects sessions asking or
+finished), a thin line sets the workspaces apart from them.
 
 - **Click** an island to show that workspace. Click the one showing for its
   menu: New Workspace, Rename…, Delete.
 - **Drag** an island to reorder the workspaces; the numbers follow.
-- **The switch** says whether Super+Tab stops there. Off, Super+Tab and
-  Super+Shift+Tab pass over it; Super+1 to Super+9 and a click still show
-  it. With every other workspace off, they stay where they are.
+- **The dot** says whether Super+Tab stops there: lit, it does. Click it to
+  change that. Unlit, Super+Tab and Super+Shift+Tab pass over the workspace;
+  Super+1 to Super+9 and a click still show it. With every other workspace
+  unlit, they stay where they are.
 
 Turning the setting off brings the head back, and Super+Tab steps through
-every workspace again. The switches are kept for the next time.
+every workspace again. The dots are kept for the next time.
 
 ## Workspaces
 

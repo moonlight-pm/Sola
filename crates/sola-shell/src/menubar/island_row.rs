@@ -2,7 +2,7 @@
 //! release is a click; a press and a move is a drag: the island follows the
 //! pointer and the others make room as it passes their middles. A widget so
 //! the drag holds when the pointer leaves the row, and so a click knows
-//! where its island really is. A switch inside an island takes its own
+//! where its island really is. A button inside an island takes its own
 //! press (it starts no drag).
 
 use iced::advanced::Renderer as _;

@@ -283,8 +283,8 @@ fn workspaces(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
         Some(
             "Each workspace an island by the flower, instead of the switcher \
              at the head of the bar. Click one to show it, the one showing for \
-             its menu; drag one to reorder. Its switch says whether Super+Tab \
-             stops there."
+             its menu; drag one to reorder. Its dot, lit, says Super+Tab stops \
+             there."
                 .into(),
         ),
     )

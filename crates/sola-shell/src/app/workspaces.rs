@@ -51,8 +51,8 @@ impl Shell {
     }
 
     /// Super+Tab / Super+Shift+Tab. With the workspaces as islands it
-    /// passes over those switched off; the switcher in the bar has no such
-    /// switches, and steps through them all.
+    /// passes over those whose dot is unlit; the switcher in the bar has no
+    /// dots, and steps through them all.
     pub(crate) fn step_workspace(&mut self, back: bool) {
         let skipped: &[String] = if self.workspace_islands() {
             &self.workspace.prefs.skipped
@@ -96,7 +96,7 @@ impl Shell {
         self.emit_idle_keep(false);
     }
 
-    /// An island's switch: Super+Tab stops at workspace `index`, or not.
+    /// An island's dot: Super+Tab stops at workspace `index`, or not.
     pub(crate) fn toggle_workspace_cycle(&mut self, index: usize) {
         let Some(id) = self.tabs.workspaces().into_iter().nth(index).map(|w| w.id) else {
             return;

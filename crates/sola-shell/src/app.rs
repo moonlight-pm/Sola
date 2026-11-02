@@ -249,7 +249,7 @@ pub enum Msg {
     WorkspaceIslandClick { index: usize, x: f32 },
     /// A dragged workspace island passed another.
     WorkspaceIslandMove { from: usize, to: usize },
-    /// A workspace island's switch: Super+Tab stops there, or not.
+    /// A workspace island's dot: Super+Tab stops there, or not.
     WorkspaceCycle(usize),
     /// The rename field changed.
     WorkspaceRenameInput(String),

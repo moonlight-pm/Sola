@@ -158,6 +158,7 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // session that asks or has finished.
     let left = row![flower]
         .push(crate::menubar::workspaces::islands(shell))
+        .push(crate::menubar::workspaces::separator(shell))
         .extend(crate::agents::view::row_islands(shell))
         .spacing(ISLAND_GAP)
         .align_y(Alignment::Center);

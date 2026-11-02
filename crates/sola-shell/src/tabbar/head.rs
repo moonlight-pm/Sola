@@ -128,18 +128,10 @@ fn elsewhere(shell: &Shell) -> Option<Mark> {
 }
 
 /// A mark as it shows.
-pub(crate) fn mark_view(shell: &Shell, mark: Mark) -> Element<'static, Msg> {
+fn mark_view(shell: &Shell, mark: Mark) -> Element<'static, Msg> {
     match mark {
         Mark::Waiting => status_mark(SidebarIndicator::Waiting),
         Mark::Unread => dot(shell.theme.extended_palette().primary.base.color),
-    }
-}
-
-/// A mark's width.
-pub(crate) fn mark_width(mark: Mark) -> f32 {
-    match mark {
-        Mark::Waiting => 12.0,
-        Mark::Unread => DOT,
     }
 }
 
