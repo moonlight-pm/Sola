@@ -296,6 +296,10 @@ impl WaylandInjector {
     }
 
     fn scroll(&self, dx: f32, dy: f32) {
+        // The wire counts wheel detents with the kernel's sign (up and right
+        // positive, as the Mac agent posts them); Wayland's vertical axis is
+        // down.
+        let dy = -dy;
         let time = now_msec();
         self.pointer.axis_source(AxisSource::Wheel);
         if dy.abs() > f32::EPSILON {
