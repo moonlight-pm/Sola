@@ -65,23 +65,28 @@ impl From<bool> for Chrome {
 /// Frame `content` with the titlebar and this app's published menus.
 ///
 /// `on_drag` starts a move ([`crate::float::drag`]) and is only sent while
-/// floating; `on_close` is the close dot; `on_resize` starts an edge resize
-/// ([`crate::float::drag_resize`]) while floating.
+/// floating; `on_close` is the close dot, and `None` (a window with a tab,
+/// [`crate::tabs::TabWindows::closable`]) or this app's window being pinned
+/// ([`crate::pinned`]) leaves the window [`WindowFrame::stays`]; `on_resize`
+/// starts an edge resize ([`crate::float::drag_resize`]) while floating.
 pub fn window_frame<'a, Message>(
     chrome: impl Into<Chrome>,
     title: impl Into<String>,
     on_drag: Message,
-    on_close: Message,
+    on_close: impl Into<Option<Message>>,
     on_resize: impl Fn(Direction) -> Message + 'a,
     content: Element<'a, Message, Theme>,
 ) -> Element<'a, Message, Theme>
 where
     Message: Clone + 'a,
 {
-    WindowFrame::new(chrome, content)
+    let frame = WindowFrame::new(chrome, content)
         .title(title)
         .on_drag(on_drag)
-        .on_close(on_close)
-        .on_resize(on_resize)
-        .into()
+        .on_resize(on_resize);
+    match on_close.into().filter(|_| !crate::pinned::this_app()) {
+        Some(on_close) => frame.on_close(on_close),
+        None => frame.stays(),
+    }
+    .into()
 }

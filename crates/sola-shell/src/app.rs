@@ -1796,6 +1796,10 @@ impl Shell {
         // Every workspace, so showing one needs no resize either.
         for ws in 0..self.tabs.workspace_count() {
             for t in self.tabs.bar_on(ws) {
+                // A common window's rows have one zone, and Common has one.
+                if ws != crate::stacks::COMMON && self.tabs.is_common(t.window_id) {
+                    continue;
+                }
                 match t.zone {
                     Zone::Float => {}
                     Zone::Cinema => {
@@ -3111,6 +3115,10 @@ impl Shell {
             Msg::AgentIslandShow => self.agent_island_act(sola_bus::topics::IslandAction::Show),
             Msg::AdaptSampled(picture, scheme) => self.adapt_sampled(picture, scheme),
             Msg::CloseWindow(wid) => {
+                if self.tabs.is_pinned_here(wid) {
+                    tracing::debug!(window_id = wid, "common window stays");
+                    return iced::Task::none();
+                }
                 // A tab's window: its app closes it (not through the
                 // compositor, whose close requests also mean "quit").
                 let close = match self.pairing.key_of(wid) {
@@ -3332,13 +3340,20 @@ mod hide_tests {
     #[test]
     fn super_tab_passes_over_switched_off_workspaces_only_with_the_islands() {
         use sola_bus::topics::{Topic, WorkspacePrefs};
+        // Past Common: Main, Two, Three.
+        const MAIN: usize = crate::stacks::COMMON + 1;
         let mut shell = test_shell(Vec::new(), None, &[]);
         shell.tabs.add_workspace("Two");
         shell.tabs.add_workspace("Three");
-        shell.tabs.show_workspace(0);
-        let two = shell.tabs.workspaces()[1].id.clone();
+        shell.tabs.show_workspace(MAIN);
+        let two = shell.tabs.workspaces()[MAIN + 1].id.clone();
         let prefs = |islands: bool, skipped: Vec<String>| {
-            let mut m = Topic::WorkspacePrefs(WorkspacePrefs { islands, skipped }).to_message();
+            let prefs = WorkspacePrefs {
+                islands,
+                skipped,
+                stops_at_common: false,
+            };
+            let mut m = Topic::WorkspacePrefs(prefs).to_message();
             m.sticky = true;
             m
         };
@@ -3347,40 +3362,66 @@ mod hide_tests {
         let _ = shell.handle_bus(&prefs(false, vec![two.clone()]));
         assert!(!shell.workspace_islands());
         shell.step_workspace(false);
-        assert_eq!(shell.tabs.showing(), 1);
+        assert_eq!(shell.tabs.showing(), MAIN + 1);
 
-        shell.tabs.show_workspace(0);
+        shell.tabs.show_workspace(MAIN);
         let _ = shell.handle_bus(&prefs(true, vec![two.clone()]));
         assert!(shell.workspace_islands());
         shell.step_workspace(false);
-        assert_eq!(shell.tabs.showing(), 2, "passes over Two");
+        assert_eq!(shell.tabs.showing(), MAIN + 2, "passes over Two");
 
         // Its switch puts it back.
-        shell.toggle_workspace_cycle(1);
+        shell.toggle_workspace_cycle(MAIN + 1);
         assert!(!shell.workspace_skipped(&two));
-        shell.tabs.show_workspace(0);
+        shell.tabs.show_workspace(MAIN);
         shell.step_workspace(false);
-        assert_eq!(shell.tabs.showing(), 1);
+        assert_eq!(shell.tabs.showing(), MAIN + 1);
 
         // A workspace gone leaves nothing behind in the list.
-        shell.toggle_workspace_cycle(1);
+        shell.toggle_workspace_cycle(MAIN + 1);
         assert!(shell.workspace_skipped(&two));
-        shell.workspace_action(workspaces::WorkspaceAction::Delete(1));
+        shell.workspace_action(workspaces::WorkspaceAction::Delete(MAIN + 1));
         assert!(!shell.workspace_skipped(&two));
+    }
+
+    /// Common's dot starts unlit, with the switcher in the bar too; lit, the
+    /// step stops there.
+    #[test]
+    fn super_tab_passes_over_common_until_its_dot_is_lit() {
+        use crate::stacks::{COMMON, COMMON_WORKSPACE};
+        const MAIN: usize = COMMON + 1;
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        shell.tabs.add_workspace("Two");
+        shell.tabs.show_workspace(MAIN);
+        assert!(shell.workspace_skipped(COMMON_WORKSPACE.0));
+        shell.step_workspace(true);
+        assert_eq!(shell.tabs.showing(), MAIN + 1, "back past Common");
+        shell.step_workspace(false);
+        assert_eq!(shell.tabs.showing(), MAIN, "round past Common");
+
+        shell.toggle_workspace_cycle(COMMON);
+        assert!(!shell.workspace_skipped(COMMON_WORKSPACE.0));
+        shell.step_workspace(true);
+        assert_eq!(shell.tabs.showing(), COMMON);
+        // It can be left whichever way.
+        shell.toggle_workspace_cycle(COMMON);
+        shell.step_workspace(false);
+        assert_eq!(shell.tabs.showing(), MAIN);
     }
 
     #[test]
     fn a_click_on_a_workspace_island_shows_it_and_the_showing_one_opens_its_menu() {
+        const MAIN: usize = crate::stacks::COMMON + 1;
         let mut shell = test_shell(Vec::new(), None, &[]);
         shell.tabs.add_workspace("Two");
-        shell.tabs.show_workspace(0);
-        let _ = shell.on_workspace_island_click(1, 90.0);
-        assert_eq!(shell.tabs.showing(), 1);
+        shell.tabs.show_workspace(MAIN);
+        let _ = shell.on_workspace_island_click(MAIN + 1, 90.0);
+        assert_eq!(shell.tabs.showing(), MAIN + 1);
         assert!(!shell.workspace_menu_open());
-        let _ = shell.on_workspace_island_click(1, 90.0);
+        let _ = shell.on_workspace_island_click(MAIN + 1, 90.0);
         assert_eq!(shell.workspace.menu_x, 90.0);
         assert!(shell.workspace_menu_open());
-        let _ = shell.on_workspace_island_click(1, 90.0);
+        let _ = shell.on_workspace_island_click(MAIN + 1, 90.0);
         assert!(!shell.workspace_menu_open(), "again closes it");
     }
 

@@ -49,7 +49,7 @@ pub const FIRST_WORKSPACE: (&str, &str) = ("main", "Main");
 /// The workspace whose windows are on every workspace, its place in the
 /// list (always first, and numbered 0), and its id and name.
 pub const COMMON: usize = 0;
-pub const COMMON_WORKSPACE: (&str, &str) = ("common", "Common");
+pub const COMMON_WORKSPACE: (&str, &str) = (sola_bus::topics::COMMON_WORKSPACE_ID, "Common");
 
 /// How long a departed window's place waits for its app to come back
 /// (a restart, a re-exec after install).
@@ -396,9 +396,18 @@ impl Stacks {
     }
 
     /// The showing workspace is not Common, and `window_id` is on Common: it
-    /// stays, so it cannot be closed or sent away from here.
+    /// stays, so it cannot be closed or sent away from here. Its dialogs can
+    /// close.
     pub fn is_pinned_here(&self, window_id: u32) -> bool {
-        self.showing != COMMON && self.is_common(window_id)
+        self.showing != COMMON && self.desks[COMMON].tab(window_id).is_some()
+    }
+
+    /// The tabs [`Self::is_pinned_here`] says stay, by key.
+    pub fn pinned_keys(&self) -> Vec<String> {
+        if self.showing == COMMON {
+            return Vec::new();
+        }
+        self.desks[COMMON].bar.tabs().map(|t| t.key.clone()).collect()
     }
 
     /// `window_id` turns out to be the tab `key` (paired after it was

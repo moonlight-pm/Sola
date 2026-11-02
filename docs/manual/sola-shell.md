@@ -38,9 +38,11 @@ system key.
 | Super+L | Lock the screen (needs a password: [Security](security.md#locking)) |
 | Super+CapsLock | Show the next window in the zone under the pointer (Super+Shift+CapsLock: the previous) |
 | Super+Backtick | Show the focused app's next window on this workspace (Super+Shift+Backtick: the previous) |
+| Super+0 | Show [Common](#common) |
 | Super+1 … Super+9 | Show workspace 1 to 9 |
+| Super+Shift+0 | Send the focused window to [Common](#common) |
 | Super+Shift+1 … Super+Shift+9 | Send the focused window to workspace 1 to 9 |
-| Super+Tab | Next workspace (Super+Shift+Tab: the previous); [as islands](#workspaces-as-islands), past those switched off |
+| Super+Tab | Next workspace (Super+Shift+Tab: the previous), past Common until its dot is lit; [as islands](#workspaces-as-islands), past those switched off |
 | Super+Keypad 0 | Move the focused window to Full |
 | Super+Keypad 4 | Move the focused window to the left column (the default layout's) |
 | Super+Keypad 6 | Move the focused window to the right column (the default layout's) |
@@ -84,9 +86,9 @@ The desk works by windows, not apps: there is no Quit. **Close Window**
 (Super+W) closes the focused window, as its bar row's × does, and an app
 ends when its last window closes. It is in each app's own menu; an app that
 isn't Sola's has no menu of its own, so the Shell gives it one with this
-item. Browser pages, Paint and Projects give Super+W their own close, and
-Editor, where Super is Meta, leaves it for Copy (its menu has the item, with
-no key).
+item. Browser pages, Paint and Projects give Super+W their own close.
+Editor, where Super is Meta, and Terminal leave it for Copy (their menus have
+the item, with no key), and Design closes a window on Super+Shift+W.
 
 ### Focus
 
@@ -332,7 +334,7 @@ name means a window on another workspace waits on a decision; a dot, that
 a Mail window on another workspace has unread mail.
 
 Click the head for the workspace menu: every workspace (the current one
-checked, Super+1 to Super+9 beside the first nine; click one to show it),
+checked, Super+0 to Super+9 beside the first ten; click one to show it),
 then, for the current one:
 
 - **New Workspace** adds "Workspace N" after the current one and shows
@@ -340,17 +342,19 @@ then, for the current one:
 - **Rename…** turns the menu into a field: Return renames, Escape
   cancels. An empty name keeps the old one.
 - **Move Left** and **Move Right** move it in the order (dimmed at the
-  ends).
+  ends; nothing goes before Common).
 - **Delete** removes it. Its windows join the workspace before it (the
   next one, for the first), in the same zones, at the end of its bar (a
   group's windows in that app's group there). The last workspace cannot
   be deleted.
 
+On Common only New Workspace is live: it cannot be renamed, moved or deleted.
+
 ### Workspaces as islands
 
 Settings → Appearance → Workspaces → **Islands in the top row** takes the
 head off the bar and puts each workspace in an island of its own, right of
-the flower. An island shows the workspace's number (its place: Super+1 to
+the flower. An island shows the workspace's number (its place: Super+0 to
 Super+9), its name and a dot. On a workspace you are not on, a diamond means
 a window there waits on a decision, and a mail icon that you have unread mail
 and Mail is there. When other islands follow (Projects sessions asking or
@@ -358,31 +362,64 @@ finished), a thin line sets the workspaces apart from them.
 
 - **Click** an island to show that workspace. Click the one showing for its
   menu: New Workspace, Rename…, Delete.
-- **Drag** an island to reorder the workspaces; the numbers follow.
+- **Drag** an island to reorder the workspaces; the numbers follow. Common
+  stays first.
 - **The dot** says whether Super+Tab stops there: lit, it does. Click it to
   change that. Unlit, Super+Tab and Super+Shift+Tab pass over the workspace;
-  Super+1 to Super+9 and a click still show it. With every other workspace
-  unlit, they stay where they are.
+  Super+0 to Super+9 and a click still show it. With every other workspace
+  unlit, they stay where they are. Common's starts unlit.
 
 Turning the setting off brings the head back, and Super+Tab steps through
-every workspace again. The dots are kept for the next time.
+every workspace but Common again, or Common too if its dot is lit. The dots
+are kept for the next time.
 
 ## Workspaces
 
 Each workspace has its own windows and its own bar; only the workspace
-you are on is on screen. A fresh desk starts with one, **Main**.
+you are on is on screen. A fresh desk starts with **Common** (number 0, on
+the left) and **Main** (number 1).
 
-- **Super+1 … Super+9** shows a workspace; its last focused window takes
+- **Super+0 … Super+9** shows a workspace; its last focused window takes
   the keyboard.
-- **Super+Shift+1 … Super+Shift+9** sends the focused window there, into
+- **Super+Shift+0 … Super+Shift+9** sends the focused window there, into
   the same zone, at the end of its app's group there (at the end of that
   workspace's bar, when it has none), shown in its zone. You stay where
   you are.
 - **Super+Tab** and **Super+Shift+Tab** step through the workspaces,
-  wrapping.
+  wrapping, past Common until its dot is lit.
 
 Showing a window that is on another workspace (from a notification, an
 agent island, Mail's chip) shows that workspace.
+
+### Common
+
+A window on Common is on every workspace: each has a row for it, in that
+app's group there, and it counts toward the group (one Terminal of your own
+and one common Terminal make a group). Common cannot be renamed, moved or
+deleted.
+
+- **Putting one there:** send a window there (Super+Shift+0), or open it
+  while on Common. Sent from elsewhere, it stays on screen where you are.
+- **On each workspace,** the row's place and what is on top are that
+  workspace's own: a common window landing on a workspace goes to the end of
+  its bar, and does not cover what shows there unless its zone shows nothing.
+  A new workspace starts with Common's windows. Clicking a common row stays
+  on the workspace you are on.
+- **One zone:** the window is in the same zone everywhere. Moving it on one
+  workspace moves it on all, and brings it up only where you are.
+- **Taking one out** happens only on Common. There, Super+Shift+N sends it to
+  workspace N, where it becomes an ordinary window, and closing it closes it.
+  On any other workspace it stays: its row has a small pin and no close, and
+  Super+W, its titlebar's close dot, its menu's Close Window, closing a
+  Terminal's last pane and sending it elsewhere do nothing. An app's own close
+  button outside Sola, a page closing itself and a crash still end the window.
+- **Marks:** a common window's waiting mark shows on Common's island, and its
+  own row keeps it.
+
+Each workspace's places for its common windows are saved with the rest of
+the bar, so they come back after a restart. A Browser page on Common runs
+Common's own profile, signed out at first (see
+[Profiles](sola-browser.md#profiles)); a web app keeps its own.
 
 Each workspace has a browser profile of its own, which goes by the
 workspace, not its name. Browser pages on a workspace share its

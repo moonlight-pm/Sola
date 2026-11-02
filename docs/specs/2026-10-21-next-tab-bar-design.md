@@ -259,6 +259,22 @@ default; several may share one); every browser window on a workspace runs
 that profile, and **a page sent to another workspace reopens there under
 that workspace's profile**, so a workspace never mixes profiles.
 
+**Amended 2026-11-02 (Joshua: "a 'workspace 0' it will go on the left. Call
+it 'Common'. In this workspace, any window that is in it will be present in
+any of the other workspaces"; "the common windows would go in the group for
+the other workspaces, but it *cannot be removed* -- common windows can only
+be removed from the common workspace").** Every window is on exactly one
+workspace, **except that a window on Common is on them all**. Common is number
+0 and always first; it cannot be renamed, moved or deleted. A common window
+has a row on every workspace, in that app's group there, with its place and
+what is on top that workspace's own; it has one zone everywhere. It is closed
+or sent away only from Common: elsewhere its row, Super+W, its titlebar's dot
+and its menu's Close Window offer nothing (a foreign app's own close button, a
+page closing itself and a crash still end it). Super+0 shows it, Super+Shift+0
+sends a window to it, and Super+Tab passes over it until its dot is lit. A
+window opened while on Common is common. Pages on it run Common's own profile;
+web apps keep theirs. Each workspace's places for its common windows persist.
+
 **Amended 2026-10-26 (Joshua: "we decided before to keep 'Workspace' and
 'Browser profile' separate — but i think that over complicates things.
 Let's join them. Every workspace has a single browser profile. If i move

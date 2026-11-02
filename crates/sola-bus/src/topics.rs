@@ -433,6 +433,21 @@ pub struct WorkspacePrefs {
     pub islands: bool,
     /// The workspaces (by id) Super+Tab passes over, while `islands`.
     pub skipped: Vec<String>,
+    /// Super+Tab stops at Common, which it passes over until asked.
+    #[serde(default)]
+    pub stops_at_common: bool,
+}
+
+/// The id of Common, the workspace whose windows are on every workspace.
+pub const COMMON_WORKSPACE_ID: &str = "common";
+
+/// The tabs that stay where they show, by [`Tab::key`]: every window on
+/// Common, seen from any other workspace (shell → apps). Their frames offer
+/// no close. Carried by the sticky `Topic::PinnedTabs`, the whole list each
+/// time.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PinnedTabs {
+    pub keys: Vec<String>,
 }
 
 /// The workspaces in order and which one is showing (shell → apps).
@@ -2451,6 +2466,11 @@ define_topics! {
     // Persistent. Appended last.
     #[persistent]
     WorkspacePrefs(WorkspacePrefs),
+
+    // The tabs that stay where they show (shell → apps). Sticky. Appended
+    // last.
+    #[sticky]
+    PinnedTabs(PinnedTabs),
 }
 
 #[cfg(test)]
@@ -2485,6 +2505,7 @@ mod tests {
         let prefs = WorkspacePrefs {
             islands: true,
             skipped: vec!["ws-1".into()],
+            stops_at_common: true,
         };
         match Topic::parse(&Topic::WorkspacePrefs(prefs.clone()).to_message()) {
             Some(Topic::WorkspacePrefs(read)) => assert_eq!(read, prefs),
@@ -2495,6 +2516,12 @@ mod tests {
             .expect("persistent");
         match Topic::from_yaml_section(TopicKind::WorkspacePrefs, value) {
             Some(Topic::WorkspacePrefs(read)) => assert_eq!(read, prefs),
+            other => panic!("read back as {other:?}"),
+        }
+        // A file from before Common: Super+Tab passes over it.
+        let value = serde_yaml_ng::from_str("islands: true\nskipped: [ws-1]\n").unwrap();
+        match Topic::from_yaml_section(TopicKind::WorkspacePrefs, value) {
+            Some(Topic::WorkspacePrefs(read)) => assert!(read.islands && !read.stops_at_common),
             other => panic!("read back as {other:?}"),
         }
     }

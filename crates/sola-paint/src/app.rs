@@ -98,7 +98,7 @@ pub fn run() -> iced::Result {
             [
                 ("zoom_in", "Zoom In", KeyCode::EQUAL.meta()),
                 ("zoom_out", "Zoom Out", KeyCode::MINUS.meta()),
-                ("zoom_fit", "Fit", KeyCode::KEY_0.meta()),
+                ("zoom_fit", "Fit", KeyCode::F.meta_shift()),
             ],
         )
         // Images from other apps and xdg-open (Sola's opener).
@@ -1044,7 +1044,7 @@ impl App {
             self.chrome(window),
             self.title(window),
             Msg::TitleDrag,
-            Msg::TitleClose,
+            self.windows.closable(window).then_some(Msg::TitleClose),
             Msg::TitleResize,
             content.into(),
         );

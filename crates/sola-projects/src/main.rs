@@ -972,7 +972,7 @@ impl App {
                 self.chrome(window),
                 self.frame_title(window),
                 Msg::TitleDrag(window),
-                Msg::TitleClose(window),
+                self.windows.closable(window).then_some(Msg::TitleClose(window)),
                 move |dir| Msg::TitleResize(window, dir),
                 body.into(),
             );
@@ -1019,7 +1019,7 @@ impl App {
             self.chrome(window),
             self.frame_title(window),
             Msg::TitleDrag(window),
-            Msg::TitleClose(window),
+            self.windows.closable(window).then_some(Msg::TitleClose(window)),
             move |dir| Msg::TitleResize(window, dir),
             framed.into(),
         )

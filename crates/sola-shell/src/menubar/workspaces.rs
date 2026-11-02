@@ -3,7 +3,8 @@
 //! switcher at the head of the bar: each shows its number, its name, what
 //! it has waiting (a workspace not showing), and a dot, lit when Super+Tab
 //! stops there. Click one to show it, the showing one for its menu; drag one
-//! to reorder. A line sets them apart from the islands that follow.
+//! to reorder (Common stays first). A line sets them apart from the islands
+//! that follow.
 
 use iced::widget::{Space, button, container, row, text};
 use iced::{Alignment, Border, Color, Element, Length, Padding, Theme};
@@ -59,7 +60,7 @@ pub fn islands(shell: &Shell) -> Option<Element<'_, Msg>> {
             let quiet = Color { a: QUIET_A, ..fg };
             let name = crate::agents::view::fit(&ws.name, NAME_MAX);
             let mut body = row![
-                text((i + 1).to_string())
+                text(i.to_string())
                     .font(fonts::chrome())
                     .size(CHROME_SIZE)
                     .color(if here { accent } else { quiet }),
@@ -86,6 +87,7 @@ pub fn islands(shell: &Shell) -> Option<Element<'_, Msg>> {
         IslandRow::new(
             islands,
             ISLAND_GAP,
+            crate::stacks::COMMON + 1,
             |index, x| Msg::WorkspaceIslandClick { index, x },
             |from, to| Msg::WorkspaceIslandMove { from, to },
         )
@@ -194,7 +196,7 @@ pub fn row_end(shell: &Shell) -> f32 {
 fn island_width(index: usize, name: &str, mark: Option<Mark>) -> f32 {
     let name = crate::agents::view::fit(name, NAME_MAX);
     let mut w = 2.0 * PAD_H
-        + fonts::line_width(&(index + 1).to_string(), CHROME_SIZE, fonts::chrome())
+        + fonts::line_width(&index.to_string(), CHROME_SIZE, fonts::chrome())
         + GAP
         + fonts::line_width(&name, CHROME_SIZE, name_font())
         + GAP

@@ -193,10 +193,24 @@ fn a_dialog_goes_with_its_common_parent() {
     s.set_parent(9, 1);
     assert!(s.is_common(9));
     s.show_workspace(mail);
-    assert!(s.is_pinned_here(9));
+    assert!(!s.is_pinned_here(9), "a dialog can close");
+    assert!(s.is_pinned_here(1));
     assert!(s.on_showing(9));
     assert!(s.show(9));
     assert_eq!(s.showing(), mail);
+}
+
+#[test]
+fn the_pinned_tabs_are_common_s_except_on_common() {
+    let t = Instant::now();
+    let (mut s, mail) = two_with_a_window_each(t);
+    assert_eq!(s.pinned_keys(), Vec::<String>::new());
+    s.send(1, COMMON);
+    assert_eq!(s.pinned_keys(), vec![TERMINAL.to_string()]);
+    s.show_workspace(mail);
+    assert_eq!(s.pinned_keys(), vec![TERMINAL.to_string()]);
+    s.show_workspace(COMMON);
+    assert_eq!(s.pinned_keys(), Vec::<String>::new());
 }
 
 #[test]

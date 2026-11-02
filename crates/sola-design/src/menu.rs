@@ -28,9 +28,6 @@ pub fn app_menu(closed: &[(String, String)]) -> AppMenuPayload {
         action(NEW_CANVAS, "New Canvas…", Some(KeyCode::N.meta_shift())),
         MenuItem::Divider,
         action(DROP_PROJECT, "Drop Project", None),
-        MenuItem::Divider,
-        // Only the window: the project stays (Open).
-        action(CLOSE_WINDOW, "Close Window", Some(KeyCode::W.meta_shift())),
     ];
     if !closed.is_empty() {
         project.push(MenuItem::Divider);
@@ -43,7 +40,8 @@ pub fn app_menu(closed: &[(String, String)]) -> AppMenuPayload {
         menus: vec![
             MenuDefinition {
                 label: "Design".into(),
-                items: vec![sola_kit::menu::close_window_menu_item()],
+                // Only the window: the project stays (Open).
+                items: vec![action(CLOSE_WINDOW, "Close Window", Some(KeyCode::W.meta_shift()))],
             },
             MenuDefinition {
                 label: "Project".into(),
@@ -59,9 +57,10 @@ pub fn app_menu(closed: &[(String, String)]) -> AppMenuPayload {
             MenuDefinition {
                 label: "View".into(),
                 items: vec![
-                    action(FIT, "Fit All", Some(KeyCode::KEY_0.meta())),
-                    // ⌘1 is Super+1, workspace 1; ⌘⇧0 is 100% (as in Figma).
-                    action(ACTUAL_SIZE, "Actual Size", Some(KeyCode::KEY_0.meta_shift())),
+                    // Super+digit is the workspaces'; Super+F and Super+A,
+                    // Every App's Find and Select All.
+                    action(FIT, "Fit All", Some(KeyCode::F.meta_shift())),
+                    action(ACTUAL_SIZE, "Actual Size", Some(KeyCode::A.meta_shift())),
                     action(ZOOM_IN, "Zoom In", Some(KeyCode::EQUAL.meta())),
                     action(ZOOM_OUT, "Zoom Out", Some(KeyCode::MINUS.meta())),
                     MenuItem::Divider,

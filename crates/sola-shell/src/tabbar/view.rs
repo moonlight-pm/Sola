@@ -164,13 +164,18 @@ fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab, in_group: bool) -> SidebarI
     };
     let has_focus = now.focused == Some(t.window_id);
     let mut item = SidebarItem::new(label, Msg::ShowTab(t.window_id))
-        .id(row_id(t.window_id))
+        .id(row_id(shell.tabs.showing_id(), t.window_id))
         .active(current && showing && has_focus)
         .shown(current && showing && !has_focus)
         .bright(current && !showing)
-        .on_close(Msg::CloseWindow(t.window_id))
         .stoplight(true)
         .leading(leading);
+    // A common window stays, on any workspace but Common.
+    item = if shell.tabs.is_pinned_here(t.window_id) {
+        item.pinned()
+    } else {
+        item.on_close(Msg::CloseWindow(t.window_id))
+    };
     if let Some(p) = parts {
         if let Some(session) = p.session {
             item = item.detail(session);

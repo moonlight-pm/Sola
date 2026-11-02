@@ -1288,6 +1288,11 @@ impl Shell {
                     action_id: crate::menu::state::SYNTHESIZED_CLOSE_WINDOW_ACTION.into(),
                 });
             if let Some(action) = self.menus.lookup_shortcut(&chord, &focused).or(synthesized) {
+                // A common window stays, on any workspace but Common.
+                let pinned = self.focused_window_id.is_some_and(|w| self.tabs.is_pinned_here(w));
+                if pinned && sola_kit::menu::closes_window(&action.action_id) {
+                    return Task::none();
+                }
                 tracing::info!(
                     app_id = %action.app_id,
                     action_id = %action.action_id,

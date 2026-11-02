@@ -126,6 +126,8 @@ pub(super) struct DrawBar<'a> {
     pub width: f32,
     pub colors: &'a Colors,
     pub open: Option<usize>,
+    /// The window can be closed: the dot shows.
+    pub close: bool,
     pub close_hover: bool,
 }
 
@@ -150,13 +152,15 @@ pub(super) fn draw(renderer: &mut iced::Renderer, d: DrawBar<'_>, clip: Rectangl
         Radius::default(),
     );
 
-    let close = shift(d.bar.close, o);
-    let close_fill = if d.close_hover {
-        d.colors.close_hover
-    } else {
-        d.colors.close
-    };
-    paint::fill(renderer, close, close_fill, (CLOSE / 2.0).into());
+    if d.close {
+        let close = shift(d.bar.close, o);
+        let close_fill = if d.close_hover {
+            d.colors.close_hover
+        } else {
+            d.colors.close
+        };
+        paint::fill(renderer, close, close_fill, (CLOSE / 2.0).into());
+    }
 
     for (i, (pill, label)) in d.bar.menus.iter().zip(&d.bar.labels).enumerate() {
         let pill = shift(*pill, o);

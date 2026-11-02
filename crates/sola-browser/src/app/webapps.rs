@@ -614,13 +614,16 @@ impl<E: Engine> App<E> {
             Some(modal) => stack![page, modal].into(),
             None => page,
         };
-        WindowFrame::new(self.window_chrome(window), content)
+        let frame = WindowFrame::new(self.window_chrome(window), content)
             .title(app.label.clone())
             .on_drag(Msg::WindowDrag(window))
-            .on_close(Msg::WindowClose(window))
             .on_resize(move |dir| Msg::WindowResize(window, dir))
-            .menus(app_menu(app))
-            .into()
+            .menus(app_menu(app));
+        if self.windows.closable(window) {
+            frame.on_close(Msg::WindowClose(window)).into()
+        } else {
+            frame.stays().into()
+        }
     }
 
     /// The Wrap This Page sheet: the app's name, then Wrap.
@@ -723,6 +726,11 @@ pub fn can_wrap(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pinned_window_s_menu_offers_no_close() {
+        assert!(sola_kit::menu::closes_window(ACTION_CLOSE_WINDOW));
+    }
 
     #[test]
     fn subdomains_are_the_same_site() {

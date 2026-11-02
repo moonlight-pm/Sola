@@ -98,6 +98,16 @@ impl<'a, Message> WindowFrame<'a, Message> {
         self
     }
 
+    /// The window stays where it shows: no close dot, and its menus' rows
+    /// that close it are disabled. After [`Self::menus`].
+    pub fn stays(mut self) -> Self {
+        self.on_close = None;
+        if let Some(menus) = &mut self.menus {
+            crate::menu::disable_close(menus);
+        }
+        self
+    }
+
     pub fn on_resize(mut self, f: impl Fn(Direction) -> Message + 'a) -> Self {
         self.on_resize = Some(Box::new(f));
         self
@@ -207,6 +217,7 @@ where
                 width: bounds.width,
                 colors: &colors,
                 open: state.open,
+                close: self.on_close.is_some(),
                 close_hover: state.close_hover,
             },
             bounds,
@@ -373,7 +384,7 @@ impl<Message: Clone> WindowFrame<'_, Message> {
             Event::Mouse(mouse::Event::CursorMoved { .. })
             | Event::Mouse(mouse::Event::CursorLeft) => {
                 let hit = on_bar(bounds, cursor).and_then(|p| state.bar.hit(p));
-                let close_hover = hit == Some(Hit::Close);
+                let close_hover = hit == Some(Hit::Close) && self.on_close.is_some();
                 let mut changed = close_hover != state.close_hover;
                 state.close_hover = close_hover;
                 // Hovering another title while a menu is open switches to it.

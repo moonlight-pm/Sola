@@ -53,7 +53,7 @@ format of the file's extension (PNG when the extension names none); a
 JPEG is saved without its alpha. Save As asks before it replaces a file.
 
 Scroll to zoom toward the pointer; drag to pan when zoomed in. ⌘= and ⌘−
-zoom, and ⌘0 fits (**View → Zoom In / Zoom Out / Fit**). Zoom runs from
+zoom, and ⌘⇧F fits (**View → Zoom In / Zoom Out / Fit**). Zoom runs from
 25% to 1600% of the fitted size. The header shows the zoom next to the
 pixel size; 100% is the picture fitted to the window, not one image pixel
 per screen pixel.

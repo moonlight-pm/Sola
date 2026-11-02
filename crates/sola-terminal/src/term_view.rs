@@ -1330,30 +1330,30 @@ mod tests {
     #[test]
     fn extends_selection_only_on_shift_with_existing() {
         // Shift + an existing selection → continue it (the reported bug).
-
-        #[test]
-        fn click_count_sets_selection_granularity() {
-            use super::click::Kind;
-            // Single click → character-precise range (the existing behaviour).
-            assert_eq!(
-                selection_type_for_click(Kind::Single),
-                SelectionType::Simple
-            );
-            // Double click → word (semantic, delimiter-aware) — grabs a token like
-            // a password or URL. This is the reported ask.
-            assert_eq!(
-                selection_type_for_click(Kind::Double),
-                SelectionType::Semantic
-            );
-            // Triple click → whole line.
-            assert_eq!(selection_type_for_click(Kind::Triple), SelectionType::Lines);
-        }
         assert!(extends_selection(true, true));
         // Shift but nothing selected yet → start fresh (no anchor to extend).
         assert!(!extends_selection(true, false));
         // No Shift → always a fresh selection, even over an existing one.
         assert!(!extends_selection(false, true));
         assert!(!extends_selection(false, false));
+    }
+
+    #[test]
+    fn click_count_sets_selection_granularity() {
+        use super::click::Kind;
+        // Single click → character-precise range (the existing behaviour).
+        assert_eq!(
+            selection_type_for_click(Kind::Single),
+            SelectionType::Simple
+        );
+        // Double click → word (semantic, delimiter-aware) — grabs a token like
+        // a password or URL. This is the reported ask.
+        assert_eq!(
+            selection_type_for_click(Kind::Double),
+            SelectionType::Semantic
+        );
+        // Triple click → whole line.
+        assert_eq!(selection_type_for_click(Kind::Triple), SelectionType::Lines);
     }
 
     #[test]

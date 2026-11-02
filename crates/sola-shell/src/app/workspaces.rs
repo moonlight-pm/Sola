@@ -5,9 +5,10 @@
 
 use std::collections::HashMap;
 
-use sola_bus::topics::{Topic, WindowWorkspace, WorkspacePrefs, Workspaces};
+use sola_bus::topics::{PinnedTabs, Topic, WindowWorkspace, WorkspacePrefs, Workspaces};
 
 use super::{Shell, with_bus};
+use crate::stacks::{COMMON, COMMON_WORKSPACE};
 
 /// What the shell remembers about workspaces beyond the model.
 #[derive(Debug, Default)]
@@ -18,6 +19,8 @@ pub struct WorkspaceState {
     sent: Option<Workspaces>,
     /// Last published workspace of each window.
     sent_windows: HashMap<u32, String>,
+    /// Last published `Topic::PinnedTabs`.
+    sent_pinned: Option<PinnedTabs>,
     /// The workspace being renamed and the name typed so far.
     pub renaming: Option<(usize, String)>,
     /// How the workspaces show and step (`Topic::WorkspacePrefs`).
@@ -52,14 +55,18 @@ impl Shell {
 
     /// Super+Tab / Super+Shift+Tab. With the workspaces as islands it
     /// passes over those whose dot is unlit; the switcher in the bar has no
-    /// dots, and steps through them all.
+    /// dots, and steps through them all. Common it passes over either way,
+    /// until its dot is lit.
     pub(crate) fn step_workspace(&mut self, back: bool) {
-        let skipped: &[String] = if self.workspace_islands() {
-            &self.workspace.prefs.skipped
+        let mut skipped = if self.workspace_islands() {
+            self.workspace.prefs.skipped.clone()
         } else {
-            &[]
+            Vec::new()
         };
-        let next = self.tabs.step_workspace(back, skipped);
+        if !self.workspace.prefs.stops_at_common {
+            skipped.push(COMMON_WORKSPACE.0.to_string());
+        }
+        let next = self.tabs.step_workspace(back, &skipped);
         self.show_workspace(next);
     }
 
@@ -70,7 +77,11 @@ impl Shell {
 
     /// Super+Tab passes over the workspace with this id.
     pub(crate) fn workspace_skipped(&self, id: &str) -> bool {
-        self.workspace.prefs.skipped.iter().any(|s| s == id)
+        let prefs = &self.workspace.prefs;
+        if id == COMMON_WORKSPACE.0 {
+            return !prefs.stops_at_common;
+        }
+        prefs.skipped.iter().any(|s| s == id)
     }
 
     /// The showing workspace's menu or rename card is up.
@@ -101,6 +112,11 @@ impl Shell {
         let Some(id) = self.tabs.workspaces().into_iter().nth(index).map(|w| w.id) else {
             return;
         };
+        if index == COMMON {
+            self.workspace.prefs.stops_at_common = !self.workspace.prefs.stops_at_common;
+            self.emit_workspace_prefs();
+            return;
+        }
         let skipped = &mut self.workspace.prefs.skipped;
         if skipped.contains(&id) {
             skipped.retain(|s| *s != id);
@@ -152,8 +168,9 @@ impl Shell {
         self.workspace_action(WorkspaceAction::Reorder { from, to });
     }
 
-    /// Send the focused window to workspace `index` (Super+Shift+1…9). The
-    /// showing workspace keeps focus on what is left.
+    /// Send the focused window to workspace `index` (Super+Shift+0…9). The
+    /// showing workspace keeps focus on what is left; a window sent to
+    /// Common is still here, and keeps it.
     pub(crate) fn send_focused_to_workspace(&mut self, index: usize) {
         let Some(wid) = self.focused_window_id else {
             return;
@@ -163,7 +180,12 @@ impl Shell {
             return;
         }
         tracing::info!(window_id = tab, index, "send window to workspace");
-        self.focus_showing_workspace();
+        if self.tabs.on_showing(tab) {
+            self.persist_tabs();
+            self.sync_workspaces();
+        } else {
+            self.focus_showing_workspace();
+        }
         self.emit_all_frames();
     }
 
@@ -176,7 +198,8 @@ impl Shell {
             }
             WorkspaceAction::New => {
                 self.remember_workspace_focus();
-                let n = self.tabs.workspace_count() + 1;
+                // Past Common, this is its number at the end of the list.
+                let n = self.tabs.workspace_count();
                 self.tabs.add_workspace(&format!("Workspace {n}"));
                 self.focus_showing_workspace();
             }
@@ -326,6 +349,15 @@ impl Shell {
             showing: self.tabs.showing_id().to_string(),
         };
         let list_changed = self.workspace.sent.as_ref() != Some(&list);
+        let pinned = PinnedTabs {
+            keys: self.tabs.pinned_keys(),
+        };
+        if self.workspace.sent_pinned.as_ref() != Some(&pinned) {
+            self.workspace.sent_pinned = Some(pinned.clone());
+            with_bus(|bus| {
+                let _ = bus.emit(Topic::PinnedTabs(pinned));
+            });
+        }
         let mut next: HashMap<u32, String> = HashMap::new();
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID {

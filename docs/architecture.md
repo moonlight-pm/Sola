@@ -298,10 +298,14 @@ showing one) and composes only the showing workspace; windows elsewhere
 are hidden by River and keep running. The workspaces (id, name, order) and
 which one shows persist inside `TabLayout` and go out as sticky
 `Topic::Workspaces`; each window's workspace as sticky
-`Topic::WindowWorkspace`. The switcher is the tab bar's head and its
-menu (`tabbar/head.rs`, `menu/workspace.rs`; the menu overlay hangs under
-the head, `MenuOverlaySpec.y`); Super+1…9 / Super+Ctrl+1…9 /
-Super+(Shift+)Tab. The
+`Topic::WindowWorkspace`. Common is `desks[0]`: each other desk's bar holds
+a copy of a common window's tab, so order and what shows stay per desk
+(`stacks/mod.rs`, `common_tests.rs`), and the tabs that may not be closed from
+the showing desk go out as sticky `Topic::PinnedTabs`, which the kit keeps
+(`sola-kit/src/pinned.rs`) so a frame offers no close. The switcher is the
+tab bar's head and its menu (`tabbar/head.rs`, `menu/workspace.rs`; the menu
+overlay hangs under the head, `MenuOverlaySpec.y`); Super+0…9 /
+Super+Shift+0…9 / Super+(Shift+)Tab. The
 browser runs one CEF helper per profile, all live: its router keeps a page
 → profile map and routes commands by page (the rest to the active page's
 helper), merges every helper's pages, and makes a helper front only while

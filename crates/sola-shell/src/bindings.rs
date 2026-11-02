@@ -29,9 +29,9 @@ pub enum Act {
     PrevHere,
     NextWorkspace,
     PrevWorkspace,
-    /// Show workspace N (0-based).
+    /// Show workspace N (its place in the list: Common is 0).
     ShowWorkspace(usize),
-    /// Send the focused window to workspace N (0-based).
+    /// Send the focused window to workspace N.
     SendToWorkspace(usize),
     ScreenshotFull,
     ScreenshotRegion,
@@ -80,8 +80,10 @@ fn sys_opt(
     }
 }
 
-/// Workspaces 1…9 sit on the digit row.
-pub const WORKSPACE_KEYS: [KeyCode; 9] = [
+/// Workspaces 0…9 sit on the digit row: Common on 0, and each other on its
+/// number.
+pub const WORKSPACE_KEYS: [KeyCode; 10] = [
+    KeyCode::KEY_0,
     KeyCode::KEY_1,
     KeyCode::KEY_2,
     KeyCode::KEY_3,
@@ -162,18 +164,18 @@ pub fn system_actions(zones: Vec<SysAction>) -> Vec<SysAction> {
     for (i, k) in WORKSPACE_KEYS.iter().enumerate() {
         all.push(sys(
             Act::ShowWorkspace(i),
-            &format!("workspace.show.{}", i + 1),
+            &format!("workspace.show.{i}"),
             "Workspaces",
-            &format!("Show Workspace {}", i + 1),
+            &if i == 0 { "Show Common".to_string() } else { format!("Show Workspace {i}") },
             k.meta(),
         ));
     }
     for (i, k) in WORKSPACE_KEYS.iter().enumerate() {
         all.push(sys(
             Act::SendToWorkspace(i),
-            &format!("workspace.send.{}", i + 1),
+            &format!("workspace.send.{i}"),
             "Workspaces",
-            &format!("Send Window to Workspace {}", i + 1),
+            &if i == 0 { "Send Window to Common".to_string() } else { format!("Send Window to Workspace {i}") },
             k.meta_shift(),
         ));
     }
@@ -330,7 +332,10 @@ mod tests {
     fn defaults_are_today_s_keys() {
         let b = Bindings::default();
         assert_eq!(b.act_for(&KeyCode::SPACE.meta()), Some(Act::Launcher));
-        assert_eq!(b.act_for(&KeyCode::KEY_3.meta_shift()), Some(Act::SendToWorkspace(2)));
+        assert_eq!(b.act_for(&KeyCode::KEY_0.meta()), Some(Act::ShowWorkspace(0)));
+        assert_eq!(b.act_for(&KeyCode::KEY_1.meta()), Some(Act::ShowWorkspace(1)));
+        assert_eq!(b.act_for(&KeyCode::KEY_0.meta_shift()), Some(Act::SendToWorkspace(0)));
+        assert_eq!(b.act_for(&KeyCode::KEY_3.meta_shift()), Some(Act::SendToWorkspace(3)));
         assert_eq!(b.act_for(&KeyCode::KEY_3.meta().ctrl()), None);
         assert_eq!(b.act_for(&KeyCode::F13.chord()), Some(Act::ScreenshotFull));
         assert_eq!(b.act_for(&KeyCode::F14.chord()), Some(Act::ScreenshotRegion));

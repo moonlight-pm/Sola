@@ -226,6 +226,14 @@ impl TabWindows {
     }
 
     /// Is this window on screen? True until the shell says otherwise.
+    /// `window` may be closed from where it shows: a pinned tab stays
+    /// ([`crate::pinned`]).
+    pub fn closable(&self, window: window::Id) -> bool {
+        self.windows
+            .get(&window)
+            .is_none_or(|e| !crate::pinned::is_pinned(&e.key))
+    }
+
     pub fn shown(&self, window: window::Id) -> bool {
         self.windows.get(&window).is_none_or(|e| e.shown)
     }

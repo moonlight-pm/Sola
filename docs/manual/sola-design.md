@@ -118,7 +118,7 @@ Two Design windows can be on screen at once (Left and Right, say), each with
 its own canvas, view, pick, tour and notes. The one you last touched takes
 the keys and the View and Share menus; moving between them loses nothing.
 
-**Project → Close Window** (⌘⇧W) closes only the window; **Project → Open
+**Design → Close Window** (⌘⇧W) closes only the window; **Project → Open
 *name*** brings it back. Closing the last window quits Design. **Project →
 Drop Project** forgets the active window's project and closes its window
 (with no project left, the window offering **Add project** comes back), and
@@ -131,8 +131,8 @@ files are untouched.
 |----|-----|
 | Pan | Right-drag |
 | Zoom | Wheel (about the pointer); ⌘= / ⌘- step (**View → Zoom In / Zoom Out**) |
-| Fit everything | ⌘0 (**View → Fit All**) |
-| 100% | ⌘⇧0 (**View → Actual Size**; ⌘1 is Super+1, workspace 1) |
+| Fit everything | ⌘⇧F (**View → Fit All**) |
+| 100% | ⌘⇧A (**View → Actual Size**) |
 | Reload the canvas | ⌘R (**View → Reload Canvas**) |
 
 ## Use the pages, pick an element

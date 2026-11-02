@@ -327,6 +327,25 @@ pub fn close_window_menu_item() -> MenuItem {
     }
 }
 
+/// Whether menu action `id` closes its window, whichever app's it is: the
+/// shell's, or the app's own.
+pub fn closes_window(id: &str) -> bool {
+    [ACTION_CLOSE_WINDOW, "close-window", "close_tab", "close-tab", "web-close-window"].contains(&id)
+}
+
+/// Disable the rows of `menus` that close the window: it stays where it is.
+pub fn disable_close(menus: &mut AppMenuPayload) {
+    for menu in &mut menus.menus {
+        for item in &mut menu.items {
+            if let MenuItem::Action { id, disabled, .. } = item {
+                if closes_window(id) {
+                    *disabled = true;
+                }
+            }
+        }
+    }
+}
+
 /// A menu action the shell carries out rather than the app.
 fn is_shell_action(id: &str) -> bool {
     id == ACTION_CLOSE_WINDOW || parse_window_action(id).is_some()

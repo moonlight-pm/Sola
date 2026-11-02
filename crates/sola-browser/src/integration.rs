@@ -492,6 +492,23 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_window_s_menus_offer_no_close() {
+        assert!(sola_kit::menu::closes_window(ACTION_CLOSE_TAB));
+        let mut menu = browser_app_menu("sola-browser");
+        sola_kit::menu::disable_close(&mut menu);
+        let disabled: Vec<&str> = menu
+            .menus
+            .iter()
+            .flat_map(|m| &m.items)
+            .filter_map(|i| match i {
+                MenuItem::Action { id, disabled: true, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(disabled, [ACTION_CLOSE_TAB]);
+    }
+
+    #[test]
     fn reopen_closed_is_on_the_browser_menu() {
         let ids: Vec<&str> = MENU_ITEMS.iter().map(|(id, _, _)| *id).collect();
         assert!(ids.contains(&ACTION_REOPEN_TAB));

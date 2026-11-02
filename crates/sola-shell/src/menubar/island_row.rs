@@ -36,6 +36,9 @@ struct Press {
 pub struct IslandRow<'a, M> {
     islands: Vec<Element<'a, M>>,
     gap: f32,
+    /// How many islands, from the left, stay where they are: they do not
+    /// drag, and nothing is dragged before them.
+    fixed: usize,
     /// A click on an island: its place, and its left edge in the window.
     on_click: fn(usize, f32) -> M,
     /// A dragged island passed another: from one place to another.
@@ -46,12 +49,14 @@ impl<'a, M> IslandRow<'a, M> {
     pub fn new(
         islands: Vec<Element<'a, M>>,
         gap: f32,
+        fixed: usize,
         on_click: fn(usize, f32) -> M,
         on_move: fn(usize, usize) -> M,
     ) -> Self {
         Self {
             islands,
             gap,
+            fixed,
             on_click,
             on_move,
         }
@@ -177,6 +182,9 @@ impl<'a, M: 'a> Widget<M, iced::Theme, iced::Renderer> for IslandRow<'a, M> {
                 let Some(at) = cursor.land().position() else {
                     return;
                 };
+                if press.index < self.fixed {
+                    return;
+                }
                 press.pointer = at.x;
                 if !press.dragging && (at.x - press.start_x).abs() < DRAG_FROM {
                     return;
@@ -191,7 +199,7 @@ impl<'a, M: 'a> Widget<M, iced::Theme, iced::Renderer> for IslandRow<'a, M> {
                     return;
                 };
                 let middle = at.x - press.grab + width / 2.0;
-                let slot = slot_at(&spans, press.index, middle);
+                let slot = slot_at(&spans, press.index, middle).max(self.fixed);
                 if slot != press.index {
                     shell.publish((self.on_move)(press.index, slot));
                     press.index = slot;

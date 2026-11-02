@@ -185,6 +185,8 @@ pub struct SidebarItem<'a, Message> {
     /// a window runs on, in its prompt's color). Never clipped by the
     /// title.
     pub tag: Option<SidebarTag>,
+    /// A small pin at the row's end: the row stays ([`Self::pinned`]).
+    pub pinned: bool,
     /// Double-click on the row (e.g. rename). Single click still emits
     /// [`Self::message`].
     pub on_double_click: Option<Message>,
@@ -234,6 +236,7 @@ impl<'a, Message> SidebarItem<'a, Message> {
             subtitle: None,
             detail: None,
             tag: None,
+            pinned: false,
             on_double_click: None,
             indicator: None,
             leading: None,
@@ -314,6 +317,12 @@ impl<'a, Message> SidebarItem<'a, Message> {
     /// A chip at the row's end ([`Self::tag`]).
     pub fn tag(mut self, tag: SidebarTag) -> Self {
         self.tag = Some(tag);
+        self
+    }
+
+    /// A small pin at the row's end, for a row that stays where it is.
+    pub fn pinned(mut self) -> Self {
+        self.pinned = true;
         self
     }
 
@@ -1700,6 +1709,7 @@ where
         subtitle,
         detail,
         tag,
+        pinned,
         on_double_click,
         indicator,
         leading,
@@ -1746,6 +1756,7 @@ where
             subtitle.as_deref(),
             detail.as_deref(),
             tag,
+            pinned,
             secondary.as_deref(),
             shortcut,
             indicator,
@@ -2351,6 +2362,7 @@ fn item_content<'a, Message: Clone + 'a>(
     subtitle: Option<&str>,
     detail: Option<&str>,
     tag: Option<SidebarTag>,
+    pinned: bool,
     secondary: Option<&str>,
     shortcut: Option<u8>,
     indicator: Option<SidebarIndicator>,
@@ -2379,7 +2391,7 @@ fn item_content<'a, Message: Clone + 'a>(
     let has_trail = secondary.is_some() || shortcut.is_some() || hover_action.is_some();
     // A tag centres on a one-line row; rows without one keep their
     // top-aligned trail.
-    let align = if tag.is_some() && subtitle.is_none() {
+    let align = if (tag.is_some() || pinned) && subtitle.is_none() {
         iced::Alignment::Center
     } else {
         iced::Alignment::Start
@@ -2390,6 +2402,9 @@ fn item_content<'a, Message: Clone + 'a>(
         .width(Length::Fill);
     if let Some(tag) = tag {
         r = r.push(tag_chip(tag));
+    }
+    if pinned {
+        r = r.push(pin_mark());
     }
     if has_trail {
         r = r.push(item_trailing(secondary, shortcut, hover_action, well));
@@ -2498,6 +2513,15 @@ fn detail_ink(active: bool, bright: bool, well: Option<Color>) -> Color {
         a: ink.a * 0.62,
         ..ink
     }
+}
+
+/// [`SidebarItem::pinned`]'s mark, at the row's middle.
+fn pin_mark<'a, Message: 'a>() -> Element<'a, Message> {
+    const SIZE: f32 = 12.0;
+    iced::widget::container(crate::components::icon::icon("lucide/pin", SIZE as u16))
+        .height(Length::Fixed(SIZE + 8.0))
+        .align_y(iced::Alignment::Center)
+        .into()
 }
 
 /// [`SidebarItem::tag`]'s chip: small medium type on a pill of its fill.

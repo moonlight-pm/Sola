@@ -1099,7 +1099,7 @@ impl App {
             self.chrome(window),
             win.title(),
             Msg::TitleDrag,
-            Msg::TitleClose,
+            self.tabs.closable(window).then_some(Msg::TitleClose),
             Msg::TitleResize,
             content.into(),
         );

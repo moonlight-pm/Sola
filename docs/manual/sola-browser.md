@@ -101,7 +101,8 @@ so renaming a workspace changes nothing about its profile.
   workspace and it reopens there, in the same window, at the same address,
   under that workspace's profile; its back history and form state do not
   come along.
-- A new workspace starts with a new, empty profile.
+- A new workspace starts with a new, empty profile. So does
+  [Common](sola-shell.md#common): a page sent there reloads signed out.
 - A deleted workspace's profile stays on disk with its sign-ins and saved
   pages, but nothing opens it.
 - A web app keeps the profile it was wrapped from, wherever its window

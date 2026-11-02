@@ -18,7 +18,14 @@ pub fn terminal_menu() -> AppMenuPayload {
                         checked: false,
                     },
                     MenuItem::Divider,
-                    sola_kit::menu::close_window_menu_item(),
+                    // No key: ⌘W means "Copy" here, as below.
+                    MenuItem::Action {
+                        id: sola_kit::menu::ACTION_CLOSE_WINDOW.into(),
+                        label: "Close Window".into(),
+                        shortcut: None,
+                        disabled: false,
+                        checked: false,
+                    },
                 ],
             },
             MenuDefinition {

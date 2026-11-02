@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
-use sola_bus::topics::Workspace;
+use sola_bus::topics::{COMMON_WORKSPACE_ID, Workspace};
 
 const REGISTRY_VERSION: u32 = 1;
 
@@ -216,9 +216,14 @@ fn pair(
         return;
     }
     let exists = |reg: &ProfilesRegistry, id: &str| reg.profiles.iter().any(|p| p.id == id);
+    // Common last, though the shell lists it first: the profile a workspace
+    // keeps, or the open pages', belongs to the first ordinary one.
+    let (common, ordinary): (Vec<&str>, Vec<&str>) =
+        workspaces.iter().partition(|w| **w == COMMON_WORKSPACE_ID);
+    let workspaces: Vec<&str> = ordinary.into_iter().chain(common).collect();
     let mut paired = std::collections::BTreeMap::new();
     let mut taken = std::collections::HashSet::new();
-    for &ws in workspaces {
+    for &ws in &workspaces {
         if let Some(id) = reg.workspaces.get(ws) {
             if exists(reg, id) && taken.insert(id.clone()) {
                 paired.insert(ws.to_string(), id.clone());
@@ -227,7 +232,7 @@ fn pair(
     }
     let mut heir = Some(reg.active.clone())
         .filter(|a| paired.is_empty() && exists(reg, a) && !taken.contains(a));
-    for &ws in workspaces {
+    for &ws in &workspaces {
         if paired.contains_key(ws) {
             continue;
         }
@@ -638,6 +643,18 @@ mod tests {
         let got = paired(&mut reg, &["main", "ws-2"], "ws-2");
         assert_eq!(got, pairs(&[("main", "primary"), ("ws-2", "new-1")]));
         assert_eq!(reg.active, "new-1");
+    }
+
+    #[test]
+    fn common_gets_a_profile_of_its_own_and_takes_none_from_the_first_workspace() {
+        let mut reg = registry(&["primary"], &[]);
+        let got = paired(&mut reg, &["common", "main"], "main");
+        assert_eq!(got, pairs(&[("common", "new-1"), ("main", "primary")]));
+        // Paired already: Main keeps its own.
+        let mut reg = registry(&["p"], &[("main", "p")]);
+        let got = paired(&mut reg, &["common", "main"], "main");
+        assert_eq!(got, pairs(&[("common", "new-1"), ("main", "p")]));
+        assert_eq!(reg.active, "p");
     }
 
     #[test]

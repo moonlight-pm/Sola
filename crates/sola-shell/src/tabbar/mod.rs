@@ -34,13 +34,15 @@ pub fn open_window() -> (window::Id, iced::Task<window::Id>) {
     window::open(settings)
 }
 
-/// A row's id: its window.
-pub fn row_id(window_id: u32) -> String {
-    format!("w{window_id}")
+/// A row's id: its window and its workspace. The bar animates a row it knows
+/// moving, so a common window, with a row on every workspace, must have
+/// another row on each: showing that workspace puts it in place at once.
+pub fn row_id(workspace: &str, window_id: u32) -> String {
+    format!("w{window_id}@{workspace}")
 }
 
 pub fn window_of_row(id: &str) -> Option<u32> {
-    id.strip_prefix('w')?.parse().ok()
+    id.strip_prefix('w')?.split_once('@')?.0.parse().ok()
 }
 
 /// A group header's id: its workspace and its app. The bar animates a row it
@@ -69,14 +71,15 @@ mod tests {
     #[test]
     fn ids_round_trip() {
         use crate::stacks::BlockId;
-        assert_eq!(window_of_row(&row_id(42)), Some(42));
+        assert_eq!(window_of_row(&row_id("ws-1", 42)), Some(42));
+        assert_ne!(row_id("ws-1", 42), row_id("ws-2", 42));
         assert_eq!(window_of_row("ghost"), None);
         assert_eq!(window_of_row(&group_row_id("ws-1", "sola-browser")), None);
         assert_eq!(
             block_of_row(&group_row_id("ws-1", "sola-browser")),
             Some(BlockId::Group("sola-browser".into()))
         );
-        assert_eq!(block_of_row(&row_id(7)), Some(BlockId::Window(7)));
+        assert_eq!(block_of_row(&row_id("main", 7)), Some(BlockId::Window(7)));
         assert_eq!(block_of_row("ghost"), None);
     }
 

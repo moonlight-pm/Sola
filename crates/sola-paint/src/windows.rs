@@ -131,6 +131,11 @@ impl PaintWindows {
         self.tabs.river_id(window)
     }
 
+    /// [`sola_kit::tabs::TabWindows::closable`].
+    pub fn closable(&self, window: window::Id) -> bool {
+        self.tabs.closable(window)
+    }
+
     /// Ask the shell to show `window` and focus it.
     pub fn show(&self, window: window::Id) {
         self.tabs.show(window);

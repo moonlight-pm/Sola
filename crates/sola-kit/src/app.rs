@@ -499,6 +499,7 @@ pub fn with_kit_kinds(kinds: &'static [TopicKind]) -> &'static [TopicKind] {
         TopicKind::Keybindings,
         TopicKind::ZoneLayout,
         TopicKind::DeskMenuPick,
+        TopicKind::PinnedTabs,
     ];
     if extra.iter().all(|k| kinds.contains(k)) {
         return kinds;
@@ -561,6 +562,7 @@ fn ensure_bus_poller() {
                     }
                     crate::menu::observe(&msg);
                     crate::desk_menu::observe(&msg);
+                    crate::pinned::observe(&msg);
                     forward_or_buffer(Arc::new(msg))
                 }
                 None => std::thread::sleep(Duration::from_millis(8)),

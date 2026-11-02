@@ -122,6 +122,11 @@ impl DesignWindows {
         self.tabs.river_id(window)
     }
 
+    /// [`sola_kit::tabs::TabWindows::closable`].
+    pub fn closable(&self, window: window::Id) -> bool {
+        self.tabs.closable(window)
+    }
+
     /// The shell has the window on screen.
     pub fn shown(&self, window: window::Id) -> bool {
         self.tabs.shown(window)

@@ -1427,7 +1427,7 @@ impl App {
             self.chrome(window),
             self.title(window),
             Msg::TitleDrag(window),
-            Msg::TitleClose(window),
+            self.windows.closable(window).then_some(Msg::TitleClose(window)),
             move |dir| Msg::TitleResize(window, dir),
             body,
         )
