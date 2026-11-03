@@ -23,10 +23,8 @@
 //!
 //! # Example
 //! ```no_run
-//! # mod iced { pub mod widget { pub use iced_widget::*; } pub use iced_widget::Renderer; pub use iced_widget::core::*; }
-//! # pub type Element<'a, Message> = iced_widget::core::Element<'a, Message, iced_widget::Theme, iced_widget::Renderer>;
-//! #
-//! use iced::widget::text_input;
+//! use iced::Element;
+//! use sola_kit::components::text_input::text_input;
 //!
 //! struct State {
 //!    content: String,
@@ -90,10 +88,8 @@ use iced_core::{
 ///
 /// # Example
 /// ```no_run
-/// # mod iced { pub mod widget { pub use iced_widget::*; } pub use iced_widget::Renderer; pub use iced_widget::core::*; }
-/// # pub type Element<'a, Message> = iced_widget::core::Element<'a, Message, iced_widget::Theme, iced_widget::Renderer>;
-/// #
-/// use iced::widget::text_input;
+/// use iced::Element;
+/// use sola_kit::components::text_input::text_input;
 ///
 /// struct State {
 ///    content: String,

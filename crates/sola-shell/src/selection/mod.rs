@@ -1,4 +1,4 @@
-//! Interactive screen-selection overlay for a selection screenshot (F14).
+//! Interactive screen-selection overlay for a selection screenshot (F13).
 //!
 //! It first freezes the live output (RGBA dump, no PNG encode)
 //! so menus and text selections stay in the shot, then shows that still

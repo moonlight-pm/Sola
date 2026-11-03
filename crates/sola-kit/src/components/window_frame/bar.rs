@@ -241,7 +241,7 @@ pub(super) fn line(
 
 /// Width of one line of `content`.
 pub(super) fn measure(content: &str, size: f32, font: Font) -> f32 {
-    fonts::line_width(content, size, font)
+    fonts::line_width_advanced(content, size, font)
 }
 
 #[cfg(test)]

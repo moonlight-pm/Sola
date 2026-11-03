@@ -20,10 +20,8 @@ pub struct Incoming {
     /// its `SOLA_PANE_ID` can name the wrong session. Callers retarget
     /// when this path disagrees with that pane.
     pub cwd: Option<String>,
-    /// What the hook says the session asks (its island's title and body).
-    pub ask: Option<crate::islands::Ask>,
-    /// Claude's transcript (a finished turn's last message).
-    pub transcript: Option<String>,
+    /// What the hook says the session asks (its island's title).
+    pub ask: Option<String>,
     /// A status line's gauges (a `gauge` line of the hook log): they go on
     /// the session's bar and change nothing else.
     pub gauges: Option<crate::gauges::Gauges>,
@@ -81,7 +79,6 @@ pub fn from_json(
         mapped,
         cwd,
         ask: crate::islands::ask_from_hook(&event),
-        transcript: crate::islands::transcript_of(&event),
         gauges: None,
     }))
 }
@@ -115,7 +112,6 @@ pub fn gauge_from_json(pane_header: Option<String>, body: &[u8]) -> Option<Incom
         },
         cwd,
         ask: None,
-        transcript: None,
         gauges: Some(crate::gauges::Gauges::from_statusline(&v)),
     })
 }

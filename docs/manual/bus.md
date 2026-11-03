@@ -310,8 +310,8 @@ their files if they exist.
 | `AppToast` | `text` | Browser (after Use as Desktop Background); `solactl emit` can | Shell (the top row, 5 seconds) | Ephemeral |
 | `AppNotification` | `id`, `app_id`, `source`, `title`, `body`, optional `tag`, `tab_id`, `url` | Browser (pages and web apps), Calendar (reminders), Projects | Shell (a card on the desk) | Ephemeral |
 | `NotificationActivate` | The clicked notification's `id`, `app_id`, `tab_id`, `url` | Shell | The app named by `app_id`: Browser (and its web apps), Calendar, Projects | Ephemeral |
-| `AgentIsland` | A session's `key` (its pane), `name`, `project`, `state` (`Waiting` or `Done`), `title`, `body`, `choices`, `reply`, `since` | Projects; retracted when the session works again, closes, is answered, or is looked at | Shell (its island in the top row) | Sticky by `key` |
-| `AgentIslandAction` | An island's `key` and what was done: `Choose(index)`, `Reply(text)`, `Show` | Shell | Projects (types it into the session, or shows its tab) | Ephemeral |
+| `AgentIsland` | A session's `key` (its pane), `name`, `project`, `state` (`Waiting` or `Done`), `title`, `since` | Projects; retracted when the session works again, closes, is looked at, or is dismissed | Shell (its island in the top row) | Sticky by `key` |
+| `AgentIslandAction` | An island's `key` and what was done: `Show`, `Dismiss` | Shell | Projects (brings up its session's window, or lets it go) | Ephemeral |
 | `ClientConnected` | An app id | `sola-bus` on `$identify`; replayed as the roster | No app; Monitor shows it | Ephemeral |
 | `ClientDisconnected` | An app id | `sola-bus` when an identified connection closes | No app; Monitor shows it | Ephemeral |
 

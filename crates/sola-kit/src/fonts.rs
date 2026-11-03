@@ -11,6 +11,7 @@
 //! See `docs/manual/distribution.md`.
 
 use iced::Font;
+use iced::advanced::text::Shaping;
 
 /// Mono font for code, JSON, table rows, terminals.
 /// Preferred: `Iosevka Term Slab`. Fallback: `JetBrains Mono`.
@@ -129,19 +130,31 @@ pub fn display() -> Font {
 pub fn chrome() -> Font {
     current().chrome
 }
-/// Width of one unwrapped line of `content` at `size` in `font`, laid out
-/// as iced will draw it (remembered, so a relayout does not shape the same
-/// words again). For widgets that place things beside text they draw.
+/// Width of one unwrapped line of `content` at `size` in `font`, as a
+/// `text` widget lays it out (remembered, so a relayout does not shape the
+/// same words again). For widgets that place things beside text they draw.
 pub fn line_width(content: &str, size: f32, font: Font) -> f32 {
+    remembered_width(content, size, font, Shaping::default())
+}
+
+/// [`line_width`] for text drawn with advanced shaping (the titlebar's).
+/// Kerning moves a line: `text` shapes plain ASCII without it, so the two
+/// differ by enough to wrap a line in a box cut to the other's width.
+pub(crate) fn line_width_advanced(content: &str, size: f32, font: Font) -> f32 {
+    remembered_width(content, size, font, Shaping::Advanced)
+}
+
+fn remembered_width(content: &str, size: f32, font: Font, shaping: Shaping) -> f32 {
+    type Key = (String, u32, Font, Shaping);
     thread_local! {
-        static WIDTHS: std::cell::RefCell<std::collections::HashMap<(String, u32, Font), f32>> =
+        static WIDTHS: std::cell::RefCell<std::collections::HashMap<Key, f32>> =
             std::cell::RefCell::new(std::collections::HashMap::new());
     }
-    let key = (content.to_string(), size.to_bits(), font);
+    let key = (content.to_string(), size.to_bits(), font, shaping);
     if let Some(w) = WIDTHS.with(|m| m.borrow().get(&key).copied()) {
         return w;
     }
-    let w = shaped_width(content, size, font);
+    let w = shaped_width(content, size, font, shaping);
     WIDTHS.with(|m| {
         let mut m = m.borrow_mut();
         if m.len() > 1024 {
@@ -166,7 +179,7 @@ pub fn fit_line(content: &str, size: f32, font: Font, room: f32) -> String {
     if let Some(fit) = FITS.with(|m| m.borrow().get(&key).cloned()) {
         return fit;
     }
-    let fit = shorten(content, room, |s| shaped_width(s, size, font));
+    let fit = shorten(content, room, |s| shaped_width(s, size, font, Shaping::default()));
     FITS.with(|m| {
         let mut m = m.borrow_mut();
         if m.len() > 4096 {
@@ -202,7 +215,7 @@ fn shorten(content: &str, room: f32, width: impl Fn(&str) -> f32) -> String {
 }
 
 /// Shape one line of `content` and take its width (no memory).
-fn shaped_width(content: &str, size: f32, font: Font) -> f32 {
+fn shaped_width(content: &str, size: f32, font: Font, shaping: Shaping) -> f32 {
     use iced::advanced::text::{self, Paragraph as _};
     type Para = <iced::Renderer as text::Renderer>::Paragraph;
     Para::with_text(text::Text {
@@ -213,7 +226,7 @@ fn shaped_width(content: &str, size: f32, font: Font) -> f32 {
         font,
         align_x: text::Alignment::Default,
         align_y: iced::alignment::Vertical::Top,
-        shaping: text::Shaping::Advanced,
+        shaping,
         wrapping: text::Wrapping::None,
     })
     .min_width()
@@ -489,6 +502,53 @@ fn dedup_sorted<I: IntoIterator<Item = String>>(iter: I) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `text` given the width its line measures stays one line: an island
+    /// or a chip is sized by [`line_width`], and a line a hair wider than
+    /// its box wraps. The words are the session names that showed it.
+    #[test]
+    fn a_line_stays_one_line_in_the_width_it_measures() {
+        use iced::advanced::text::{self, Paragraph as _};
+        type Para = <iced::Renderer as text::Renderer>::Paragraph;
+        let font = chrome();
+        for content in [
+            "(sc-16061 [review] - Link awaiting-charges emails to their notification)",
+            "(sc-20772 [review] - Auto-bump the officer app store version)",
+            "AV To Ty WA Tell Your Valley: Yes, Type Away",
+            "wants to run cargo make build…",
+        ] {
+            let size = 13.0;
+            let room = line_width(content, size, font).ceil();
+            let drawn = Para::with_text(text::Text {
+                content,
+                bounds: iced::Size::new(room, f32::INFINITY),
+                size: iced::Pixels(size),
+                line_height: text::LineHeight::default(),
+                font,
+                align_x: text::Alignment::Default,
+                align_y: iced::alignment::Vertical::Top,
+                // As `text()` draws it.
+                shaping: text::Shaping::default(),
+                wrapping: text::Wrapping::Word,
+            });
+            let one = Para::with_text(text::Text {
+                content: "x",
+                bounds: iced::Size::INFINITE,
+                size: iced::Pixels(size),
+                line_height: text::LineHeight::default(),
+                font,
+                align_x: text::Alignment::Default,
+                align_y: iced::alignment::Vertical::Top,
+                shaping: text::Shaping::default(),
+                wrapping: text::Wrapping::None,
+            });
+            assert_eq!(
+                drawn.min_height(),
+                one.min_height(),
+                "{content:?} wrapped in the {room} it measures",
+            );
+        }
+    }
 
     #[test]
     fn shorten_keeps_what_fits_and_ellipsizes_the_rest() {

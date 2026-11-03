@@ -46,8 +46,8 @@ system key.
 | Super+Keypad 6 | Move the focused window to the right column (the default layout's) |
 | Super+Keypad Multiply | Float the focused window |
 | Super+Keypad Enter | Move the focused window to Cinema |
-| F13 | Screenshot of the whole output, to the clipboard |
-| F14 | Screenshot of a selection, to the clipboard |
+| F13 | Screenshot of a selection, to the clipboard |
+| F14 | Screenshot of the whole output, to the clipboard |
 | F15 | Screenshot of the focused window, to the clipboard |
 | Escape | Close the open launcher, overlay, menu or panel; cancel a selection |
 | Play/Pause, Next, Previous | Media players (MPRIS) |
@@ -236,21 +236,17 @@ When a Projects session asks you something (a permission, a question) or
 finishes its turn, an island for it appears in the top row after the
 flower, the newest first: a diamond for a question, a check for a
 finished turn, then the project's name and the tab's in parentheses
-("Sola (root)"), and for a question what it wants ("wants to run …"). A
-project on another computer goes by its folder alone, without "on
-<computer>". When the islands reach the middle of the row, a **+N**
-island lists the rest; click one there for its card.
+("Sola (root)"), and for a question what it wants ("wants to run …"). What
+does not fit in 340 px is cut with an ellipsis. A project on another
+computer goes by its folder alone, without "on <computer>". When the
+islands reach the middle of the row, a **+N** island lists the rest.
 
-Click an island for its card, under it: who it is and how long ago, the
-question or the session's last message, and then:
-
-- a question's answers as buttons, and a field for your own answer;
-- for a finished turn, a field to tell it what to do next.
-
-Return sends the field. What you pick or type is typed into the session,
-as you would type it, and the island goes. **Show** brings up the
-session's tab without answering. Escape, or a click on the island again,
-closes the card and leaves the island.
+Click an island and its session's window comes up, on whichever workspace
+it is. Hover one and a **×** takes its mark's place: click that to let the
+island go without looking; the session carries on, and the island stays
+gone until the session next asks or finishes. A row of the +N list works
+the same way, with its × always showing, and the list stays up for the
+next one.
 
 An island also goes when the session moves on, and when you look at it
 yourself: its window has the keyboard. While the desk is fading idle you are away, so a session in
@@ -729,12 +725,12 @@ F13, F14 and F15 copy a PNG to the clipboard and show
 viewer. The clipboard is offered at once, so you can paste right away;
 the paste waits until encoding finishes.
 
-- **F13** copies the whole output.
-- **F14** first freezes the output as it is (open menus, panels
+- **F13** first freezes the output as it is (open menus, panels
   and text selections stay in the still), then shows a marquee on that
   still at full brightness, with no dim. Drag a rectangle to copy it;
   Escape, or a drag too small to be a rectangle, cancels. The crop comes
   from the freeze, not from a second capture.
+- **F14** copies the whole output.
 - **F15** copies the focused window's own buffer. The window
   does not come forward. `solactl compositor screenshot --app` does the
   same but writes a PNG file

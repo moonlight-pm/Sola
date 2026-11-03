@@ -658,7 +658,7 @@ their events to that computer's hook log
 of its sessions follows that log — this computer's by reading it, another
 computer's over a connection of its own (the link, `ssh … tail -F`). So
 marks, islands, desk cards and `pane.wait` work on every computer that has
-the session open, whichever one started it; looking at or answering an
+the session open, whichever one started it; looking at or dismissing an
 island on one lets it go on all. The first link installs the same agent
 hooks there (Claude's `settings.json`, Codex's `hooks.json`, Grok's
 `sola-status.json`; scripts in `~/.config/sola/remote/`). `pane.send`, `pane.read` and `session.exec` reach

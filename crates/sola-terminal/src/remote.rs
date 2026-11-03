@@ -79,11 +79,6 @@ pub fn capture_scrollback(host: &str, session: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Type `text` into `session` on `host` ([`crate::tmux::send_literal`]).
-pub fn send_literal(host: &str, session: &str, text: &str) -> Result<(), String> {
-    tmux(host, session, &["send-keys", "-t", &pane(session)?, "-l", "--", text], None).map(|_| ())
-}
-
 /// Paste `text` into `session` on `host`, then Enter if asked
 /// ([`crate::tmux::send_prompt`]): one round trip, the text on stdin.
 pub fn send_prompt(host: &str, session: &str, text: &str, enter: bool) -> Result<(), String> {

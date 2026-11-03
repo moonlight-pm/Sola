@@ -2,8 +2,8 @@
 //! projects here do: their links ([`crate::link`]: their hooks come here,
 //! so marks, islands and `pane.wait` work), attaching their tabs (with an
 //! agent's resume), a status tick for their panes (presence, Codex turns,
-//! `×N`, gone worktrees), and the calls and island answers that reach
-//! their tmux, git and startup scripts. What waits on ssh runs off the UI
+//! `×N`, gone worktrees), and the calls that reach their tmux, git and
+//! startup scripts. What waits on ssh runs off the UI
 //! thread, through a [`Machine::Remote`]; a call there replies when done.
 
 use std::collections::{BTreeSet, HashSet};
@@ -42,13 +42,6 @@ impl PaneTmux {
         match self.machine.host() {
             None => tmux::capture_scrollback(&self.session),
             Some(host) => rtmux::capture_scrollback(host, &self.session),
-        }
-    }
-
-    pub(crate) fn send_literal(&self, text: &str) -> Result<(), String> {
-        match self.machine.host() {
-            None => tmux::send_literal(&self.session, text),
-            Some(host) => rtmux::send_literal(host, &self.session, text),
         }
     }
 
@@ -713,33 +706,6 @@ impl App {
             move |git| Msg::RemoteKind {
                 tab: tab.clone(),
                 git,
-            },
-        )
-    }
-
-    /// An island scan for a remote pane: its screen and its transcript's
-    /// last message, fetched off the UI thread.
-    pub(crate) fn remote_island_scan(&self, id: &str) -> Task<Msg> {
-        let Ok(t) = self.pane_tmux(id) else {
-            return Task::none();
-        };
-        let transcript = self.islands.transcript_of(id).map(PathBuf::from);
-        let machine = t.machine.clone();
-        let pane = id.to_string();
-        Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || {
-                    let screen = t.capture().unwrap_or_default();
-                    let message = transcript.and_then(|p| crate::islands::message_at(&machine, &p));
-                    (screen, message)
-                })
-                .await
-                .unwrap_or_default()
-            },
-            move |(screen, message)| Msg::IslandScanned {
-                pane: pane.clone(),
-                screen,
-                message,
             },
         )
     }
