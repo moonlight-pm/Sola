@@ -936,7 +936,13 @@ pub enum LeftStep {
 /// program did not ask for it: a drag needs mode 1002 or 1003, and with no
 /// mouse mode on (the program quit mid-gesture) the bytes would land as text
 /// in the shell. `col` and `row` are 1-based.
-pub fn left_report(mode: TermMode, step: LeftStep, mods: Mods, col: u16, row: u16) -> Option<Vec<u8>> {
+pub fn left_report(
+    mode: TermMode,
+    step: LeftStep,
+    mods: Mods,
+    col: u16,
+    row: u16,
+) -> Option<Vec<u8>> {
     let wanted = match step {
         LeftStep::Drag => TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION,
         LeftStep::Press | LeftStep::Release => TermMode::MOUSE_MODE,
@@ -960,7 +966,13 @@ pub fn left_report(mode: TermMode, step: LeftStep, mods: Mods, col: u16, row: u1
 /// trailing byte is `32 + value` (button code, then 1-based col, then row).
 /// Coordinates are clamped to the classic 223 limit. Used for apps that enabled
 /// mouse tracking without SGR (no `TermMode::SGR_MOUSE`).
-fn encode_mouse_x10(button: MouseButton, col: u16, row: u16, pressed: bool, mods: Mods) -> Vec<u8> {
+fn encode_mouse_x10(
+    button: MouseButton,
+    col: u16,
+    row: u16,
+    pressed: bool,
+    mods: Mods,
+) -> Vec<u8> {
     // A release does not say which button: 3 is "a button went up".
     let base: u8 = match button {
         _ if !pressed => 3,

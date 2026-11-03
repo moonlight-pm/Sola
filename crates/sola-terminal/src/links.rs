@@ -1,7 +1,9 @@
 //! URL detection and open-in-browser for plain left-click.
 //!
 //! Scans the terminal grid for plain-text `http(s)://` / `www.` links (and
-//! honours OSC 8 hyperlinks when a cell carries one). Visible links are always
+//! honours OSC 8 hyperlinks to `http(s)` when a cell carries one: a program
+//! can hang any target on any text, and a click here opens with no prompt, so
+//! nothing else counts as a link). Visible links are always
 //! underlined; a plain left-click (press + release with no drag) opens the
 //! link in **sola-browser**. Dragging still starts a text
 //! selection, including when the press begins on a URL; while the program in
@@ -57,9 +59,8 @@ pub fn open_url(uri: &str) {
 pub fn url_at_point<T>(term: &Term<T>, point: GridPoint) -> Option<String> {
     // OSC 8 wins when present — the app authored an explicit link.
     if let Some(link) = term.grid()[point].hyperlink() {
-        let uri = link.uri().to_string();
-        if !uri.is_empty() {
-            return Some(uri);
+        if is_web(link.uri()) {
+            return Some(link.uri().to_string());
         }
     }
 
@@ -67,6 +68,13 @@ pub fn url_at_point<T>(term: &Term<T>, point: GridPoint) -> Option<String> {
         .into_iter()
         .find(|span| point_in_span(point, span))
         .map(|span| span.uri)
+}
+
+/// Whether an OSC 8 target is one a click may open: `http` or `https`.
+fn is_web(uri: &str) -> bool {
+    uri.split_once(':').is_some_and(|(scheme, _)| {
+        scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+    })
 }
 
 /// Plain-text + OSC 8 URLs on the single logical line that contains `point`.
@@ -275,7 +283,7 @@ fn collect_osc8_spans<T>(
             continue;
         };
         let uri = link.uri().to_string();
-        if uri.is_empty() {
+        if !is_web(&uri) {
             i += 1;
             continue;
         }
@@ -553,6 +561,56 @@ mod tests {
         assert_eq!(
             url_at_point(&term, GridPoint::new(Line(0), Column(0))).as_deref(),
             Some("https://other.com/nowhere")
+        );
+    }
+
+    /// Where a click on the first cell of `text`, linked to `uri`, goes.
+    fn click_on_osc8(uri: &str, text: &str) -> Option<String> {
+        use crate::emulator::{Emulator, Listener};
+        use std::sync::mpsc;
+
+        let (ptx, _prx) = mpsc::channel::<(String, Vec<u8>)>();
+        let (ntx, _nrx) = mpsc::channel::<String>();
+        let (ttx, _trx) = mpsc::channel::<(String, String)>();
+        let mut e = Emulator::new(80, 24, Listener::new("t".into(), ptx, ntx, ttx));
+        e.advance(format!("\x1b]8;;{uri}\x1b\\{text}\x1b]8;;\x1b\\").as_bytes());
+        let term = e.term();
+        let term = term.lock();
+        url_at_point(&term, GridPoint::new(Line(0), Column(0)))
+    }
+
+    #[test]
+    fn a_web_link_opens_its_target() {
+        for uri in [
+            "http://example.com/a",
+            "https://example.com/a",
+            "HTTPS://example.com/a",
+        ] {
+            assert_eq!(click_on_osc8(uri, "the docs").as_deref(), Some(uri));
+        }
+    }
+
+    #[test]
+    fn a_link_to_anything_else_opens_nothing() {
+        for uri in [
+            "file:///etc/passwd",
+            "mailto:a@example.com",
+            "claude-cli://open?q=hi",
+            "ssh://example.com",
+            "javascript:alert(1)",
+            "httpsx://example.com",
+            "example.com/http:",
+        ] {
+            assert_eq!(click_on_osc8(uri, "the docs"), None, "{uri}");
+        }
+    }
+
+    /// The link is not honoured, but what the screen shows still is.
+    #[test]
+    fn a_web_address_on_screen_opens_whatever_its_link_says() {
+        assert_eq!(
+            click_on_osc8("file:///etc/passwd", "https://example.com/shown").as_deref(),
+            Some("https://example.com/shown")
         );
     }
 }

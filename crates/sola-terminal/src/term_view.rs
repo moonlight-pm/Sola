@@ -1785,6 +1785,16 @@ mod tests {
         );
     }
 
+    /// Not a link we open, so the click is the program's like any other.
+    #[test]
+    fn a_click_on_a_non_web_link_goes_to_the_program() {
+        let mut pane = Pane::new(
+            b"\x1b[?1002h\x1b[?1006h\x1b]8;;file:///etc/passwd\x1b\\the docs\x1b]8;;\x1b\\",
+        );
+        assert_eq!(pane.press(1, 0), pty(b"\x1b[<0;2;1M"));
+        assert_eq!(pane.release(1, 0), pty(b"\x1b[<0;2;1m"));
+    }
+
     #[test]
     fn a_shaky_click_on_a_link_still_opens_it() {
         let mut pane = Pane::new(REPORTS_DRAGS);

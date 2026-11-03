@@ -45,7 +45,8 @@ In Terminal and Projects, a program that asks for the mouse gets the left
 button, as it already got the wheel. An agent such as Claude Code selects and
 copies by itself, and it knows where it wrapped its own lines, so a long URL
 dragged over in its pane copies as one line; Copy has nothing to do there. A
-plain click on a link still opens the link, on any row of a link that wraps.
+plain click on a web link still opens it, on any row of a link that wraps; a
+link a program hung on other text opens only if it goes to `http` or `https`.
 Hold Shift to select with the terminal's own selection instead. A program can
 also copy to the clipboard with OSC 52, which is how it copies from another
 computer over ssh; no program can read the clipboard that way.
