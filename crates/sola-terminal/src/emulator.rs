@@ -67,7 +67,7 @@ pub fn publish_cursor(term: &alacritty_terminal::term::Term<Listener>, snap: &Rw
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{Config, Term};
+use alacritty_terminal::term::{ClipboardType, Config, Term};
 use alacritty_terminal::vte::ansi::Processor;
 
 /// Characters that terminate a double-click "word" (alacritty semantic selection).
@@ -344,6 +344,8 @@ pub struct Listener {
     pty_write: mpsc::Sender<(String, Vec<u8>)>,
     notify: mpsc::Sender<String>,
     title: mpsc::Sender<(String, String)>,
+    /// Takes the text a program copies with OSC 52.
+    clipboard: fn(String),
 }
 
 impl Listener {
@@ -358,8 +360,21 @@ impl Listener {
             pty_write,
             notify,
             title,
+            clipboard: copy_to_desk,
         }
     }
+}
+
+/// A program's OSC 52 copy goes on the desk's clipboard. This is how a program
+/// on another machine copies, over SSH. Copy only: the read side stays off
+/// (`Osc52::OnlyCopy`, alacritty's default), so no program reads the clipboard.
+/// On its own thread, since the PTY reader must not wait on the compositor.
+fn copy_to_desk(text: String) {
+    std::thread::spawn(move || {
+        if let Err(e) = sola_kit::clipboard::write_text(text) {
+            tracing::warn!(error = %e, "could not put a program's OSC 52 copy on the clipboard");
+        }
+    });
 }
 
 impl EventListener for Listener {
@@ -386,8 +401,12 @@ impl EventListener for Listener {
             Event::Bell => { /* Phase 4 */ }
             // Phase 4: propagate child exit so App can close the tab.
             Event::ChildExit(_status) => { /* Phase 4 */ }
+            // An empty copy would wipe what the user has on the clipboard.
+            Event::ClipboardStore(ClipboardType::Clipboard, text) if !text.is_empty() => {
+                (self.clipboard)(text);
+            }
             // All other variants (MouseCursorDirty,
-            // ClipboardStore, ClipboardLoad, ColorRequest,
+            // the primary selection, ClipboardLoad, ColorRequest,
             // TextAreaSizeRequest, CursorBlinkingChange, Exit, …) are
             // intentionally ignored until their phases land.
             _ => {}
@@ -700,5 +719,46 @@ mod tests {
             .map(|indexed| indexed.cell.c)
             .collect();
         assert_eq!(top, "AAAA", "scrolled-off line should be the first history row");
+    }
+
+    std::thread_local! {
+        static COPIED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// What `bytes` copied, and what the emulator wrote back to the program.
+    /// A recorder stands in for the desk's clipboard, which a test must not touch.
+    fn osc52(bytes: &[u8]) -> (Vec<String>, Vec<Vec<u8>>) {
+        let (ptx, prx) = mpsc::channel::<(String, Vec<u8>)>();
+        let (ntx, _nrx) = mpsc::channel::<String>();
+        let (ttx, _trx) = mpsc::channel::<(String, String)>();
+        let mut listener = Listener::new("t".into(), ptx, ntx, ttx);
+        listener.clipboard = |text| COPIED.with(|copied| copied.borrow_mut().push(text));
+        let mut e = Emulator::new(80, 24, listener);
+        e.advance(bytes);
+        let copied = COPIED.with(|copied| std::mem::take(&mut *copied.borrow_mut()));
+        (copied, prx.try_iter().map(|(_, bytes)| bytes).collect())
+    }
+
+    #[test]
+    fn a_programs_copy_reaches_the_clipboard() {
+        let (copied, _) = osc52(b"\x1b]52;c;aGVsbG8=\x07");
+        assert_eq!(copied, ["hello"]);
+    }
+
+    #[test]
+    fn an_empty_copy_leaves_the_clipboard_alone() {
+        assert!(osc52(b"\x1b]52;c;\x07").0.is_empty());
+    }
+
+    #[test]
+    fn a_copy_to_the_primary_selection_is_not_the_clipboard() {
+        assert!(osc52(b"\x1b]52;p;aGVsbG8=\x07").0.is_empty());
+    }
+
+    #[test]
+    fn no_program_reads_the_clipboard() {
+        let (copied, replies) = osc52(b"\x1b]52;c;?\x07");
+        assert!(copied.is_empty());
+        assert!(replies.is_empty());
     }
 }

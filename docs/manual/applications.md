@@ -41,6 +41,16 @@ incomplete. Applications that offer methods on the
 There is no separate Wrapper application: a wrapped website is a
 [web app](web-apps.md) that Browser hosts.
 
+In Terminal and Projects, a program that asks for the mouse gets the left
+button, as it already got the wheel. An agent such as Claude Code selects and
+copies by itself, and it knows where it wrapped its own lines, so a long URL
+dragged over in its pane copies as one line; Copy has nothing to do there. A
+plain click on a web link still opens it, on any row of a link that wraps; a
+link a program hung on other text opens only if it goes to `http` or `https`.
+Hold Shift to select with the terminal's own selection instead. A program can
+also copy to the clipboard with OSC 52, which is how it copies from another
+computer over ssh; no program can read the clipboard that way.
+
 The notes are kept in the repository beside this manual and are not part
 of the page: they describe each application's keys, menus, and files in
 detail, and change as often as the applications do.

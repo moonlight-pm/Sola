@@ -104,6 +104,11 @@ pub fn reload_config() {
 // `set -gu terminal-overrides` drops a sticky `*:smcup@:rmcup@` left on a
 // server that was started from an older config. `source-file` does not
 // delete an option this file no longer mentions.
+//
+// `hyperlinks` passes OSC 8 links to the grid, where every cell of a link
+// wrapped over several rows names the whole URL. `set-clipboard on` passes a
+// program's OSC 52 copy; tmux drops it under the default, `external`. Both
+// reach the emulator, which is what acts on them.
 pub(crate) const TMUX_CONF: &str = "\
 set -gu terminal-overrides
 set -g status off
@@ -116,7 +121,8 @@ set -g default-terminal xterm-256color
 set -g escape-time 0
 set -g extended-keys always
 set -g extended-keys-format csi-u
-set -as terminal-features 'xterm*:extkeys'
+set -as terminal-features 'xterm*:extkeys:hyperlinks'
+set -g set-clipboard on
 set -g set-titles off
 set -g allow-passthrough on
 set -ga update-environment ' TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM WAYLAND_DISPLAY XDG_SESSION_TYPE'
@@ -770,6 +776,9 @@ mod tests {
         assert!(TMUX_CONF.contains("extended-keys always"));
         assert!(TMUX_CONF.contains("extended-keys-format csi-u"));
         assert!(TMUX_CONF.contains("xterm*:extkeys"));
+        // Links and a program's copy cross tmux. See TMUX_CONF.
+        assert!(TMUX_CONF.contains(":hyperlinks"));
+        assert!(TMUX_CONF.contains("set-clipboard on"));
         // Alt-screen enter/exit must reach the outer grid. See TMUX_CONF.
         assert!(TMUX_CONF.contains("set -gu terminal-overrides"));
         assert!(!TMUX_CONF.contains("smcup@"));
