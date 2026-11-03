@@ -278,6 +278,18 @@ account settings). Recorded in the spec.
 
 ---
 
+### D18 — The new Oath app's package (P2)
+
+**Context:** the Oath app ships in `pkg:sola` (`crates/sola-make/src/oath/packages.rs`), and moving that package restarts the desk, so every overlay of the app would too. A package of its own moves alone, but needs an Oath pin in the profile.
+
+**Ask:** does the new app ([`design/oath/`](../design/oath/)) get its own `pkg:sola-oath`? The session that designed it recommends yes.
+
+**Until decided:** it stays in `pkg:sola`.
+
+**Related:** `oath-platform` capability; [CURRENT](../CURRENT.md).
+
+---
+
 ## Open technical questions
 
 ### T1 — Agent pin UI surface — **closed (2026-08-28)**
@@ -345,6 +357,7 @@ runs `cloudflared` while open. Links work only while Design runs.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-11-03 | The new Oath app's first version | Strata and Weight for the map, Flow for the tree; it only looks, with no on/off, apply or undo; this machine only, other machines later; Upstream is its own column; the audit report may be public on the origin (Joshua: "1. Yes 2. Yes 3. Not yet. I'm going to work on oath multi-computer visualization and configuration type stuff later") | `design/oath/`, CURRENT |
 | 2026-11-03 | Screenshot keys swapped | F13 takes a selection, F14 the whole screen; F15 stays the focused window (Joshua: "swap the F13 and F14 keybindings") | `docs/manual/sola-shell.md` § Screenshots |
 | 2026-11-03 | Agent islands go to the window | Clicking an island brings up its session's window; no card, and nothing is answered from the row. A hover × dismisses it until the session next asks or finishes (Joshua: "clicking them should just take me to the window.  Let's give them a 'hover close' just to dismiss them as well") | [agent islands](specs/2026-10-23-agent-islands-design.md) |
 | 2026-11-02 | Pinned windows replace Common | No Common workspace, island or Super+0: a window is pinned to every workspace, from a toggle in the Window menu, for every window (Joshua: "lets get rid of the 0 Common island .. and we don't switch to the workspace -- in fact it doesn't have to be a workspace at all. Instead, we simply pin any window we want on all workspaces ... lets just make this a menu option toggle for now for all windows"). Chosen with it: unpinning leaves the window on the workspace showing; closing works from any workspace; Super+Shift+N sends it there and unpins it; a pinned page keeps its profile; a pinned window has one zone, as before. Supersedes the Common row below. | [shell](manual/sola-shell.md#pinned-windows) |
