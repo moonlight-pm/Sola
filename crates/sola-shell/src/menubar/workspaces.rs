@@ -58,7 +58,7 @@ pub fn islands(shell: &Shell) -> Option<Element<'_, Msg>> {
         .map(|(i, ws)| {
             let here = i == showing;
             let quiet = Color { a: QUIET_A, ..fg };
-            let name = crate::agents::view::fit(&ws.name, NAME_MAX);
+            let name = fonts::fit_line(&ws.name, CHROME_SIZE, name_font(), NAME_MAX);
             let mut body = row![
                 text((i + 1).to_string())
                     .font(fonts::chrome())
@@ -194,7 +194,7 @@ pub fn row_end(shell: &Shell) -> f32 {
 }
 
 fn island_width(index: usize, name: &str, mark: Option<Mark>) -> f32 {
-    let name = crate::agents::view::fit(name, NAME_MAX);
+    let name = fonts::fit_line(name, CHROME_SIZE, name_font(), NAME_MAX);
     let mut w = 2.0 * PAD_H
         + fonts::line_width(&index.to_string(), CHROME_SIZE, fonts::chrome())
         + GAP

@@ -14,7 +14,7 @@ use iced::{event, keyboard, window};
 
 use sola_bus::Message;
 use sola_bus::topics::{
-    AgentIslandAction, AppNotification, IslandAction, IslandState, MenuActionPayload, Topic,
+    AgentIslandAction, AppNotification, IslandAction, MenuActionPayload, Topic,
     TopicKind,
 };
 use sola_kit::app::{
@@ -57,22 +57,6 @@ use machine::Machine;
 
 const APP_ID: &str = "sola-projects";
 const WINDOW_TITLE: &str = "Projects";
-
-/// An island's screen read: first a moment after the ask (the prompt
-/// draws after its hook), then again while no choices show, a few times.
-const ISLAND_SCAN_MS: u64 = 400;
-const ISLAND_RESCAN_MS: u64 = 700;
-const ISLAND_SCAN_TRIES: u8 = 4;
-/// Lines of the screen's end that stand for a body the hook did not give.
-const ISLAND_TAIL_LINES: usize = 14;
-/// Between picking a question's "Type something" and typing the answer.
-const ISLAND_TYPE_SETTLE: Duration = Duration::from_millis(150);
-
-fn island_scan_later(pane: String, ms: u64) -> Task<Msg> {
-    Task::perform(tokio::time::sleep(Duration::from_millis(ms)), move |_| {
-        Msg::IslandScan(pane.clone())
-    })
-}
 
 fn now_millis() -> u128 {
     std::time::SystemTime::now()
@@ -306,9 +290,6 @@ enum Msg {
         host: Option<String>,
         pane: String,
     },
-    /// Read a session's screen for its island (the prompt's choices, or a
-    /// body), a moment after it began to need you.
-    IslandScan(String),
     Osc(String, sola_terminal::osc9999::OscStatus),
     PresenceTick,
     Call(sola_call::Incoming),
@@ -359,12 +340,6 @@ enum Msg {
     RemoteKind {
         tab: String,
         git: bool,
-    },
-    /// A remote pane's screen and transcript message, for its island.
-    IslandScanned {
-        pane: String,
-        screen: String,
-        message: Option<String>,
     },
 }
 
@@ -638,8 +613,8 @@ impl App {
     fn update(&mut self, msg: Msg) -> Task<Msg> {
         let task = self.update_msg(msg);
         self.windows.publish_activity(&self.tabs);
-        let scans = self.sync_islands();
-        Task::batch([task, scans])
+        self.sync_islands();
+        task
     }
 
     fn update_msg(&mut self, msg: Msg) -> Task<Msg> {
@@ -670,8 +645,7 @@ impl App {
                     }
                     return Task::none();
                 }
-                self.islands
-                    .note_hook(&id, incoming.ask.clone(), incoming.transcript.clone());
+                self.islands.note_hook(&id, incoming.ask.clone());
                 let prev = self
                     .pane_status
                     .get(&id)
@@ -710,10 +684,9 @@ impl App {
             }
             Msg::Seen { host, pane } => {
                 let key = catalog::key_for(&pane, host.as_deref());
-                self.islands.answer(&key);
+                self.islands.let_go(&key);
                 Task::none()
             }
-            Msg::IslandScan(id) => self.scan_island(&id),
             Msg::Osc(id, payload) => {
                 if let Some(id) = self.resolve_pane(&id) {
                     let prev = self
@@ -892,11 +865,6 @@ impl App {
                 }
                 Task::none()
             }
-            Msg::IslandScanned {
-                pane,
-                screen,
-                message,
-            } => self.apply_island_scan(&pane, &screen, message),
             Msg::Title(id, title) => {
                 tracing::debug!(pane = %id, %title, "pane title");
                 Task::none()
@@ -1832,16 +1800,12 @@ impl App {
     }
 
     /// Follow every session's status into its island; send the islands.
-    /// Returns screen reads for sessions that newly need you.
-    fn sync_islands(&mut self) -> Task<Msg> {
+    fn sync_islands(&mut self) {
         let now = now_millis() as u64;
-        let mut scans = Vec::new();
         for (id, st) in &self.pane_status {
             // A status restored from before a restart says nothing yet.
             let status = (!st.restored_unconfirmed).then_some(st.status);
-            if self.islands.track(id, status, now) {
-                scans.push(id.clone());
-            }
+            self.islands.track(id, status, now);
         }
         let known: Vec<String> = self.pane_status.keys().cloned().collect();
         let live: HashSet<String> = known
@@ -1861,7 +1825,6 @@ impl App {
             // Looked at here: every computer watching it lets it go.
             self.announce_seen(&pane);
         }
-        Task::batch(scans.into_iter().map(|id| island_scan_later(id, ISLAND_SCAN_MS)))
     }
 
     /// You are looking at session `pane`: its window has the keyboard and
@@ -1875,98 +1838,20 @@ impl App {
         self.window_focused && window.is_some() && self.windows.focused == window
     }
 
-    /// The prompt draws a moment after its hook: read its choices (a
-    /// question's, a permission's) or, with nothing from the hook, the end
-    /// of the screen as the body. Tries again while the prompt is not up.
-    fn scan_island(&mut self, id: &str) -> Task<Msg> {
-        if self.tab_for_pane(id).is_some_and(|w| w.host.is_some()) {
-            return self.remote_island_scan(id);
-        }
-        let screen = tmux::capture_scrollback(&catalog::session_name(id)).unwrap_or_default();
-        let message = self.islands.last_message(id);
-        self.apply_island_scan(id, &screen, message)
-    }
-
-    /// [`Self::scan_island`] with the screen and the transcript's last
-    /// message read (here, or fetched from another computer).
-    fn apply_island_scan(&mut self, id: &str, screen: &str, message: Option<String>) -> Task<Msg> {
-        let Some(need) = self.islands.need_mut(id) else {
-            return Task::none();
-        };
-        need.scans += 1;
-        if need.state == IslandState::Waiting {
-            // The prompt is at the bottom; an older list further up is not it.
-            need.choices = islands::choices_on_screen(&islands::screen_tail(&screen, 40));
-            if need.choices.is_empty() && need.scans < ISLAND_SCAN_TRIES {
-                return island_scan_later(id.to_string(), ISLAND_RESCAN_MS);
-            }
-        }
-        if need.state == IslandState::Done && !need.asked {
-            // The transcript may not have had the last message yet.
-            match message {
-                Some(m) => {
-                    need.body = m;
-                    need.asked = true;
-                }
-                None if need.scans < ISLAND_SCAN_TRIES => {
-                    need.body = islands::screen_tail(&screen, ISLAND_TAIL_LINES);
-                    return island_scan_later(id.to_string(), ISLAND_RESCAN_MS);
-                }
-                None => need.body = islands::screen_tail(&screen, ISLAND_TAIL_LINES),
-            }
-            return Task::none();
-        }
-        if need.body.is_empty() {
-            need.body = islands::screen_tail(&screen, ISLAND_TAIL_LINES);
-        }
-        Task::none()
-    }
-
-    /// The shell's island: an answer typed into the session, a reply, or
-    /// its tab pulled up.
+    /// The shell's island: clicked (its session's window comes up) or
+    /// closed. Either way, every computer lets it go.
     fn on_island_action(&mut self, a: AgentIslandAction) -> Task<Msg> {
         let pane = a.key;
-        // Answered or pulled up here: every computer lets it go.
         self.announce_seen(&pane);
+        self.islands.let_go(&pane);
         match a.action {
             IslandAction::Show => {
-                self.islands.answer(&pane);
                 let Some(tab) = self.tab_for_pane(&pane).map(|t| t.id.clone()) else {
                     return Task::none();
                 };
                 self.show_tab(&tab)
             }
-            IslandAction::Choose(i) => {
-                let Some(need) = self.islands.answer(&pane) else {
-                    return Task::none();
-                };
-                let Some(choice) = need.offered().get(i as usize).copied().cloned() else {
-                    return Task::none();
-                };
-                tracing::info!(%pane, choice = %choice.label, "island answer");
-                let key = choice.key.to_string();
-                self.tmux_job(&pane, "island answer", move |t| t.send_literal(&key));
-                Task::none()
-            }
-            IslandAction::Reply(text) => {
-                let Some(need) = self.islands.answer(&pane) else {
-                    return Task::none();
-                };
-                // A question's own answer: pick its "Type something" first.
-                let own = (need.state == IslandState::Waiting)
-                    .then(|| need.choices.iter().find(|c| islands::is_free_text(&c.label)))
-                    .flatten()
-                    .map(|c| c.key.to_string());
-                tracing::info!(%pane, "island reply");
-                self.tmux_job(&pane, "island reply", move |t| {
-                    if let Some(key) = own {
-                        let _ = t.send_literal(&key);
-                        std::thread::sleep(ISLAND_TYPE_SETTLE);
-                    }
-                    t.send_prompt(&text, true)
-                });
-                Task::none()
-            }
+            IslandAction::Dismiss => Task::none(),
         }
     }
 

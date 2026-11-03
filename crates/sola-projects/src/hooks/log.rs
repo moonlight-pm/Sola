@@ -6,7 +6,7 @@
 //! started it (sessions anywhere, slice 2).
 //!
 //! One line per event: `<agent>\t<SOLA_PANE_ID>\t<base64 payload>`. A
-//! computer that looks at or answers a session's island appends
+//! computer that looks at or dismisses a session's island appends
 //! `seen\t<id>\t`, and every other one lets that island go too. Past
 //! 8 MiB the script moves the log to `hooks.log.1` and starts a new one;
 //! readers follow it by name.

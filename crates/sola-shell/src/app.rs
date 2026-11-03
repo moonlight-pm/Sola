@@ -226,17 +226,12 @@ pub enum Msg {
     ShowTab(u32),
     /// A tab bar row's stoplight: close that window, as its own close would.
     CloseWindow(u32),
-    /// Open (or close) an agent island's card.
-    AgentIslandOpen(String),
+    /// An agent island clicked: its session's window comes up.
+    AgentIslandShow(String),
+    /// An agent island's close: it goes, the session goes on.
+    AgentIslandDismiss(String),
     /// The +N island: the agent islands that did not fit.
     AgentIslandList,
-    /// The open card's choice, by index.
-    AgentIslandChoose(u32),
-    /// The open card's reply field changed / was sent.
-    AgentIslandReplyInput(String),
-    AgentIslandReply,
-    /// The open card's Show: pull the session's tab up.
-    AgentIslandShow,
     /// The background picture was sampled for the adapted theme.
     AdaptSampled(
         sola_bus::topics::Background,
@@ -326,8 +321,6 @@ pub enum Panel {
     Workspace(usize),
     /// Renaming a workspace (`workspace.renaming`).
     RenameWorkspace,
-    /// An agent island's card (`agents.open`).
-    AgentIsland,
     /// The agent islands that did not fit (the +N island).
     AgentIslands,
     /// The desk menu over an app's window (`Shell::desk`).
@@ -393,7 +386,7 @@ pub struct Shell {
     pub replayed: bool,
     /// The window list that came before that, placed once it has.
     pub held_windows: Option<Vec<Window>>,
-    /// Agent sessions' islands in the top row and the card open.
+    /// Agent sessions' islands in the top row.
     pub agents: crate::agents::AgentIslands,
     /// The theme's colors following the background picture.
     pub adapt: crate::adapt::Adapt,
@@ -2127,18 +2120,9 @@ impl Shell {
                     height: crate::menu::workspace::menu_height(self).round() as i32,
                 };
             }
-            Some(Panel::AgentIsland) => {
-                let w = crate::agents::view::CARD_WIDTH;
-                let x = crate::agents::view::anchor_x(self, self.agents.open.as_deref());
-                let h = self
-                    .agents
-                    .opened()
-                    .map_or(200.0, crate::agents::view::card_height);
-                (clamp_x(x, w), w, h)
-            }
             Some(Panel::AgentIslands) => {
-                let w = crate::agents::view::CARD_WIDTH;
-                let x = crate::agents::view::anchor_x(self, None);
+                let w = crate::agents::view::LIST_WIDTH;
+                let x = crate::agents::view::list_x(self);
                 (clamp_x(x, w), w, crate::agents::view::list_height(self))
             }
             // Over the app's window, at the click.
@@ -3095,7 +3079,12 @@ impl Shell {
                 self.emit_registered_chords();
                 iced::Task::none()
             }
-            Msg::AgentIslandOpen(key) => self.open_agent_island(key),
+            Msg::AgentIslandShow(key) => {
+                self.agent_island_act(key, sola_bus::topics::IslandAction::Show)
+            }
+            Msg::AgentIslandDismiss(key) => {
+                self.agent_island_act(key, sola_bus::topics::IslandAction::Dismiss)
+            }
             Msg::AgentIslandList => {
                 if self.menu_open && self.open_panel == Some(Panel::AgentIslands) {
                     let _ = self.dismiss_open_menu();
@@ -3109,21 +3098,6 @@ impl Shell {
                 self.emit_registered_chords();
                 iced::Task::none()
             }
-            Msg::AgentIslandChoose(i) => {
-                self.agent_island_act(sola_bus::topics::IslandAction::Choose(i))
-            }
-            Msg::AgentIslandReplyInput(text) => {
-                self.agents.reply = text;
-                iced::Task::none()
-            }
-            Msg::AgentIslandReply => {
-                let text = std::mem::take(&mut self.agents.reply);
-                if text.trim().is_empty() {
-                    return iced::Task::none();
-                }
-                self.agent_island_act(sola_bus::topics::IslandAction::Reply(text))
-            }
-            Msg::AgentIslandShow => self.agent_island_act(sola_bus::topics::IslandAction::Show),
             Msg::AdaptSampled(picture, scheme) => self.adapt_sampled(picture, scheme),
             Msg::CloseWindow(wid) => {
                 // A tab's window: its app closes it (not through the

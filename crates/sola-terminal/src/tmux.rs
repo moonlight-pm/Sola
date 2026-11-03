@@ -378,22 +378,6 @@ pub fn capture_scrollback(session: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Type `text` literally into the session (`send-keys -l`).
-///
-/// Fine for short shell lines. Long or multiline text should use
-/// [`paste_bracketed`] — `send-keys -l` is an argv and will truncate.
-pub fn send_literal(session: &str, text: &str) -> Result<(), String> {
-    let output = tmux_cmd()
-        .args(["send-keys", "-t", &pane_target(session), "-l", "--", text])
-        .output()
-        .map_err(|e| format!("tmux send-keys failed: {e}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(tmux_fail("send-keys", &output))
-    }
-}
-
 /// Paste `text` into the session with tmux bracketed-paste (`paste-buffer
 /// -p`). Newlines stay in the TUI composer instead of submitting; length
 /// is not capped by `send-keys` argv.

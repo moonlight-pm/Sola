@@ -1,25 +1,20 @@
 //! Agent islands in the top row (`docs/specs/2026-10-23-agent-islands-design.md`):
 //! one island per Projects session that asks or has finished
 //! (`Topic::AgentIsland`, sticky per session), left after the flower.
-//! Clicking one grows its card under it ([`view::card`]): the ask and its
-//! choices, or the last message and a reply; Show pulls the session's tab
-//! up. What you pick goes back as `Topic::AgentIslandAction`, and Projects
-//! types it into the session.
+//! Clicking one goes to its window; hovering one offers a close that lets it
+//! go ([`view`]). Either goes back as `Topic::AgentIslandAction`, and Projects
+//! does it.
 
 pub mod view;
 
 use sola_bus::Message;
 use sola_bus::topics::{AgentIsland, IdleKeep, Topic};
 
-/// The islands and the card open.
+/// The islands.
 #[derive(Default)]
 pub struct AgentIslands {
     /// Newest first.
     pub islands: Vec<AgentIsland>,
-    /// The island whose card shows.
-    pub open: Option<String>,
-    /// The card's reply field.
-    pub reply: String,
     /// What the idle fade was last told to keep in sight.
     pub keep_sent: Option<IdleKeep>,
 }
@@ -35,19 +30,8 @@ impl AgentIslands {
         if msg.sticky {
             self.islands.push(island);
             self.islands.sort_by(|a, b| b.since.cmp(&a.since));
-        } else if self.open.as_deref() == Some(island.key.as_str()) {
-            self.open = None;
         }
         true
-    }
-
-    pub fn get(&self, key: &str) -> Option<&AgentIsland> {
-        self.islands.iter().find(|i| i.key == key)
-    }
-
-    /// The island whose card shows.
-    pub fn opened(&self) -> Option<&AgentIsland> {
-        self.get(self.open.as_deref()?)
     }
 }
 
@@ -63,9 +47,6 @@ mod tests {
             project: "Sola".into(),
             state: IslandState::Done,
             title: "finished".into(),
-            body: String::new(),
-            choices: Vec::new(),
-            reply: true,
             since,
         }
     }
@@ -81,11 +62,9 @@ mod tests {
         assert!(a.update(&sticky(island("a", 1))));
         assert!(a.update(&sticky(island("b", 2))));
         assert_eq!(a.islands[0].key, "b");
-        a.open = Some("a".into());
         let mut gone = Topic::AgentIsland(island("a", 1)).to_message();
         gone.sticky = false;
         assert!(a.update(&gone));
         assert_eq!(a.islands.len(), 1);
-        assert_eq!(a.open, None);
     }
 }

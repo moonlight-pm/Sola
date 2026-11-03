@@ -493,7 +493,7 @@ pub struct WindowWorkspace {
 /// (Projects → shell; `docs/specs/2026-10-23-agent-islands-design.md`).
 /// Carried by the sticky `Topic::AgentIsland`, keyed by `key` (the
 /// session); Projects retracts it when the session works again, closes,
-/// is answered, or is looked at.
+/// is looked at, or is dismissed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentIsland {
     /// The session (Projects' pane id).
@@ -506,14 +506,6 @@ pub struct AgentIsland {
     /// After the name on the island: "wants to run cargo make build",
     /// "asks: Which layout?", "finished".
     pub title: String,
-    /// The card's body: the whole ask, the question, or the last message.
-    pub body: String,
-    /// The answers to offer, in the prompt's order
-    /// ([`IslandAction::Choose`] names one by index).
-    pub choices: Vec<String>,
-    /// A text field: a reply to a finished session, or a question's own
-    /// answer ([`IslandAction::Reply`]).
-    pub reply: bool,
     /// When it started to need you (unix ms).
     pub since: u64,
 }
@@ -527,8 +519,7 @@ pub enum IslandState {
     Done,
 }
 
-/// What you did with an island (shell → Projects): Projects types it into
-/// the session, or pulls its tab up.
+/// What you did with an island (shell → Projects).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentIslandAction {
     pub key: String,
@@ -537,12 +528,10 @@ pub struct AgentIslandAction {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IslandAction {
-    /// One of [`AgentIsland::choices`], by index.
-    Choose(u32),
-    /// Text for the session, then Return.
-    Reply(String),
-    /// Select the session's tab and bring its window up (no answer).
+    /// Select the session's tab and bring its window up.
     Show,
+    /// Let the island go, until the session next needs you.
+    Dismiss,
 }
 
 /// The picture on the ground behind the windows (`Topic::Background`,
@@ -775,7 +764,7 @@ pub struct ThemeVariation {
 
 /// What the idle fade leaves uncovered (shell → sola-river,
 /// `Topic::IdleKeep`, sticky): the top row's left group — the flower and
-/// the agent islands, what you may want to answer — stays in full sight
+/// the agent islands, what you may want to get back to — stays in full sight
 /// while everything else fades into the picture. Output-local logical
 /// pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2384,7 +2373,7 @@ define_topics! {
     #[sticky(keys = [key])]
     AgentIsland(AgentIsland),
 
-    // An island's answer, reply or Show (shell → Projects). Appended last.
+    // An island clicked or closed (shell → Projects). Appended last.
     AgentIslandAction(AgentIslandAction),
 
     // The picture behind the windows (any app → sola-river). Persistent so
@@ -2691,9 +2680,6 @@ mod tests {
             project: "Sola".into(),
             state: IslandState::Waiting,
             title: "wants to run cargo make build".into(),
-            body: "cargo make build sola-shell".into(),
-            choices: vec!["Yes".into(), "No".into()],
-            reply: false,
             since: 1,
         };
         let msg = Topic::AgentIsland(island.clone()).to_message();
@@ -2705,7 +2691,7 @@ mod tests {
         }
         let act = AgentIslandAction {
             key: "pane-7".into(),
-            action: IslandAction::Reply("go on".into()),
+            action: IslandAction::Dismiss,
         };
         let msg = Topic::AgentIslandAction(act.clone()).to_message();
         assert!(!TopicKind::AgentIslandAction.behavior().is_sticky());
