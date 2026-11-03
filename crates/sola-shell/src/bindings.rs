@@ -178,14 +178,14 @@ pub fn system_actions(zones: Vec<SysAction>) -> Vec<SysAction> {
         ));
     }
     all.extend([
-        sys(Act::ScreenshotFull, "screenshot.screen", "Capture", "Screenshot Screen", KeyCode::F13.chord()),
         sys(
             Act::ScreenshotRegion,
             "screenshot.selection",
             "Capture",
             "Screenshot Selection",
-            KeyCode::F14.chord(),
+            KeyCode::F13.chord(),
         ),
+        sys(Act::ScreenshotFull, "screenshot.screen", "Capture", "Screenshot Screen", KeyCode::F14.chord()),
         sys(Act::ScreenshotWindow, "screenshot.window", "Capture", "Screenshot Window", KeyCode::F15.chord()),
     ]);
     all.extend(zones);
@@ -336,8 +336,8 @@ mod tests {
         assert_eq!(b.act_for(&KeyCode::KEY_0.meta()), None, "no Common");
         assert_eq!(b.act_for(&KeyCode::KEY_0.meta_shift()), None, "no Common");
         assert_eq!(b.act_for(&KeyCode::KEY_3.meta().ctrl()), None);
-        assert_eq!(b.act_for(&KeyCode::F13.chord()), Some(Act::ScreenshotFull));
-        assert_eq!(b.act_for(&KeyCode::F14.chord()), Some(Act::ScreenshotRegion));
+        assert_eq!(b.act_for(&KeyCode::F13.chord()), Some(Act::ScreenshotRegion));
+        assert_eq!(b.act_for(&KeyCode::F14.chord()), Some(Act::ScreenshotFull));
         assert_eq!(b.act_for(&KeyCode::F15.chord()), Some(Act::ScreenshotWindow));
         assert_eq!(b.act_for(&KeyCode::KP_4.meta()), Some(Act::Zone(Zone::Grid(1))));
         assert_eq!(b.key(Act::Lock), Some(KeyCode::L.meta()));

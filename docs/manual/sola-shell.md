@@ -46,8 +46,8 @@ system key.
 | Super+Keypad 6 | Move the focused window to the right column (the default layout's) |
 | Super+Keypad Multiply | Float the focused window |
 | Super+Keypad Enter | Move the focused window to Cinema |
-| F13 | Screenshot of the whole output, to the clipboard |
-| F14 | Screenshot of a selection, to the clipboard |
+| F13 | Screenshot of a selection, to the clipboard |
+| F14 | Screenshot of the whole output, to the clipboard |
 | F15 | Screenshot of the focused window, to the clipboard |
 | Escape | Close the open launcher, overlay, menu or panel; cancel a selection |
 | Play/Pause, Next, Previous | Media players (MPRIS) |
@@ -725,12 +725,12 @@ F13, F14 and F15 copy a PNG to the clipboard and show
 viewer. The clipboard is offered at once, so you can paste right away;
 the paste waits until encoding finishes.
 
-- **F13** copies the whole output.
-- **F14** first freezes the output as it is (open menus, panels
+- **F13** first freezes the output as it is (open menus, panels
   and text selections stay in the still), then shows a marquee on that
   still at full brightness, with no dim. Drag a rectangle to copy it;
   Escape, or a drag too small to be a rectangle, cancels. The crop comes
   from the freeze, not from a second capture.
+- **F14** copies the whole output.
 - **F15** copies the focused window's own buffer. The window
   does not come forward. `solactl compositor screenshot --app` does the
   same but writes a PNG file
