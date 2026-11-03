@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SOLA / Oath</title>
+<link rel="stylesheet" href="../tokens.css">
+<link rel="stylesheet" href="oath.css">
+<style>
+  body { padding: 72px; }
+  .kicker { font: 500 13px/1 var(--font-mono); color: var(--accent); margin-bottom: 18px; }
+  .big { font: 600 54px/1.04 var(--font-display); letter-spacing: -1.4px; margin: 0 0 22px; max-width: 1100px; }
+  .intro { font: 400 17px/27px var(--font-ui); color: var(--ink-2); max-width: 860px; margin-bottom: 64px; }
+  .intro b { color: var(--ink); font-weight: 500; }
+  .label { font: 500 10px/1 var(--font-chrome); letter-spacing: 1px; text-transform: uppercase; color: var(--ink-3); margin-bottom: 16px; }
+  .block { margin-bottom: 60px; }
+  .facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 56px; }
+  .fact { border-top: 1px solid var(--hairline); padding: 13px 0 16px; font: 400 15px/23px var(--font-ui); color: var(--ink-2); }
+  .fact b { color: var(--ink); font-weight: 500; }
+  .fact .w { color: var(--warning); }
+  .standings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px 40px; }
+  .sg { display: grid; grid-template-columns: 16px 1fr; gap: 3px 8px; align-items: baseline; align-content: start; }
+  .sg .mk { align-self: center; justify-self: center; }
+  .sg b { font: 500 14px/20px var(--font-ui); }
+  .sg span.t { grid-column: 2; font: 400 13px/20px var(--font-ui); color: var(--ink-2); }
+  .boards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .boards a { color: inherit; border-radius: var(--radius-lg); padding: 14px 16px; background: var(--face-2); box-shadow: inset 0 0 0 1px var(--rule-2); display: flex; flex-direction: column; gap: 6px; }
+  .boards a:hover { background: var(--face-3); }
+  .boards b { font: 500 14px/18px var(--font-ui); }
+  .boards i { font: 400 12px/17px var(--font-ui); color: var(--ink-2); font-style: normal; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; }
+  .li { font: 400 14px/22px var(--font-ui); color: var(--ink-2); padding: 10px 0; border-top: 1px solid var(--hairline); }
+  .li b { color: var(--ink); font-weight: 500; }
+  .li code { font: 400 12.5px/1 var(--font-mono); color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="kicker">SOLA · OATH · 2026-11-02</div>
+<h1 class="big">Every package, and everywhere it differs</h1>
+<div class="intro" id="intro"></div>
+<div class="block"><div class="label">Read from novus tonight</div><div class="facts" id="facts"></div></div>
+<div class="block"><div class="label">Six standings, one mark each</div><div class="standings" id="standings"></div></div>
+<div class="block"><div class="label">On this canvas</div><div class="boards">
+  <a href="#" data-design-to="packages" data-design-label="the list"><b>Packages</b><i>The opening view: a sentence, then the list. Differences first, everything else folded by family.</i></a>
+  <a href="#" data-design-to="strata" data-design-label="the map"><b>Map</b><i>Strata for the shape of all 172, Weight for what they take on disk. Click a package and its whole tree lights.</i></a>
+  <a href="#" data-design-to="flow" data-design-label="the tree"><b>Tree</b><i>Up and down from one package: what uses it on the left, what it needs on the right.</i></a>
+  <a href="#" data-design-to="sheet-sola" data-design-label="one package"><b>One package</b><i>A verdict, then where it stands, then whatever detail you open: security, versions, provenance.</i></a>
+</div></div>
+<div class="block two">
+  <div><div class="label">Real and invented</div>
+    <div class="li"><b>Real:</b> names, needs, versions, hashes, programs, services, sizes, overlays and their commits, the newest release's pins for the 15 Sola packages, and upstream versions from the audit.</div>
+    <div class="li"><b>Invented, and tagged <i class="smp">sample</i> on the page:</b> the unpushed <code>sola-browser</code>, updates to <code>openssl</code>, <code>curl</code> and <code>git</code>, all advisories, and <code>ffmpeg</code> and <code>gimp</code> on the origin.</div>
+    <div class="li"><b>Assumed:</b> outside those, the newest release leaves every package as it is. I have not read what it would change.</div>
+  </div>
+  <div><div class="label">What the app cannot read yet</div>
+    <div class="li"><b>Is it pushed?</b> Oath records repo, commit, branch and dirty, but not whether origin has the commit. The app has to ask git.</div>
+    <div class="li"><b>What would an update change?</b> That is the preview from <code>oath update</code>, whose output this comp has not seen.</div>
+    <div class="li"><b>What is on the origin but not here?</b> It needs a listing of the store, and I do not know that one exists.</div>
+    <div class="li"><b>Security.</b> The advisory file has id, url and summary, not severity or a fixed version, and a local build has no file at all.</div>
+    <div class="li"><b>Upstream.</b> The audit knows, but its report stays on buccina. Oath has been asked to publish it.</div>
+    <div class="li"><b>Sizes.</b> Tonight's read used <code>du</code>. They are not in the catalog.</div>
+  </div>
+</div>
+<script src="catalog.js"></script>
+<script>
+(() => {
+  const P = Object.values(CATALOG.pkgs);
+  const sum = f => P.reduce((a, p) => a + f(p), 0);
+  const gb = b => (b / 1e9).toFixed(1) + ' GB';
+  const edges = sum(p => p.needs.length);
+  const used = new Set(P.flatMap(p => p.needs));
+  const alone = P.filter(p => !p.needs.length && !used.has(p.n)).length;
+  const dep = {}; const depth = n => dep[n] ??= CATALOG.pkgs[n].needs.length ? 1 + Math.max(...CATALOG.pkgs[n].needs.map(depth)) : 0;
+  const tallest = Math.max(...P.map(p => depth(p.n)));
+  const overlays = P.filter(p => p.overlay).length;
+  const sola = CATALOG.pkgs.sola;
+  const empty = P.filter(p => Array.isArray(p.adv)).length;
+  document.getElementById('intro').innerHTML = `A package lives in several places at once: this machine, the release it is on, the newest release, the commit it was built from. <b>Almost all of them agree almost all of the time.</b> So agreement is drawn as quiet grey, and what you see is where they differ. The list, the map and the tree are three ways of looking, with the same marks, and one package in your hand the whole time. This first version only looks: it changes nothing, and other machines come later.`;
+  document.getElementById('facts').innerHTML = [
+    `<b>${P.length} packages and ${edges} needs between them.</b> ${alone} stand alone. The tallest stack is <b>${tallest} levels</b>, with the compositor, rivulet, on top.`,
+    `<b>${overlays} local builds on novus</b>, all from master@${sola.src.commit}, all on origin.`,
+    `<b>${gb(sum(p => p.store))} on disk, ${gb(sum(p => p.on ? p.sz : 0))} in use.</b> <code style="font:400 14px var(--font-mono)">sola</code> alone keeps ${sola.nvers} versions and ${gb(sola.store)}.`,
+    `<b>${P.length - empty} packages have never had an advisory check.</b> The other ${empty} have empty lists. Knowing of nothing is not the same as nothing being wrong.`,
+    `<b>Moving <code style="font:400 14px var(--font-mono)">pkg:sola</code> restarts ${sola.svc.length} services</b>, the desk among them. The app can say that before you do it.`,
+    `<b>${P.filter(p => p.up).length} packages are behind upstream</b>, by buccina's audit of ${CATALOG.audit.at}. That is not the same as a newer release: until Oath takes the new version, no machine can.`,
+  ].map(t => `<div class="fact">${t}</div>`).join('');
+  document.getElementById('standings').innerHTML = [
+    ['current', 'Current', 'The release\'s build, and no newer release is out. No color.'],
+    ['update', 'Update', 'A newer release pins something else.'],
+    ['local', 'Local build', 'Built here and on origin. An update replaces it and nothing is lost.'],
+    ['unpushed', 'Not pushed', 'Built here and not on origin, or built from a dirty tree. An update would take the only copy off the machine.'],
+    ['off', 'Off', 'In the catalog, not linked. May still be on disk.'],
+    ['remote', 'On origin only', 'Published, and not in this machine\'s catalog.'],
+  ].map(([k, l, t]) => `<div class="sg"><span class="mk mk--${k}"></span><b>${l}</b><span class="t">${t}</span></div>`).join('')
+    + `<div class="sg" style="grid-column:1/-1"><span class="mk mk--adv"></span><b>Advisory</b><span class="t">Security sits on top of any standing: a current package can have one too. Red appears nowhere else.</span></div>`;
+})();
+</script>
+</body>
+</html>

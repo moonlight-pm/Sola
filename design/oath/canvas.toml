@@ -1,0 +1,179 @@
+title = "Oath"
+
+# Oath from the ground up: the package ecosystem, on this machine, for looking only. app.html is one working comp
+# over a snapshot of the real catalog (catalog.js), with invented states laid
+# on top and tagged (samples.js); each board opens it in a different state.
+# Window boards are 2420 wide: Oath in a half tile on a 5120 x 2160 screen.
+
+[[artboard]]
+id = "cover"
+src = "cover.html"
+x = 0
+y = 0
+width = 1440
+height = "auto"
+title = "Oath / The idea"
+
+[[artboard]]
+id = "packages"
+src = "app.html?view=list&pkg=sola&fams=GPU"
+x = 1640
+y = 0
+width = 2420
+height = "auto"
+title = "Oath / Packages"
+
+[[artboard]]
+id = "strata"
+src = "app.html?view=map&take=strata&pkg=none"
+x = 0
+y = 2500
+width = 2420
+height = 2102
+title = "Map / Strata"
+
+[[artboard]]
+id = "strata-lit"
+src = "app.html?view=map&take=strata&pkg=mesa"
+x = 2620
+y = 2500
+width = 2420
+height = 2102
+title = "Map / Strata, one package lit"
+
+[[artboard]]
+id = "weight"
+src = "app.html?view=map&take=weight&pkg=none"
+x = 5240
+y = 2500
+width = 2420
+height = 2102
+title = "Map / Weight"
+
+[[artboard]]
+id = "flow"
+src = "app.html?view=tree&bare=1&take=flow&pkg=mesa"
+x = 0
+y = 4900
+width = 1500
+height = "auto"
+title = "Tree / Flow"
+
+[[artboard]]
+id = "sheet-sola"
+src = "app.html?sheet=1&pkg=sola&open=where,tree,restarts,versions,source"
+x = 4260
+y = 0
+width = 760
+height = "auto"
+title = "Sheet / A local build"
+
+[[artboard]]
+id = "sheet-browser"
+src = "app.html?sheet=1&pkg=sola-browser&open=where,source"
+x = 5100
+y = 0
+width = 760
+height = "auto"
+title = "Sheet / Not pushed"
+
+[[artboard]]
+id = "sheet-openssl"
+src = "app.html?sheet=1&pkg=openssl&open=where,security,tree"
+x = 5940
+y = 0
+width = 760
+height = "auto"
+title = "Sheet / Advisories"
+
+[[artboard]]
+id = "sheet-codex"
+src = "app.html?sheet=1&pkg=codex&open=where,security"
+x = 6780
+y = 0
+width = 760
+height = "auto"
+title = "Sheet / Off"
+
+[[section]]
+title = "The window"
+boards = ["cover", "packages"]
+note = "Everything real except what wears a sample tag."
+
+[[artboard]]
+id = "behind"
+src = "app.html?view=list&filter=behind&pkg=openssl"
+x = 7740
+y = 0
+width = 2420
+height = "auto"
+title = "Oath / Behind upstream"
+
+[[section]]
+title = "One package, as far open as you want"
+boards = ["sheet-sola", "sheet-browser", "sheet-openssl", "sheet-codex"]
+note = "The verdict and where it stands first; the rest stays folded until you ask."
+
+[[section]]
+title = "The picture of the ecosystem"
+boards = ["strata", "strata-lit", "weight"]
+note = "The same packages each time. Click one and its tree stays lit; click empty space to let go."
+
+[[section]]
+title = "The tree"
+boards = ["flow"]
+note = "Left uses right. Click a package to move there; hover one to light its paths."
+
+[[section]]
+title = "Two kinds of behind"
+boards = ["behind"]
+note = "Newest is a release this machine could move to. Upstream is a version no release has taken yet."
+
+[[link]]
+from = "cover"
+to = "packages"
+
+[[link]]
+from = "packages"
+to = "sheet-sola"
+label = "the right-hand pane"
+
+[[note]]
+board = "packages"
+at = "#summary"
+text = "A sentence first. If it says nothing is wrong, you are done reading."
+
+[[note]]
+board = "packages"
+at = "#leds"
+text = "One mark per package, the same marks everywhere in the app. Current packages are grey, so anything else shows."
+
+[[note]]
+board = "packages"
+at = "#table"
+text = "Columns go quiet when they agree with novus. The hashes you can read are the ones that differ."
+
+[[note]]
+board = "behind"
+at = "#col-upstream"
+text = "Real, from buccina's audit of 2026-11-02. Today the report never leaves buccina; Oath has been asked to publish it."
+
+[[note]]
+board = "strata"
+at = "#strata-rows"
+text = "Packages keep their place between visits, so the picture can stick. Only a new need moves one."
+
+[[note]]
+board = "strata-lit"
+at = "#map-card"
+text = "Up is what uses it, in white; down is what it needs, in cyan. Everything outside the tree steps back."
+
+[[note]]
+board = "sheet-browser"
+at = "#verdict"
+text = "This state is invented; novus has no unpushed build today. Oath records repo, commit and dirty, but not whether origin has the commit, so the app must ask git."
+
+[[note]]
+board = "sheet-openssl"
+at = "#sec-security"
+text = "Severity, component and fixed-in are not in Oath's advisory file today, only id, url and summary."
