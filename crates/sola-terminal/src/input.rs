@@ -91,13 +91,15 @@ pub fn merge_modifiers(
 
 // ── MouseButton ───────────────────────────────────────────────────────────
 
-/// Terminal mouse button identity for [`encode_mouse_sgr`] / [`wheel_dispatch`].
-/// Click buttons are used by the SGR encoder (and its tests); the wheel path
-/// only constructs `WheelUp`/`WheelDown` today.
+/// Terminal mouse button identity for [`encode_mouse_sgr`] / [`left_report`] /
+/// [`wheel_dispatch`]. Only the SGR encoder's tests construct `Middle` and
+/// `Right` today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum MouseButton {
     Left,
+    /// The pointer moved with the left button held.
+    LeftDrag,
     Middle,
     Right,
     WheelUp,
@@ -817,11 +819,13 @@ pub fn encode_mouse_sgr(
 ) -> Vec<u8> {
     // SGR button code:
     //   0 = left, 1 = middle, 2 = right
+    //   32 = moved with left held
     //   64 = wheel-up, 65 = wheel-down
     // Modifier bits added on top:
     //   +4  shift, +8  alt, +16 ctrl
     let base: u8 = match button {
         MouseButton::Left => 0,
+        MouseButton::LeftDrag => 32,
         MouseButton::Middle => 1,
         MouseButton::Right => 2,
         MouseButton::WheelUp => 64,
@@ -897,7 +901,7 @@ pub fn wheel_dispatch(mode: TermMode, mods: Mods, notches: i32, col: u16, row: u
     if notches == 0 {
         return WheelAction::Scroll(0);
     }
-    if !mods.shift() && mode.intersects(TermMode::MOUSE_MODE) {
+    if reports_mouse(mode, mods) {
         let button = if notches > 0 {
             MouseButton::WheelUp
         } else {
@@ -906,20 +910,62 @@ pub fn wheel_dispatch(mode: TermMode, mods: Mods, notches: i32, col: u16, row: u
         let bytes = if mode.contains(TermMode::SGR_MOUSE) {
             encode_mouse_sgr(button, col, row, true, mods)
         } else {
-            encode_mouse_x10(button, col, row, mods)
+            encode_mouse_x10(button, col, row, true, mods)
         };
         return WheelAction::Report(bytes);
     }
     WheelAction::Scroll(notches)
 }
 
+/// Whether the mouse goes to the program in the pane: it asked for reports
+/// and Shift is not held. Shift keeps the wheel and the selection for us, as
+/// in Alacritty and xterm.
+pub fn reports_mouse(mode: TermMode, mods: Mods) -> bool {
+    !mods.shift() && mode.intersects(TermMode::MOUSE_MODE)
+}
+
+/// One step of a left-button gesture, for [`left_report`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeftStep {
+    Press,
+    Drag,
+    Release,
+}
+
+/// The report for one step of a left-button gesture, or `None` when the
+/// program did not ask for it: a drag needs mode 1002 or 1003, and with no
+/// mouse mode on (the program quit mid-gesture) the bytes would land as text
+/// in the shell. `col` and `row` are 1-based.
+pub fn left_report(mode: TermMode, step: LeftStep, mods: Mods, col: u16, row: u16) -> Option<Vec<u8>> {
+    let wanted = match step {
+        LeftStep::Drag => TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION,
+        LeftStep::Press | LeftStep::Release => TermMode::MOUSE_MODE,
+    };
+    if !mode.intersects(wanted) {
+        return None;
+    }
+    let (button, pressed) = match step {
+        LeftStep::Press => (MouseButton::Left, true),
+        LeftStep::Drag => (MouseButton::LeftDrag, true),
+        LeftStep::Release => (MouseButton::Left, false),
+    };
+    Some(if mode.contains(TermMode::SGR_MOUSE) {
+        encode_mouse_sgr(button, col, row, pressed, mods)
+    } else {
+        encode_mouse_x10(button, col, row, pressed, mods)
+    })
+}
+
 /// Encode a mouse event in the legacy X10 form `ESC [ M Cb Cx Cy`, where each
 /// trailing byte is `32 + value` (button code, then 1-based col, then row).
 /// Coordinates are clamped to the classic 223 limit. Used for apps that enabled
 /// mouse tracking without SGR (no `TermMode::SGR_MOUSE`).
-fn encode_mouse_x10(button: MouseButton, col: u16, row: u16, mods: Mods) -> Vec<u8> {
+fn encode_mouse_x10(button: MouseButton, col: u16, row: u16, pressed: bool, mods: Mods) -> Vec<u8> {
+    // A release does not say which button: 3 is "a button went up".
     let base: u8 = match button {
+        _ if !pressed => 3,
         MouseButton::Left => 0,
+        MouseButton::LeftDrag => 32,
         MouseButton::Middle => 1,
         MouseButton::Right => 2,
         MouseButton::WheelUp => 64,
@@ -1746,6 +1792,64 @@ mod tests {
         // Alt adds +8 to button code.
         let result = encode_mouse_sgr(MouseButton::Middle, 2, 3, true, Mods::ALT);
         assert_eq!(result, b"\x1b[<9;2;3M".to_vec());
+    }
+
+    // ── left_report (a left-button gesture, for the program) ──────────
+
+    #[test]
+    fn left_gesture_in_sgr() {
+        let mode = TermMode::MOUSE_DRAG | TermMode::SGR_MOUSE;
+        let report = |step| left_report(mode, step, Mods::NONE, 5, 3).unwrap();
+        assert_eq!(report(LeftStep::Press), b"\x1b[<0;5;3M");
+        assert_eq!(report(LeftStep::Drag), b"\x1b[<32;5;3M");
+        assert_eq!(report(LeftStep::Release), b"\x1b[<0;5;3m");
+    }
+
+    #[test]
+    fn left_gesture_in_x10() {
+        let mode = TermMode::MOUSE_DRAG;
+        let report = |step| left_report(mode, step, Mods::NONE, 5, 3).unwrap();
+        assert_eq!(report(LeftStep::Press), b"\x1b[M\x20\x25\x23");
+        assert_eq!(report(LeftStep::Drag), b"\x1b[M\x40\x25\x23");
+        assert_eq!(report(LeftStep::Release), b"\x1b[M\x23\x25\x23");
+    }
+
+    #[test]
+    fn left_report_carries_modifiers() {
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        let report = left_report(mode, LeftStep::Press, Mods::CTRL, 1, 1).unwrap();
+        assert_eq!(report, b"\x1b[<16;1;1M");
+    }
+
+    #[test]
+    fn click_tracking_gets_no_drag() {
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        assert!(left_report(mode, LeftStep::Press, Mods::NONE, 1, 1).is_some());
+        assert!(left_report(mode, LeftStep::Drag, Mods::NONE, 1, 1).is_none());
+        assert!(left_report(mode, LeftStep::Release, Mods::NONE, 1, 1).is_some());
+    }
+
+    #[test]
+    fn any_motion_tracking_gets_the_drag() {
+        let mode = TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE;
+        assert!(left_report(mode, LeftStep::Drag, Mods::NONE, 1, 1).is_some());
+    }
+
+    /// SGR alone is an encoding, not a request: nothing is listening.
+    #[test]
+    fn no_mouse_mode_gets_no_report() {
+        for step in [LeftStep::Press, LeftStep::Drag, LeftStep::Release] {
+            assert!(left_report(TermMode::SGR_MOUSE, step, Mods::NONE, 1, 1).is_none());
+        }
+    }
+
+    #[test]
+    fn shift_keeps_the_mouse_for_us() {
+        let mode = TermMode::MOUSE_DRAG | TermMode::SGR_MOUSE;
+        assert!(reports_mouse(mode, Mods::NONE));
+        assert!(reports_mouse(mode, Mods::CTRL));
+        assert!(!reports_mouse(mode, Mods::SHIFT));
+        assert!(!reports_mouse(TermMode::SGR_MOUSE, Mods::NONE));
     }
 
     // ── wheel_dispatch (route a wheel notch by terminal mode) ─────────

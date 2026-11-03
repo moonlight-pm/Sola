@@ -33,7 +33,7 @@ use alacritty_terminal::term::{RenderableContent, Term, TermMode};
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor, Rgb};
 
 use crate::emulator::{self, CursorSnap, Listener};
-use crate::input::{self, Mods, WheelAction};
+use crate::input::{self, LeftStep, Mods, WheelAction};
 use crate::links::{self, UrlSpan}; // UrlSpan: draw_url_underline (rate-limited pass TBD)
 use crate::perf;
 use crate::sel_follow;
@@ -514,6 +514,11 @@ pub struct TermView<'a, Message> {
     /// wheel event, so it captures the pane id rather than being a plain
     /// message like `on_scroll`.
     pub on_wheel_pty: Box<dyn Fn(Vec<u8>) -> Message + 'a>,
+    /// Builds the message that writes left-button reports to this pane's PTY,
+    /// while the program in the pane reports the mouse. `App` writes the
+    /// bytes and clears the pane's geometry cache, since a press that goes to
+    /// the program also drops our own selection.
+    pub on_mouse_pty: Box<dyn Fn(Vec<u8>) -> Message + 'a>,
     /// Builds the message that asks for the desk menu at a right-click,
     /// at the click in the window's logical pixels (`sola_kit::desk_menu`).
     /// Not while the program in the pane reports the mouse: the click is
@@ -549,6 +554,12 @@ pub struct SelState {
     /// [`LINK_DRAG_SLOP_PX`] — platforms often emit a zero/subpixel
     /// `CursorMoved` on press that must not steal the click.
     pending_press_pos: Option<Point>,
+    /// This gesture belongs to the program in the pane: it gets the press,
+    /// the drag and the release, and our selection stays out of it. Decided
+    /// at the press, so a mode change mid-gesture cannot split it.
+    reporting: bool,
+    /// The cell last reported, so a drag reports once per cell.
+    last_cell: (u16, u16),
 }
 
 /// Pixel slop before a press-on-URL becomes a drag-select instead of an open.
@@ -579,10 +590,46 @@ fn selection_type_for_click(kind: click::Kind) -> SelectionType {
     }
 }
 
+impl<Message> TermView<'_, Message> {
+    /// The grid's mode, and the 1-based cell a mouse report names for `pos`.
+    /// One lock, so the two see the same screen.
+    fn report_cell(&self, pos: Point) -> (TermMode, (u16, u16)) {
+        let term = self.term.lock();
+        let mode = *term.mode();
+        let cols = term.columns() as u16;
+        let rows = term.screen_lines() as u16;
+        drop(term);
+        let (col, row) = pixel_to_cell(pos.x, pos.y, self.metrics, cols, rows);
+        (mode, (col as u16 + 1, row as u16 + 1))
+    }
+
+    /// Write reports to the pane, keeping the pointer either way.
+    fn send_report(&self, bytes: Vec<u8>) -> canvas::Action<Message> {
+        if bytes.is_empty() {
+            return canvas::Action::capture();
+        }
+        canvas::Action::publish((self.on_mouse_pty)(bytes)).and_capture()
+    }
+
+    fn clear_selection(&self) {
+        self.term.lock().selection = None;
+        if let Ok(mut track) = self.selection_track.lock() {
+            sel_follow::uncommit(&mut track);
+        }
+    }
+}
+
 impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
     type State = SelState;
 
-    /// Mouse-driven selection + plain-click link open.
+    /// Mouse-driven selection + plain-click link open, or reports for a
+    /// program that asked for the mouse.
+    ///
+    /// While the program in the pane reports the mouse, the left button is
+    /// its own: it selects and copies by itself, and only it knows where its
+    /// lines wrapped. Shift keeps the button for us. A plain click on a link
+    /// still opens the link and the program never hears of it, so that press
+    /// is held back until the pointer moves.
     ///
     /// - Left press on a URL (single click): arm a pending open; no selection
     ///   yet. Release without movement opens the URL; movement promotes the
@@ -640,11 +687,21 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 state.pending_press_pos = None;
 
                 let (point, side) = point_at(pos);
+                let mods = Mods::from(state.modifiers);
+                let (mode, cell) = self.report_cell(pos);
+                state.reporting = input::reports_mouse(mode, mods);
+                state.last_cell = cell;
 
                 // Single-click on a URL: arm open-on-release. Double/triple
                 // still select the word/line so the URL remains copyable.
-                // Shift+click always extends selection (never opens).
-                if matches!(click.kind(), click::Kind::Single) && !state.modifiers.shift() {
+                // Shift+click always extends selection (never opens). Ctrl or
+                // Alt on a program's mouse is the program's (Claude Code opens
+                // links on Ctrl+click itself).
+                let program_chord = state.reporting && (mods.ctrl() || mods.alt());
+                if matches!(click.kind(), click::Kind::Single)
+                    && !state.modifiers.shift()
+                    && !program_chord
+                {
                     let term = self.term.lock();
                     let uri = links::url_at_point(&term, point);
                     drop(term);
@@ -658,6 +715,14 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                         // do not publish yet — nothing on screen changed.
                         return Some(canvas::Action::capture());
                     }
+                }
+
+                if state.reporting {
+                    state.dragging = true;
+                    state.moved = false;
+                    self.clear_selection();
+                    let press = input::left_report(mode, LeftStep::Press, mods, cell.0, cell.1);
+                    return Some(self.send_report(press.unwrap_or_default()));
                 }
 
                 let mut term = self.term.lock();
@@ -714,6 +779,24 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                         state.pending_origin.take().unwrap_or((point, side));
                     state.pending_url = None;
                     state.pending_press_pos = None;
+                    if state.reporting {
+                        // A drag after all: the program gets the press it was
+                        // spared, from where it happened.
+                        let mods = Mods::from(state.modifiers);
+                        let (mode, cell) = self.report_cell(pos);
+                        let (col, row) = state.last_cell;
+                        let mut bytes = input::left_report(mode, LeftStep::Press, mods, col, row)
+                            .unwrap_or_default();
+                        if cell != state.last_cell {
+                            state.last_cell = cell;
+                            bytes.extend(
+                                input::left_report(mode, LeftStep::Drag, mods, cell.0, cell.1)
+                                    .unwrap_or_default(),
+                            );
+                        }
+                        self.clear_selection();
+                        return Some(self.send_report(bytes));
+                    }
                     let mut term = self.term.lock();
                     let mut sel = Selection::new(SelectionType::Simple, origin, origin_side);
                     sel.update(point, side);
@@ -724,6 +807,17 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                     drop(term);
                     state.moved = true;
                     return Some(canvas::Action::publish(self.on_select.clone()).and_capture());
+                }
+
+                if state.reporting {
+                    let (mode, cell) = self.report_cell(pos);
+                    if cell == state.last_cell {
+                        return Some(canvas::Action::capture());
+                    }
+                    state.last_cell = cell;
+                    let mods = Mods::from(state.modifiers);
+                    let drag = input::left_report(mode, LeftStep::Drag, mods, cell.0, cell.1);
+                    return Some(self.send_report(drag.unwrap_or_default()));
                 }
 
                 let mut term = self.term.lock();
@@ -740,10 +834,20 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 state.moved = false;
                 state.pending_origin = None;
                 state.pending_press_pos = None;
+                let reporting = std::mem::take(&mut state.reporting);
                 if let Some(uri) = state.pending_url.take() {
                     // Press+release with no drag on a URL → open it.
                     // (A drag already cleared pending_url above.)
                     return Some(canvas::Action::publish((self.on_open_url)(uri)).and_capture());
+                }
+                if reporting {
+                    // The mode now, not at the press: a program that has quit
+                    // hears nothing, and the shell after it reads no bytes.
+                    let mode = *self.term.lock().mode();
+                    let mods = Mods::from(state.modifiers);
+                    let (col, row) = state.last_cell;
+                    let release = input::left_report(mode, LeftStep::Release, mods, col, row);
+                    return Some(self.send_report(release.unwrap_or_default()));
                 }
                 if was_drag {
                     // Real drag → keep the installed selection for copy.
@@ -755,12 +859,7 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                     Some(canvas::Action::capture())
                 } else {
                     // Plain click, no movement → clear any selection.
-                    let mut term = self.term.lock();
-                    term.selection = None;
-                    drop(term);
-                    if let Ok(mut track) = self.selection_track.lock() {
-                        sel_follow::uncommit(&mut track);
-                    }
+                    self.clear_selection();
                     Some(canvas::Action::publish(self.on_select.clone()).and_capture())
                 }
             }
@@ -786,21 +885,14 @@ impl<Message: Clone> canvas::Program<Message> for TermView<'_, Message> {
                 if notches == 0 {
                     return None;
                 }
-                // Snapshot the mode + grid size under one lock so classification
-                // and the report's cell position see a consistent screen.
-                let term = self.term.lock();
-                let mode = *term.mode();
-                let cols = term.columns() as u16;
-                let rows = term.screen_lines() as u16;
-                drop(term);
-                let (col0, row0) = pixel_to_cell(pos.x, pos.y, self.metrics, cols, rows);
+                let (mode, (col, row)) = self.report_cell(pos);
                 let mods = Mods::from(state.modifiers);
 
                 // Positive `notches` scrolls up into history. Mouse tracking
                 // takes one report. Otherwise, including the alternate
                 // screen, we scroll our own scrollback. Shift forces that
                 // local scroll while the app is tracking the mouse.
-                match input::wheel_dispatch(mode, mods, notches, col0 as u16 + 1, row0 as u16 + 1) {
+                match input::wheel_dispatch(mode, mods, notches, col, row) {
                     WheelAction::Report(bytes) => {
                         // The app is tracking the mouse (Grok). Do not touch
                         // our scrollback.
@@ -1545,5 +1637,240 @@ mod tests {
         assert!((p.selection.a - SELECTION_WASH_ALPHA).abs() < 1e-6);
         // Neon cyan, not a darkened mix (g and b both well above r).
         assert!(p.selection.g > p.selection.r && p.selection.b > p.selection.r);
+    }
+
+    // ── the left button, through the real `update` ────────────────────
+
+    use crate::emulator::{Emulator, Listener};
+    use std::sync::mpsc;
+
+    /// Program asks for button + drag tracking in SGR, then prints a link at
+    /// columns 4 through 24 of the top row.
+    const REPORTS_DRAGS: &[u8] = b"\x1b[?1002h\x1b[?1006hsee https://example.com/x here";
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum Out {
+        Selected,
+        Open(String),
+        Pty(Vec<u8>),
+        Other,
+    }
+
+    struct Pane {
+        emulator: Emulator,
+        cache: canvas::Cache,
+        palette: Palette,
+        state: SelState,
+    }
+
+    impl Pane {
+        fn new(bytes: &[u8]) -> Self {
+            let (ptx, _) = mpsc::channel::<(String, Vec<u8>)>();
+            let (ntx, _) = mpsc::channel::<String>();
+            let (ttx, _) = mpsc::channel::<(String, String)>();
+            let mut emulator = Emulator::new(80, 24, Listener::new("t".into(), ptx, ntx, ttx));
+            emulator.advance(bytes);
+            Self {
+                emulator,
+                cache: canvas::Cache::new(),
+                palette: Palette::default(),
+                state: SelState::default(),
+            }
+        }
+
+        fn update(&mut self, event: Event, at: Point) -> Option<Out> {
+            let view = TermView {
+                term: self.emulator.term(),
+                cursor_snap: self.emulator.cursor_snap(),
+                selection_track: self.emulator.selection_track(),
+                cache: &self.cache,
+                palette: &self.palette,
+                metrics: CellMetrics::default(),
+                cursor_on: true,
+                active: true,
+                on_select: Out::Selected,
+                on_scroll: Out::Other,
+                on_open_url: Box::new(Out::Open),
+                on_wheel_pty: Box::new(|_| Out::Other),
+                on_mouse_pty: Box::new(Out::Pty),
+                on_desk_menu: Box::new(|_| Out::Other),
+            };
+            let bounds = Rectangle::new(Point::ORIGIN, Size::new(2000.0, 2000.0));
+            let cursor = mouse::Cursor::Available(at);
+            let action = canvas::Program::update(&view, &mut self.state, &event, bounds, cursor);
+            action.and_then(|action| action.into_inner().0)
+        }
+
+        fn press(&mut self, col: usize, row: usize) -> Option<Out> {
+            let press = mouse::Event::ButtonPressed(mouse::Button::Left);
+            self.update(Event::Mouse(press), cell(col, row))
+        }
+
+        fn drag(&mut self, col: usize, row: usize) -> Option<Out> {
+            self.drag_px(cell(col, row))
+        }
+
+        fn drag_px(&mut self, position: Point) -> Option<Out> {
+            let moved = mouse::Event::CursorMoved { position };
+            self.update(Event::Mouse(moved), position)
+        }
+
+        fn release(&mut self, col: usize, row: usize) -> Option<Out> {
+            let release = mouse::Event::ButtonReleased(mouse::Button::Left);
+            self.update(Event::Mouse(release), cell(col, row))
+        }
+
+        fn hold(&mut self, mods: keyboard::Modifiers) {
+            let changed = keyboard::Event::ModifiersChanged(mods);
+            self.update(Event::Keyboard(changed), Point::ORIGIN);
+        }
+
+        fn selection(&self) -> Option<String> {
+            self.emulator.term().lock().selection_to_string()
+        }
+    }
+
+    /// The middle of a cell. A selection pressed here starts from the cell's
+    /// right half, so it leaves that cell out: `see` from column 0 reads `ee`.
+    fn cell(col: usize, row: usize) -> Point {
+        let m = CellMetrics::default();
+        Point::new(
+            PAD + (col as f32 + 0.5) * m.cell_w,
+            PAD + (row as f32 + 0.5) * m.cell_h,
+        )
+    }
+
+    fn pty(bytes: &[u8]) -> Option<Out> {
+        Some(Out::Pty(bytes.to_vec()))
+    }
+
+    #[test]
+    fn a_drag_goes_to_the_program() {
+        let mut pane = Pane::new(REPORTS_DRAGS);
+        assert_eq!(pane.press(10, 2), pty(b"\x1b[<0;11;3M"));
+        assert_eq!(pane.drag(10, 2), None, "still the pressed cell");
+        assert_eq!(pane.drag(12, 2), pty(b"\x1b[<32;13;3M"));
+        assert_eq!(pane.drag(12, 2), None, "one report per cell");
+        assert_eq!(pane.drag(0, 4), pty(b"\x1b[<32;1;5M"));
+        assert_eq!(pane.release(0, 4), pty(b"\x1b[<0;1;5m"));
+        assert_eq!(pane.selection(), None, "the program selected, not us");
+    }
+
+    #[test]
+    fn a_drag_past_the_edge_reports_the_edge_cell() {
+        let mut pane = Pane::new(REPORTS_DRAGS);
+        pane.press(10, 2);
+        assert_eq!(
+            pane.drag_px(Point::new(5000.0, 5000.0)),
+            pty(b"\x1b[<32;80;24M")
+        );
+        assert_eq!(pane.release(79, 23), pty(b"\x1b[<0;80;24m"));
+    }
+
+    #[test]
+    fn click_tracking_hears_the_click_but_no_drag() {
+        let mut pane = Pane::new(b"\x1b[?1000h\x1b[?1006h");
+        assert_eq!(pane.press(3, 1), pty(b"\x1b[<0;4;2M"));
+        assert_eq!(pane.drag(9, 1), None);
+        assert_eq!(pane.release(9, 1), pty(b"\x1b[<0;10;2m"));
+    }
+
+    #[test]
+    fn plain_click_on_a_link_opens_it_and_the_program_hears_nothing() {
+        let mut pane = Pane::new(REPORTS_DRAGS);
+        assert_eq!(pane.press(6, 0), None);
+        assert_eq!(
+            pane.release(6, 0),
+            Some(Out::Open("https://example.com/x".into()))
+        );
+    }
+
+    #[test]
+    fn a_shaky_click_on_a_link_still_opens_it() {
+        let mut pane = Pane::new(REPORTS_DRAGS);
+        pane.press(6, 0);
+        let at = cell(6, 0);
+        assert_eq!(pane.drag_px(Point::new(at.x + 1.0, at.y)), None);
+        assert_eq!(
+            pane.release(6, 0),
+            Some(Out::Open("https://example.com/x".into()))
+        );
+    }
+
+    /// The case that started this: dragging over a URL to copy it.
+    #[test]
+    fn a_drag_from_a_link_gives_the_program_its_press() {
+        let mut pane = Pane::new(REPORTS_DRAGS);
+        assert_eq!(pane.press(6, 0), None);
+        assert_eq!(pane.drag(20, 0), pty(b"\x1b[<0;7;1M\x1b[<32;21;1M"));
+        assert_eq!(pane.drag(21, 0), pty(b"\x1b[<32;22;1M"));
+        assert_eq!(pane.release(21, 0), pty(b"\x1b[<0;22;1m"));
+    }
+
+    #[test]
+    fn ctrl_click_on_a_link_is_the_programs() {
+        let mut pane = Pane::new(REPORTS_DRAGS);
+        pane.hold(keyboard::Modifiers::CTRL);
+        assert_eq!(pane.press(6, 0), pty(b"\x1b[<16;7;1M"));
+        assert_eq!(pane.release(6, 0), pty(b"\x1b[<16;7;1m"));
+    }
+
+    #[test]
+    fn shift_drag_selects_for_us() {
+        let mut pane = Pane::new(REPORTS_DRAGS);
+        pane.hold(keyboard::Modifiers::SHIFT);
+        assert_eq!(pane.press(0, 0), Some(Out::Selected));
+        assert_eq!(pane.drag(2, 0), Some(Out::Selected));
+        assert_eq!(pane.release(2, 0), None);
+        assert_eq!(pane.selection().as_deref(), Some("ee"));
+    }
+
+    #[test]
+    fn a_press_for_the_program_drops_our_selection() {
+        let mut pane = Pane::new(REPORTS_DRAGS);
+        pane.hold(keyboard::Modifiers::SHIFT);
+        pane.press(0, 0);
+        pane.drag(2, 0);
+        pane.release(2, 0);
+        assert!(pane.selection().is_some());
+        pane.hold(keyboard::Modifiers::empty());
+        assert_eq!(pane.press(40, 5), pty(b"\x1b[<0;41;6M"));
+        assert_eq!(pane.selection(), None);
+    }
+
+    /// A release after the program quit would be typed into the shell.
+    #[test]
+    fn a_program_that_quit_mid_drag_hears_nothing_more() {
+        let mut pane = Pane::new(REPORTS_DRAGS);
+        pane.press(10, 2);
+        pane.emulator.advance(b"\x1b[?1002l\x1b[?1006l");
+        assert_eq!(pane.drag(12, 2), None);
+        assert_eq!(pane.release(12, 2), None);
+        assert_eq!(pane.selection(), None);
+    }
+
+    #[test]
+    fn a_mouse_request_mid_drag_leaves_our_selection_ours() {
+        let mut pane = Pane::new(b"see https://example.com/x here");
+        pane.press(0, 0);
+        pane.emulator.advance(b"\x1b[?1002h\x1b[?1006h");
+        assert_eq!(pane.drag(2, 0), Some(Out::Selected));
+        assert_eq!(pane.release(2, 0), None);
+        assert_eq!(pane.selection().as_deref(), Some("ee"));
+    }
+
+    #[test]
+    fn without_mouse_reports_the_button_is_still_ours() {
+        let mut pane = Pane::new(b"see https://example.com/x here");
+        assert_eq!(pane.press(0, 0), Some(Out::Selected));
+        assert_eq!(pane.drag(2, 0), Some(Out::Selected));
+        assert_eq!(pane.release(2, 0), None);
+        assert_eq!(pane.selection().as_deref(), Some("ee"));
+
+        assert_eq!(pane.press(6, 0), None);
+        assert_eq!(
+            pane.release(6, 0),
+            Some(Out::Open("https://example.com/x".into()))
+        );
     }
 }

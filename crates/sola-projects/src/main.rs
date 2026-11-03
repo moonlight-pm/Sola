@@ -271,6 +271,8 @@ enum Msg {
     Scrolled(String),
     OpenUrl(String),
     WheelToPty(String, Vec<u8>),
+    /// Left-button reports for the program in a pane.
+    MouseToPty(String, Vec<u8>),
     Pasted(Option<String>),
     /// A right-click on a pane (its id, the point in its window): the desk
     /// menu.
@@ -928,6 +930,13 @@ impl App {
                 }
                 Task::none()
             }
+            Msg::MouseToPty(id, bytes) => {
+                if let Some(rt) = self.runtimes.get(&id) {
+                    rt.backend.write(&bytes);
+                    rt.cache.clear();
+                }
+                Task::none()
+            }
             Msg::Pasted(text) => self.on_pasted(text),
             Msg::DeskMenu(pane, at) => {
                 if let Some(rt) = self.runtimes.get(&pane) {
@@ -1343,6 +1352,10 @@ impl App {
                     on_wheel_pty: Box::new({
                         let pid = pane_id.to_string();
                         move |bytes| Msg::WheelToPty(pid.clone(), bytes)
+                    }),
+                    on_mouse_pty: Box::new({
+                        let pid = pane_id.to_string();
+                        move |bytes| Msg::MouseToPty(pid.clone(), bytes)
                     }),
                     on_desk_menu: Box::new({
                         let pid = pane_id.to_string();

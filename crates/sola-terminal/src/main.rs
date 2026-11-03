@@ -221,6 +221,8 @@ enum Msg {
     /// emitted when a mouse-tracking app owns the wheel. Accumulated and
     /// rate-limited before enqueue on the write queue.
     WheelToPty(String, Vec<u8>),
+    /// Left-button reports for the program in a pane.
+    MouseToPty(String, Vec<u8>),
     /// Drain a pane's wheel accumulator (scheduled after a throttle gap).
     FlushWheel(String),
     Pasted(Option<String>),
@@ -452,6 +454,13 @@ impl App {
                 Task::none()
             }
             Msg::WheelToPty(pane, bytes) => self.on_wheel_to_pty(pane, bytes),
+            Msg::MouseToPty(pane, bytes) => {
+                if let Some(rt) = self.tabs.pane_runtime(&pane) {
+                    rt.backend.write(&bytes);
+                }
+                self.tabs.clear_pane_cache(&pane);
+                Task::none()
+            }
             Msg::FlushWheel(pane) => self.flush_wheel(&pane),
             Msg::Pasted(text) => self.on_pasted(text),
             Msg::DeskMenu(pane, at) => {
@@ -669,6 +678,10 @@ impl App {
                     on_wheel_pty: Box::new({
                         let pid = pane_id.to_string();
                         move |bytes| Msg::WheelToPty(pid.clone(), bytes)
+                    }),
+                    on_mouse_pty: Box::new({
+                        let pid = pane_id.to_string();
+                        move |bytes| Msg::MouseToPty(pid.clone(), bytes)
                     }),
                     on_desk_menu: Box::new({
                         let pid = pane_id.to_string();

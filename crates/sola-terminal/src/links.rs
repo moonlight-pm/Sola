@@ -4,7 +4,8 @@
 //! honours OSC 8 hyperlinks when a cell carries one). Visible links are always
 //! underlined; a plain left-click (press + release with no drag) opens the
 //! link in **sola-browser**. Dragging still starts a text
-//! selection, including when the press begins on a URL.
+//! selection, including when the press begins on a URL; while the program in
+//! the pane reports the mouse, that drag is the program's (see `term_view`).
 //!
 //! Super/⌘ is not used here (plain left-click). Opening uses
 //! [`sola_kit::open`]: the app Sola keeps for the link's scheme (the
