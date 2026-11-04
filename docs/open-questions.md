@@ -237,9 +237,12 @@ canto today?
 **Seen on novus, 2026-11-04:** with a Google account restored from before the
 rebuild, every sync stops at refresh with 400 "Could not determine client ID
 from request". The account's client ID is in its store, but refresh reads only
-the environment. The client's secret is nowhere in the old home; it was likely
-built into the old binary. A refresh token is tied to its client, so a new
-client means signing in again.
+the environment. The client's secret is nowhere in the old home, and that home's
+last release build of Calendar (2026-10-26) holds neither ID nor secret. The
+restored store's token expiry and event range (2026-08-01 to 10-31) put the
+last Google sync at 2026-09-08, the day of sign-in: Google stopped refreshing
+long before the rebuild. A refresh token is tied to its client, so a new
+client means signing in again; this one may have expired anyway.
 
 **Related:** `calendar` capability.
 
