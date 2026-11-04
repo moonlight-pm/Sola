@@ -50,14 +50,24 @@ impl Default for CalendarState {
 
 impl CalendarState {
     pub fn sync_from_canonical(&mut self, cfg: &CalendarConfig) {
-        self.last_canonical = cfg.clone();
+        let before = std::mem::replace(&mut self.last_canonical, cfg.clone());
         match &self.detail {
             Detail::Edit { id, .. } => {
                 if let Some(acc) = cfg.accounts.iter().find(|a| a.id == *id) {
-                    self.detail = Detail::Edit {
-                        id: acc.id.clone(),
-                        draft: Draft::from_account(acc),
-                    };
+                    // Calendar republishes an account when its token refreshes;
+                    // what is being typed stays unless the form's fields moved.
+                    let draft = Draft::from_account(acc);
+                    let same = before
+                        .accounts
+                        .iter()
+                        .find(|a| a.id == *id)
+                        .is_some_and(|a| Draft::from_account(a) == draft);
+                    if !same {
+                        self.detail = Detail::Edit {
+                            id: acc.id.clone(),
+                            draft,
+                        };
+                    }
                 } else {
                     self.detail = Detail::Closed;
                 }
@@ -81,7 +91,7 @@ pub enum Detail {
     Calendar { id: String, alias: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Draft {
     pub kind: CalendarAccountKind,
     pub label: String,
@@ -214,7 +224,6 @@ pub fn update(msg: CalMsg, cfg: &mut CalendarConfig, ui: &mut CalendarState) -> 
         CalMsg::SignInGoogle => {
             let client_id = google_calendar_client_id();
             cfg.google_client_id = client_id.clone();
-            emit_accounts_only(cfg);
             ui.signing_in = true;
             ui.error = None;
             ui.status = Some("Waiting for Google sign-in…".into());
@@ -286,7 +295,7 @@ pub fn update(msg: CalMsg, cfg: &mut CalendarConfig, ui: &mut CalendarState) -> 
                     ui.last_canonical = cfg.clone();
                     ui.status = Some(format!("Connected {email}"));
                     ui.error = None;
-                    emit_accounts_only(cfg);
+                    emit_accounts(cfg);
                 }
                 Err(e) => {
                     ui.error = Some(e);
@@ -300,7 +309,7 @@ pub fn update(msg: CalMsg, cfg: &mut CalendarConfig, ui: &mut CalendarState) -> 
                 ui.detail = Detail::Closed;
                 ui.last_canonical = cfg.clone();
                 ui.status = Some("Disconnected".into());
-                emit_accounts_only(cfg);
+                emit_accounts(cfg);
             }
         }
         CalMsg::Close => {
@@ -546,7 +555,7 @@ fn publish(cfg: &mut CalendarConfig, ui: &mut CalendarState, status: &str) {
     ui.last_canonical = cfg.clone();
     ui.error = None;
     ui.status = Some(status.into());
-    emit_accounts_only(cfg);
+    emit_accounts(cfg);
 }
 
 fn publish_shelf(cfg: &mut CalendarConfig, ui: &mut CalendarState, status: &str) {
@@ -572,10 +581,32 @@ fn write_calendar_draft(cfg: &mut CalendarConfig, ui: &CalendarState) {
     }
 }
 
-fn emit_accounts_only(cfg: &mut CalendarConfig) {
-    let calendars = std::mem::take(&mut cfg.calendars);
-    emit(Topic::CalendarConfig(cfg.clone()));
-    cfg.calendars = calendars;
+fn emit_accounts(cfg: &CalendarConfig) {
+    emit(Topic::CalendarConfig(accounts_config(cfg)));
+}
+
+/// The whole config, because the bus keeps only the last one. With no accounts
+/// left the shelf goes too: that pair tells Calendar all were disconnected.
+fn accounts_config(cfg: &CalendarConfig) -> CalendarConfig {
+    let mut out = cfg.clone();
+    if out.accounts.is_empty() {
+        out.calendars.clear();
+    }
+    out
+}
+
+/// Fold a `CalendarConfig` into what Settings knows. The bus can still hold
+/// half a one from before Calendar and Settings published whole configs: no
+/// shelf keeps the last shelf, and no accounts beside a shelf keeps the last
+/// accounts.
+pub fn merge_config(dst: &mut CalendarConfig, mut src: CalendarConfig) {
+    if src.calendars.is_empty() && !dst.calendars.is_empty() {
+        src.calendars = dst.calendars.clone();
+    }
+    if src.accounts.is_empty() && !src.calendars.is_empty() && !dst.accounts.is_empty() {
+        src.accounts = dst.accounts.clone();
+    }
+    *dst = src;
 }
 
 fn calendar_detail_id(ui: &CalendarState) -> Option<String> {
@@ -1075,4 +1106,109 @@ pub fn set_focused_value(ui: &mut CalendarState, id: &iced::widget::Id, value: &
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn account(id: &str, token: &str) -> CalendarAccount {
+        CalendarAccount {
+            id: id.into(),
+            kind: CalendarAccountKind::Google,
+            label: id.into(),
+            access_token: Some(Encrypted(token.into())),
+            ..CalendarAccount::default()
+        }
+    }
+
+    fn shelf(id: &str) -> CalendarShelf {
+        CalendarShelf {
+            id: id.into(),
+            name: id.into(),
+            alias: None,
+            color: "#000000".into(),
+            color_override: None,
+            hidden: false,
+            visible: true,
+            kind: "google".into(),
+        }
+    }
+
+    fn whole(accounts: Vec<CalendarAccount>) -> CalendarConfig {
+        CalendarConfig {
+            accounts,
+            calendars: vec![shelf("local")],
+            ..CalendarConfig::default()
+        }
+    }
+
+    #[test]
+    fn a_new_settings_learns_accounts_from_what_calendar_published() {
+        let mut settings = CalendarConfig::default();
+        merge_config(&mut settings, whole(vec![account("a", "t")]));
+        assert_eq!(settings.accounts.len(), 1);
+        assert_eq!(settings.calendars.len(), 1);
+    }
+
+    #[test]
+    fn half_a_config_keeps_the_other_half() {
+        let mut settings = whole(vec![account("a", "t")]);
+        let shelf_only = CalendarConfig {
+            calendars: vec![shelf("local"), shelf("b")],
+            ..CalendarConfig::default()
+        };
+        merge_config(&mut settings, shelf_only);
+        assert_eq!(settings.accounts.len(), 1);
+        assert_eq!(settings.calendars.len(), 2);
+
+        let accounts_only = CalendarConfig {
+            accounts: vec![account("a", "t"), account("b", "t")],
+            ..CalendarConfig::default()
+        };
+        merge_config(&mut settings, accounts_only);
+        assert_eq!(settings.accounts.len(), 2);
+        assert_eq!(settings.calendars.len(), 2);
+    }
+
+    #[test]
+    fn an_account_change_publishes_the_shelf_with_it() {
+        let cfg = whole(vec![account("a", "t")]);
+        let out = accounts_config(&cfg);
+        assert_eq!(out.accounts.len(), 1);
+        assert_eq!(out.calendars.len(), 1);
+    }
+
+    #[test]
+    fn removing_the_last_account_publishes_disconnect_all() {
+        let out = accounts_config(&whole(Vec::new()));
+        assert!(out.accounts.is_empty());
+        assert!(out.calendars.is_empty());
+    }
+
+    #[test]
+    fn a_token_refresh_leaves_what_is_being_typed() {
+        let mut ui = CalendarState::default();
+        ui.sync_from_canonical(&whole(vec![account("a", "old")]));
+        let mut draft = Draft::from_account(&account("a", "old"));
+        draft.label = "typing".into();
+        ui.detail = Detail::Edit {
+            id: "a".into(),
+            draft,
+        };
+
+        ui.sync_from_canonical(&whole(vec![account("a", "new")]));
+        let Detail::Edit { draft, .. } = &ui.detail else {
+            panic!("the form closed");
+        };
+        assert_eq!(draft.label, "typing");
+
+        let mut renamed = account("a", "new");
+        renamed.label = "elsewhere".into();
+        ui.sync_from_canonical(&whole(vec![renamed]));
+        let Detail::Edit { draft, .. } = &ui.detail else {
+            panic!("the form closed");
+        };
+        assert_eq!(draft.label, "elsewhere");
+    }
 }

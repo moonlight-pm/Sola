@@ -19,8 +19,7 @@ use iced::{
 };
 use sola_bus::Message;
 use sola_bus::topics::{
-    AppNotification, CalendarConfig, CalendarShelf, NOTIFICATION_PERSIST_PREFIX,
-    SplitDir, Topic, google_calendar_client_id,
+    AppNotification, CalendarConfig, NOTIFICATION_PERSIST_PREFIX, SplitDir, Topic,
 };
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::components::color_picker;
@@ -43,7 +42,7 @@ use sola_kit::theme::{color_to_hex, default_theme};
 mod board;
 
 use crate::bridge;
-use crate::model::{CalEvent, Calendar, Settings, Store, View, format_hm, parse_hex};
+use crate::model::{Account, CalEvent, Calendar, Settings, Store, View, format_hm, parse_hex};
 use crate::paths::AppDirs;
 use crate::reminders::{self, ReminderBook};
 use crate::timeutil::{
@@ -80,15 +79,17 @@ pub struct App {
     toast: Option<String>,
     toast_gen: u64,
     cal_picker_open: bool,
-    got_config: bool,
     renaming: Option<(String, String)>,
     color_picker: Option<(String, ColorPicker)>,
     dragging_sidebar: bool,
     dragging_inspector: bool,
     window_w: f32,
-    /// Last calendar-shelf fingerprint we published. Stops Snapshot from
-    /// re-emitting (and re-applying) the same `CalendarConfig`.
-    last_shelf_fp: Option<String>,
+    /// The bus has replayed what it held and the worker has applied it.
+    /// From here `CalendarConfig` from us is ours: publish, ignore the echo.
+    replayed: bool,
+    /// Accounts and shelf fingerprint of our last `CalendarConfig`. Stops
+    /// Snapshot from publishing the same one again.
+    published: Option<(Vec<Account>, String)>,
     reminders: ReminderBook,
     /// New-event reminders, held until the provider returns the saved id.
     pending_remind: Option<PendingRemind>,
@@ -179,7 +180,6 @@ pub enum Msg {
     DismissToast { generation: u64 },
     KeyPressed(keyboard::Key, keyboard::key::Physical, keyboard::Modifiers),
     Tick,
-    MaybeMigrate,
     SidebarPress,
     InspectorPress,
     SidebarRelease,
@@ -216,13 +216,13 @@ impl Default for App {
             toast: None,
             toast_gen: 0,
             cal_picker_open: false,
-            got_config: false,
             renaming: None,
             color_picker: None,
             dragging_sidebar: false,
             dragging_inspector: false,
             window_w: 0.0,
-            last_shelf_fp: None,
+            replayed: false,
+            published: None,
             reminders: ReminderBook::load(&AppDirs::discover().reminders_file()),
             pending_remind: None,
             loaded: false,
@@ -240,15 +240,7 @@ impl App {
         bridge::send(CalCmd::Boot);
         (
             app,
-            Task::batch([
-                sola_kit::window_ready_task(Msg::WindowReady),
-                Task::perform(
-                    async {
-                        tokio::time::sleep(Duration::from_millis(400)).await;
-                    },
-                    |_| Msg::MaybeMigrate,
-                ),
-            ]),
+            sola_kit::window_ready_task(Msg::WindowReady),
         )
     }
 
@@ -479,13 +471,6 @@ impl App {
                 Task::none()
             }
             Msg::KeyPressed(key, physical, mods) => self.on_key(key, physical, mods),
-            Msg::MaybeMigrate => {
-                if !self.got_config {
-                    self.emit_config_from_store();
-                    self.got_config = true;
-                }
-                Task::none()
-            }
             Msg::SidebarPress => {
                 self.dragging_sidebar = true;
                 Task::none()
@@ -684,66 +669,48 @@ impl App {
                 }
             }
         }
+        if matches!(Topic::parse(message), Some(Topic::Replayed)) {
+            bridge::send(CalCmd::Replayed);
+        }
         if let Some(Topic::CalendarConfig(cfg)) = Topic::parse(message) {
-            self.got_config = true;
-            // Our own shelf publish (empty accounts) is already in the store.
-            if cfg.accounts.is_empty() && !cfg.calendars.is_empty() {
-                let fp = shelf_fingerprint_from_bus(&cfg.calendars);
-                if self.last_shelf_fp.as_deref() == Some(fp.as_str()) {
-                    return Task::none();
-                }
+            // Sticky topics echo to their sender. Ours says what the store
+            // already holds, or held: applying a late one would undo what
+            // came after it. A replay of ours at the start is still applied.
+            if self.replayed && message.source == APP_ID {
+                return Task::none();
             }
             bridge::send(CalCmd::ApplyConfig(cfg));
         }
         Task::none()
     }
 
-    fn emit_config_from_store(&mut self) {
-        let accounts: Vec<_> = self
-            .store
-            .accounts
-            .iter()
-            .filter_map(crate::worker::account_to_bus)
-            .collect();
-        let calendars: Vec<_> = self
-            .store
-            .calendars
-            .iter()
-            .map(Calendar::to_shelf)
-            .collect();
-        self.last_shelf_fp = Some(shelf_fingerprint(&self.store.calendars));
-        let cfg = CalendarConfig {
-            google_client_id: google_calendar_client_id(),
-            accounts,
-            calendars,
+    /// Publish accounts and shelf together when either changed, so Settings
+    /// finds both on the bus at its start, Calendar open or not.
+    fn publish_config(&mut self) {
+        let Some(cfg) = self.next_config() else {
+            return;
         };
         if let Ok(mut bus) = sola_kit::app::bus().lock() {
             let _ = bus.emit(Topic::CalendarConfig(cfg));
         }
     }
 
-    /// Publish the calendar shelf so Settings can list hidden/alias/colour.
-    /// Accounts stay empty: Settings keeps its own account list.
-    fn maybe_emit_shelf(&mut self) {
-        let fp = shelf_fingerprint(&self.store.calendars);
-        if self.last_shelf_fp.as_deref() == Some(fp.as_str()) {
-            return;
+    /// Nothing before the bus's replay is applied: publishing the store then
+    /// would replace what Settings left there while Calendar was closed.
+    fn next_config(&mut self) -> Option<CalendarConfig> {
+        if !self.replayed {
+            return None;
         }
-        self.last_shelf_fp = Some(fp);
-        let calendars = self
-            .store
-            .calendars
-            .iter()
-            .map(Calendar::to_shelf)
-            .collect();
-        let cfg = CalendarConfig {
-            google_client_id: google_calendar_client_id(),
-            accounts: Vec::new(),
-            calendars,
-        };
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-            let _ = bus.emit(Topic::CalendarConfig(cfg));
+        let shelf = shelf_fingerprint(&self.store.calendars);
+        if let Some((accounts, last_shelf)) = &self.published {
+            if *last_shelf == shelf
+                && crate::worker::accounts_match(accounts, &self.store.accounts)
+            {
+                return None;
+            }
         }
+        self.published = Some((self.store.accounts.clone(), shelf));
+        Some(crate::worker::config_from_store(&self.store))
     }
 
     fn on_menu(&mut self, action: &str) -> Task<Msg> {
@@ -800,7 +767,7 @@ impl App {
             CalNotice::Snapshot(store) => {
                 self.store = store;
                 self.store.ensure_local();
-                self.maybe_emit_shelf();
+                self.publish_config();
                 self.deliver_due();
                 if !self.loaded {
                     self.loaded = true;
@@ -841,6 +808,10 @@ impl App {
             }
             CalNotice::Status(s) => self.status = s,
             CalNotice::Error(s) | CalNotice::Toast(s) => return self.show_toast(s),
+            CalNotice::Replayed => {
+                self.replayed = true;
+                self.publish_config();
+            }
         }
         Task::none()
     }
@@ -1882,24 +1853,6 @@ fn shelf_fingerprint(cals: &[Calendar]) -> String {
     parts.join("\u{1e}")
 }
 
-fn shelf_fingerprint_from_bus(cals: &[CalendarShelf]) -> String {
-    let mut parts: Vec<String> = cals
-        .iter()
-        .map(|c| {
-            format!(
-                "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
-                c.id,
-                c.hidden,
-                c.alias.as_deref().unwrap_or(""),
-                c.color_override.as_deref().unwrap_or(""),
-                c.name
-            )
-        })
-        .collect();
-    parts.sort();
-    parts.join("\u{1e}")
-}
-
 fn rename_color_swatch<'a>(color: Color, on_press: Msg) -> Element<'a, Msg> {
     const SIZE: f32 = 16.0;
     let ink = if (0.299 * color.r + 0.587 * color.g + 0.114 * color.b) > 0.55 {
@@ -1985,5 +1938,91 @@ fn toast_style(theme: &Theme) -> container::Style {
         background: Some(Background::Color(p.background.strong.color)),
         text_color: Some(p.background.base.text),
         ..container::Style::default()
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+    use sola_core::Encrypted;
+
+    fn account(token: &str) -> Account {
+        let mut a: Account = serde_json::from_value(serde_json::json!({
+            "id": "a",
+            "kind": "google",
+            "label": "a",
+            "app_password": null,
+            "google_client_id": "",
+            "access_token": null,
+            "refresh_token": null,
+            "expiry_unix": 0,
+            "principal_url": "",
+        }))
+        .unwrap();
+        a.access_token = Some(Encrypted(token.into()));
+        a
+    }
+
+    fn app() -> App {
+        let mut app = App::default();
+        app.store.accounts = vec![account("first")];
+        app.store.ensure_local();
+        app
+    }
+
+    #[test]
+    fn nothing_is_published_before_the_replay_is_applied() {
+        let mut app = app();
+        assert!(app.next_config().is_none());
+        app.replayed = true;
+        let cfg = app.next_config().expect("publishes once replayed");
+        assert_eq!(cfg.accounts.len(), 1, "accounts go with the shelf");
+        assert!(!cfg.calendars.is_empty(), "the shelf goes with accounts");
+    }
+
+    #[test]
+    fn publishes_again_only_when_accounts_or_shelf_moved() {
+        let mut app = app();
+        app.replayed = true;
+        assert!(app.next_config().is_some());
+        assert!(app.next_config().is_none());
+
+        app.store.accounts[0].access_token = Some(Encrypted("refreshed".into()));
+        assert!(app.next_config().is_some(), "a refreshed token");
+        assert!(app.next_config().is_none());
+
+        app.store.calendars[0].alias = Some("Renamed".into());
+        assert!(app.next_config().is_some(), "a shelf edit");
+        assert!(app.next_config().is_none());
+    }
+
+    #[test]
+    fn our_echo_is_ignored_and_a_config_from_anyone_else_applied() {
+        bridge::init_channels();
+        let cmds = bridge::take_cmd_rx();
+        let mut app = app();
+        let from = |source: &str| {
+            let mut m = Topic::CalendarConfig(CalendarConfig::default()).to_message();
+            m.source = source.into();
+            m
+        };
+        let applied = |cmds: &std::sync::mpsc::Receiver<CalCmd>| {
+            std::iter::from_fn(|| cmds.try_recv().ok())
+                .filter(|c| matches!(c, CalCmd::ApplyConfig(_)))
+                .count()
+        };
+
+        // At the start even our own is what the bus held: the store may be new.
+        let _ = app.on_bus(&from(APP_ID));
+        assert_eq!(applied(&cmds), 1);
+
+        let _ = app.on_bus(&Topic::Replayed.to_message());
+        assert!(matches!(cmds.try_recv(), Ok(CalCmd::Replayed)));
+
+        app.replayed = true;
+        let _ = app.on_bus(&from(APP_ID));
+        assert_eq!(applied(&cmds), 0);
+        let _ = app.on_bus(&from("sola-settings"));
+        assert_eq!(applied(&cmds), 1);
     }
 }

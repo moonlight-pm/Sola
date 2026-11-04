@@ -28,6 +28,9 @@ pub enum CalCmd {
     SetColor { id: String, color: String },
     SetHidden { id: String, hidden: bool },
     ApplyConfig(CalendarConfig),
+    /// The bus has replayed what it holds. Queued behind that replay's
+    /// `ApplyConfig`, so the notice it answers with means it is applied.
+    Replayed,
     SaveSettings(Settings),
     Shutdown,
 }
@@ -39,6 +42,8 @@ pub enum CalNotice {
     Status(String),
     Error(String),
     Toast(String),
+    /// What the bus held at our start is in the store: it may publish now.
+    Replayed,
     /// Provider save finished. `requested_id` is the id Calendar sent;
     /// `saved_id` is the id now in the store (Google may replace it).
     EventSaved {
@@ -147,6 +152,7 @@ async fn run() {
             CalCmd::SaveEvent(event) => save_event(&mut state, event).await,
             CalCmd::DeleteEvent(id) => delete_event(&mut state, &id).await,
             CalCmd::ApplyConfig(cfg) => apply_config(&mut state, cfg).await,
+            CalCmd::Replayed => bridge::emit(CalNotice::Replayed),
         }
     }
 }
@@ -180,7 +186,7 @@ fn ensure_default(state: &mut State) {
     bridge::emit(CalNotice::Settings(state.settings.clone()));
 }
 
-fn accounts_match(a: &[Account], b: &[Account]) -> bool {
+pub fn accounts_match(a: &[Account], b: &[Account]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -518,9 +524,10 @@ async fn apply_config(state: &mut State, cfg: CalendarConfig) {
     if shelf_changed {
         ensure_default(state);
     }
-    // Calendar publishes the shelf with empty accounts. That is not
-    // “disconnect every account”. Settings still sends accounts when it
-    // edits them; empty accounts + empty shelf is disconnect-all.
+    // Empty accounts with a shelf is not “disconnect every account”: the bus
+    // can still hold one from before Calendar published whole configs, and
+    // Settings sends one when it edits a shelf with no accounts listed. Only
+    // empty accounts + empty shelf is disconnect-all.
     if cfg.accounts.is_empty() && !cfg.calendars.is_empty() {
         if shelf_changed {
             persist(state);
@@ -644,7 +651,17 @@ fn account_from_bus(a: &CalendarAccount, google_client_id: &str) -> Account {
     }
 }
 
-pub fn account_to_bus(a: &Account) -> Option<CalendarAccount> {
+/// The whole config, as the bus should keep it: it holds only the last
+/// `CalendarConfig`, so what one leaves out is gone for the next reader.
+pub fn config_from_store(store: &Store) -> CalendarConfig {
+    CalendarConfig {
+        google_client_id: google_calendar_client_id(),
+        accounts: store.accounts.iter().filter_map(account_to_bus).collect(),
+        calendars: store.calendars.iter().map(Calendar::to_shelf).collect(),
+    }
+}
+
+fn account_to_bus(a: &Account) -> Option<CalendarAccount> {
     let kind = match a.kind {
         CalKind::Google => CalendarAccountKind::Google,
         CalKind::Apple => CalendarAccountKind::Apple,
@@ -781,4 +798,115 @@ fn disconnect(state: &mut State, account_id: &str) {
         let _ = store::save_settings(&state.dirs, &state.settings);
     }
     persist(state);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sola_bus::topics::CalendarShelf;
+
+    fn account(id: &str) -> Account {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "kind": "apple",
+            "label": id,
+            "app_password": null,
+            "google_client_id": "",
+            "access_token": null,
+            "refresh_token": null,
+            "expiry_unix": 0,
+            "principal_url": "",
+        }))
+        .unwrap()
+    }
+
+    fn calendar(id: &str, account_id: &str) -> Calendar {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": id,
+            "color": "#000000",
+            "kind": "apple",
+            "account_id": account_id,
+        }))
+        .unwrap()
+    }
+
+    /// A store of one account, one calendar and one of its events, in a
+    /// directory of its own. No secrets, so no key file is read.
+    fn state(name: &str) -> State {
+        let root = std::env::temp_dir().join(format!(
+            "sola-calendar-test-{}-{name}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut store = Store {
+            accounts: vec![account("a")],
+            calendars: vec![calendar("cal", "a")],
+            ..Store::default()
+        };
+        store.ensure_local();
+        State {
+            dirs: AppDirs {
+                config: root.join("config"),
+                state: root.join("state"),
+            },
+            store,
+            settings: Settings::default(),
+            http: reqwest::Client::new(),
+            window: default_window(),
+        }
+    }
+
+    fn apply(state: &mut State, cfg: CalendarConfig) {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(apply_config(state, cfg));
+    }
+
+    fn shelf_of(state: &State) -> Vec<CalendarShelf> {
+        state.store.calendars.iter().map(Calendar::to_shelf).collect()
+    }
+
+    #[test]
+    fn a_published_config_is_whole() {
+        let cfg = config_from_store(&state("whole").store);
+        assert_eq!(cfg.accounts.len(), 1);
+        assert_eq!(cfg.calendars.len(), 2);
+    }
+
+    #[test]
+    fn our_own_config_read_back_changes_nothing() {
+        let mut s = state("own");
+        let cfg = config_from_store(&s.store);
+        apply(&mut s, cfg);
+        assert_eq!(s.store.accounts.len(), 1);
+        assert_eq!(s.store.calendars.len(), 2);
+    }
+
+    /// What the bus holds on a machine last run before configs were whole.
+    #[test]
+    fn a_shelf_without_accounts_disconnects_nobody() {
+        let mut s = state("old-shape");
+        let mut calendars = shelf_of(&s);
+        calendars[0].alias = Some("Renamed".into());
+        apply(
+            &mut s,
+            CalendarConfig {
+                calendars,
+                ..CalendarConfig::default()
+            },
+        );
+        assert_eq!(s.store.accounts.len(), 1);
+        assert_eq!(s.store.calendars[0].alias.as_deref(), Some("Renamed"));
+    }
+
+    #[test]
+    fn no_accounts_and_no_shelf_disconnects_all() {
+        let mut s = state("disconnect-all");
+        apply(&mut s, CalendarConfig::default());
+        assert!(s.store.accounts.is_empty());
+        assert!(!s.store.calendars.iter().any(|c| c.id == "cal"));
+    }
 }

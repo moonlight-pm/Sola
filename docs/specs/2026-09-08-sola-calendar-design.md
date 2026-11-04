@@ -20,7 +20,7 @@ Ship `crates/sola-calendar`: a bog-standard kit calendar. See a month, open a da
 | Apple | iCloud CalDAV (`https://caldav.icloud.com`) with Apple ID + app-specific password |
 | URL | ICS / iCal / `webcal://` feed (GET, read-only). `webcal://` becomes `https://` |
 | CalDAV | Generic CalDAV (Fastmail, Nextcloud, …): server URL + username + password; same PROPFIND/REPORT path as iCloud |
-| Accounts | **Settings → Calendar.** Persistent `Topic::CalendarConfig` (any mix of account kinds; Google uses the shipped client; `calendars` shelf for hidden / alias / colour). Empty shelf on an accounts-only publish means leave prefs. Calendar consumes it; local “On This Computer” stays in the app |
+| Accounts | **Settings → Calendar.** Persistent `Topic::CalendarConfig` (any mix of account kinds; Google uses the shipped client; `calendars` shelf for hidden / alias / colour). The bus keeps only the last one, so Calendar and Settings each publish it whole; Calendar starts publishing after `Replayed`. Empty accounts + empty shelf is disconnect-all; a half one (from before this) leaves the missing half as it was. Calendar consumes it; local “On This Computer” stays in the app |
 | Secrets | Age-encrypted on disk via `sola_core::Encrypted` (`~/.config/sola/key`) |
 | Process | In-process worker (mail/spotify pattern), not a bus daemon |
 | Recurrence | Google: `singleEvents=true` instances. Apple: RRULE expanded in the visible window; series edit is later |
