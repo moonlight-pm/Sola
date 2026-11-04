@@ -216,7 +216,9 @@ Oath's)?
 "sola owns it.."). `pkg:sola` ships Sola's own opener as `/bin/xdg-open`,
 not xdg-utils and not `.desktop` files; the rest of the routing is the
 handler registry in the decision log (Link and file handlers).
-`cloudflared` and log rotation are still open.
+**Answered 2026-11-03 (`cloudflared`):** its own package from Oath,
+`pkg:cloudflared`, not part of `pkg:sola`; on novus, Design's tunnel runs
+through it. Log rotation is still open.
 
 **Related:** `oath-platform`, `install-make`, `kvm`, `design` capabilities.
 
