@@ -234,6 +234,13 @@ in the environment. *Found 2026-10-29 by the novus manual pass over `next` 30a43
 under `~/.config/sola`, built in at publish)? Does Google sign-in work on
 canto today?
 
+**Seen on novus, 2026-11-04:** with a Google account restored from before the
+rebuild, every sync stops at refresh with 400 "Could not determine client ID
+from request". The account's client ID is in its store, but refresh reads only
+the environment. The client's secret is nowhere in the old home; it was likely
+built into the old binary. A refresh token is tied to its client, so a new
+client means signing in again.
+
 **Related:** `calendar` capability.
 
 ---
