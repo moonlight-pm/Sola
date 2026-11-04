@@ -127,9 +127,17 @@ fn string_cwd(event: &Value) -> Option<String> {
 
 /// Where a hook should land.
 ///
-/// Keep the header pane when its tab path is the event cwd. Otherwise
-/// pick the leaf on that path, preferring the one already named `agent` or
-/// already bound to the event session.
+/// Only Codex's hooks can name the wrong pane, or none: its sessions share
+/// an app-server, whose environment is that of the pane that started it.
+/// So Codex's land by folder: the header pane when its tab path is the
+/// event cwd, else the leaf on that path, preferring the one already bound
+/// to the event session or already named `agent`.
+///
+/// Any other agent's pane id is its own pane's, and its folder says nothing:
+/// a project's sessions share one, and an agent moves between worktrees.
+/// Its hook goes to that pane, else the leaf bound to its session, else
+/// nowhere. A hook given to another session rewrites that session's record,
+/// and the next boot resumes the wrong conversation there.
 pub fn resolve_hook_target(
     header_pane: Option<&str>,
     header_path: Option<&Path>,
@@ -138,6 +146,16 @@ pub fn resolve_hook_target(
     agent: &str,
     leaves: &[HookLeaf<'_>],
 ) -> Option<String> {
+    if agent != "codex" {
+        return header_pane
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                let sid = event_session.filter(|s| !s.is_empty())?;
+                let leaf = leaves.iter().find(|leaf| leaf.session_id == Some(sid))?;
+                Some(leaf.id.to_string())
+            });
+    }
     let event_cwd = event_cwd.filter(|p| !p.as_os_str().is_empty());
     let header_matches = header_pane.filter(|id| !id.is_empty()).and_then(|id| {
         let path = header_path?;
@@ -288,6 +306,75 @@ mod tests {
             &leaves,
         );
         assert_eq!(got.as_deref(), Some("ws-main-11"));
+    }
+
+    #[test]
+    fn a_hook_stays_on_its_pane_when_its_agent_moved_folder() {
+        let repo = std::path::Path::new("/src/repo");
+        let tree = std::path::Path::new("/src/repo/.worktrees/x");
+        let leaves = [HookLeaf {
+            id: "ws-other",
+            path: tree,
+            agent: Some("claude"),
+            session_id: Some("other-sid"),
+        }];
+        for agent in ["claude", "grok"] {
+            let got = resolve_hook_target(
+                Some("ws-own"),
+                Some(repo),
+                Some(tree),
+                Some("own-sid"),
+                agent,
+                &leaves,
+            );
+            assert_eq!(got.as_deref(), Some("ws-own"), "{agent}");
+        }
+    }
+
+    #[test]
+    fn a_pane_not_listed_yet_takes_no_other_sessions_place() {
+        let repo = std::path::Path::new("/src/repo");
+        let leaves = [
+            HookLeaf {
+                id: "ws-first",
+                path: repo,
+                agent: Some("claude"),
+                session_id: Some("first-sid"),
+            },
+            HookLeaf {
+                id: "ws-second",
+                path: repo,
+                agent: None,
+                session_id: None,
+            },
+        ];
+        for agent in ["claude", "grok"] {
+            let got =
+                resolve_hook_target(None, None, Some(repo), Some("new-sid"), agent, &leaves);
+            assert_eq!(got, None, "{agent}");
+        }
+    }
+
+    #[test]
+    fn a_session_id_finds_its_pane_without_a_header() {
+        let repo = std::path::Path::new("/src/repo");
+        let leaves = [
+            HookLeaf {
+                id: "ws-first",
+                path: repo,
+                agent: Some("claude"),
+                session_id: Some("first-sid"),
+            },
+            HookLeaf {
+                id: "ws-second",
+                path: repo,
+                agent: Some("claude"),
+                session_id: Some("second-sid"),
+            },
+        ];
+        let got =
+            resolve_hook_target(None, None, Some(repo), Some("second-sid"), "claude", &leaves);
+        assert_eq!(got.as_deref(), Some("ws-second"));
     }
 
     #[test]
