@@ -65,6 +65,66 @@ windows are actually restarted.
 
 ---
 
+## VRAM (2026-11-05)
+
+Live desk: 10.7 GiB of 24 in use, about 80 windows (33 Browser pages, 28
+Projects sessions), 54 Design boards open. What holds it:
+
+| What | GiB | Basis |
+|------|-----|-------|
+| Design board textures (2× raster, with mips) | ~2.7 | calculated from `status` |
+| Window buffers (2 per window, hidden or not) | 2.3 | dma-bufs held by rivulet |
+| Image atlases (16 MiB per window, empty or not) | 1.3 | `create_texture` log |
+| CEF GPU helpers (Browser 0.85, Design 0.04) | 0.9 | `nvidia-smi` |
+| 4× MSAA target (largest window the app has had; never shrinks) | ~0.7 | residual after the rest |
+| Browser page textures | ~0.5 | residual after the rest |
+| rivulet, Steam, Xwayland | 0.5 | `nvidia-smi` |
+| Small per-app overhead | ~0.6 | estimate |
+| Not attributed to any process | 1.0 | `nvidia-smi` |
+
+**CEF is not where it goes.** Design's GPU helper is 44 MiB, as its boards
+are CPU frames. The memory is on the iced side of both apps, and Projects,
+with no CEF, was third at 1.5 GiB for the same per-window reasons.
+
+Four mitigations (under [Shipped](#shipped)) should bring that down by about
+4.3 GiB: 2 from Design's hidden canvases, 1.2 from the atlases, 0.6 from
+MSAA, 0.5 from Browser's page textures. That is an estimate until they run
+at the desk. Measured on a private headless desk (windows about 1024×768, so
+the buffers and targets are far smaller than at 5120×2160), MiB per process:
+
+| | Before | After |
+|--|--------|-------|
+| Shell, 7 windows | 134 | 30 |
+| Terminal, 1 tab | 63 | 27 |
+| Terminal, 6 tabs | 207 | 99 |
+| Editor, 1 window | 64 | 27 |
+| Projects, 2 windows | 87 | 43 |
+| Browser, 12 pages, none looked at | 363 | 179 |
+| Browser, 12 pages, all looked at | 403 | 179 |
+| Design, a hidden canvas of 2 boards after its 10 minutes | 131 | 107 |
+
+Pictures against the old binaries: Editor and Preview (images of 400, 600,
+1200 and 1500 px) are the same pixels. Terminal differs only in underlines,
+one sharp row where MSAA blended two. A page returning from hidden shows its
+last frame in the first present, then live ones, with the exact CSS colour
+in its window's own buffer. A hidden canvas's window came back at its zoom.
+
+Left, cheapest first:
+
+- **A hidden window holds both its buffers.** Reconfiguring its surface to
+  1×1 while hidden, without presenting, should leave only the one the
+  compositor holds: up to ~1 GiB. Needs a spike: it touches patched
+  `iced_winit`, and how the NVIDIA driver behaves is unmeasured.
+- **Shell's selection overlay** is a full-output canvas, so the first
+  screenshot selection makes an output-sized MSAA target that stays: seen on
+  the private desk, about 220 MiB at 5120×2160 by its size, and live Shell
+  went from 154 to 414 MiB. Its meshes would need the same audit first.
+- **Design's 2× raster** is the largest lever left (about 4× in VRAM and
+  in CEF's RAM), but it changes what agent screenshots show: a product call
+  ([idea](docs/ideas/2026-10-13-design-memory-budget.md)).
+
+---
+
 ## Shipped
 
 | Mitigation | Where | Status |
@@ -89,6 +149,10 @@ windows are actually restarted.
 | sola-design board patches | `sola-browser` `cef/host.rs` frame writer, `paint::changed_tiles` / `pack_patch`, `cpu_import::upload_patch`; `sola-design` `plane.rs`, `frames.rs` | **Installed** `design` release 2026-10-14 (slice 8). A board's frame crossed the frame socket **whole** on every paint (35–55 MB for a tall or 2× board), so a 10 px CSS spinner stuttered and pegged the helper (~146%) and Design (~118%). Now: a board's damage is cut to the 32 px tiles that changed (CEF reports one union rect), sent as a packed patch after one whole frame per size / view, merged in place in the mailboxes (`AbsorbDamage` takes the dropped frame by value), written straight into the board texture, mips rebuilt only over the region; frame wakes paced to ~120 Hz; link → board matching parsed once per view. Copy of Wicket foundation (26 boards, spinners on several): socket ~330 MB/s → ~6 MB/s; Design main thread ~6%; helper ~55%, of which ~80% is the tile compare. Browser tabs unchanged (whole frames). |
 | Design boards paced: tiny + wakes | `sola-design` `pace.rs` (`Look::readable`), `frames.rs` | **Installed** `design` release 2026-10-14 (slice 8). On top of `BoardPace`: a board in view but tiny on screen (zoom < 0.3) is `Slow`; only boards in view wake the window (a wake presents it), no faster than their pace (`pace::hz`); the rest upload with the next present. Before (board patches without pacing): GPU 84% (P0, 114 W) — Design re-presented ~120×/s; at fit with these: GPU ~30% (P3, 65 W), Design under pmon's floor. |
 | sola-design software compositing | `sola-browser` `on_before_command_line_processing` (`app_id == "sola-design"`) | **Installed** `design` release 2026-10-14. Zoomed in on one animated board (232%, 60 fps), GPU was still 55% (P0, ~105 W): Design's CEF GPU process at 36–44% SM, because with GPU compositing and CPU frames (no shared textures) Chromium reads every frame back whole. `--disable-gpu-compositing` for Design's helper only: the software compositor redraws the damage into the paint buffer. Same view: that process off pmon; Design ~5% SM; CPU Design ~10–16%, renderer ~18%, helper ~3%. Agent screenshots render as before. The browser keeps GPU compositing (its own call). |
+| Image atlas 512², not 2048² | patched `iced_wgpu` `image/atlas.rs`, `image/cache.rs` | **On branch `vram-fixes`, private desk.** 1 MiB a window, not 16; an image too large for it gets its own texture. |
+| No MSAA where meshes are straight | `sola-terminal`, `sola-projects`, `sola-editor` `.antialiasing(false)` | **On branch `vram-fixes`, private desk.** The target was as large as the largest window the app had had, and stayed. |
+| Hidden page frees its texture | `sola-browser` `cef/frame.rs` `free_hidden` | **On branch `vram-fixes`, private desk.** Goes at the next prepare of any page window, so the last one or two wait for Browser's next draw. The parked frame comes back in the first present. |
+| Hidden canvas closes when idle | `sola-design` `app/canvases.rs` `evict_idle` | **On branch `vram-fixes`, private desk.** Not the active window's. Its textures go at Design's next draw. |
 
 Install that landed this track (2026-08-25): `shell` `agent` `arcade`
 `browser` `install` `kit` `mail` `monitor` `paint` `preview` `settings`
@@ -158,6 +222,20 @@ nvidia-smi pmon -c 5 -s um
 # Did this process pick up the last install?
 stat -c '%y' /opt/sola/bin/sola-projects
 ps -o lstart,etime,args -C sola-projects
+```
+
+For VRAM, by process and by what it holds:
+
+```bash
+nvidia-smi pmon -c 1 -s m   # fb MiB per process (the CEF GPU helpers are separate rows)
+
+# Window buffers: the dma-bufs rivulet holds, with their sizes
+r=$(pidof rivulet); for f in /proc/$r/fd/*; do
+  readlink "$f" | grep -q dmabuf && grep -h '^size:' "/proc/$r/fdinfo/${f##*/}"
+done | sort | uniq -c
+
+# Every texture an app makes, on a private headless desk: no build needed
+RUST_LOG=info,wgpu_core=trace sola-terminal   # look for create_texture
 ```
 
 Compare against the baseline (~30–40%) and the 2026-08-25 row above.
