@@ -412,6 +412,9 @@ pub struct Shell {
     last_tab_layout: Option<TabLayout>,
     /// `WindowParent` that came before its window's `Windows` entry.
     pending_parents: HashMap<u32, u32>,
+    /// Windows that asked for fullscreen before their `Windows` entry: they
+    /// are placed in Cinema.
+    pending_fullscreen: HashSet<u32>,
     /// The first `Windows` list has been placed (windows in it were up
     /// before this shell started).
     windows_seen: bool,
@@ -611,6 +614,7 @@ impl Shell {
             tab_layout_ready,
             last_tab_layout: None,
             pending_parents: HashMap::new(),
+            pending_fullscreen: HashSet::new(),
             windows_seen: false,
             focused_app_id: None,
             focused_window_id: None,
@@ -3220,6 +3224,7 @@ mod pending_launch_tests {
             tab_layout_ready: false,
             last_tab_layout: None,
             pending_parents: HashMap::new(),
+            pending_fullscreen: HashSet::new(),
             windows_seen: false,
             focused_app_id: None,
             focused_window_id: None,
@@ -3585,6 +3590,47 @@ mod hide_tests {
     /// window lands beside the one that asked and leaves you where you are.
     /// Asked for in front, it takes you there.
     #[test]
+    fn a_window_asking_for_fullscreen_as_it_maps_opens_in_cinema() {
+        use sola_bus::topics::{FullscreenRequest, Topic, Zone};
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        shell.windows_seen = true;
+        let send = |shell: &mut Shell, t: Topic| {
+            let mut m = t.to_message();
+            m.sticky = true;
+            let _ = shell.handle_bus(&m);
+        };
+        let fullscreen = |window_id, fullscreen| {
+            Topic::FullscreenRequest(FullscreenRequest {
+                window_id,
+                fullscreen,
+            })
+        };
+        let game = |id| Window {
+            window_id: id,
+            app_id: "steam_app_1".into(),
+            title: "Game".into(),
+            pid: None,
+        };
+
+        // The request comes first: River tells of the window afterwards.
+        send(&mut shell, fullscreen(7, true));
+        send(&mut shell, Topic::Windows(vec![game(7)]));
+        assert_eq!(shell.tabs.zone_of(7), Some(Zone::Cinema));
+        assert_eq!(shell.focused_window_id, Some(7));
+
+        // Leaving fullscreen goes where it would have been placed.
+        send(&mut shell, fullscreen(7, false));
+        let placed = shell.tabs.zone_of(7);
+        assert!(placed.is_some() && placed != Some(Zone::Cinema));
+
+        // Asked and taken back before it mapped: placed as any window is.
+        send(&mut shell, fullscreen(8, true));
+        send(&mut shell, fullscreen(8, false));
+        send(&mut shell, Topic::Windows(vec![game(7), game(8)]));
+        assert_ne!(shell.tabs.zone_of(8), Some(Zone::Cinema));
+    }
+
+    #[test]
     fn a_session_opens_on_the_workspace_of_the_session_that_started_it() {
         use sola_bus::topics::{Tab, TabOpener, Topic};
         const PROJECTS: &str = "sola-projects";
@@ -3699,6 +3745,7 @@ mod hide_tests {
             tab_layout_ready: false,
             last_tab_layout: None,
             pending_parents: HashMap::new(),
+            pending_fullscreen: HashSet::new(),
             windows_seen: false,
             focused_app_id: focused.map(str::to_string),
             focused_window_id,

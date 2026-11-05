@@ -37,6 +37,12 @@ impl Shell {
     pub(super) fn on_fullscreen_request(&mut self, r: FullscreenRequest) {
         let wid = self.tabs.parent_of(r.window_id).unwrap_or(r.window_id);
         let Some(zone) = self.tabs.zone_of(wid) else {
+            // Asked as it mapped (Wine, SDL), before `Windows` names it.
+            if r.fullscreen {
+                self.pending_fullscreen.insert(wid);
+            } else {
+                self.pending_fullscreen.remove(&wid);
+            }
             return;
         };
         let to = match (r.fullscreen, zone) {

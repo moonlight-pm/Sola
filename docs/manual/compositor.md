@@ -294,7 +294,9 @@ on the first output. For Xwayland games (Wine, Proton, SDL) this keeps the
 fullscreen window managed: when the request is refused, some of them open
 a separate surface that bypasses the window manager. It also tells the
 shell (`FullscreenRequest`), which moves the window's tab to Cinema, and
-back to the zone it came from when the application leaves fullscreen.
+back to the zone it came from when the application leaves fullscreen. A
+window that asks as it maps opens in Cinema, and leaves for the zone it would
+have been placed in.
 Cinema uses the same state: the `Frame` of the Cinema tab on screen asks
 for fullscreen. While a window in the composition fills the screen the
 background picture is taken away, so what shows around or through it is
