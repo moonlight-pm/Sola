@@ -123,6 +123,8 @@ shows, compare only rows CEF's rect actually crosses per tile column.
 
 **Later / park**
 
+- `sola-terminal-perf.log` is always on, has no rotation, and reached 78 MB in the
+  week after the 10-30 rebuild (`perf.rs`; `SOLA_TERMINAL_PERF=0` turns it off). Cap it or default it off.
 - Terminal (and, cheaper still, Projects) **cursor blink** without a process-wide
   present — `request_redraw` only on the cell that blinks, or a cheaper
   tick that does not redraw the whole 5K window.

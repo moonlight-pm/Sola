@@ -88,7 +88,7 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | `crates/sola-install` | Kit installer wizard + apply orchestration (`sola-install-apply`) |
 | `crates/sola-make` | `cargo make` xtask (build / install / publish / **vm** / **iso**) |
 | `crates/sola-assets` | Vendored icons/assets |
-| `crates/iced_winit-patched` | iced 0.14 `iced_winit` + Wayland opaque-region from window-fill alpha (not a workspace member; `[patch.crates-io]`) |
+| `crates/iced_winit-patched` | iced 0.14 `iced_winit` + `scope` (which windows a message changes; an app that declares nothing gets stock behavior; reached as `sola_kit::scope`) + Wayland opaque-region from window-fill alpha (not a workspace member; `[patch.crates-io]`) |
 | `nix/patches/` | River + wlroots patches (Xwayland destroy heal; live `pointer_position`; screencopy omits software cursor) |
 | `nix/module.nix` | NixOS module (`services.sola`) — Shape 1 + images; wheel polkit YES for logind reboot/power-off (flower menu; no polkit agent) |
 | `nix/sola.nix` | Package from GitHub release tarball |

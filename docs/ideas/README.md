@@ -7,6 +7,7 @@ Do not implement from this folder without promotion.
 
 | Idea | Notes |
 |------|--------|
+| [tab-hover-prerender](2026-11-04-tab-hover-prerender.md) | Parked (2026-11-04). Render a hidden tab while the pointer is over it, so it is current when clicked. Whether a hidden window can present at all is the open question. |
 | [common-send-feedback](2026-11-02-common-send-feedback.md) | Overtaken (2026-11-02): pinned windows replace Common, and a pin shows on the row. Kept for its options, should a pin want more: row pulse, window flash, flying icon, toast. |
 | [signal-client](2026-10-31-signal-client.md) | Parked (2026-10-31). Research only: a kit Signal client as a linked device. Feasible, never set-and-forget. If unparked: signal-cli (JSON-RPC, no D-Bus) under a Vault-shaped `sola-signald` + kit app, engine-neutral so presage can replace it. No history on link and no calls with either engine. Earlier attempt not found. |
 | [vault-later](2026-10-31-vault-later.md) | Parked (2026-10-31). Vault's later pieces: an SSH agent with a prompt per signature, Mail passwords from the vault, import, attachments, Send, the right-click menu over other applications' windows (V4), the username generator's own options, the shell's own fields, memory locking (needs an Oath rlimit on `svc:`). Declined: vault search in the launcher. |
