@@ -14,7 +14,8 @@
 //!    built.
 //! 5. Upload `pkg/<name>/<hash>.tar` and `plan/<name>/<hash>.plan` for
 //!    the sources, the build and the products (skipping what the origin
-//!    has), then print the desk profile entries that pin the products.
+//!    has), then print the desk profile entries that pin the products,
+//!    each with its `source`.
 //!
 //! The machine's own pins do not change: `oath build` leaves an existing
 //! `pkg:<name>` as it is.
@@ -28,6 +29,7 @@ use super::catalog;
 use super::origin::{self, Origin};
 use super::packages::{BASE, PACKAGES, Package};
 use super::plan::{self, BUILD, Plan};
+use super::provenance;
 use super::vendor;
 
 const WORK: &str = "target/oath/publish";
@@ -52,6 +54,7 @@ pub fn publish(local: bool) -> Result<(), String> {
     if !local {
         released_from_master()?;
     }
+    let source = provenance::here()?;
     // Not the commit (see `stage`): an untouched package builds to the
     // hash it had.
     let version = env!("CARGO_PKG_VERSION");
@@ -128,6 +131,7 @@ pub fn publish(local: bool) -> Result<(), String> {
                 .iter()
                 .map(|(id, hash)| serde_json::json!({ "id": id, "hash": hash }))
                 .collect::<Vec<_>>(),
+            "source": source,
         });
         println!("\"{}\": {entry},", pkg.id());
     }
