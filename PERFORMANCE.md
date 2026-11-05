@@ -86,11 +86,30 @@ Projects sessions), 54 Design boards open. What holds it:
 are CPU frames. The memory is on the iced side of both apps, and Projects,
 with no CEF, was third at 1.5 GiB for the same per-window reasons.
 
-Four mitigations (under [Shipped](#shipped)) should bring that down by about
-4.3 GiB: 2 from Design's hidden canvases, 1.2 from the atlases, 0.6 from
-MSAA, 0.5 from Browser's page textures. That is an estimate until they run
-at the desk. Measured on a private headless desk (windows about 1024×768, so
-the buffers and targets are far smaller than at 5120×2160), MiB per process:
+Four mitigations (under [Shipped](#shipped)) were estimated at 4.3 GiB: 2
+from Design's hidden canvases, 1.2 from the atlases, 0.6 from MSAA, 0.5 from
+Browser's page textures. **At the desk (2026-11-05), same windows, Design
+closed:** 7.5 GiB just before the apply, 4.3 two minutes after it. MiB per
+process, the before read earlier in the day:
+
+| | Before | After |
+|--|--------|-------|
+| Browser chrome, 33 pages | 2329 | 1465 |
+| Projects, 28 windows | 1507 | 876 |
+| Terminal, 4 tabs | 401 | 138 |
+| Editor | 283 | 62 |
+| Shell (414 after a screenshot selection) | 154 | 42 |
+| Settings | 115 | 50 |
+| Calendar | 78 | 62 |
+| Mail, Vault | 66 each | 42 each |
+
+A fresh restart flatters this: Browser has made few page textures and Shell
+no selection target yet, though a hidden page's texture no longer stays, and
+the CEF helpers grow with use. Read it again after a day. Design was closed
+at the apply, so its change is seen only on the private desk below.
+
+On a private headless desk (windows about 1024×768, so the buffers and
+targets are far smaller than at 5120×2160), MiB per process:
 
 | | Before | After |
 |--|--------|-------|
@@ -149,10 +168,10 @@ Left, cheapest first:
 | sola-design board patches | `sola-browser` `cef/host.rs` frame writer, `paint::changed_tiles` / `pack_patch`, `cpu_import::upload_patch`; `sola-design` `plane.rs`, `frames.rs` | **Installed** `design` release 2026-10-14 (slice 8). A board's frame crossed the frame socket **whole** on every paint (35–55 MB for a tall or 2× board), so a 10 px CSS spinner stuttered and pegged the helper (~146%) and Design (~118%). Now: a board's damage is cut to the 32 px tiles that changed (CEF reports one union rect), sent as a packed patch after one whole frame per size / view, merged in place in the mailboxes (`AbsorbDamage` takes the dropped frame by value), written straight into the board texture, mips rebuilt only over the region; frame wakes paced to ~120 Hz; link → board matching parsed once per view. Copy of Wicket foundation (26 boards, spinners on several): socket ~330 MB/s → ~6 MB/s; Design main thread ~6%; helper ~55%, of which ~80% is the tile compare. Browser tabs unchanged (whole frames). |
 | Design boards paced: tiny + wakes | `sola-design` `pace.rs` (`Look::readable`), `frames.rs` | **Installed** `design` release 2026-10-14 (slice 8). On top of `BoardPace`: a board in view but tiny on screen (zoom < 0.3) is `Slow`; only boards in view wake the window (a wake presents it), no faster than their pace (`pace::hz`); the rest upload with the next present. Before (board patches without pacing): GPU 84% (P0, 114 W) — Design re-presented ~120×/s; at fit with these: GPU ~30% (P3, 65 W), Design under pmon's floor. |
 | sola-design software compositing | `sola-browser` `on_before_command_line_processing` (`app_id == "sola-design"`) | **Installed** `design` release 2026-10-14. Zoomed in on one animated board (232%, 60 fps), GPU was still 55% (P0, ~105 W): Design's CEF GPU process at 36–44% SM, because with GPU compositing and CPU frames (no shared textures) Chromium reads every frame back whole. `--disable-gpu-compositing` for Design's helper only: the software compositor redraws the damage into the paint buffer. Same view: that process off pmon; Design ~5% SM; CPU Design ~10–16%, renderer ~18%, helper ~3%. Agent screenshots render as before. The browser keeps GPU compositing (its own call). |
-| Image atlas 512², not 2048² | patched `iced_wgpu` `image/atlas.rs`, `image/cache.rs` | **On branch `vram-fixes`, private desk.** 1 MiB a window, not 16; an image too large for it gets its own texture. |
-| No MSAA where meshes are straight | `sola-terminal`, `sola-projects`, `sola-editor` `.antialiasing(false)` | **On branch `vram-fixes`, private desk.** The target was as large as the largest window the app had had, and stayed. |
-| Hidden page frees its texture | `sola-browser` `cef/frame.rs` `free_hidden` | **On branch `vram-fixes`, private desk.** Goes at the next prepare of any page window, so the last one or two wait for Browser's next draw. The parked frame comes back in the first present. |
-| Hidden canvas closes when idle | `sola-design` `app/canvases.rs` `evict_idle` | **On branch `vram-fixes`, private desk.** Not the active window's. Its textures go at Design's next draw. |
+| Image atlas 512², not 2048² | patched `iced_wgpu` `image/atlas.rs`, `image/cache.rs` | **Applied on novus 2026-11-05 (next@be11f623), master 0c03321c.** 1 MiB a window, not 16; an image too large for it gets its own texture. |
+| No MSAA where meshes are straight | `sola-terminal`, `sola-projects`, `sola-editor` `.antialiasing(false)` | **Applied on novus 2026-11-05 (next@be11f623), master 0c03321c.** The target was as large as the largest window the app had had, and stayed. |
+| Hidden page frees its texture | `sola-browser` `cef/frame.rs` `free_hidden` | **Applied on novus 2026-11-05 (next@be11f623), master 0c03321c.** Goes at the next prepare of any page window, so the last one or two wait for Browser's next draw. The parked frame comes back in the first present. |
+| Hidden canvas closes when idle | `sola-design` `app/canvases.rs` `evict_idle` | **Applied on novus 2026-11-05 (next@be11f623), master 0c03321c.** Not the active window's. Its textures go at Design's next draw. |
 
 Install that landed this track (2026-08-25): `shell` `agent` `arcade`
 `browser` `install` `kit` `mail` `monitor` `paint` `preview` `settings`
