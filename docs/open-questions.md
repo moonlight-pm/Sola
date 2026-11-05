@@ -240,8 +240,10 @@ the environment variables at run time. Google calls a desktop client public, so
 the programs and the public plan carrying it is expected.
 
 **Google's side:** project `sola-508017`, published (in production, unverified:
-a warning, and 100 new users). Verification still needs `moonlight.pm` proven in
-Search Console, the narrower scopes on Data Access, and `/privacy` live.
+a warning, and 100 new users), with the two narrow scopes on Data Access and the
+home page, `/privacy` and `moonlight.pm` on Branding. Verification still needs
+`/privacy` live, `moonlight.pm` proven in Search Console, and on Data Access a
+justification and a demo video for `calendar.events`.
 
 **Related:** `calendar` capability.
 
