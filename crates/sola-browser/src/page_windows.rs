@@ -273,6 +273,7 @@ impl<E: Engine> PageWindows<E> {
             let shown = self.tabs.shown(page.window);
             if page.shown_sent != Some(shown) {
                 page.shown_sent = Some(shown);
+                crate::cef::frame::slot_shown(page.slot.key, shown);
                 out.push((*tab, shown));
             }
         }

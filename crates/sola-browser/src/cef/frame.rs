@@ -582,6 +582,7 @@ impl shader::Primitive for CefPrimitive {
         let want = (req_w, req_h);
         let paint_tab = self.slot.paint_id(self.surface);
         pipeline.drop_retired();
+        pipeline.free_hidden(self.slot.key);
         let pipe = pipeline.surface_mut(self.surface, self.slot.key, device, queue);
         let pending = self.slot.take_pending_of(self.surface);
         if let Some(pending) = pending {
@@ -623,6 +624,25 @@ impl shader::Primitive for CefPrimitive {
             }
         }
         let blank = self.slot.blank_of(self.surface);
+        // Freed while its window was hidden: the page's last frame comes
+        // back in this first present, so its window never shows empty.
+        if self.surface == PaintSurface::Page && !blank && pipe.importer.texture.is_none() {
+            let parked = self.slot.parked_frames.lock().unwrap().get(&paint_tab).cloned();
+            if let Some(frame) = parked.filter(|f| crate::shader::size_matches((f.width, f.height), want)) {
+                if let Some(imported) = pipe.importer.import_into(
+                    device,
+                    queue,
+                    &pipe.sample.bind_group_layout,
+                    &pipe.sample.sampler,
+                    frame,
+                    &self.slot.osr,
+                ) {
+                    pipe.sample.install(imported);
+                    pipe.painted_tab = paint_tab;
+                    return;
+                }
+            }
+        }
         if blank || pipe.painted_tab != paint_tab {
             pipe.sample.clear();
             pipe.painted_tab = u64::MAX;
@@ -655,6 +675,15 @@ struct SurfacePipe {
     painted_tab: u64,
 }
 
+impl SurfacePipe {
+    fn free_texture(&mut self) {
+        self.sample.clear();
+        self.importer.texture = None;
+        self.importer.bind_group = None;
+        self.importer.staging = Vec::new();
+    }
+}
+
 impl std::fmt::Debug for SurfacePipe {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SurfacePipe")
@@ -676,10 +705,28 @@ pub struct CefPipeline {
 /// Slots whose windows closed: their page textures go at the next prepare.
 static RETIRED_SLOTS: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
 
+/// Slots whose windows the shell has hidden: their page textures go at the
+/// next prepare of any page window. Each page's last clean frame stays in
+/// [`FrameSlot::parked_frames`], and comes back when it is next drawn.
+static HIDDEN_SLOTS: std::sync::Mutex<std::collections::BTreeSet<u64>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
 /// A page window closed: free its slot's page texture.
 pub fn retire_slot(key: u64) {
     if let Ok(mut retired) = RETIRED_SLOTS.lock() {
         retired.push(key);
+    }
+    slot_shown(key, true);
+}
+
+/// The shell showed or hid a page window.
+pub fn slot_shown(key: u64, shown: bool) {
+    if let Ok(mut hidden) = HIDDEN_SLOTS.lock() {
+        if shown {
+            hidden.remove(&key);
+        } else {
+            hidden.insert(key);
+        }
     }
 }
 
@@ -732,6 +779,19 @@ impl CefPipeline {
         };
         for key in retired.drain(..) {
             self.pages.remove(&key);
+        }
+    }
+
+    /// Free the textures of hidden windows, but `drawing`'s: a hidden window
+    /// may present once more, and draws its picture if it does.
+    fn free_hidden(&mut self, drawing: u64) {
+        let Ok(hidden) = HIDDEN_SLOTS.lock() else {
+            return;
+        };
+        for key in hidden.iter().filter(|key| **key != drawing) {
+            if let Some(pipe) = self.pages.get_mut(key) {
+                pipe.free_texture();
+            }
         }
     }
 }
