@@ -147,7 +147,7 @@ fn applications() -> Node {
         <p>
             Each is its own process, with its menus in its windows' titlebars. The shell is
             stable in daily use; the applications are early, and each is incomplete.
-            <a href={"{repository}/blob/next/docs/capabilities.md"}>docs/capabilities.md</a>
+            <a href={"{repository}/blob/master/docs/capabilities.md"}>docs/capabilities.md</a>
             lists what each can do and what it lacks.
         </p>
         <dl class="entries">
@@ -200,10 +200,9 @@ fn status() -> Node {
         <h2>Status</h2>
         <p>
             Sola is pre-release. It runs every day on
-            <a href="https://oath.moonlight.pm">Oath</a>, which carries it as three
-            packages built from this repository's <code>next</code> branch:
-            <code>pkg:sola</code>, <code>pkg:sola-browser</code>, and
-            <code>pkg:sola-design</code>. Not there yet:
+            <a href="https://oath.moonlight.pm">Oath</a>, which carries it as packages
+            built from this repository's <code>master</code> branch: <code>pkg:sola</code>
+            for the desk, and one package for each application. Not there yet:
         </p>
         <ul>
             <li>Releases of its own. x86-64 is the only platform.</li>
@@ -212,18 +211,18 @@ fn status() -> Node {
         </ul>
         <p>
             The work under way is in
-            <a href={"{repository}/blob/next/CURRENT.md"}>CURRENT.md</a>, and what each
+            <a href={"{repository}/blob/master/CURRENT.md"}>CURRENT.md</a>, and what each
             part can do in
-            <a href={"{repository}/blob/next/docs/capabilities.md"}>docs/capabilities.md</a>.
+            <a href={"{repository}/blob/master/docs/capabilities.md"}>docs/capabilities.md</a>.
         </p>
     </section>
 }
 
 fn buildLines() -> Array<Line> {
     [
-        Line(command: "git clone -b next https://github.com/moonlight-pm/Sola", note: ""),
+        Line(command: "git clone https://github.com/moonlight-pm/Sola", note: ""),
         Line(command: "cd Sola", note: ""),
-        Line(command: "cargo make oath stage  ", note: "# build the three packages under target/oath"),
+        Line(command: "cargo make oath stage  ", note: "# build the packages under target/oath"),
         Line(command: "cargo make oath apply  ", note: "# stage, store, pin, and apply them"),
     ]
 }
