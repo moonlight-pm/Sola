@@ -12,10 +12,11 @@
 //! 4. A plan per package copies its programs out of `pkg:sola-build`.
 //!    `pkg:sola-browser` and `pkg:sola-design` need the `pkg:sola` just
 //!    built.
-//! 5. Upload `pkg/<name>/<hash>.tar` and `plan/<name>/<hash>.plan` for
-//!    the sources, the build and the products (skipping what the origin
+//! 5. Upload `pkg/<name>/<hash>.tar` for the sources and the products and
+//!    `plan/<name>/<hash>.plan` for every plan (skipping what the origin
 //!    has), then print the desk profile entries that pin the products,
-//!    each with its `source`.
+//!    each with its `source`. `pkg:sola-build` stays here: a rebuild runs
+//!    its plan.
 //!
 //! The machine's own pins do not change: `oath build` leaves an existing
 //! `pkg:<name>` as it is.
@@ -110,11 +111,7 @@ pub fn publish(local: bool) -> Result<(), String> {
         run_needs_of.insert(pkg.name, run_needs);
     }
 
-    let mut packs = vec![
-        ("sola-src", src_hash),
-        ("sola-crates", crates_hash),
-        (BUILD, build_hash),
-    ];
+    let mut packs = vec![("sola-src", src_hash), ("sola-crates", crates_hash)];
     packs.extend(products.iter().map(|(n, h)| (*n, h.clone())));
     if let Some(origin) = &origin {
         upload_all(origin, work, &packs, &plans)?;
