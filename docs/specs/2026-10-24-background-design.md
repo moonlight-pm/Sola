@@ -355,6 +355,64 @@ transparent. On any user input, it snaps back to full opacity."
   alpha; the overlay needs no compositor change and costs one composite a
   second while idle.
 
+## Videos (2026-11-05)
+
+**Asked (Joshua):** "Videos need to have no transparency, like on
+youtube. Additionally, if a video is playing and is visible on screen, we
+need to pause the gradual opacity fade … the full opacity should
+specifically target the video, not the entire window." Agreed: a video
+counts when it shows a frame and is larger than a thumbnail, playing or
+paused; one holds the fade when it plays with sound, in view and not
+covered; the fade holds where it is ("a pause, not a reset").
+
+- **Opaque by leaving it out.** The windows are not translucent; the
+  picture lies over them. So a video at full opacity is a hole in the
+  overlay over the video's rectangle. sola-river cuts the overlay around
+  the videos as it cut it around the kept rectangle (`client/fade/cut.rs`:
+  the output in bands at every edge, the runs of each band joined to the
+  same run above; the holes left out, the pieces in the kept rectangle
+  marked). When only the cut moves (a video scrolling), the pieces'
+  surfaces are kept and take new places and buffers; a new picture or
+  output size makes them again.
+- **Where the videos are** (`Topic::WindowVideos`, sticky, keyed by
+  `window_id`: `videos: [{x, y, w, h, watched}]`, window-local logical
+  pixels; retracted when the window shows none). The app that draws the
+  window says; sola-river places them by the window's position, clips them
+  to the window and the output, and takes off every window above it in
+  the composition (`client/fade/videos.rs`). It retracts a closed window's
+  entry itself, since an app that died never would.
+- **The Browser's watcher** (`sola-browser` `videos.rs`). A script
+  evaluated in each page's top frame at its start (`on_context_created`),
+  handed a native function the page never sees, reports the videos in
+  view: a `<video>` with a frame (`readyState ≥ 2`), visible
+  (`checkVisibility`), at least 15 % of the view's area (the home page's
+  previews are not), its part in view in view pixels; *watched* when it
+  plays unmuted with volume and at least half of it is in view. It
+  measures on media events, scrolling and resizing, every frame while one
+  plays, and every half second for anything else; it reports only
+  changes, and a new document reports none. The helper sends it to the
+  chrome (`FromEngine::Videos`); the chrome places it by where the page
+  view last drew in its window (`FrameSlot::page_view`, logical origin and
+  scale) and publishes per window. Nothing while the browser's own panels,
+  dialogs, menus or the find bar are over the active page.
+- **At rest** every video on screen is a hole. **While the fade runs**
+  only a watched one holding it is (the others fade with their windows),
+  and **once it is full** none (the pages rest then).
+- **The hold** (`fade::hold`): each tick of a fade, if a watched video is
+  in sight (at least half of what the page shows of it uncovered), the
+  fade's start moves along so its level stays; when it stops or leaves
+  sight the fade goes on from there. Not once the fade is full. Since the
+  lock follows the full fade (*Lock when the windows have faded*), a
+  watched video keeps it off too; `IdleFade.fading` is still said (no
+  input is no input).
+
+**Not now:** videos in another page's frame (an embedded player: the frame
+cannot see where it sits; it would tell its parent, which knows the
+iframe), the player's own black bars around a narrower video (they are the
+page, not the video), a video's rounded corners (the hole is square), a
+hole that trails a fast scroll by a frame, video in apps other than the
+Browser (a `wp_content_type_v1` "video" hint could serve them).
+
 ## From the browser (2026-10-24)
 
 Joshua: "make a right click menu. If its a picture, we say 'Use as desktop

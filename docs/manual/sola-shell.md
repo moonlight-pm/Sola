@@ -764,7 +764,11 @@ everything else fades, so a session waiting on you can still be seen and
 answered. Only the dim that follows covers them. Once the fade is full,
 the Shell tells apps their tab windows are off screen (the browser rests
 its pages) until you are back. Nothing fades while a window is in Cinema
-or an app keeps the screen awake (a video playing).
+or an app keeps the screen awake.
+
+Videos in the Browser are always fully opaque, while the rest of the page
+is at the desk's opacity. A video you are watching (playing with sound and
+mostly in sight) holds the fade where it is until it stops.
 
 ## Limits
 

@@ -422,8 +422,23 @@ rests its pages, until input brings the windows back.
 Nothing is drawn over a fullscreen window, at rest or idle. While a window
 is fullscreen the fade does not run; it starts over once none is. Idle
 comes from `ext-idle-notify`, which honors idle inhibitors: an application
-that keeps the screen awake stops the fade. No Sola application does, so
-the fade also runs over a video playing in a Browser window.
+that keeps the screen awake stops the fade.
+
+**Videos.** An app tells `sola-river` where its windows show videos
+(`WindowVideos`; the Browser does, for videos in a page's top frame). The
+surface over the desk is cut around them, so a video is fully opaque while
+the rest of its window is at the desk's opacity. `sola-river` places each
+video by its window's position and takes off whatever window is above it.
+
+- **At rest**, every video on screen is fully opaque.
+- **While the fade runs**, a video being watched (playing with sound) with
+  at least half of it uncovered holds the fade where it is and stays fully
+  opaque. When it stops or leaves sight, the fade goes on from there.
+  Other videos fade with their windows.
+- **Once the fade is full**, no video is cut out and none holds it.
+
+Since the lock follows the full fade, a watched video keeps the desk from
+locking too. `IdleFade` still says `fading`.
 
 ## Outputs
 
@@ -574,6 +589,7 @@ rules. Payload fields are listed here.
 | `Background` | Paint, Browser, `solactl`, Settings | The picture behind the windows; a retraction for the black ground |
 | `Appearance` | Settings | The desk's opacity, the idle fade and dim |
 | `IdleKeep` | Shell | `{x, y, w, h}`: what the fade keeps at the rest |
+| `WindowVideos` | Browser | `{window_id, videos: [{x, y, w, h, watched}]}`, window-local logical pixels: no overlay over them, and a watched one holds the fade ([The idle fade](#the-idle-fade)). `sola-river` retracts a window's entry when the window closes |
 | `Theme` | Shell | The rim's colors |
 | `Shutdown` | Shell | `sola-river` exits with status 0 |
 

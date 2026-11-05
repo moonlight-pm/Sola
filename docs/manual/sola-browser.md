@@ -200,6 +200,17 @@ the page. A page whose window is not on screen (on another workspace,
 behind another window in its zone, or under the desk's idle fade once the
 fade is complete) rests, and its videos pause until it shows again.
 
+A video in a page is fully opaque: the desk's opacity is left off it,
+while the rest of the window shows the picture through at the usual
+amount. This applies to a video that shows a picture and takes at least
+15 % of the page's view, playing or paused, so small previews stay as
+they are. A video that plays with sound and is at least half in view
+holds the desk's idle fade where it is until it stops
+([Compositor § The idle fade](compositor.md#the-idle-fade)). While a panel,
+dialog, menu, or the find bar is over the page, its videos are not cut
+out. Videos inside a frame from another site (an embedded player) are not
+seen yet.
+
 Oath's `pkg:cef` is built with H.264 and AAC, so typical MP4 video,
 Steam store trailers included, plays.
 

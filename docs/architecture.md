@@ -365,7 +365,14 @@ picture, the output size or the kept rectangle change);
 there over `fade_over_min` (`wp_alpha_modifier_v1`), stepped back down to
 the rest over a second on input. Once it is full, the dim (`client/fade/dim.rs`) waits `dim_after_min`, then raises a black output-sized surface over it to 90 % over `dim_over_min` (a tenth of the picture's light left), and steps it down with the return. The overlay is cut in pieces (sub-buffers of the picture's memory) around
 the shell's sticky `Topic::IdleKeep` — the top row's flower and agent
-islands — whose piece stays at the rest. Sticky `Topic::IdleFade`
+islands — whose piece stays at the rest — and without the videos
+(`client/fade/cut.rs`, `client/fade/videos.rs`): the browser publishes
+sticky `Topic::WindowVideos` per page window (a watcher script in each
+top frame, `sola-browser` `videos.rs` → `FromEngine::Videos` →
+`app/videos.rs`, placed by `FrameSlot::page_view`), sola-river places
+them by window position less the windows above; at rest every video is
+left out, while fading only a watched one in sight, which holds the
+fade (`fade::hold`). Sticky `Topic::IdleFade`
 says it is fading and, once full, `out`: the shell then reports every tab
 window off screen (`TabWindow.shown`), so the browser's pages rest. The menubar carries no
 app menus. The shell publishes sticky

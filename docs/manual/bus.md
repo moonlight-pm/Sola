@@ -281,6 +281,7 @@ titlebar; the kit draws them from the app's own copy, not from the bus.
 | `ThemeVariations` | `path` (the picture), `choices` (per scheme: `name`, and `base`, `raised`, `accent`, and `source`, the picture's color it comes from, or for a complement the turned color itself) | Shell | Settings (the scheme cards) | Sticky |
 | `IdleKeep` | `x`, `y`, `w`, `h`: output-local logical pixels, the top row's flower and agent islands | Shell | `sola-river` (that part stays at the desk's rest during the fade) | Sticky |
 | `IdleFade` | `fading` (no input for the fade's delay), `out` (the fade is full: the windows are out of sight) | `sola-river` | Projects (a focused session's island shows); Shell (on `out`, reports every tab window off screen in `TabWindow`); `sola-vaultd` (the vault's idle lock counts from it) | Sticky |
+| `WindowVideos` | `window_id`, `videos` (each `x`, `y`, `w`, `h`, window-local logical pixels, the part in view, and `watched`: playing with sound) | Browser (per page window; retracted when it shows none) | `sola-river` (no overlay over them; a watched one in sight holds the fade; retracts a closed window's) | Sticky, one per `window_id` |
 
 The fade and the dim are described in [Compositor § The idle fade](compositor.md#the-idle-fade).
 
