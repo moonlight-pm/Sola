@@ -27,15 +27,25 @@
 //! honors idle inhibitors (a video player keeping the screen awake); and
 //! no fade runs while a window is fullscreen (Cinema).
 //!
+//! Videos (`Topic::WindowVideos`, [`videos`]) are cut out of the overlay:
+//! at rest every video on screen is fully opaque. While the fade runs only
+//! a watched one in sight is, and it holds the fade where it is until it
+//! stops or leaves sight; the others fade with their windows.
+//!
 //! Once the fade is full, the picture itself dims after a while ([`dim`]).
 
+mod cut;
 mod dim;
+mod videos;
 
+pub use videos::{forget as forget_videos, set as set_videos};
+
+use std::collections::HashMap;
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
 use rustix::fs::{MemfdFlags, ftruncate, memfd_create};
-use sola_bus::topics::{Appearance, IdleFade, IdleKeep, Topic};
+use sola_bus::topics::{Appearance, IdleFade, IdleKeep, Topic, WindowVideo};
 use tracing::{debug, info, warn};
 use wayland_client::protocol::{wl_buffer, wl_shm, wl_shm_pool, wl_surface};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
@@ -49,6 +59,7 @@ use wayland_protocols::wp::alpha_modifier::v1::client::wp_alpha_modifier_v1::WpA
 use crate::client::AppData;
 use crate::protocol::river_window_management_v1::river_node_v1::RiverNodeV1;
 use crate::protocol::river_window_management_v1::river_shell_surface_v1::RiverShellSurfaceV1;
+use cut::Rect;
 
 /// While fading, the opacity changes at most this often (over 30
 /// minutes, a step of 1/1800 of the way).
@@ -74,6 +85,10 @@ pub struct FadeState {
     returning: Option<(u32, Instant)>,
     /// What stays in sight (`Topic::IdleKeep`, output-local logical).
     keep: Option<IdleKeep>,
+    /// Each window's videos (`Topic::WindowVideos`, window-local logical).
+    videos: HashMap<u32, Vec<WindowVideo>>,
+    /// A watched video holds the fade: how far into it the fade was.
+    held: Option<Duration>,
     overlay: Option<Overlay>,
     /// Making the overlay failed this idle: stop asking for render passes.
     failed: bool,
@@ -105,6 +120,8 @@ impl Default for FadeState {
             since: None,
             returning: None,
             keep: None,
+            videos: HashMap::new(),
+            held: None,
             overlay: None,
             failed: false,
             told: None,
@@ -121,8 +138,8 @@ struct Overlay {
     pieces: Vec<Piece>,
     /// The black buffers' own memory (none over the picture's).
     black: Option<(rustix::fd::OwnedFd, wl_shm_pool::WlShmPool)>,
-    /// What it was cut around.
-    keep: Option<IdleKeep>,
+    /// Its pieces' rectangles, and which are kept ([`cut::cut`]).
+    cut: Vec<(Rect, bool)>,
     /// The background it shows (`background::generation`; 0: black) and
     /// the output's size: either changing makes it again.
     ground: u64,
@@ -228,6 +245,8 @@ pub fn tick(state: &mut AppData) {
             state.fade.returning = None;
             state.fade.dimmer = None;
             rest(state);
+            // At rest every video is cut out again.
+            state.pending.render_dirty = true;
             return;
         }
         if let Some(overlay) = &mut state.fade.overlay {
@@ -248,6 +267,9 @@ pub fn tick(state: &mut AppData) {
         tell(state, true, false);
         state.fade.since = Some(Instant::now());
         state.fade.full_since = None;
+        return;
+    }
+    if hold(state, since) {
         return;
     }
     let target = multiplier(floor, since.elapsed(), state.fade.over);
@@ -271,6 +293,31 @@ pub fn tick(state: &mut AppData) {
     }
 }
 
+/// While a watched video is in sight the fade holds where it is: its
+/// start moves along so it stays as far in. Not once it is full (the pages
+/// rest then). Whether it holds.
+fn hold(state: &mut AppData, since: Instant) -> bool {
+    let holds = state.fade.full_since.is_none()
+        && videos::shown(state).iter().any(videos::Shown::holds);
+    if !holds {
+        if state.fade.held.take().is_some() {
+            info!("idle fade: no video watched, the fade goes on");
+        }
+        return false;
+    }
+    let held = match state.fade.held {
+        Some(held) => held,
+        None => {
+            let held = since.elapsed();
+            info!(into_s = held.as_secs(), "idle fade: held by a video being watched");
+            state.fade.held = Some(held);
+            held
+        }
+    };
+    state.fade.since = Some(Instant::now().checked_sub(held).unwrap_or(since));
+    true
+}
+
 /// Run during every render sequence, last: make the overlay when the rest
 /// or the fade needs it (again when what it keeps moved), and keep it on
 /// top, with the dim's black over it.
@@ -292,10 +339,11 @@ fn sync_overlay(state: &mut AppData) {
         return;
     }
     let ground = crate::client::background::generation(state);
+    let cut = wanted_cut(state);
     if let Some(overlay) = &state.fade.overlay {
         // Made again (a new cut, picture or size) unless returning; a
         // return is over in a second.
-        let current = overlay.keep == state.fade.keep
+        let current = overlay.cut == cut
             && overlay.ground == ground
             && Some(overlay.size) == state.output_size;
         if current || state.fade.returning.is_some() {
@@ -314,13 +362,16 @@ fn sync_overlay(state: &mut AppData) {
         (None, Some(since)) => multiplier(floor, since.elapsed(), state.fade.over),
         (None, None) => floor,
     };
-    match make_overlay(state, level) {
+    let mut old = state.fade.overlay.take();
+    match make_overlay(state, level, cut, &mut old) {
         Ok(overlay) => {
             debug!(level, pieces = overlay.pieces.len(), "idle fade overlay");
             // The old one, if any, goes now: the new is already on top.
+            drop(old);
             state.fade.overlay = Some(overlay);
         }
         Err(e) => {
+            state.fade.overlay = old;
             warn!(%e, "idle fade overlay");
             state.fade.failed = true;
         }
@@ -352,37 +403,30 @@ fn over(look: &Appearance) -> Duration {
     Duration::from_secs(u64::from(look.fade_over_min.max(1)) * 60)
 }
 
-/// A rectangle of the output, logical pixels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Rect {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-}
-
-/// The output (`w` × `h`) in pieces that cover it once: the part kept
-/// (`true`; inside the output), and the up to four around it.
-fn cut(w: i32, h: i32, keep: Option<IdleKeep>) -> Vec<(Rect, bool)> {
-    let full = Rect { x: 0, y: 0, w, h };
-    let Some(k) = keep else {
-        return vec![(full, false)];
+/// The overlay's pieces now: cut around what the shell keeps in sight and
+/// without the videos. At rest every video on screen is left out; while the
+/// fade runs only those holding it, and none once it is full.
+fn wanted_cut(state: &AppData) -> Vec<(Rect, bool)> {
+    let Some((w, h)) = state.output_size else {
+        return Vec::new();
     };
-    let (x0, y0) = (k.x.clamp(0, w), k.y.clamp(0, h));
-    let x1 = k.x.saturating_add(k.w as i32).clamp(0, w);
-    let y1 = k.y.saturating_add(k.h as i32).clamp(0, h);
-    if x1 <= x0 || y1 <= y0 {
-        return vec![(full, false)];
-    }
-    let around = [
-        Rect { x: 0, y: 0, w, h: y0 },
-        Rect { x: 0, y: y1, w, h: h - y1 },
-        Rect { x: 0, y: y0, w: x0, h: y1 - y0 },
-        Rect { x: x1, y: y0, w: w - x1, h: y1 - y0 },
-    ];
-    let mut out = vec![(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, true)];
-    out.extend(around.into_iter().filter(|r| r.w > 0 && r.h > 0).map(|r| (r, false)));
-    out
+    let keep = state.fade.keep.map(|k| Rect {
+        x: k.x,
+        y: k.y,
+        w: i32::try_from(k.w).unwrap_or(i32::MAX),
+        h: i32::try_from(k.h).unwrap_or(i32::MAX),
+    });
+    let fading = state.fade.since.is_some();
+    let holes: Vec<Rect> = if fading && state.fade.full_since.is_some() {
+        Vec::new()
+    } else {
+        videos::shown(state)
+            .into_iter()
+            .filter(|v| !fading || v.holds())
+            .flat_map(|v| v.uncovered)
+            .collect()
+    };
+    cut::cut(w, h, keep, &holes)
 }
 
 /// Ask for the idle notification when the fade is on and it is missing.
@@ -408,6 +452,7 @@ fn ensure(state: &mut AppData) {
 fn resume(state: &mut AppData) {
     tell(state, false, false);
     state.fade.since = None;
+    state.fade.held = None;
     state.fade.full_since = None;
     state.fade.failed = false;
     state.fade.dim_failed = false;
@@ -464,6 +509,7 @@ fn tell(state: &mut AppData, fading: bool, out: bool) {
 fn wake(state: &mut AppData) {
     tell(state, false, false);
     state.fade.since = None;
+    state.fade.held = None;
     state.fade.full_since = None;
     state.fade.failed = false;
     state.fade.dim_failed = false;
@@ -506,7 +552,15 @@ fn black_pool(
     Ok((memfd, pool))
 }
 
-fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
+/// The overlay at `level`, in the pieces `cut`. When only the cut changed
+/// (a video moved), the `old` overlay's surfaces take their new places;
+/// they are left to it otherwise, and on failure.
+fn make_overlay(
+    state: &mut AppData,
+    level: u32,
+    cut: Vec<(Rect, bool)>,
+    old: &mut Option<Overlay>,
+) -> Result<Overlay, String> {
     let wm = state.wm.clone().ok_or("window manager not bound")?;
     let alpha = state.fade.alpha.clone().ok_or("wp_alpha_modifier_v1 not bound")?;
     let compositor = state
@@ -516,17 +570,43 @@ fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
         .ok_or("wl_compositor not bound")?;
     let qh = state.qh.clone().ok_or("queue handle missing")?;
     let (ow, oh) = state.output_size.ok_or("output size unknown")?;
-    let (pool, bw, bh, scale, black) = match crate::client::background::overlay_pool(state) {
-        Some((pool, w, h, scale)) => (pool, w, h, scale.max(1), None),
+    let ground = crate::client::background::generation(state);
+    let reuse = old
+        .as_ref()
+        .is_some_and(|o| o.ground == ground && o.size == (ow, oh));
+    // Without a picture, black memory: the old overlay's when it is kept.
+    let mut fresh_black = None;
+    let (pool, bw, bh, scale) = match crate::client::background::overlay_pool(state) {
+        Some((pool, w, h, scale)) => (pool, w, h, scale.max(1)),
         None => {
-            let (memfd, pool) = black_pool(state, ow, oh)?;
-            (pool.clone(), ow, oh, 1, Some((memfd, pool)))
+            let kept = old
+                .as_ref()
+                .filter(|_| reuse)
+                .and_then(|o| o.black.as_ref())
+                .map(|(_, pool)| pool.clone());
+            let pool = match kept {
+                Some(pool) => pool,
+                None => {
+                    let (memfd, pool) = black_pool(state, ow, oh)?;
+                    fresh_black = Some((memfd, pool.clone()));
+                    pool
+                }
+            };
+            (pool, ow, oh, 1)
         }
     };
+    // Nothing fails past here: the old overlay's pieces can be taken.
+    let (mut spare, mut black) = match old.as_mut() {
+        Some(o) if reuse => (std::mem::take(&mut o.pieces), o.black.take()),
+        _ => (Vec::new(), None),
+    };
+    if fresh_black.is_some() {
+        black = fresh_black;
+    }
     let (x, y) = state.output_origin.unwrap_or((0, 0));
     let mut pieces = Vec::new();
     let floor = state.fade.floor;
-    for (r, kept) in cut(ow, oh, state.fade.keep) {
+    for &(r, kept) in &cut {
         // The piece in the buffer's pixels, inside it, whole logical pixels.
         let (px, py) = (r.x * scale, r.y * scale);
         let pw = (r.w * scale).min(bw - px);
@@ -537,36 +617,50 @@ fn make_overlay(state: &mut AppData, level: u32) -> Result<Overlay, String> {
         }
         let offset = (py * bw + px) * 4;
         let buffer = pool.create_buffer(offset, pw, ph, bw * 4, wl_shm::Format::Xrgb8888, &qh, ());
-        let surface = compositor.create_surface(&qh, ());
-        let region = compositor.create_region(&qh, ());
-        surface.set_input_region(Some(&region));
-        region.destroy();
-        let opacity = alpha.get_surface(&surface, &qh, ());
+        let piece = match spare.pop() {
+            Some(mut p) => {
+                std::mem::replace(&mut p.buffer, buffer).destroy();
+                p.kept = kept;
+                p
+            }
+            None => {
+                let surface = compositor.create_surface(&qh, ());
+                let region = compositor.create_region(&qh, ());
+                surface.set_input_region(Some(&region));
+                region.destroy();
+                let opacity = alpha.get_surface(&surface, &qh, ());
+                let shell_surface = wm.get_shell_surface(&surface, &qh, ());
+                let node = shell_surface.get_node(&qh, ());
+                Piece {
+                    kept,
+                    shell_surface,
+                    node,
+                    surface,
+                    opacity,
+                    buffer,
+                }
+            }
+        };
         // The kept part (the flower, the agent islands) stays at the rest.
-        opacity.set_multiplier(if kept { level.min(floor) } else { level });
-        let shell_surface = wm.get_shell_surface(&surface, &qh, ());
-        let node = shell_surface.get_node(&qh, ());
-        node.place_top();
-        node.set_position(x + r.x, y + r.y);
-        shell_surface.sync_next_commit();
-        surface.set_buffer_scale(scale);
-        surface.attach(Some(&buffer), 0, 0);
-        surface.damage_buffer(0, 0, pw, ph);
-        surface.commit();
-        pieces.push(Piece {
-            kept,
-            shell_surface,
-            node,
-            surface,
-            opacity,
-            buffer,
-        });
+        piece
+            .opacity
+            .set_multiplier(if kept { level.min(floor) } else { level });
+        piece.node.place_top();
+        piece.node.set_position(x + r.x, y + r.y);
+        piece.shell_surface.sync_next_commit();
+        piece.surface.set_buffer_scale(scale);
+        piece.surface.attach(Some(&piece.buffer), 0, 0);
+        piece.surface.damage_buffer(0, 0, pw, ph);
+        piece.surface.commit();
+        pieces.push(piece);
     }
+    // Pieces left over go.
+    drop(spare);
     Ok(Overlay {
         pieces,
         black,
-        keep: state.fade.keep,
-        ground: crate::client::background::generation(state),
+        cut,
+        ground,
         size: (ow, oh),
         level,
         set_at: Instant::now(),
@@ -680,39 +774,5 @@ mod tests {
         let floor = u32::MAX / 10;
         assert_eq!(returning_level(from, floor, 1.0), floor);
         assert_eq!(returning_level(floor / 2, floor, 0.5), floor);
-    }
-
-    #[test]
-    fn the_cut_covers_the_output_once() {
-        let keep = IdleKeep {
-            x: 0,
-            y: 0,
-            w: 240,
-            h: 40,
-        };
-        let pieces = cut(1920, 1080, Some(keep));
-        let area: i32 = pieces.iter().map(|(r, _)| r.w * r.h).sum();
-        assert_eq!(area, 1920 * 1080);
-        let kept: Vec<_> = pieces.iter().filter(|(_, k)| *k).collect();
-        assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].0, Rect { x: 0, y: 0, w: 240, h: 40 });
-        // In the middle: four around it.
-        let mid = IdleKeep {
-            x: 100,
-            y: 100,
-            w: 50,
-            h: 50,
-        };
-        assert_eq!(cut(400, 300, Some(mid)).len(), 5);
-        // Off the output, or none: one piece.
-        let off = IdleKeep {
-            x: 5000,
-            y: 0,
-            w: 10,
-            h: 10,
-        };
-        let whole = Rect { x: 0, y: 0, w: 400, h: 300 };
-        assert_eq!(cut(400, 300, Some(off)), vec![(whole, false)]);
-        assert_eq!(cut(400, 300, None).len(), 1);
     }
 }

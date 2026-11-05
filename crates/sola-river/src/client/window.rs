@@ -338,6 +338,7 @@ pub(crate) fn drop_window(state: &mut AppData, window_id: u32) {
         state.pending.set_focus(crate::pending::FocusAction::None);
         state.focused_window = None;
     }
+    crate::client::fade::forget_videos(state, window_id);
     state.registry.remove(window_id);
     state.windows_by_object.retain(|_, v| *v != window_id);
     let proxy = state.windows_by_id.remove(&window_id);

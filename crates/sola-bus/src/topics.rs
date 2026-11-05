@@ -789,6 +789,27 @@ pub struct IdleFade {
     pub out: bool,
 }
 
+/// The videos a window shows (an app → sola-river,
+/// `Topic::WindowVideos`, sticky, keyed by `window_id`; retracted when it
+/// shows none). sola-river leaves the desk's opacity off them, and a
+/// watched one in sight holds the idle fade.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowVideos {
+    pub window_id: u32,
+    pub videos: Vec<WindowVideo>,
+}
+
+/// One video in a window: the part of it in view, window-local logical
+/// pixels, and whether it is being watched (playing with sound).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowVideo {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+    pub watched: bool,
+}
+
 /// Emitted by compositor when pointer enters a different surface/window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEnteredPayload {
@@ -2461,6 +2482,11 @@ define_topics! {
     // last.
     #[sticky]
     FocusPinned(FocusPinned),
+
+    // The videos a window shows (an app → sola-river). Sticky, keyed by
+    // window_id; retracted when it shows none. Appended last.
+    #[sticky(keys = [window_id])]
+    WindowVideos(WindowVideos),
 }
 
 #[cfg(test)]
@@ -2474,6 +2500,21 @@ mod tests {
         assert!(super::TopicKind::FocusPinned.behavior().is_sticky());
         match super::Topic::parse(&msg) {
             Some(super::Topic::FocusPinned(back)) => assert_eq!(back, pinned),
+            other => panic!("read back as {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_windows_videos_read_back_and_are_kept_per_window() {
+        let videos = super::WindowVideos {
+            window_id: 7,
+            videos: vec![super::WindowVideo { x: 0, y: 48, w: 1280, h: 720, watched: true }],
+        };
+        let msg = super::Topic::WindowVideos(videos.clone()).to_message();
+        assert!(super::TopicKind::WindowVideos.behavior().is_sticky());
+        assert_eq!(msg.keys, vec!["7".to_string()]);
+        match super::Topic::parse(&msg) {
+            Some(super::Topic::WindowVideos(back)) => assert_eq!(back, videos),
             other => panic!("read back as {other:?}"),
         }
     }

@@ -36,6 +36,8 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     // What the idle fade keeps in sight (the top row's left islands).
     // Sticky.
     TopicKind::IdleKeep,
+    // The videos each window shows: no overlay over them. Sticky.
+    TopicKind::WindowVideos,
 ];
 
 pub struct BusClient {
