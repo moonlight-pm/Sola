@@ -81,6 +81,9 @@ pub fn run() -> iced::Result {
         .subscription(App::subscription)
         .theme(App::theme)
         .default_font(fonts::ui())
+        // Its meshes are straight lines and rectangles; a 4× target the size
+        // of the largest window it has had would be ~200 MiB of VRAM.
+        .antialiasing(false)
         .run()
 }
 
