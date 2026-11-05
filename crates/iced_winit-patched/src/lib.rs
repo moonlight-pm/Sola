@@ -28,6 +28,7 @@ pub use winit;
 
 pub mod clipboard;
 pub mod conversion;
+pub mod scope;
 
 mod error;
 mod proxy;
@@ -519,6 +520,8 @@ async fn run_instance<P>(
 
     let mut ui_caches = FxHashMap::default();
     let mut user_interfaces = ManuallyDrop::new(FxHashMap::default());
+    // Windows no message touched: built again at their next event or redraw.
+    let mut parked = FxHashMap::default();
     let mut clipboard = Clipboard::unconnected();
 
     #[cfg(all(feature = "linux-theme-detection", target_os = "linux"))]
@@ -755,6 +758,7 @@ async fn run_instance<P>(
                             &mut clipboard,
                             &mut control_sender,
                             &mut user_interfaces,
+                            &mut parked,
                             &mut window_manager,
                             &mut ui_caches,
                             &mut is_window_opening,
@@ -784,6 +788,19 @@ async fn run_instance<P>(
                         if physical_size.width == 0 || physical_size.height == 0
                         {
                             continue;
+                        }
+
+                        if let Some(cache) = parked.remove(&id) {
+                            let _ = user_interfaces.insert(
+                                id,
+                                build_user_interface(
+                                    &program,
+                                    cache,
+                                    &mut window.renderer,
+                                    logical_size,
+                                    id,
+                                ),
+                            );
                         }
 
                         // Window was resized between redraws
@@ -866,11 +883,16 @@ async fn run_instance<P>(
                                     &mut messages,
                                 );
 
+                                let touched = scope::take();
+
                                 user_interfaces =
-                                    ManuallyDrop::new(build_user_interfaces(
+                                    ManuallyDrop::new(rebuild_user_interfaces(
                                         &program,
                                         &mut window_manager,
                                         caches,
+                                        &mut parked,
+                                        &touched,
+                                        Some(id),
                                     ));
 
                                 for action in actions {
@@ -891,6 +913,7 @@ async fn run_instance<P>(
                                         &mut clipboard,
                                         &mut control_sender,
                                         &mut user_interfaces,
+                                        &mut parked,
                                         &mut window_manager,
                                         &mut ui_caches,
                                         &mut is_window_opening,
@@ -898,16 +921,12 @@ async fn run_instance<P>(
                                     );
                                 }
 
-                                for (window_id, window) in
-                                    window_manager.iter_mut()
-                                {
-                                    // We are already redrawing this window
-                                    if window_id == id {
-                                        continue;
-                                    }
-
-                                    window.raw.request_redraw();
-                                }
+                                // We are already redrawing this window
+                                redraw_touched(
+                                    &mut window_manager,
+                                    &touched,
+                                    Some(id),
+                                );
 
                                 let Some(next_compositor) = compositor.as_mut()
                                 else {
@@ -1098,6 +1117,7 @@ async fn run_instance<P>(
                                 &mut clipboard,
                                 &mut control_sender,
                                 &mut user_interfaces,
+                                &mut parked,
                                 &mut window_manager,
                                 &mut ui_caches,
                                 &mut is_window_opening,
@@ -1149,6 +1169,26 @@ async fn run_instance<P>(
 
                             if window_events.is_empty() && messages.is_empty() {
                                 continue;
+                            }
+
+                            if parked.contains_key(&id) {
+                                if window_events.is_empty() {
+                                    continue;
+                                }
+
+                                let cache = parked.remove(&id).unwrap();
+                                let size = window.state.logical_size();
+
+                                let _ = user_interfaces.insert(
+                                    id,
+                                    build_user_interface(
+                                        &program,
+                                        cache,
+                                        &mut window.renderer,
+                                        size,
+                                        id,
+                                    ),
+                                );
                             }
 
                             let (ui_state, statuses) = user_interfaces
@@ -1224,11 +1264,16 @@ async fn run_instance<P>(
                                 &mut messages,
                             );
 
+                            let touched = scope::take();
+
                             user_interfaces =
-                                ManuallyDrop::new(build_user_interfaces(
+                                ManuallyDrop::new(rebuild_user_interfaces(
                                     &program,
                                     &mut window_manager,
                                     cached_interfaces,
+                                    &mut parked,
+                                    &touched,
+                                    None,
                                 ));
 
                             for action in actions {
@@ -1242,6 +1287,7 @@ async fn run_instance<P>(
                                     &mut clipboard,
                                     &mut control_sender,
                                     &mut user_interfaces,
+                                    &mut parked,
                                     &mut window_manager,
                                     &mut ui_caches,
                                     &mut is_window_opening,
@@ -1249,9 +1295,7 @@ async fn run_instance<P>(
                                 );
                             }
 
-                            for (_id, window) in window_manager.iter_mut() {
-                                window.raw.request_redraw();
-                            }
+                            redraw_touched(&mut window_manager, &touched, None);
                         }
 
                         if let Some(redraw_at) = window_manager.redraw_at() {
@@ -1310,7 +1354,9 @@ where
     let mut actions = Vec::new();
 
     for message in messages.drain(..) {
+        scope::begin_message();
         let task = runtime.enter(|| program.update(message));
+        scope::end_message();
 
         if let Some(mut stream) = runtime::task::into_stream(task) {
             let waker = futures::task::noop_waker_ref();
@@ -1355,6 +1401,7 @@ fn run_action<'a, P, C>(
         window::Id,
         UserInterface<'a, P::Message, P::Theme, P::Renderer>,
     >,
+    parked: &mut FxHashMap<window::Id, user_interface::Cache>,
     window_manager: &mut WindowManager<P, C>,
     ui_caches: &mut FxHashMap<window::Id, user_interface::Cache>,
     is_window_opening: &mut bool,
@@ -1399,6 +1446,7 @@ fn run_action<'a, P, C>(
             window::Action::Close(id) => {
                 let _ = ui_caches.remove(&id);
                 let _ = interfaces.remove(&id);
+                let _ = parked.remove(&id);
 
                 if let Some(window) = window_manager.remove(id) {
                     if clipboard.window_id() == Some(window.raw.id()) {
@@ -1740,6 +1788,8 @@ fn run_action<'a, P, C>(
             }
         },
         Action::Widget(operation) => {
+            unpark_all(program, interfaces, parked, window_manager);
+
             let mut current_operation = Some(operation);
 
             while let Some(mut operation) = current_operation.take() {
@@ -1782,6 +1832,8 @@ fn run_action<'a, P, C>(
             }
         }
         Action::Reload => {
+            unpark_all(program, interfaces, parked, window_manager);
+
             for (id, window) in window_manager.iter_mut() {
                 let Some(ui) = interfaces.remove(&id) else {
                     continue;
@@ -1808,6 +1860,93 @@ fn run_action<'a, P, C>(
             control_sender
                 .start_send(Control::Exit)
                 .expect("Send control action");
+        }
+    }
+}
+
+/// The interfaces after an update that changed `touched`. Every window's, when
+/// that is all of them. Otherwise none is built yet, but for `keep`: each waits
+/// parked for the event or redraw that needs it, so a window nothing touched
+/// costs nothing and a touched one out of sight waits until it can be drawn.
+fn rebuild_user_interfaces<'a, P: Program, C>(
+    program: &'a program::Instance<P>,
+    window_manager: &mut WindowManager<P, C>,
+    mut caches: FxHashMap<window::Id, user_interface::Cache>,
+    parked: &mut FxHashMap<window::Id, user_interface::Cache>,
+    touched: &scope::Scope,
+    keep: Option<window::Id>,
+) -> FxHashMap<window::Id, UserInterface<'a, P::Message, P::Theme, P::Renderer>>
+where
+    C: Compositor<Renderer = P::Renderer>,
+    P::Theme: theme::Base,
+{
+    if let scope::Scope::All = touched {
+        caches.extend(parked.drain());
+
+        return build_user_interfaces(program, window_manager, caches);
+    }
+
+    // Titles and themes reach a window whether or not it is drawn.
+    for (id, window) in window_manager.iter_mut() {
+        window.state.synchronize(program, id, &window.raw);
+    }
+
+    parked.extend(caches);
+
+    let mut interfaces = FxHashMap::default();
+
+    if let Some(id) = keep
+        && let Some(window) = window_manager.get_mut(id)
+        && let Some(cache) = parked.remove(&id)
+    {
+        let size = window.state.logical_size();
+
+        let _ = interfaces.insert(
+            id,
+            build_user_interface(program, cache, &mut window.renderer, size, id),
+        );
+    }
+
+    interfaces
+}
+
+/// Ask a redraw of the windows an update changed, but for `except`.
+fn redraw_touched<P: Program, C>(
+    window_manager: &mut WindowManager<P, C>,
+    touched: &scope::Scope,
+    except: Option<window::Id>,
+) where
+    C: Compositor<Renderer = P::Renderer>,
+    P::Theme: theme::Base,
+{
+    for (id, window) in window_manager.iter_mut() {
+        if Some(id) != except && touched.includes(id) {
+            window.raw.request_redraw();
+        }
+    }
+}
+
+/// Build every parked window: what follows needs them all.
+fn unpark_all<'a, P: Program, C>(
+    program: &'a program::Instance<P>,
+    interfaces: &mut FxHashMap<
+        window::Id,
+        UserInterface<'a, P::Message, P::Theme, P::Renderer>,
+    >,
+    parked: &mut FxHashMap<window::Id, user_interface::Cache>,
+    window_manager: &mut WindowManager<P, C>,
+) where
+    C: Compositor<Renderer = P::Renderer>,
+    P::Theme: theme::Base,
+{
+    for (id, cache) in parked.drain() {
+        if let Some(window) = window_manager.get_mut(id) {
+            let size = window.state.logical_size();
+
+            let _ = interfaces.insert(
+                id,
+                build_user_interface(program, cache, &mut window.renderer, size, id),
+            );
         }
     }
 }

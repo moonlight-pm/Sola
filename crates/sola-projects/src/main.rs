@@ -22,6 +22,7 @@ use sola_kit::app::{
 };
 use sola_core::window_label::WindowLabel;
 use sola_kit::fonts;
+use sola_kit::scope;
 use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
 use sola_terminal::emulator::{self, Emulator, Listener};
 use sola_terminal::input::{self, Mods};
@@ -618,10 +619,47 @@ impl App {
     }
 
     fn update(&mut self, msg: Msg) -> Task<Msg> {
+        self.touch_for(&msg);
         let task = self.update_msg(msg);
         self.windows.publish_activity(&self.tabs);
         self.sync_islands();
         task
+    }
+
+    /// The busy messages say which windows they change, so the others are
+    /// not rebuilt and redrawn for them ([`scope`]). A message not named here
+    /// changes every window; only what is sure of its reach belongs here.
+    /// Keys say so in [`Self::on_input`], ticks in [`Self::apply_tick`].
+    fn touch_for(&self, msg: &Msg) {
+        match msg {
+            Msg::PtyOutput(id) | Msg::Scrolled(id) | Msg::MouseToPty(id, _) => self.touch_pane(id),
+            Msg::Osc(id, _) => self.touch_pane(&self.resolve_pane(id).unwrap_or_default()),
+            Msg::Hook(incoming) => {
+                self.touch_pane(&self.resolve_hook_pane(incoming).unwrap_or_default())
+            }
+            Msg::BlinkTick | Msg::SelectionChanged => self.touch_pane(&self.focused),
+            Msg::SpawnName(_) => {
+                if let Some(window) = self.windows.focused {
+                    scope::touch(window);
+                }
+            }
+            Msg::Nav(window, NavMsg::Query(_)) => scope::touch(*window),
+            Msg::PresenceTick
+            | Msg::LocalTick(_)
+            | Msg::RemoteTick { .. }
+            | Msg::Seen { .. }
+            | Msg::Title(..)
+            | Msg::WheelToPty(..) => scope::touch_none(),
+            _ => {}
+        }
+    }
+
+    /// The message changes what session `pane`'s window shows, and no other.
+    fn touch_pane(&self, pane: &str) {
+        match self.windows.window_of(pane) {
+            Some(window) => scope::touch(window),
+            None => scope::touch_none(),
+        }
     }
 
     fn update_msg(&mut self, msg: Msg) -> Task<Msg> {
@@ -2848,6 +2886,7 @@ impl App {
         // and every later key is swallowed until quit.
         if let iced::Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) = event {
             self.keyboard_mods = mods;
+            scope::touch_none();
             return Task::none();
         }
         if let iced::Event::Keyboard(keyboard::Event::KeyReleased {
@@ -2855,6 +2894,7 @@ impl App {
         }) = &event
         {
             self.apply_modifier_key(key, physical_key, false);
+            scope::touch_none();
             return Task::none();
         }
         // A navigator's keys are its own: never a session's terminal.
@@ -2874,6 +2914,8 @@ impl App {
             }
         }
         if self.dialog_open() {
+            // Its field has the key; that is its own message.
+            scope::touch_none();
             return Task::none();
         }
 
@@ -2893,11 +2935,13 @@ impl App {
 
         self.apply_modifier_key(&key, &physical_key, true);
         if modifier_key_bit(&key, &physical_key).is_some() {
+            scope::touch_none();
             return Task::none();
         }
 
         let modifiers = input::merge_modifiers(modifiers, self.keyboard_mods, self.keys_held_mods);
         if modifiers.logo() {
+            scope::touch_none();
             return Task::none();
         }
 
@@ -2936,6 +2980,7 @@ impl App {
             }
         }
         rt.backend.write(&bytes);
+        self.touch_pane(&self.focused);
         Task::none()
     }
 

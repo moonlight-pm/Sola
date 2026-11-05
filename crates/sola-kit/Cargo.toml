@@ -27,6 +27,8 @@ image = { version = "0.25", default-features = false, features = ["rayon", "bmp"
 # `floating_frame` punches rounded-rect ears via iced_wgpu custom primitives
 # (iced's `widget::shader` module does not re-export the Renderer trait).
 iced_wgpu = "0.14"
+# `scope`: our patched iced_winit, for apps that say which windows a message changes.
+iced_winit = { version = "0.14", default-features = false }
 # Direct dep so the kit's forked text-input widget (components/kit_input/) can
 # use iced's core widget machinery exactly as iced_widget does internally — the
 # vendored source was written against `iced_core` (iced_widget aliases it as

@@ -546,6 +546,11 @@ impl App {
             {
                 dirty = true;
             }
+            if now != after {
+                if let Some(window) = self.windows.window_of(&id) {
+                    sola_kit::scope::touch(window);
+                }
+            }
             self.pane_status.insert(id, after);
         }
         if dirty {
