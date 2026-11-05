@@ -60,6 +60,8 @@ pub use theme::default_theme;
 /// Re-export so consumers don't need a separate `iced` direct dep
 /// just to spell out trait bounds or `Element<'_, Self::Message>`.
 pub use iced;
+/// Which windows a message changes: see the module.
+pub use iced_winit::scope;
 
 /// Re-export so consumers can reference bus types without taking
 /// their own dep — convenience only, not load-bearing.

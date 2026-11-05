@@ -8554,6 +8554,7 @@ dependencies = [
  "iced_core",
  "iced_graphics",
  "iced_wgpu",
+ "iced_winit",
  "image",
  "png 0.18.1",
  "rustix 1.1.4",
