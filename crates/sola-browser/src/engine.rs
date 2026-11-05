@@ -696,6 +696,17 @@ pub struct FrameSlot<E: Engine> {
     /// window is sized more than once), so the window asks for its size
     /// again, once per stray size until a frame fits.
     pub stray_size: Mutex<Option<(u32, u32)>>,
+    /// Where the page last drew in its window (logical pixels) and its
+    /// view pixels to one: the page's videos are placed in the window by it.
+    pub page_view: Mutex<Option<PageView>>,
+}
+
+/// Where a page view sits in its window: its top left, logical pixels, and
+/// how many of its view pixels make one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PageView {
+    pub origin: (f32, f32),
+    pub scale: f32,
 }
 
 impl<E: Engine> FrameSlot<E> {
@@ -732,6 +743,7 @@ impl<E: Engine> FrameSlot<E> {
             last_frame_ms: AtomicU64::new(0),
             ime,
             stray_size: Mutex::new(None),
+            page_view: Mutex::new(None),
         }
     }
 
@@ -775,6 +787,16 @@ impl<E: Engine> FrameSlot<E> {
     }
 
     /// Returns true when the stored size changed (caller should Resize).
+    /// The page drew at `view`. Whether that moved it.
+    pub fn store_page_view(&self, view: PageView) -> bool {
+        let mut slot = self.page_view.lock().unwrap();
+        if *slot == Some(view) {
+            return false;
+        }
+        *slot = Some(view);
+        true
+    }
+
     pub fn store_last_size(&self, surface: PaintSurface, size: (u32, u32)) -> bool {
         let mut slot = match surface {
             PaintSurface::Page => self.last_size.lock().unwrap(),
@@ -947,6 +969,8 @@ pub type FaviconsHandle = Arc<Mutex<Vec<FaviconIpc>>>;
 pub type FindResultsHandle = Arc<Mutex<Vec<FindResult>>>;
 /// Helper → chrome: docked inspector opened / closed.
 pub type DevToolsHandle = Arc<Mutex<Vec<DevToolsEvent>>>;
+/// Helper → chrome: each page's latest videos in view (`crate::videos`).
+pub type VideosHandle = Arc<Mutex<Vec<(TabId, Vec<crate::videos::PageVideo>)>>>;
 
 /// Inspector attached to a page tab (not a strip tab).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1025,6 +1049,7 @@ pub trait Engine: Sized + Send + Sync + 'static {
     fn favicons_handle(&self) -> FaviconsHandle;
     fn find_results_handle(&self) -> FindResultsHandle;
     fn devtools_handle(&self) -> DevToolsHandle;
+    fn videos_handle(&self) -> VideosHandle;
     fn agent_handle(&self) -> crate::agent::AgentHandle;
     fn frames(&self) -> FrameReceiver<Self::Frame>;
     fn make_program(slot: Arc<FrameSlot<Self>>) -> Self::Program;

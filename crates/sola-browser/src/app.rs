@@ -8,6 +8,7 @@ mod favicons;
 mod pages;
 #[cfg(feature = "vault")]
 mod vault;
+mod videos;
 mod wallpaper;
 mod webapps;
 
@@ -294,6 +295,8 @@ pub struct App<E: Engine> {
     page_ids: HashMap<TabId, String>,
     /// Each page's favicon file, named on its tab ([`favicons`]).
     page_icons: HashMap<TabId, String>,
+    /// Each page's videos, told to sola-river ([`videos`]).
+    videos: videos::Videos,
     /// Web apps: the pages hosted as their own apps ([`webapps`]).
     pub(crate) webapps: webapps::WebApps,
     /// Editable contents of the URL bar.
@@ -432,6 +435,7 @@ impl<E: Engine> App<E> {
             recently_closed,
             page_ids: HashMap::new(),
             page_icons: HashMap::new(),
+            videos: videos::Videos::default(),
             webapps: webapps::WebApps::default(),
             url_field: String::new(),
             last_seen_url: String::new(),
@@ -758,7 +762,9 @@ impl<E: Engine> App<E> {
 
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
         let task = self.update_msg(msg);
-        Task::batch([task, self.sync_windows()])
+        let task = Task::batch([task, self.sync_windows()]);
+        self.publish_videos();
+        task
     }
 
     /// The page slot the chrome drives: the active page's window, else the
@@ -1168,6 +1174,7 @@ impl<E: Engine> App<E> {
                 }
                 self.webapps.favicons.remove(&id);
                 self.forget_page_icon(id);
+                self.forget_videos(id);
                 // If closing the active tab, pick a new active tab
                 // first so the engine never sees `active` pointing
                 // at a closed tab.
@@ -1332,6 +1339,7 @@ impl<E: Engine> App<E> {
                 let http_auth = self.drain_http_auth();
                 self.drain_find_results();
                 self.drain_favicons();
+                self.drain_videos();
                 self.drain_devtools();
                 for req in bg {
                     // The page that asked: the active one (it was clicked).
@@ -1357,6 +1365,7 @@ impl<E: Engine> App<E> {
                     }
                     Some(Topic::Replayed) => {
                         self.replayed = true;
+                        self.retell_videos();
                         self.open_held_links();
                         if self.scheme_wait {
                             tracing::info!("no Appearance saved: restored pages open without light or dark");

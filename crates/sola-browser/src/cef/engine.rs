@@ -210,6 +210,7 @@ pub struct CefEngine {
     favicons: crate::engine::FaviconsHandle,
     find_results: crate::engine::FindResultsHandle,
     devtools: crate::engine::DevToolsHandle,
+    videos: crate::engine::VideosHandle,
     agent: crate::agent::AgentHandle,
     front_profile: crate::engine::FrontProfileHandle,
 }
@@ -296,6 +297,7 @@ impl Engine for CefEngine {
             favicons: handles.favicons,
             find_results: handles.find_results,
             devtools: handles.devtools,
+            videos: handles.videos,
             agent: handles.agent,
             front_profile: handles.front_profile,
         }
@@ -378,6 +380,10 @@ impl Engine for CefEngine {
 
     fn devtools_handle(&self) -> crate::engine::DevToolsHandle {
         self.devtools.clone()
+    }
+
+    fn videos_handle(&self) -> crate::engine::VideosHandle {
+        self.videos.clone()
     }
 
     fn agent_handle(&self) -> crate::agent::AgentHandle {
@@ -854,7 +860,7 @@ cef::wrap_render_process_handler! {
         fn on_context_created(
             &self,
             _browser: Option<&mut cef::Browser>,
-            _frame: Option<&mut cef::Frame>,
+            frame: Option<&mut cef::Frame>,
             context: Option<&mut cef::V8Context>,
         ) {
             // `Frame::execute_java_script` is browser-process only. Eval
@@ -864,6 +870,9 @@ cef::wrap_render_process_handler! {
             // on "Verifying it's you".
             let Some(ctx) = context else { return };
             eval_v8_context(ctx, &crate::paste_js::clipboard_bridge_script());
+            if frame.is_some_and(|f| f.is_main() != 0) {
+                install_videos(ctx);
+            }
             #[cfg(feature = "vault")]
             {
                 install_vault_post(ctx);
@@ -1876,6 +1885,87 @@ fn handle_notify_perm(browser: Option<&cef::Browser>, raw: &str) {
     });
     if let Some(tx) = &cef_state().ipc_events {
         let _ = tx.send(crate::cef::ipc::FromEngine::Notify(ev));
+    }
+}
+
+/// The process message the video watcher's reports become.
+const VIDEOS_POST: &str = "__solaVideos";
+
+/// Start the video watcher (`crate::videos`) in a top frame: evaluate it
+/// and hand it the native function that sends its reports to the browser
+/// process. The page never sees the function.
+fn install_videos(ctx: &mut cef::V8Context) {
+    if ctx.is_valid() == 0 || ctx.enter() == 0 {
+        return;
+    }
+    let code = cef::CefString::from(crate::videos::script().as_str());
+    let mut watcher: Option<cef::V8Value> = None;
+    let mut exception: Option<cef::V8Exception> = None;
+    let ok = ctx.eval(Some(&code), None, 1, Some(&mut watcher), Some(&mut exception));
+    let name = cef::CefString::from(VIDEOS_POST);
+    let mut handler = VideosPostHandler::new();
+    let post = cef::v8_value_create_function(Some(&name), Some(&mut handler));
+    match (ok != 0, watcher, post) {
+        (true, Some(watcher), Some(post)) if watcher.is_function() != 0 => {
+            watcher.execute_function(None, Some(&[Some(post)]));
+        }
+        _ => tracing::debug!("videos: the watcher did not start"),
+    }
+    ctx.exit();
+}
+
+cef::wrap_v8_handler! {
+    struct VideosPostHandler {}
+
+    impl V8Handler {
+        fn execute(
+            &self,
+            _name: Option<&cef::CefString>,
+            _object: Option<&mut cef::V8Value>,
+            arguments: Option<&[Option<cef::V8Value>]>,
+            _retval: Option<&mut Option<cef::V8Value>>,
+            _exception: Option<&mut cef::CefString>,
+        ) -> ::std::os::raw::c_int {
+            let Some(arg) = arguments.and_then(|a| a.first()).and_then(|a| a.as_ref()) else {
+                return 1;
+            };
+            if arg.is_string() == 0 {
+                return 1;
+            }
+            let json = cef::CefString::from(&arg.string_value());
+            let Some(frame) = cef::v8_context_get_current_context().and_then(|c| c.frame()) else {
+                return 1;
+            };
+            let name = cef::CefString::from(VIDEOS_POST);
+            let Some(mut msg) = cef::process_message_create(Some(&name)) else {
+                return 1;
+            };
+            if let Some(args) = msg.argument_list() {
+                args.set_string(0, Some(&json));
+            }
+            frame.send_process_message(cef::ProcessId::BROWSER, Some(&mut msg));
+            1
+        }
+    }
+}
+
+/// The watcher's report (browser process): the videos in view in a page's
+/// top frame, for the chrome.
+fn handle_videos_post(browser: &cef::Browser, frame: &cef::Frame, raw: &str) {
+    use cef::ImplFrame;
+    if frame.is_main() == 0 {
+        return;
+    }
+    let state = cef_state();
+    let Some(tab) = tab_by_browser_id(&state, browser.identifier()) else {
+        return;
+    };
+    let Some(videos) = crate::videos::parse(raw) else {
+        tracing::debug!(tab = tab.0, "videos: a report that does not read");
+        return;
+    };
+    if let Some(tx) = &state.ipc_events {
+        let _ = tx.send(crate::cef::ipc::FromEngine::Videos { tab_id: tab.0, videos });
     }
 }
 
@@ -3207,20 +3297,26 @@ cef::wrap_client! {
             _source_process: cef::ProcessId,
             message: Option<&mut cef::ProcessMessage>,
         ) -> ::std::os::raw::c_int {
-            #[cfg(feature = "vault")]
-            if let (Some(browser), Some(frame), Some(message)) = (browser, frame, message) {
-                use cef::{ImplListValue, ImplProcessMessage};
-                if cef::CefString::from(&message.name()).to_string() == VAULT_POST {
-                    let raw = message
-                        .argument_list()
-                        .map(|a| cef_string_userfree_display(&a.string(0)))
-                        .unwrap_or_default();
-                    handle_vault_post(browser, frame, &raw);
-                    return 1;
-                }
+            let (Some(browser), Some(frame), Some(message)) = (browser, frame, message) else {
+                return 0;
+            };
+            use cef::{ImplListValue, ImplProcessMessage};
+            let name = cef::CefString::from(&message.name()).to_string();
+            let raw = || {
+                message
+                    .argument_list()
+                    .map(|a| cef_string_userfree_display(&a.string(0)))
+                    .unwrap_or_default()
+            };
+            if name == VIDEOS_POST {
+                handle_videos_post(browser, frame, &raw());
+                return 1;
             }
-            #[cfg(not(feature = "vault"))]
-            let _ = (browser, frame, message);
+            #[cfg(feature = "vault")]
+            if name == VAULT_POST {
+                handle_vault_post(browser, frame, &raw());
+                return 1;
+            }
             0
         }
 

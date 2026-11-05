@@ -33,6 +33,7 @@ pub mod shader;
 pub mod util;
 #[cfg(feature = "vault")]
 pub mod vault;
+pub mod videos;
 pub mod visit_history;
 pub mod wallpaper;
 

@@ -26,7 +26,7 @@ use crate::engine::{
     BackgroundTabsHandle, ClipboardHandle, Cmd, DevToolsHandle, DownloadsHandle, FaviconsHandle,
     FileDialogsHandle, FindResultsHandle, FrameMailbox, FrameReceiver, FrontProfileHandle,
     HttpAuthHandle, ImeCaret,
-    ImeHandle, JsDialogsHandle, NotificationsHandle, PageMenusHandle, PasskeysHandle, TabId,
+    ImeHandle, VideosHandle, JsDialogsHandle, NotificationsHandle, PageMenusHandle, PasskeysHandle, TabId,
     TabInfo, TabsHandle,
 };
 use crate::profiles;
@@ -61,6 +61,7 @@ struct Shared {
     favicons: FaviconsHandle,
     find_results: FindResultsHandle,
     devtools: DevToolsHandle,
+    videos: VideosHandle,
     agent: crate::agent::AgentHandle,
     next_id: Arc<AtomicU64>,
     /// Last chrome content size (physical px) + scale. Helpers must match
@@ -116,6 +117,7 @@ pub struct RouterHandles {
     pub favicons: FaviconsHandle,
     pub find_results: FindResultsHandle,
     pub devtools: DevToolsHandle,
+    pub videos: VideosHandle,
     pub agent: crate::agent::AgentHandle,
     pub front_profile: FrontProfileHandle,
 }
@@ -140,6 +142,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
     let favicons: FaviconsHandle = Arc::new(Mutex::new(Vec::new()));
     let find_results: FindResultsHandle = Arc::new(Mutex::new(Vec::new()));
     let devtools: DevToolsHandle = Arc::new(Mutex::new(Vec::new()));
+    let videos: VideosHandle = Arc::new(Mutex::new(Vec::new()));
     let agent: crate::agent::AgentHandle = Arc::new(Mutex::new(Vec::new()));
 
     let front_profile: FrontProfileHandle = Arc::new(Mutex::new(String::new()));
@@ -162,6 +165,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         favicons: favicons.clone(),
         find_results: find_results.clone(),
         devtools: devtools.clone(),
+        videos: videos.clone(),
         agent: agent.clone(),
         next_id: next_id.clone(),
         viewport: Mutex::new((width, height, 1.0)),
@@ -202,6 +206,7 @@ pub fn spawn_router(_app_id: &'static str, width: u32, height: u32) -> RouterHan
         favicons,
         find_results,
         devtools,
+        videos,
         agent,
         front_profile,
     }
@@ -901,6 +906,10 @@ fn handle_from(
         }
         FromEngine::Agent(reply) => {
             shared.agent.lock().unwrap().push(reply);
+            crate::chrome_wake::wake();
+        }
+        FromEngine::Videos { tab_id, videos } => {
+            shared.videos.lock().unwrap().push((TabId(tab_id), videos));
             crate::chrome_wake::wake();
         }
         FromEngine::Favicon { tab_id, png } => {

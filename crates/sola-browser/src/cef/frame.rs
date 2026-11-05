@@ -564,6 +564,15 @@ impl shader::Primitive for CefPrimitive {
         let scale = viewport.scale_factor() as f32;
         let req_w = (bounds.width * scale).round().max(1.0) as u32;
         let req_h = (bounds.height * scale).round().max(1.0) as u32;
+        if self.surface == PaintSurface::Page
+            && self.slot.store_page_view(crate::engine::PageView {
+                origin: (bounds.x, bounds.y),
+                scale,
+            })
+        {
+            // The page's videos move with it in the window.
+            crate::chrome_wake::wake();
+        }
         if self.slot.store_last_size(self.surface, (req_w, req_h)) {
             let cmd = match self.surface {
                 PaintSurface::Page => self.slot.page_cmd(Cmd::Resize {

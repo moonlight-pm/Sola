@@ -204,6 +204,11 @@ pub enum FromEngine {
     FindResult(crate::engine::FindResult),
     DevTools(crate::engine::DevToolsEvent),
     Agent(crate::agent::AgentReply),
+    /// The videos in view in a page's top frame (`crate::videos`).
+    Videos {
+        tab_id: u64,
+        videos: Vec<crate::videos::PageVideo>,
+    },
 }
 
 /// Helper → chrome WebAuthn intercept (page lives in the engine process).
