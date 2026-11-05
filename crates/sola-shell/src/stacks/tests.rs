@@ -1022,3 +1022,131 @@ fn reordering_keeps_the_showing_workspace_showing() {
     assert!(!s.reorder_workspace(MAIN + 1, MAIN + 1));
     assert!(!s.reorder_workspace(MAIN, 9));
 }
+
+/// Every order of `items`.
+fn orders(items: &[usize]) -> Vec<Vec<usize>> {
+    if items.len() <= 1 {
+        return vec![items.to_vec()];
+    }
+    let mut all = Vec::new();
+    for (i, first) in items.iter().enumerate() {
+        let mut rest = items.to_vec();
+        rest.remove(i);
+        for mut order in orders(&rest) {
+            order.insert(0, *first);
+            all.push(order);
+        }
+    }
+    all
+}
+
+fn keys(s: &Stacks) -> Vec<String> {
+    s.bar().iter().map(|t| t.key.clone()).collect()
+}
+
+/// A bar with an app's sessions between other apps: two loose rows, four
+/// sessions, then another app's group.
+fn a_full_bar(t: Instant) -> (Stacks, [(u32, String); 4]) {
+    let mut s = Stacks::new();
+    s.place(1, "sola-mail", "sola-mail", false, true, t);
+    s.place(2, "sola-browser", "sola-browser", false, true, t);
+    let sessions = ["c", "a", "d", "b"].map(|n| format!("sola-projects/{n}"));
+    let sessions: [(u32, String); 4] = [
+        (10, sessions[0].clone()),
+        (11, sessions[1].clone()),
+        (12, sessions[2].clone()),
+        (13, sessions[3].clone()),
+    ];
+    for (id, key) in &sessions {
+        s.place(*id, "sola-projects", key, false, true, t);
+    }
+    s.place(20, "sola-editor", "sola-editor/x", false, true, t);
+    s.place(21, "sola-editor", "sola-editor/y", false, true, t);
+    (s, sessions)
+}
+
+#[test]
+fn windows_leaving_together_come_back_in_their_order() {
+    let t = Instant::now();
+    let want = keys(&a_full_bar(t).0);
+    assert_eq!(want[2..6], ["sola-projects/c", "sola-projects/a", "sola-projects/d", "sola-projects/b"]);
+    let every = orders(&[0, 1, 2, 3]);
+    for leaving in &every {
+        for coming in &every {
+            let (mut s, sessions) = a_full_bar(t);
+            s.show(sessions[2].0);
+            for &i in leaving {
+                s.remove(sessions[i].0, t);
+            }
+            for (n, &i) in coming.iter().enumerate() {
+                let back = t + Duration::from_secs(1);
+                s.place(100 + n as u32, "sola-projects", &sessions[i].1, false, true, back);
+            }
+            assert_eq!(keys(&s), want, "left in {leaving:?}, came back in {coming:?}");
+            let shown = s.shown(FULL).and_then(|w| s.bar().iter().find(|t| t.window_id == w).map(|t| t.key.clone()));
+            assert_eq!(shown.as_deref(), Some(sessions[2].1.as_str()), "left in {leaving:?}, came back in {coming:?}");
+        }
+    }
+}
+
+#[test]
+fn every_window_leaving_together_comes_back_in_its_order() {
+    let t = Instant::now();
+    let (start, _) = a_full_bar(t);
+    let want = keys(&start);
+    let apps: Vec<(u32, String, String)> = start
+        .bar()
+        .iter()
+        .map(|t| (t.window_id, t.app_id.clone(), t.key.clone()))
+        .collect();
+    let all: Vec<usize> = (0..apps.len()).collect();
+    // A fixed walk through the orders of eight: enough to mix, quick to run.
+    let every = orders(&all);
+    for (n, leaving) in every.iter().enumerate().step_by(997) {
+        let coming = &every[(n * 7 + 3) % every.len()];
+        let (mut s, _) = a_full_bar(t);
+        for &i in leaving {
+            s.remove(apps[i].0, t);
+        }
+        for (m, &i) in coming.iter().enumerate() {
+            let back = t + Duration::from_secs(1);
+            s.place(100 + m as u32, &apps[i].1, &apps[i].2, false, true, back);
+        }
+        assert_eq!(keys(&s), want, "left in {leaving:?}, came back in {coming:?}");
+    }
+}
+
+#[test]
+fn the_layout_saved_while_windows_are_away_has_them_in_order() {
+    let t = Instant::now();
+    let (mut s, sessions) = a_full_bar(t);
+    let want = keys(&s);
+    for i in [2, 0, 3, 1] {
+        s.remove(sessions[i].0, t);
+    }
+    let saved: Vec<String> = s
+        .layout(t)
+        .zones
+        .iter()
+        .flat_map(|z| z.apps.iter().cloned())
+        .collect();
+    assert_eq!(saved, want);
+}
+
+#[test]
+fn a_window_that_stays_away_leaves_no_gap_for_those_that_return() {
+    let t = Instant::now();
+    let (mut s, sessions) = a_full_bar(t);
+    // c stays away past its grace; the others left later.
+    s.remove(sessions[0].0, t);
+    let later = t + Duration::from_secs(20);
+    for i in [2, 1, 3] {
+        s.remove(sessions[i].0, later);
+    }
+    let back = t + GHOST_GRACE + Duration::from_secs(1);
+    for (n, i) in [3, 2, 1].into_iter().enumerate() {
+        s.place(100 + n as u32, "sola-projects", &sessions[i].1, false, true, back);
+    }
+    let got = keys(&s);
+    assert_eq!(got[2..5], ["sola-projects/a", "sola-projects/d", "sola-projects/b"]);
+}

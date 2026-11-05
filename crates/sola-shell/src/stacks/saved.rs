@@ -14,7 +14,9 @@ use super::desk::Desk;
 use super::{FIRST_WORKSPACE, FULL, GHOST_GRACE, RESTORE_GRACE, Stacks};
 
 /// A remembered place: a workspace, a zone, a key, its index in that
-/// workspace's bar, and whether the zone showed it.
+/// workspace's bar, and whether the zone showed it. A window that just left
+/// has its index in the bar as it was when windows started leaving
+/// ([`Desk::number_tabs`]), so those that leave together agree.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Slot {
     pub workspace: String,
@@ -171,7 +173,9 @@ impl Stacks {
                 }
             }
             let here = |s: &Slot| s.workspace == desk.id;
-            for (g, _) in self.live_ghosts(now).filter(|(g, _)| here(g)) {
+            let mut waiting: Vec<_> = self.live_ghosts(now).filter(|(g, _)| here(g)).collect();
+            waiting.sort_by_key(|(g, _)| g.at);
+            for (g, _) in waiting {
                 if g.shown {
                     for row in &mut bar {
                         if let Row::Tab(zone, _, shown) = row {

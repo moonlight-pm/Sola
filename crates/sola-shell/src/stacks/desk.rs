@@ -53,6 +53,10 @@ pub(super) struct Desk {
     /// Saved index in this bar of each restored window, so windows that
     /// come back in any order still line up as saved.
     ranks: HashMap<u32, usize>,
+    /// Each tab's index when windows last started leaving, and each window
+    /// back since: those that leave together, and come back in any order,
+    /// line up by it.
+    numbers: HashMap<u32, usize>,
 }
 
 impl Desk {
@@ -66,6 +70,7 @@ impl Desk {
             picks: Vec::new(),
             last_zone: FULL,
             ranks: HashMap::new(),
+            numbers: HashMap::new(),
         }
     }
 
@@ -202,6 +207,40 @@ impl Desk {
         self.placed(window_id, zone, show)
     }
 
+    /// Windows are starting to leave: note the bar's order as it stands.
+    pub fn number_tabs(&mut self) {
+        self.numbers = self
+            .bar
+            .tabs()
+            .enumerate()
+            .map(|(i, t)| (t.window_id, i))
+            .collect();
+    }
+
+    /// `window_id`'s number. A tab added since goes by the one before it.
+    pub fn number_of(&self, window_id: u32) -> usize {
+        let mut number = 0;
+        for t in self.bar.tabs() {
+            if let Some(n) = self.numbers.get(&t.window_id) {
+                number = *n;
+            }
+            if t.window_id == window_id {
+                break;
+            }
+        }
+        number
+    }
+
+    /// Put back `tab`, which left with [`Self::number_of`] `number`, among the
+    /// windows there now.
+    pub fn insert_back(&mut self, tab: Tab, number: usize, show: bool) -> bool {
+        let (window_id, zone) = (tab.window_id, tab.zone);
+        let numbers = &self.numbers;
+        self.bar.insert_ranked(tab, number, &|w| numbers.get(&w).copied());
+        self.numbers.insert(window_id, number);
+        self.placed(window_id, zone, show)
+    }
+
     /// Move `window_id` to `zone`, its row where it is in the bar; `zone`
     /// shows it when `show` (or when it showed nothing). The zone it left
     /// shows what it showed before.
@@ -263,6 +302,7 @@ impl Desk {
     pub fn take(&mut self, window_id: u32) -> Option<(Zone, usize, Tab, bool)> {
         self.float_z.retain(|&w| w != window_id);
         self.ranks.remove(&window_id);
+        self.numbers.remove(&window_id);
         let (at, tab) = self.bar.remove(window_id)?;
         let zone = tab.zone;
         let was_shown = self.vacate(window_id, zone, at);
@@ -272,6 +312,7 @@ impl Desk {
     pub fn clear(&mut self) {
         self.bar.clear();
         self.ranks.clear();
+        self.numbers.clear();
         for c in &mut self.columns {
             c.shown = None;
             c.recent.clear();

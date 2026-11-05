@@ -371,9 +371,10 @@ impl Stacks {
         })
     }
 
-    /// Put `tab` in its remembered place. A pinned window's goes back to each
-    /// other workspace too, where `copies` says it was there, else at the end.
-    fn insert_slot(&mut self, mut tab: Tab, slot: &Slot, ranked: bool, copies: &[Slot]) -> Placed {
+    /// Put `tab` in its remembered place, from the saved layout or from when
+    /// it left. A pinned window's goes back to each other workspace too, where
+    /// `copies` says it was there, else at the end.
+    fn insert_slot(&mut self, mut tab: Tab, slot: &Slot, saved: bool, copies: &[Slot]) -> Placed {
         // A zone the layout no longer has: the end of Full.
         if !self.layout.contains(tab.zone) {
             tab.zone = FULL;
@@ -381,11 +382,11 @@ impl Stacks {
         let zone = tab.zone;
         let window_id = tab.window_id;
         let d = self.desk_index(&slot.workspace).unwrap_or(self.showing);
-        let mut shown = self.put_back(d, tab.clone(), slot, ranked);
+        let mut shown = self.put_back(d, tab.clone(), slot, saved);
         if slot.pinned {
             for copy in copies {
                 if let Some(i) = self.desk_index(&copy.workspace) {
-                    self.put_back(i, tab.clone(), copy, ranked);
+                    self.put_back(i, tab.clone(), copy, saved);
                 }
             }
             self.pinned.insert(window_id);
@@ -399,14 +400,14 @@ impl Stacks {
         }
     }
 
-    /// Put `tab` in `slot` on workspace `d`. `ranked`: before the first tab
-    /// saved after it (or added since).
-    fn put_back(&mut self, d: usize, tab: Tab, slot: &Slot, ranked: bool) -> bool {
+    /// Put `tab` in `slot` on workspace `d`: before the first tab saved after
+    /// it, or that left from after it (or added since).
+    fn put_back(&mut self, d: usize, tab: Tab, slot: &Slot, saved: bool) -> bool {
         let desk = &mut self.desks[d];
-        if ranked {
+        if saved {
             desk.insert_ranked(tab, slot.at, slot.shown)
         } else {
-            desk.insert(tab, slot.at, slot.shown)
+            desk.insert_back(tab, slot.at, slot.shown)
         }
     }
 
@@ -487,7 +488,15 @@ impl Stacks {
         let pinned = self.pinned.remove(&window_id);
         let mut left = None;
         for desk in &mut self.desks {
-            if let Some((zone, at, tab, shown)) = desk.take(window_id) {
+            let others_away = self
+                .ghosts
+                .iter()
+                .any(|(g, left)| g.workspace == desk.id && now < *left + GHOST_GRACE);
+            if !others_away && desk.tab(window_id).is_some() {
+                desk.number_tabs();
+            }
+            let at = desk.number_of(window_id);
+            if let Some((zone, _, tab, shown)) = desk.take(window_id) {
                 left = Some(zone);
                 if leaves_a_place {
                     self.ghosts.push((
