@@ -28,7 +28,7 @@
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::io::{IntoRawFd, RawFd};
+use std::os::unix::io::RawFd;
 use std::os::unix::process::CommandExt;
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant};
@@ -334,37 +334,14 @@ impl PtyBackend {
             ws_ypixel: 0,
         };
 
-        let pty = nix::pty::openpty(Some(&winsize), None)
+        let (master_fd, slave) = open_pty(&winsize)
             .map_err(|e| std::io::Error::other(format!("openpty failed: {e}")))?;
-        let slave_fd = pty.slave.into_raw_fd();
+        let child = spawn_on_slave(cmd.env("TERM", "xterm-256color"), slave.as_raw_fd())
+            .map_err(|e| std::io::Error::other(format!("failed to spawn tmux: {e}")))?;
 
-        // SAFETY: pre_exec runs in the child between fork and exec; the libc
-        // calls here are async-signal-safe.
-        let child = unsafe {
-            cmd.env("TERM", "xterm-256color")
-                .pre_exec(move || {
-                    libc::setsid();
-                    libc::dup2(slave_fd, 0);
-                    libc::dup2(slave_fd, 1);
-                    libc::dup2(slave_fd, 2);
-                    if slave_fd > 2 {
-                        libc::close(slave_fd);
-                    }
-                    libc::ioctl(0, libc::TIOCSCTTY, 0);
-                    Ok(())
-                })
-                .spawn()
-                .map_err(|e| std::io::Error::other(format!("failed to spawn tmux: {e}")))?
-        };
-
-        // Parent: close slave, keep master.
-        unsafe { libc::close(slave_fd) };
-        let master_raw = pty.master.into_raw_fd();
-        // SAFETY: `master_raw` comes straight from openpty (via nix's
-        // OwnedFd -> into_raw_fd) and is not owned anywhere else. This is the
-        // ONE place ownership of the master fd is taken; the OwnedFd closes it
+        // Parent: close slave, keep master. The OwnedFd closes the master
         // exactly once when this `PtyBackend` drops.
-        let master_fd = unsafe { OwnedFd::from_raw_fd(master_raw) };
+        drop(slave);
         let child_pid = child.id() as i32;
 
         debug!(
@@ -381,9 +358,9 @@ impl PtyBackend {
         // UI never calls write(2) and concurrent writers never interleave
         // mid-sequence on the same fd.
         let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>();
-        // SAFETY: `libc::dup` returns a fresh, owned fd; the writer thread is
-        // its sole owner and the OwnedFd closes it when the loop exits.
-        let write_fd = unsafe { OwnedFd::from_raw_fd(libc::dup(master_fd.as_raw_fd())) };
+        // The writer thread is its sole owner; the OwnedFd closes it when the
+        // loop exits.
+        let write_fd = master_fd.try_clone()?;
         let writer_tab_id = tab_id.to_string();
         std::thread::spawn(move || {
             while let Ok(mut bytes) = write_rx.recv() {
@@ -401,10 +378,9 @@ impl PtyBackend {
         register_writer(tab_id, write_tx.clone());
 
         // Reader thread: own a dup'd fd + the term Arc + a FRESH Processor.
-        // SAFETY: `libc::dup` returns a fresh, owned fd distinct from the
-        // master; the reader thread is its sole owner and the OwnedFd closes it
-        // exactly once when the loop exits.
-        let read_fd = unsafe { OwnedFd::from_raw_fd(libc::dup(master_fd.as_raw_fd())) };
+        // Distinct from the master; the reader thread is its sole owner and
+        // the OwnedFd closes it exactly once when the loop exits.
+        let read_fd = master_fd.try_clone()?;
         let reader_tab_id = tab_id.to_string();
         std::thread::spawn(move || {
             let mut processor: Processor<StdSyncHandler> = Processor::new();
@@ -582,6 +558,65 @@ impl PtyBackend {
     }
 }
 
+/// A new pty, both ends close-on-exec from the start, so nothing spawned on
+/// any thread inherits them. An inherited master keeps a terminal open after
+/// this process lets go: what runs on it gets no hangup and stays, with
+/// nothing reading it (a tmux client holding its own master, stuck writing to
+/// it; an ssh client attached to a remote session, whose writes stall the
+/// connection every remote session shares).
+fn open_pty(winsize: &libc::winsize) -> std::io::Result<(OwnedFd, OwnedFd)> {
+    let flags = libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC;
+    let failed = std::io::Error::last_os_error;
+    // SAFETY: each fd is owned as soon as it is returned; `winsize` is valid
+    // for the ioctl that reads it.
+    unsafe {
+        let master = libc::posix_openpt(flags);
+        if master < 0 {
+            return Err(failed());
+        }
+        let master = OwnedFd::from_raw_fd(master);
+        let raw = master.as_raw_fd();
+        if libc::grantpt(raw) != 0 || libc::unlockpt(raw) != 0 {
+            return Err(failed());
+        }
+        let slave = libc::ioctl(raw, libc::TIOCGPTPEER, flags);
+        if slave < 0 {
+            return Err(failed());
+        }
+        let slave = OwnedFd::from_raw_fd(slave);
+        if libc::ioctl(slave.as_raw_fd(), libc::TIOCSWINSZ, winsize) != 0 {
+            return Err(failed());
+        }
+        Ok((master, slave))
+    }
+}
+
+/// Run `cmd` in a session of its own, with the slave as its terminal.
+fn spawn_on_slave(
+    cmd: &mut std::process::Command,
+    slave_fd: RawFd,
+) -> std::io::Result<std::process::Child> {
+    // SAFETY: pre_exec runs in the child between fork and exec; the libc
+    // calls here are async-signal-safe.
+    unsafe {
+        cmd.pre_exec(move || {
+            libc::setsid();
+            // A dup2 copy is not close-on-exec; the slave itself still is.
+            libc::dup2(slave_fd, 0);
+            libc::dup2(slave_fd, 1);
+            libc::dup2(slave_fd, 2);
+            if slave_fd > 2 {
+                libc::close(slave_fd);
+            } else {
+                libc::fcntl(slave_fd, libc::F_SETFD, 0);
+            }
+            libc::ioctl(0, libc::TIOCSCTTY, 0);
+            Ok(())
+        })
+        .spawn()
+    }
+}
+
 impl Drop for PtyBackend {
     fn drop(&mut self) {
         // Preserve the tmux session (shutdown / crash path). SIGHUP the tmux
@@ -599,5 +634,44 @@ impl Drop for PtyBackend {
             libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG);
         }
         debug!(tab_id = %self.tab_id, "PtyBackend dropped; tmux session preserved");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::{Command, Stdio};
+
+    #[test]
+    fn a_later_child_does_not_keep_a_terminal_open() {
+        let size = libc::winsize { ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0 };
+        let (master, slave) = open_pty(&size).unwrap();
+        let mut on_it = spawn_on_slave(Command::new("sleep").arg("60"), slave.as_raw_fd()).unwrap();
+        drop(slave);
+        let mut later = Command::new("sleep")
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        // Letting go hangs up what runs on it, whatever was spawned since.
+        drop(master);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let hung_up = loop {
+            if on_it.try_wait().unwrap().is_some() {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let _ = on_it.kill();
+        let _ = on_it.wait();
+        let _ = later.kill();
+        let _ = later.wait();
+        assert!(hung_up, "the later child kept the terminal open");
     }
 }

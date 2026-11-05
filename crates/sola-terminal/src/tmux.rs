@@ -230,8 +230,10 @@ pub fn kill_orphaned_clients() {
         }
 
         tracing::info!("Killing orphaned tmux client pid={pid}");
+        // KILL: a ghost stuck writing to a terminal nobody reads catches TERM
+        // and never gets to act on it. Its session is the server's, unharmed.
         unsafe {
-            libc::kill(pid, libc::SIGTERM);
+            libc::kill(pid, libc::SIGKILL);
         }
     }
 }
