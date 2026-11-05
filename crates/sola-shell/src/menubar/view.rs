@@ -3,7 +3,7 @@
 //!
 //! Layout (left-to-right), a gap in from every edge, the ground between:
 //!   (✿) (1 Main) (2 Mail ◆)       (toast)        (✉ 🔔 ᛒ) (spectrum)
-//!                                            (CPU GPU MEM) (RX TX) (clock)
+//!                                       (CPU GPU VRAM MEM) (RX TX) (clock)
 //!
 //! The workspaces are here only when set to be islands ([`super::workspaces`]).
 //!
@@ -226,11 +226,12 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let mut meters = vec![stat("CPU", shell.cpu_hist.to_vec(), 100.0, Tint::Level, Metric::Cpu)];
     if shell.stats.gpu.is_some() {
         meters.push(stat("GPU", shell.gpu_hist.to_vec(), 100.0, Tint::Level, Metric::Gpu));
+        meters.push(stat("VRAM", shell.vram_hist.to_vec(), 100.0, Tint::Level, Metric::Vram));
     }
     meters.push(stat("MEM", shell.mem_hist.to_vec(), 100.0, Tint::Level, Metric::Mem));
     islands.push(island(
         items(meters),
-        stat_open(&[Metric::Cpu, Metric::Gpu, Metric::Mem]),
+        stat_open(&[Metric::Cpu, Metric::Gpu, Metric::Vram, Metric::Mem]),
         ISLAND_PAD_H,
     ));
 

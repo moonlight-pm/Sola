@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nvml_wrapper::Nvml;
 use nvml_wrapper::enum_wrappers::device::{Clock, TemperatureSensor};
@@ -24,16 +24,30 @@ fn nvml() -> Option<&'static Nvml> {
         .as_ref()
 }
 
-/// Last `process_utilization_stats` timestamp (µs) so each tick asks only for
-/// samples since the previous query.
-static LAST_SM_TS: AtomicU64 = AtomicU64::new(0);
+/// How far back the by-GPU list looks. NVML has a sample for a process only
+/// now and then: asking for what is new since the last tick came back empty
+/// on 8 of 30 ticks with the card at 9–33%; five seconds, on none of 25.
+const SM_WINDOW: Duration = Duration::from_secs(5);
 
 /// Tier-1 summary for the bar. None when no GPU/NVML.
 pub fn lite() -> Option<GpuLite> {
     let dev = nvml()?.device_by_index(0).ok()?;
     let util = dev.utilization_rates().ok()?.gpu as f32;
     let temp = dev.temperature(TemperatureSensor::Gpu).ok().unwrap_or(0) as f32;
-    Some(GpuLite { util, temp_c: temp })
+    let vram_pct = dev.memory_info().ok().map_or(0.0, |m| used_pct(m.used, m.total));
+    Some(GpuLite {
+        util,
+        vram_pct,
+        temp_c: temp,
+    })
+}
+
+fn used_pct(used: u64, total: u64) -> f32 {
+    if total == 0 {
+        0.0
+    } else {
+        used as f32 / total as f32 * 100.0
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -117,14 +131,11 @@ pub fn detail() -> Option<GpuDetail> {
 }
 
 fn top_by_sm(dev: &nvml_wrapper::Device<'_>) -> Vec<Proc> {
-    let last = LAST_SM_TS.load(Ordering::Relaxed);
-    let last_seen = if last == 0 { None } else { Some(last) };
-    let Ok(samples) = dev.process_utilization_stats(last_seen) else {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let since = now.saturating_sub(SM_WINDOW).as_micros() as u64;
+    let Ok(samples) = dev.process_utilization_stats(Some(since)) else {
         return Vec::new();
     };
-    if let Some(max_ts) = samples.iter().map(|s| s.timestamp).max() {
-        LAST_SM_TS.store(max_ts, Ordering::Relaxed);
-    }
     let sm: Vec<SmSample> = samples
         .iter()
         .map(|s| SmSample {
@@ -189,6 +200,12 @@ fn proc_name(pid: u32) -> String {
 mod tests {
     use super::*;
     use crate::stats::cpu::cap_top;
+
+    #[test]
+    fn used_pct_of_memory() {
+        assert_eq!(used_pct(6, 24), 25.0);
+        assert_eq!(used_pct(0, 0), 0.0);
+    }
 
     #[test]
     fn latest_sm_keeps_newest_sample_per_pid() {

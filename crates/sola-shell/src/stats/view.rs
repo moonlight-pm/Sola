@@ -72,6 +72,7 @@ pub fn panel(shell: &Shell, metric: Metric) -> Element<'_, Msg> {
     let card = match metric {
         Metric::Cpu => cpu_card(shell),
         Metric::Gpu => gpu_card(shell),
+        Metric::Vram => vram_card(shell),
         Metric::Mem => mem_card(shell),
         Metric::Rx => rate_card(shell, Metric::Rx),
         Metric::Tx => rate_card(shell, Metric::Tx),
@@ -340,27 +341,33 @@ fn mem_card(shell: &Shell) -> Element<'_, Msg> {
     card(parts)
 }
 
+/// The GPU detail, while a GPU or VRAM panel has asked for it.
+fn gpu_detail(shell: &Shell) -> Option<&crate::stats::gpu::GpuDetail> {
+    match &shell.stats.detail {
+        Some(crate::stats::Detail::Gpu(d)) => Some(d),
+        _ => None,
+    }
+}
+
+/// The card and its memory, for the GPU and VRAM panels' headers.
+fn gpu_identity(detail: Option<&crate::stats::gpu::GpuDetail>) -> (String, String) {
+    (
+        detail.map_or_else(|| "GPU".into(), |d| short_gpu(&d.name)),
+        detail.map_or_else(String::new, |d| format!("{:.0} GB", d.mem_total_mb / 1024.0)),
+    )
+}
+
 fn gpu_card(shell: &Shell) -> Element<'_, Msg> {
     let theme = &shell.theme;
     let ink = inks(theme);
-    let s = &shell.stats;
     let level = |v: f32| crate::stats::level_color(v, theme);
-    let util = s.gpu.map_or(0.0, |g| g.util);
-    let detail = match &s.detail {
-        Some(crate::stats::Detail::Gpu(d)) => Some(d),
-        _ => None,
-    };
+    let util = shell.stats.gpu.map_or(0.0, |g| g.util);
+    let detail = gpu_detail(shell);
+    let (model, memory) = gpu_identity(detail);
     let samples = shell.gpu_hist.to_vec();
 
     let mut parts = vec![
-        header(
-            "GPU",
-            &percent(util),
-            level(util),
-            detail.map_or_else(|| "GPU".into(), |d| short_gpu(&d.name)),
-            detail.map_or_else(String::new, |d| format!("{:.0} GB", d.mem_total_mb / 1024.0)),
-            &ink,
-        ),
+        header("GPU", &percent(util), level(util), model, memory, &ink),
         section(
             "Last 60 seconds",
             format!("peak {:.0}%", peak(&samples)),
@@ -370,25 +377,8 @@ fn gpu_card(shell: &Shell) -> Element<'_, Msg> {
     ];
 
     if let Some(d) = detail {
-        let frac = if d.mem_total_mb > 0.0 {
-            d.mem_used_mb / d.mem_total_mb
-        } else {
-            0.0
-        };
-        parts.push(section(
-            "VRAM",
-            format!("{:.1} / {:.0} GB", d.mem_used_mb / 1024.0, d.mem_total_mb / 1024.0),
-            pixel::bar(&[(frac, level(frac * 100.0))], WIDE_CELLS, PANEL, ink.unlit),
-            &ink,
-        ));
-        if !d.top_gpu.is_empty() {
-            parts.push(rule(&ink));
-            parts.push(processes(&d.top_gpu, "GPU", |p| format!("{:.0}%", p.value), &ink));
-        }
-        if !d.top_vram.is_empty() {
-            parts.push(rule(&ink));
-            parts.push(processes(&d.top_vram, "VRAM", |p| format!("{:.0} MB", p.value), &ink));
-        }
+        parts.push(rule(&ink));
+        parts.push(processes(&d.top_gpu, "GPU", |p| format!("{:.0}%", p.value), &ink));
         parts.push(rule(&ink));
         parts.push(foot(
             vec![
@@ -398,6 +388,38 @@ fn gpu_card(shell: &Shell) -> Element<'_, Msg> {
             ],
             &ink,
         ));
+    }
+    card(parts)
+}
+
+fn vram_card(shell: &Shell) -> Element<'_, Msg> {
+    let theme = &shell.theme;
+    let ink = inks(theme);
+    let level = |v: f32| crate::stats::level_color(v, theme);
+    let used = shell.stats.gpu.map_or(0.0, |g| g.vram_pct);
+    let detail = gpu_detail(shell);
+    let (model, memory) = gpu_identity(detail);
+    let samples = shell.vram_hist.to_vec();
+
+    let mut parts = vec![
+        header("VRAM", &percent(used), level(used), model, memory, &ink),
+        section(
+            "Last 60 seconds",
+            format!("peak {:.0}%", peak(&samples)),
+            history(&samples, 100.0, level, &ink),
+            &ink,
+        ),
+    ];
+
+    if let Some(d) = detail {
+        parts.push(section(
+            "Used",
+            format!("{:.1} / {:.0} GB", d.mem_used_mb / 1024.0, d.mem_total_mb / 1024.0),
+            pixel::bar(&[(used / 100.0, level(used))], WIDE_CELLS, PANEL, ink.unlit),
+            &ink,
+        ));
+        parts.push(rule(&ink));
+        parts.push(processes(&d.top_vram, "VRAM", |p| format!("{:.0} MB", p.value), &ink));
     }
     card(parts)
 }
