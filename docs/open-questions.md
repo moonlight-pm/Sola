@@ -370,6 +370,7 @@ runs `cloudflared` while open. Links work only while Design runs.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-11-05 | A hidden Design tab reloads | The canvas of a Design window behind other tabs closes after 10 idle minutes like any off-screen canvas, and reloads when the window comes up, with its view kept. The active window's stays. It frees VRAM and the CEF memory behind it (Joshua: "the reload is fine") | `docs/manual/sola-design.md`, `PERFORMANCE.md` § VRAM |
 | 2026-11-04 | GPU and VRAM meters | The top row reads CPU GPU VRAM MEM: the card's processor and its memory are separate meters, each with its own panel, the GPU panel listing apps by processor and the VRAM panel by memory (Joshua: "i'd like meters for both gpu ram and processor") | `docs/manual/sola-shell.md` § CPU, GPU, VRAM, MEM, RX and TX |
 | 2026-11-03 | The new Oath app's first version | Strata and Weight for the map, Flow for the tree; it only looks, with no on/off, apply or undo; this machine only, other machines later; Upstream is its own column; the audit report may be public on the origin (Joshua: "1. Yes 2. Yes 3. Not yet. I'm going to work on oath multi-computer visualization and configuration type stuff later") | `design/oath/`, CURRENT |
 | 2026-11-03 | Screenshot keys swapped | F13 takes a selection, F14 the whole screen; F15 stays the focused window (Joshua: "swap the F13 and F14 keybindings") | `docs/manual/sola-shell.md` § Screenshots |

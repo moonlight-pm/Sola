@@ -241,6 +241,9 @@ struct App {
     /// Canvases with live boards: each window's, and any an agent works
     /// on in the background (see [`canvases`]).
     live: Vec<canvases::Live>,
+    /// The views of canvases closed for idling in a hidden window: the
+    /// camera is where the human left it when the window comes up.
+    evicted_views: HashMap<String, canvases::Parked>,
     /// Key of the shown canvas: the active window's. Its view is the
     /// fields below; every other live canvas keeps its view parked.
     shown: Option<String>,
@@ -319,6 +322,7 @@ impl App {
             canvases: HashMap::new(),
             windows: DesignWindows::new(APP_ID),
             live: Vec::new(),
+            evicted_views: HashMap::new(),
             shown: None,
             listed: HashSet::new(),
             camera: Camera::default(),
@@ -595,6 +599,7 @@ impl App {
             return iced::exit();
         }
         if matches!(Topic::parse(message), Some(Topic::TabWindow(_))) {
+            self.touch_in_view();
             self.windows.update(message);
             self.wake_windows();
             return Task::none();

@@ -6,8 +6,9 @@
 //! another window shows draws from it. Agents never bring a canvas to the
 //! front (`--raise` is the explicit exception). Boards nobody looks at
 //! sleep ([`crate::pace`]); when memory runs short, idle ones are discarded
-//! ([`super::budget`]). A canvas no window shows that nobody has used for
-//! [`IDLE`] closes; the next call reopens it.
+//! ([`super::budget`]). A canvas out of view that nobody has used for
+//! [`IDLE`] closes: no window shows it, or only a hidden window that is not
+//! the active one. The next call, or its window coming up, reopens it.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -27,7 +28,7 @@ use crate::projects::CanvasRef;
 use crate::select::Selection;
 use crate::tour::{Notes, Tour};
 
-/// An off-screen canvas closes after this long without a call.
+/// A canvas out of view closes after this long without a call or a look.
 pub(super) const IDLE: Duration = Duration::from_secs(10 * 60);
 /// The top bar marks a canvas an agent called on within this.
 pub(super) const AGENT_RECENT: Duration = Duration::from_secs(30);
@@ -169,7 +170,7 @@ impl App {
                 annot: Annotations::default(),
                 links: HashMap::new(),
                 shown_at: None,
-                parked: None,
+                parked: self.evicted_views.remove(&key),
                 touched: Instant::now(),
                 agent_at: None,
             });
@@ -356,6 +357,9 @@ impl App {
         if let Some(p) = self.live_mut(key).and_then(|l| l.parked.as_mut()) {
             p.leave();
         }
+        if let Some(p) = self.evicted_views.get_mut(key) {
+            p.leave();
+        }
         self.retire_details(key);
     }
 
@@ -369,6 +373,7 @@ impl App {
 
     /// Close a live canvas and its boards.
     pub(super) fn close_live(&mut self, key: &str) {
+        self.evicted_views.remove(key);
         if self.is_shown(key) {
             self.park_shown(true);
         }
@@ -386,7 +391,24 @@ impl App {
         }
     }
 
-    /// Close off-screen canvases idle past [`IDLE`] with no call in flight.
+    /// A window shows `key` where the human sees it, or it is the active
+    /// window's, which [`App::wake_windows`] keeps live.
+    fn in_view(&self, key: &str) -> bool {
+        self.displayed(key)
+            .is_some_and(|w| self.windows.active == Some(w) || self.windows.shown(w))
+    }
+
+    /// Before a window's shown state changes: a canvas leaving view starts
+    /// its idle clock now, not at its last call.
+    pub(super) fn touch_in_view(&mut self) {
+        let keys: Vec<String> = self.live.iter().map(|l| l.at.key()).filter(|k| self.in_view(k)).collect();
+        for key in keys {
+            self.touch(&key);
+        }
+    }
+
+    /// Close canvases out of view, idle past [`IDLE`], with no call in
+    /// flight. One in a hidden window keeps its view for its next look.
     pub(super) fn evict_idle(&mut self, now: Instant) {
         let mut busy: HashSet<u64> = self
             .pending
@@ -400,21 +422,23 @@ impl App {
         let idle: Vec<String> = self
             .live
             .iter()
-            .filter(|l| self.displayed(&l.at.key()).is_none())
+            .filter(|l| !self.in_view(&l.at.key()))
             .filter(|l| now.duration_since(l.touched) >= IDLE)
             .filter(|l| !l.boards.iter().any(|b| busy.contains(&b.tab.0)))
             .map(|l| l.at.key())
             .collect();
         for key in idle {
+            let view = self.displayed(&key).and_then(|_| self.live_mut(&key)?.parked.take());
             self.close_live(&key);
+            if let Some(view) = view {
+                self.evicted_views.insert(key, view);
+            }
         }
     }
 
-    /// Some canvas no window shows is live (the eviction tick runs).
+    /// Some canvas out of view is live (the eviction tick runs).
     pub(super) fn has_background(&self) -> bool {
-        self.live
-            .iter()
-            .any(|l| self.displayed(&l.at.key()).is_none())
+        self.live.iter().any(|l| !self.in_view(&l.at.key()))
     }
 
     /// Where canvas `key` is on the human's screen: the camera and plane

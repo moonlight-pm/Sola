@@ -210,7 +210,10 @@ canvas, its name along the top and its project's row in the bar show a
 spinning ring; click the name to watch. An agent puts a canvas on your
 screen only when you ask it to (`--raise`: the canvas comes up in its
 project's window). Canvases no window shows that nobody has used for 10
-minutes are closed in the background and reopen on the next call.
+minutes are closed in the background and reopen on the next call. So is the
+canvas of a Design window behind other tabs, 10 minutes after you last saw
+it (unless it is the window you were last in): bringing the window up
+reloads its boards, with the view where you left it.
 
 Boards nobody is looking at slow down to 1 frame a second: a canvas you are
 not on, and boards panned out of view. They keep painting, so a board you
