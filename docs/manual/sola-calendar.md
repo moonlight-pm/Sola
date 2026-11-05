@@ -136,24 +136,14 @@ delivers a reminder whose event ended within the last 12 hours.
 Browser opens Google's sign-in; pick the account. Add another Google
 account the same way.
 
-Sola's packages carry a Google OAuth client, so sign-in needs no setup.
-Until Google finishes verifying it, Google warns that the app is not
-verified; choose Advanced, then continue. The sign-in returns to a free
-port on `127.0.0.1`. Sola asks for two permissions: to see and edit
-events, and to see your list of calendars. It talks to Google directly
-from your computer; see [Privacy](https://sola.moonlight.pm/privacy).
-
-If an account's sign-in has lapsed, open it in **Settings → Calendar** and
-choose **Sign in again**. It keeps the names and colours you gave its
-calendars.
-
-A build made without the client (from a clone with no
-`~/.config/oath/sola-google-client.env`) stops at sign-in with "a Google
-OAuth Desktop client ID is required". To use a Desktop OAuth client of
-your own Google Cloud project, with the Calendar API, set
+Sola does not ship a Google OAuth client. Sign-in needs a Desktop OAuth
+client of your own Google Cloud project, with the Calendar API: set
 `SOLA_GOOGLE_CALENDAR_CLIENT_ID` and `SOLA_GOOGLE_CALENDAR_CLIENT_SECRET`
 in the environment Settings and Calendar start with (see
 [the session manager](session.md#environment-and-working-directory)).
+Without them, sign-in stops with "a Google OAuth Desktop client ID is
+required". Google may warn that the app is not verified; choose Advanced,
+then continue. The sign-in returns to `http://127.0.0.1:8765/oauth`.
 
 ## iCloud
 
