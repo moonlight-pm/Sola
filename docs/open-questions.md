@@ -370,6 +370,7 @@ runs `cloudflared` while open. Links work only while Design runs.
 
 | Date | ID | Decision | Where recorded |
 |------|-----|----------|----------------|
+| 2026-11-04 | GPU and VRAM meters | The top row reads CPU GPU VRAM MEM: the card's processor and its memory are separate meters, each with its own panel, the GPU panel listing apps by processor and the VRAM panel by memory (Joshua: "i'd like meters for both gpu ram and processor") | `docs/manual/sola-shell.md` § CPU, GPU, VRAM, MEM, RX and TX |
 | 2026-11-03 | The new Oath app's first version | Strata and Weight for the map, Flow for the tree; it only looks, with no on/off, apply or undo; this machine only, other machines later; Upstream is its own column; the audit report may be public on the origin (Joshua: "1. Yes 2. Yes 3. Not yet. I'm going to work on oath multi-computer visualization and configuration type stuff later") | `design/oath/`, CURRENT |
 | 2026-11-03 | Screenshot keys swapped | F13 takes a selection, F14 the whole screen; F15 stays the focused window (Joshua: "swap the F13 and F14 keybindings") | `docs/manual/sola-shell.md` § Screenshots |
 | 2026-11-03 | Agent islands go to the window | Clicking an island brings up its session's window; no card, and nothing is answered from the row. A hover × dismisses it until the session next asks or finishes (Joshua: "clicking them should just take me to the window.  Let's give them a 'hover close' just to dismiss them as well") | [agent islands](specs/2026-10-23-agent-islands-design.md) |

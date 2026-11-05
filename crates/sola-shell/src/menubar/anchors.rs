@@ -28,6 +28,8 @@ pub struct Edges {
     pub cpu: f32,
     /// Equals `mem` when there is no GPU.
     pub gpu: f32,
+    /// Equals `mem` when there is no GPU.
+    pub vram: f32,
     pub mem: f32,
     /// The spectrum island's left edge (meaningless without one).
     pub spectrum: f32,
@@ -50,11 +52,13 @@ fn edges_with(r: &Right<'_>, text: &dyn Fn(&str) -> f32) -> Edges {
     let rx = x;
     x -= ISLAND_PAD_H + ISLAND_GAP + ISLAND_PAD_H + stat("MEM");
     let mem = x;
-    let gpu = if r.gpu {
+    let (gpu, vram) = if r.gpu {
+        x -= ITEM_GAP + stat("VRAM");
+        let vram = x;
         x -= ITEM_GAP + stat("GPU");
-        x
+        (x, vram)
     } else {
-        mem
+        (mem, mem)
     };
     x -= ITEM_GAP + stat("CPU");
     let cpu = x;
@@ -74,6 +78,7 @@ fn edges_with(r: &Right<'_>, text: &dyn Fn(&str) -> f32) -> Edges {
         tx,
         cpu,
         gpu,
+        vram,
         mem,
         spectrum,
         bluetooth,
@@ -103,6 +108,8 @@ mod tests {
         assert_eq!(e.tx, e.clock - 2.0 * ISLAND_PAD_H - ISLAND_GAP - stat);
         assert_eq!(e.rx, e.tx - ITEM_GAP - stat);
         assert_eq!(e.mem, e.rx - 2.0 * ISLAND_PAD_H - ISLAND_GAP - stat);
+        assert_eq!(e.vram, e.mem - ITEM_GAP - stat);
+        assert_eq!(e.gpu, e.vram - ITEM_GAP - stat);
         assert_eq!(e.cpu, e.gpu - ITEM_GAP - stat);
         let spectrum_right = e.cpu - ISLAND_PAD_H - ISLAND_GAP;
         assert_eq!(e.spectrum, spectrum_right - crate::audio::wave::SPECTRUM_W - 2.0 * SPECTRUM_PAD_H);
@@ -124,6 +131,7 @@ mod tests {
         };
         let (a, b) = (edges_with(&all, &ten), edges_with(&bare, &ten));
         assert_eq!(b.gpu, b.mem);
+        assert_eq!(b.vram, b.mem);
         assert!(b.cpu > a.cpu);
         assert!(b.bluetooth > a.bluetooth);
     }

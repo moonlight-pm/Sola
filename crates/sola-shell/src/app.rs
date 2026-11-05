@@ -516,6 +516,7 @@ pub struct Shell {
     pub net_down_hist: crate::stats::History,
     pub net_up_hist: crate::stats::History,
     pub gpu_hist: crate::stats::History,
+    pub vram_hist: crate::stats::History,
     /// Last `Topic::MailStatus` inbox unread. Chip shows only when mail
     /// is mapped and this is `Some(n)` with `n > 0`.
     pub inbox_unread: Option<u32>,
@@ -656,6 +657,7 @@ impl Shell {
             net_down_hist: crate::stats::History::new(60),
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
+            vram_hist: crate::stats::History::new(60),
             inbox_unread: None,
             vault_unlocked: false,
             calendar_agenda: None,
@@ -2023,6 +2025,7 @@ impl Shell {
         match metric {
             Metric::Cpu => e.cpu,
             Metric::Gpu => e.gpu,
+            Metric::Vram => e.vram,
             Metric::Mem => e.mem,
             Metric::Rx => e.rx,
             Metric::Tx => e.tx,
@@ -2423,6 +2426,7 @@ impl Shell {
                 self.net_up_hist.push(snap.net_up);
                 if let Some(g) = snap.gpu {
                     self.gpu_hist.push(g.util);
+                    self.vram_hist.push(g.vram_pct);
                 }
                 self.stats = snap;
                 iced::Task::none()
@@ -3275,6 +3279,7 @@ mod pending_launch_tests {
             net_down_hist: crate::stats::History::new(60),
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
+            vram_hist: crate::stats::History::new(60),
             inbox_unread: None,
             vault_unlocked: false,
             calendar_agenda: None,
@@ -3744,6 +3749,7 @@ mod hide_tests {
             net_down_hist: crate::stats::History::new(60),
             net_up_hist: crate::stats::History::new(60),
             gpu_hist: crate::stats::History::new(60),
+            vram_hist: crate::stats::History::new(60),
             inbox_unread: None,
             vault_unlocked: false,
             calendar_agenda: None,

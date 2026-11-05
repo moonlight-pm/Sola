@@ -20,6 +20,8 @@ use std::time::Duration;
 pub enum Metric {
     Cpu,
     Gpu,
+    /// The GPU's memory.
+    Vram,
     Mem,
     /// Receive (download) rate.
     Rx,
@@ -27,7 +29,7 @@ pub enum Metric {
     Tx,
 }
 
-/// Levels (cpu/gpu/mem) turn the theme's warning at WARN and its danger at
+/// Levels (cpu/gpu/vram/mem) turn the theme's warning at WARN and its danger at
 /// CRIT. Rates have no level.
 pub const WARN_PCT: f32 = 75.0;
 pub const CRIT_PCT: f32 = 90.0;
@@ -116,6 +118,7 @@ pub struct Snapshot {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GpuLite {
     pub util: f32,
+    pub vram_pct: f32,
     pub temp_c: f32,
 }
 
@@ -189,7 +192,8 @@ fn stats_stream() -> impl Stream<Item = Arc<Snapshot>> {
                 Some(Metric::Mem) => Some(Detail::Mem(mem::detail())),
                 // RX and TX share the same tier-2 Net detail (iface/IP/totals).
                 Some(Metric::Rx) | Some(Metric::Tx) => Some(Detail::Net(net::detail(&cur_net))),
-                Some(Metric::Gpu) => gpu::detail().map(Detail::Gpu),
+                // GPU and VRAM share the same tier-2 Gpu detail.
+                Some(Metric::Gpu) | Some(Metric::Vram) => gpu::detail().map(Detail::Gpu),
                 None => None,
             };
 

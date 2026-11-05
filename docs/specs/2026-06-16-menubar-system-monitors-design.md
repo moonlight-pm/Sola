@@ -31,6 +31,10 @@ Four indicators, left → right, then the divider and clock:
   dropdown. Anti-reflow is the graph width, not a reserved text slot.
 - **Disk usage was dropped** from this iteration (was a fifth indicator). May
   return later.
+- **VRAM is its own indicator** (amended 2026-11-04), beside GPU, with its own
+  dropdown: the VRAM bar and the by-VRAM list moved there from GPU's. The by-GPU
+  list reads the last five seconds of NVML's samples, not only those new since
+  the last tick.
 - **GPU is NVIDIA-only** (dev box is an RTX 3090 Ti). The indicator hides
   gracefully when no NVIDIA GPU / NVML is present.
 - **Rich dropdowns** (see template below) — not trimmed.

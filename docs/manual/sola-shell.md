@@ -121,8 +121,8 @@ Left to right:
   with an error ("… exited (code N)", "… killed (signal N)"),
   "Screenshot copied".
 - On the right, an island per group: mail, the bell, the mouse battery
-  and Bluetooth; the volume spectrum; CPU, GPU and MEM; RX and TX; the
-  clock.
+  and Bluetooth; the volume spectrum; CPU, GPU, VRAM and MEM; RX and TX;
+  the clock.
 
 Click an item for its panel; its island lifts while the panel is open.
 Click it again, press Escape, or click a window to close the panel.
@@ -165,13 +165,14 @@ none, it says **Nothing today**. The list is what Calendar last
 published, so it is there with Calendar closed; it appears once Calendar
 has run.
 
-### CPU, GPU, MEM, RX and TX
+### CPU, GPU, VRAM, MEM, RX and TX
 
 Each is an LED graph of the last 12 seconds, a column a second, five dots
-tall. A dot lights once its column reaches its middle. CPU, GPU and MEM
-are drawn in the theme's text colour, its warning colour from 75% and its
+tall. A dot lights once its column reaches its middle. CPU, GPU, VRAM and
+MEM are drawn in the theme's text colour, its warning colour from 75% and its
 danger colour from 90%; RX is in the accent and TX in the success colour,
-each scaled to its own recent peak. GPU shows only for an NVIDIA GPU that
+each scaled to its own recent peak. GPU is how busy the card's processor
+is and VRAM how full its memory is; both show only for an NVIDIA GPU that
 NVML can read.
 
 Click one for its panel: the value in large type, then the last 60
@@ -180,8 +181,11 @@ seconds as columns tinted the same way, with the peak.
 - **CPU**: the model and its cores and threads; per-thread load as a
   column per thread (a gap between threads, two between cores); the top
   processes with LED bars; load averages and uptime.
-- **GPU**: the card and its memory; VRAM as a row of LEDs; the top
-  processes by GPU and by VRAM; temperature, power and fan.
+- **GPU**: the card and its memory; the top processes by how much of the
+  processor they used in the last five seconds; temperature, power and
+  fan.
+- **VRAM**: the card and its memory; used and total, with a row of LEDs;
+  the top processes by VRAM.
 - **MEM**: total memory; a row of LEDs (used lit, cache dim, free dark)
   with the three figures; the top processes by memory; swap and
   pressure.
