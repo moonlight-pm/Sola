@@ -2,6 +2,7 @@
 //! (no NVIDIA GPU, NVML not loadable) yields None so the indicator hides.
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -13,9 +14,14 @@ use nvml_wrapper::struct_wrappers::device::ProcessInfo;
 use crate::stats::GpuLite;
 use crate::stats::cpu::Proc;
 
+/// The driver's soname. `Nvml::init` asks for the bare `libnvidia-ml.so`, a
+/// development link that Oath's `pkg:nvidia` does not carry.
+const NVML_LIB: &str = "libnvidia-ml.so.1";
+
 fn nvml() -> Option<&'static Nvml> {
     static NVML: OnceLock<Option<Nvml>> = OnceLock::new();
-    NVML.get_or_init(|| Nvml::init().ok()).as_ref()
+    NVML.get_or_init(|| Nvml::builder().lib_path(OsStr::new(NVML_LIB)).init().ok())
+        .as_ref()
 }
 
 /// Last `process_utilization_stats` timestamp (µs) so each tick asks only for
