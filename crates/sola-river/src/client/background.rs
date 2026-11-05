@@ -168,13 +168,13 @@ pub fn poll(state: &mut AppData) {
 }
 
 /// Run during every render sequence: show the ground, or take it away.
-/// While a fullscreen window (Cinema) is drawn the picture goes: what
-/// shows around or through it is the compositor's black.
+/// While a window fills the screen the picture goes: what shows around or
+/// through it is the compositor's black.
 pub fn sync_on_render(state: &mut AppData) {
     let generation = state.background.generation;
-    if state.background.ground.is_none() || fullscreen_drawn(state) {
+    if state.background.ground.is_none() || screen_filled(state) {
         if state.background.shown.take().is_some() {
-            info!("background: away under a fullscreen window");
+            info!("background: away under a window that fills the screen");
         }
         return;
     }
@@ -195,12 +195,28 @@ pub fn sync_on_render(state: &mut AppData) {
     }
 }
 
-/// Whether a window in the composition is fullscreen (a Cinema tab).
-fn fullscreen_drawn(state: &AppData) -> bool {
-    state
-        .last_composition
-        .iter()
-        .any(|id| state.currently_fullscreen.contains(id))
+/// The shell's surfaces (bar, menus, launcher, selection marquee).
+const SHELL_APP_ID: &str = "sola-shell";
+
+/// Whether a window in the composition fills the screen: in the compositor's
+/// fullscreen (a Cinema tab), or as large as the output without that state
+/// (a game's windowed fullscreen). The shell's own surfaces don't count: the
+/// selection marquee is the output's size and mostly clear.
+pub fn screen_filled(state: &AppData) -> bool {
+    state.last_composition.iter().any(|&id| {
+        state.currently_fullscreen.contains(&id)
+            || (state.registry.app_id_for(id) != Some(SHELL_APP_ID)
+                && state
+                    .registry
+                    .geometry(id)
+                    .zip(state.output_size)
+                    .is_some_and(|(g, output)| covers(g.x, g.y, g.width, g.height, output)))
+    })
+}
+
+/// Whether the rectangle covers an output of size `output`.
+fn covers(x: i32, y: i32, width: i32, height: i32, output: (i32, i32)) -> bool {
+    x <= 0 && y <= 0 && x + width >= output.0 && y + height >= output.1
 }
 
 /// The shown picture's memory, for the idle fade's overlay (`fade.rs`),
@@ -360,6 +376,17 @@ fn show(state: &mut AppData, generation: u64, position: (i32, i32)) -> Result<Sh
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_as_large_as_the_output_covers_it() {
+        let output = (5120, 2160);
+        assert!(covers(0, 0, 5120, 2160, output));
+        assert!(covers(-10, -10, 5140, 2180, output));
+        // The Full zone leaves the bar and the top row.
+        assert!(!covers(260, 48, 4850, 2102, output));
+        assert!(!covers(0, 0, 5120, 2159, output));
+        assert!(!covers(1, 0, 5120, 2160, output));
+    }
 
     #[test]
     fn rgb_becomes_little_endian_xrgb() {
