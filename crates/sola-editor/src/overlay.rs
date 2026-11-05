@@ -178,7 +178,7 @@ impl Prompt {
         }
     }
 
-    pub fn view(self, name: &str) -> Element<'_, Msg> {
+    pub fn view<'a>(self, name: &str) -> Element<'a, Msg> {
         let (title, body, buttons): (String, &str, Vec<(&str, Answer, bool)>) = match self {
             Prompt::CloseUnsaved => (
                 format!("Save changes to {name}?"),

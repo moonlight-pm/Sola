@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use iced::widget::{Space, canvas, column, container, row, stack, text};
 use iced::{Alignment, Element, Event, Length, Padding, Size, Subscription, Task, Theme, event, keyboard, window};
-use sola_bus::topics::{MenuDefinition, MenuItem, Topic, TopicKind};
+use sola_bus::topics::{MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind};
 use sola_core::{KeyChord, KeyCode};
 use sola_kit::app::{BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup};
 use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcome};
@@ -28,7 +28,7 @@ use crate::session::{self, Session};
 use crate::syntax;
 use crate::view::{Clicks, Surface};
 use crate::watch;
-use crate::win::{Follow, Win, mini_id, palette_id};
+use crate::win::{Follow, Win, lowest_free, mini_id, palette_id};
 
 pub const APP_ID: &str = "sola-editor";
 
@@ -53,7 +53,13 @@ pub fn run() -> iced::Result {
         return Ok(());
     }
     if !instance::claim() {
-        hand_off(&targets);
+        // A launch with no file (the launcher's) is a new window, as a
+        // second Terminal is a new tab. `edit` alone only brings it up.
+        if targets.is_empty() && !sola_core::opener::is_open_launch() {
+            ask_for_new_file();
+        } else {
+            hand_off(&targets);
+        }
         return Ok(());
     }
     syntax::warm_up();
@@ -105,6 +111,19 @@ fn hand_off(targets: &[PathBuf]) {
     }
 }
 
+fn ask_for_new_file() {
+    BusSetup::new(APP_ID).install();
+    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        let action = MenuActionPayload {
+            app_id: APP_ID.into(),
+            action_id: "new_file".into(),
+        };
+        if let Err(e) = bus.emit(Topic::MenuAction(action)) {
+            tracing::warn!("asking the running editor for a new window failed: {e:?}");
+        }
+    }
+}
+
 fn item(id: &str, label: &str, shortcut: Option<KeyChord>) -> MenuItem {
     MenuItem::Action {
         id: id.into(),
@@ -120,11 +139,13 @@ fn item(id: &str, label: &str, shortcut: Option<KeyChord>) -> MenuItem {
 /// have a Meta key that does something else. Find, Cut and Paste go without a
 /// key, under ids of their own since the shared ones (`find`, `cut`, `paste`)
 /// bring Super+F, Super+X and Super+V with them. Close has none: Super+W copies.
+/// Super+N is New File, as it is New in every Sola app: `M-n` is free in Emacs.
 fn menus() -> Vec<MenuDefinition> {
     vec![
         MenuDefinition {
             label: "File".into(),
             items: vec![
+                item("new_file", "New File", Some(KeyCode::N.meta())),
                 item("open", "Open…", Some(KeyCode::O.meta())),
                 item("save", "Save", Some(KeyCode::S.meta())),
                 item("save_as", "Save As…", Some(KeyCode::S.meta().shift())),
@@ -158,6 +179,7 @@ fn menus() -> Vec<MenuDefinition> {
 fn command_of_menu(action: &str) -> Option<Command> {
     Some(match action {
         "quit" => Command::Quit,
+        "new_file" => Command::NewFile,
         "open" => Command::OpenFile,
         "save" => Command::Save,
         "save_as" => Command::SaveAs,
@@ -250,7 +272,9 @@ impl App {
         }
         if wins.is_empty() {
             let key = app.untitled_key();
-            wins.push((Win::new("", None, key, None), true));
+            let mut win = Win::new("", None, key, None);
+            win.placeholder = true;
+            wins.push((win, true));
         }
         let mut chain = Task::none();
         for (win, in_front) in wins {
@@ -296,7 +320,11 @@ impl App {
         key
     }
 
-    fn add_window(&mut self, win: Win, background: bool) -> Task<Msg> {
+    fn add_window(&mut self, mut win: Win, background: bool) -> Task<Msg> {
+        if win.path.is_none() {
+            let taken: Vec<usize> = self.wins.values().filter(|w| w.path.is_none()).map(|w| w.number).collect();
+            win.number = lowest_free(&taken);
+        }
         let mut settings = sola_kit::app::window_settings_transparent(APP_ID);
         settings.size = WINDOW_SIZE;
         if let Some(path) = &win.path {
@@ -333,7 +361,7 @@ impl App {
             sola_kit::call_subscription().map(Msg::Call),
             watch::changes().map(Msg::DiskChanged),
             if self.picker.is_some() {
-                FilePicker::keys().map(Msg::Picker)
+                event::listen_with(picker_key)
             } else {
                 Subscription::none()
             },
@@ -445,8 +473,7 @@ impl App {
                 self.held = self.held & !bit;
                 Task::none()
             }
-            Msg::Loaded(result) => self.on_loaded(result),
-            Msg::Picker(m) => self.on_picker(m),
+            Msg::Loaded(from, result) => self.on_loaded(from, result),
             Msg::Pasted(window, text) => {
                 if let (Some(win), Some(text)) = (self.wins.get_mut(&window), text) {
                     let out = win.ed.insert(&text, Group::None);
@@ -546,7 +573,9 @@ impl App {
                 Task::none()
             }
             Msg::Answer(answer) => self.on_answer(window, answer),
-            Msg::Picker(m) => self.on_picker(m),
+            // The panel's, from its own window only: the others carry on.
+            Msg::Picker(m) if self.picker_in(window) => self.on_picker(m),
+            Msg::Picker(_) => Task::none(),
             Msg::TitleDrag => sola_kit::drag(Some(window)),
             Msg::TitleResize(direction) => sola_kit::drag_resize(Some(window), direction),
             Msg::TitleClose => self.request_close(window),
@@ -593,7 +622,7 @@ impl App {
         typed: Option<&str>,
         status: event::Status,
     ) -> Task<Msg> {
-        if self.picker.is_some() {
+        if self.picker_in(window) {
             return Task::none();
         }
         if let Some(bit) = keymap::modifier_bit(key) {
@@ -694,6 +723,7 @@ impl App {
                 }
                 return iced::widget::operation::focus(palette_id());
             }
+            Command::NewFile => return self.new_file(),
             Command::OpenFile => {
                 self.open_picker(window);
                 return Task::none();
@@ -825,19 +855,28 @@ impl App {
         // `file://` from the opener.
         let path = sola_open::Target::parse(target, Path::new("/"))
             .map_or_else(|| target.to_string(), |t| t.as_arg());
-        self.open_path(files::absolute(Path::new(&path)))
+        self.open_path(files::absolute(Path::new(&path)), None)
     }
 
-    fn open_path(&mut self, path: PathBuf) -> Task<Msg> {
+    /// Open `path` in a window of its own; `from`, the window that asked.
+    fn open_path(&mut self, path: PathBuf, from: Option<window::Id>) -> Task<Msg> {
         let open = self.wins.iter().find(|(_, w)| w.path.as_deref() == Some(&path));
         if let Some((window, _)) = open {
             self.tabs.show(*window);
             return Task::none();
         }
-        Task::perform(async move { files::load(&path) }, Msg::Loaded)
+        Task::perform(async move { files::load(&path) }, move |result| Msg::Loaded(from, result))
     }
 
-    fn on_loaded(&mut self, result: Result<Loaded, String>) -> Task<Msg> {
+    /// An empty window: File → New File, Super+N, a second launch.
+    fn new_file(&mut self) -> Task<Msg> {
+        let key = self.untitled_key();
+        let task = self.add_window(Win::new("", None, key, None), false);
+        self.persist();
+        task
+    }
+
+    fn on_loaded(&mut self, from: Option<window::Id>, result: Result<Loaded, String>) -> Task<Msg> {
         match result {
             Ok(loaded) => {
                 // Opened twice before the first load came back.
@@ -846,9 +885,15 @@ impl App {
                     self.tabs.show(*window);
                     return Task::none();
                 }
-                // An empty window gives way to the file.
-                let empty: Vec<window::Id> =
-                    self.wins.iter().filter(|(_, w)| w.is_pristine()).map(|(id, _)| *id).collect();
+                // An empty window gives way to the file: the one it was
+                // opened from, or the one boot made for want of a file. One
+                // made with New File elsewhere stays.
+                let empty: Vec<window::Id> = self
+                    .wins
+                    .iter()
+                    .filter(|(id, w)| w.is_pristine() && (w.placeholder || from == Some(**id)))
+                    .map(|(id, _)| *id)
+                    .collect();
                 let mut tasks: Vec<Task<Msg>> = empty
                     .into_iter()
                     .map(|id| {
@@ -894,6 +939,11 @@ impl App {
         self.picker = Some((PickerKind::SaveAs, picker, window));
     }
 
+    /// The file panel is up in `window`.
+    fn picker_in(&self, window: window::Id) -> bool {
+        self.picker.as_ref().is_some_and(|(_, _, w)| *w == window)
+    }
+
     fn on_picker(&mut self, msg: PickerMsg) -> Task<Msg> {
         let Some((kind, picker, window)) = self.picker.as_mut() else {
             return Task::none();
@@ -905,13 +955,13 @@ impl App {
             Some(Outcome::Cancelled) => self.picker = None,
             Some(Outcome::PickedMany(paths)) => {
                 self.picker = None;
-                let opens: Vec<Task<Msg>> = paths.into_iter().map(|p| self.open_path(p)).collect();
+                let opens: Vec<Task<Msg>> = paths.into_iter().map(|p| self.open_path(p, Some(window))).collect();
                 return Task::batch(opens);
             }
             Some(Outcome::Picked(path)) => {
                 self.picker = None;
                 return match kind {
-                    PickerKind::Open => self.open_path(path),
+                    PickerKind::Open => self.open_path(path, Some(window)),
                     PickerKind::SaveAs => {
                         self.write_to(window, &path);
                         Task::none()
@@ -1064,6 +1114,9 @@ impl App {
     }
 
     fn forget(&mut self, window: window::Id) {
+        if self.picker_in(window) {
+            self.picker = None;
+        }
         self.wins.remove(&window);
         self.order.retain(|id| *id != window);
         self.tabs.close(window);
@@ -1112,7 +1165,7 @@ impl App {
             layers.push(palette.view());
         }
         if let Some(prompt) = win.prompt {
-            layers.push(prompt.view(win_name(win)));
+            layers.push(prompt.view(&win.name()));
         }
         if let Some((_, picker, _)) = self.picker.as_ref().filter(|(_, _, w)| *w == window) {
             layers.push(picker.overlay().map(Msg::Picker));
@@ -1122,18 +1175,10 @@ impl App {
     }
 }
 
-fn win_name(win: &Win) -> &str {
-    win.path
-        .as_ref()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("untitled")
-}
-
 /// The line at the very foot: what just happened, and where you are.
 fn status_line(win: &Win) -> Element<'_, Msg> {
     let left = win.note.clone().unwrap_or_else(|| {
-        let path = win.path.as_ref().map_or_else(|| "untitled".to_string(), |p| p.display().to_string());
+        let path = win.path.as_ref().map_or_else(|| win.name(), |p| p.display().to_string());
         if win.changed_on_disk { format!("{path} (changed on disk)") } else { path }
     });
     let ed = &win.ed;
@@ -1160,6 +1205,19 @@ fn status_line(win: &Win) -> Element<'_, Msg> {
     .width(Length::Fill)
     .style(overlay::foot)
     .into()
+}
+
+/// The file panel's keys ([`FilePicker::keys`]), tagged with the window they
+/// came from: only the panel's own window feeds it.
+fn picker_key(event: Event, status: event::Status, window: window::Id) -> Option<Msg> {
+    let msg = match event {
+        Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => PickerMsg::Modifiers(m),
+        Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) if status == event::Status::Ignored => {
+            PickerMsg::Key(key, modifiers)
+        }
+        _ => return None,
+    };
+    Some(Msg::At(window, Box::new(Msg::Picker(msg))))
 }
 
 fn win_of_loaded(loaded: Loaded) -> Win {

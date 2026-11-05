@@ -69,6 +69,8 @@ pub struct Win {
     pub path: Option<PathBuf>,
     /// Its tab: the path, or `untitled-<n>`.
     pub key: String,
+    /// Untitled, its number among the others (`untitled 2`), from the app.
+    pub number: usize,
     pub stamp: Option<Stamp>,
     pub hl: Highlight,
     pub grid: Grid,
@@ -95,6 +97,9 @@ pub struct Win {
     pub changed_on_disk: bool,
     /// The buffer revision last written to the recovery file.
     pub recovered: Option<u64>,
+    /// Made at boot for want of anything else: a file opened while it is
+    /// still empty takes its place.
+    pub placeholder: bool,
 }
 
 impl Win {
@@ -106,6 +111,7 @@ impl Win {
             ed,
             path,
             key,
+            number: 1,
             stamp,
             hl,
             grid: Grid::current(),
@@ -123,15 +129,16 @@ impl Win {
             note: None,
             changed_on_disk: false,
             recovered: None,
+            placeholder: false,
         }
     }
 
-    /// The name of the file, or "untitled".
+    /// The name of the file, or `untitled`, `untitled 2`…
     pub fn name(&self) -> String {
         self.path
             .as_ref()
             .and_then(|p| p.file_name())
-            .map_or_else(|| "untitled".to_string(), |n| n.to_string_lossy().into_owned())
+            .map_or_else(|| untitled_name(self.number), |n| n.to_string_lossy().into_owned())
     }
 
     /// A window's title, and so its row in the bar.
@@ -257,6 +264,15 @@ impl Win {
     }
 }
 
+fn untitled_name(number: usize) -> String {
+    if number > 1 { format!("untitled {number}") } else { "untitled".to_string() }
+}
+
+/// The lowest number not `taken`, from 1.
+pub fn lowest_free(taken: &[usize]) -> usize {
+    (1..).find(|n| !taken.contains(n)).unwrap_or(1)
+}
+
 /// The field of the find and go-to line at a window's foot.
 pub fn mini_id() -> widget::Id {
     widget::Id::new("editor-mini")
@@ -265,4 +281,19 @@ pub fn mini_id() -> widget::Id {
 /// The field of the command palette.
 pub fn palette_id() -> widget::Id {
     widget::Id::new("editor-palette")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn untitled_windows_are_told_apart() {
+        assert_eq!(untitled_name(1), "untitled");
+        assert_eq!(untitled_name(2), "untitled 2");
+        // A number comes free when its window goes.
+        assert_eq!(lowest_free(&[]), 1);
+        assert_eq!(lowest_free(&[2, 3]), 1);
+        assert_eq!(lowest_free(&[1, 3]), 2);
+    }
 }
