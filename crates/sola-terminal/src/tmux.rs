@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -651,17 +652,11 @@ pub fn pane_current_path(session: &str) -> Option<String> {
     if path.is_empty() { None } else { Some(path) }
 }
 
-/// Foreground pane pid, if tmux still has the session.
-pub fn pane_pid(session: &str) -> Option<i32> {
+/// Each session's foreground pane pid, in one call. `None` when tmux did not
+/// answer.
+pub fn pane_pids() -> Option<HashMap<String, i32>> {
     let output = tmux_cmd()
-        .args([
-            "display-message",
-            "-p",
-            "-t",
-            &pane_target(session),
-            "-F",
-            "#{pane_pid}",
-        ])
+        .args(["ls", "-F", "#{session_name} #{pane_pid}"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .output()
@@ -669,7 +664,16 @@ pub fn pane_pid(session: &str) -> Option<i32> {
     if !output.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+    Some(parse_pane_pids(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn parse_pane_pids(text: &str) -> HashMap<String, i32> {
+    text.lines()
+        .filter_map(|line| {
+            let (name, pid) = line.rsplit_once(' ')?;
+            Some((name.to_string(), pid.parse().ok()?))
+        })
+        .collect()
 }
 
 /// Stamp a session environment variable (inherited by new panes / shells).
@@ -725,6 +729,14 @@ mod tests {
             Some("abc-123")
         );
         assert_eq!(pane_id_from_session("other"), None);
+    }
+
+    #[test]
+    fn pane_pids_keep_a_name_with_spaces_and_skip_what_is_not_a_pid() {
+        let found = parse_pane_pids("sws-a 100\nmy session 200\nsws-b oops\nbare\n");
+        assert_eq!(found.len(), 2);
+        assert_eq!(found["sws-a"], 100);
+        assert_eq!(found["my session"], 200);
     }
 
     #[test]

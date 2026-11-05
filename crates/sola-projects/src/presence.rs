@@ -21,19 +21,29 @@ pub enum Presence {
     Agent(&'static str),
 }
 
-/// Walk the tmux pane's descendants. Prefer Grok if both are present.
-pub fn scan_session(tmux_session: &str) -> Presence {
-    let Some(pid) = tmux::pane_pid(tmux_session) else {
-        return Presence::Unknown;
-    };
-    match scan_pid(pid) {
-        Some(name) => Presence::Agent(name),
-        None => Presence::Shell,
+/// Who is in each of `sessions` on `m`, from one look at its panes and its
+/// process table however many there are. A session with no answer is not in
+/// the result.
+pub fn scan(m: &Machine, sessions: &[String]) -> HashMap<String, Presence> {
+    match m {
+        Machine::Local => scan_local(sessions),
+        Machine::Remote(_) => scan_remote(m, sessions),
     }
 }
 
-pub fn scan_pid(root: i32) -> Option<&'static str> {
-    scan_tree(root, agent_from_proc, children_of)
+fn scan_local(sessions: &[String]) -> HashMap<String, Presence> {
+    let Some(panes) = tmux::pane_pids() else {
+        return HashMap::new();
+    };
+    let table = ProcessTable::read();
+    sessions
+        .iter()
+        .filter_map(|session| {
+            let pid = *panes.get(session)?;
+            let who = scan_tree(pid, |p| table.agent(p), |p| table.children(p));
+            Some((session.clone(), who.map_or(Presence::Shell, Presence::Agent)))
+        })
+        .collect()
 }
 
 /// The agent in the process tree under `root` (Grok first when several).
@@ -64,8 +74,8 @@ fn scan_tree(
     found.into_iter().next()
 }
 
-/// [`scan_session`] for each of `sessions` on another computer: their
-/// panes' pids and its process table, in one look.
+/// [`scan`] on another computer: its panes' pids and its process table, by
+/// one script over ssh.
 pub fn scan_remote(m: &Machine, sessions: &[String]) -> HashMap<String, Presence> {
     let pick = sola_terminal::remote::pick("\"=$s\"");
     let script = format!(
@@ -128,50 +138,58 @@ pub fn agent_from_name(name: &str) -> Option<&'static str> {
     None
 }
 
-fn agent_from_proc(pid: i32) -> Option<&'static str> {
-    let comm = fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
-    if let Some(a) = agent_from_name(comm.trim()) {
-        return Some(a);
-    }
-    let exe = fs::read_link(format!("/proc/{pid}/exe")).ok()?;
-    agent_from_name(&exe.to_string_lossy())
+/// One read of `/proc`: each process's children, and the agents known by
+/// name. A walk reads this, not `/proc`: finding a process's children there
+/// costs a read of every process here, far too much per process walked.
+#[derive(Default)]
+struct ProcessTable {
+    children: HashMap<i32, Vec<i32>>,
+    agents: HashMap<i32, &'static str>,
 }
 
-fn children_of(pid: i32) -> Vec<i32> {
-    let path = format!("/proc/{pid}/task/{pid}/children");
-    if let Ok(text) = fs::read_to_string(&path) {
-        return text
-            .split_whitespace()
-            .filter_map(|s| s.parse().ok())
-            .collect();
-    }
-    children_by_ppid_scan(pid)
-}
-
-fn children_by_ppid_scan(ppid: i32) -> Vec<i32> {
-    let Ok(entries) = fs::read_dir("/proc") else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for ent in entries.flatten() {
-        let pid: i32 = match ent.file_name().to_string_lossy().parse() {
-            Ok(p) => p,
-            Err(_) => continue,
+impl ProcessTable {
+    fn read() -> Self {
+        let mut table = Self::default();
+        let Ok(entries) = fs::read_dir("/proc") else {
+            return table;
         };
-        let status = match fs::read_to_string(ent.path().join("status")) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        for line in status.lines() {
-            if let Some(rest) = line.strip_prefix("PPid:") {
-                if rest.trim().parse::<i32>() == Ok(ppid) {
-                    out.push(pid);
+        for entry in entries.flatten() {
+            let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse().ok()) else {
+                continue;
+            };
+            // Gone already.
+            let Ok(stat) = fs::read(entry.path().join("stat")) else {
+                continue;
+            };
+            if let Some((name, parent)) = parse_stat(&String::from_utf8_lossy(&stat)) {
+                table.children.entry(parent).or_default().push(pid);
+                if let Some(agent) = agent_from_name(name) {
+                    table.agents.insert(pid, agent);
                 }
-                break;
             }
         }
+        table
     }
-    out
+
+    fn children(&self, pid: i32) -> Vec<i32> {
+        self.children.get(&pid).cloned().unwrap_or_default()
+    }
+
+    /// By its name, else by its binary (read here: only for what is walked).
+    fn agent(&self, pid: i32) -> Option<&'static str> {
+        self.agents.get(&pid).copied().or_else(|| {
+            let exe = fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+            agent_from_name(&exe.to_string_lossy())
+        })
+    }
+}
+
+/// `(name, parent)` from a `/proc/<pid>/stat` line. A name can hold spaces
+/// and parentheses, so it ends at the last `)`.
+fn parse_stat(line: &str) -> Option<(&str, i32)> {
+    let name = line.get(line.find('(')? + 1..line.rfind(')')?)?;
+    let parent = line.get(line.rfind(')')? + 1..)?.split_whitespace().nth(1)?;
+    Some((name, parent.parse().ok()?))
 }
 
 #[cfg(test)]
@@ -190,6 +208,37 @@ mod tests {
         assert_eq!(found["sws-a"], Presence::Agent("claude"));
         assert_eq!(found["sws-b"], Presence::Shell);
         assert!(!found.contains_key("sws-c"));
+    }
+
+    #[test]
+    fn a_stat_line_gives_the_name_and_the_parent() {
+        assert_eq!(parse_stat("12 (claude) S 34 12 12 0"), Some(("claude", 34)));
+        assert_eq!(parse_stat("12 (a b) (c)) R 34 12"), Some(("a b) (c)", 34)));
+        assert_eq!(parse_stat("12 (claude) S"), None);
+        assert_eq!(parse_stat("not a stat line"), None);
+    }
+
+    #[test]
+    fn the_table_finds_a_child_and_knows_it_by_name() {
+        use std::os::unix::process::CommandExt;
+        let dir = std::env::temp_dir().join(format!("sola-presence-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let link = dir.join("claude");
+        let sleep = std::path::PathBuf::from("/bin/sleep").canonicalize().unwrap();
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&sleep, &link).unwrap();
+        let mut child = std::process::Command::new(&link).arg0("sleep").arg("30").spawn().unwrap();
+        let pid = child.id() as i32;
+
+        let table = ProcessTable::read();
+        let walked = scan_tree(pid, |p| table.agent(p), |p| table.children(p));
+        let mine = table.children(std::process::id() as i32);
+
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(mine.contains(&pid));
+        assert_eq!(walked, Some("claude"));
     }
 
     #[test]

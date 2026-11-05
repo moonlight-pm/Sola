@@ -5,6 +5,7 @@
 //! `×N`, gone worktrees), and the calls that reach their tmux, git and
 //! startup scripts. What waits on ssh runs off the UI
 //! thread, through a [`Machine::Remote`]; a call there replies when done.
+//! This computer's status tick takes the same road ([`App::local_tick`]).
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
@@ -442,9 +443,40 @@ impl App {
         Task::none()
     }
 
+    /// The panes a tick on `host` looks at (`None`: here).
+    fn tick_panes(&self, host: Option<&str>) -> Vec<(String, PathBuf, PaneStatus)> {
+        self.tabs
+            .iter()
+            .filter(|w| w.host.as_deref() == host)
+            .map(|w| {
+                let st = self.pane_status.get(&w.id).cloned().unwrap_or_default();
+                (w.id.clone(), w.path.clone(), st)
+            })
+            .collect()
+    }
+
+    /// The presence tick's part for this computer: off the UI thread, one
+    /// look at a time ([`status_tick`]). What it reads grows with the
+    /// sessions and the processes here, and every key waits for whatever
+    /// the UI thread is doing.
+    pub(crate) fn local_tick(&mut self) -> Task<Msg> {
+        if std::mem::replace(&mut self.local_busy, true) {
+            return Task::none();
+        }
+        let panes = self.tick_panes(None);
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || status_tick(&Machine::Local, panes))
+                    .await
+                    .unwrap_or_default()
+            },
+            Msg::LocalTick,
+        )
+    }
+
     /// The presence tick's part for other computers: for each linked host
     /// (one look at a time), its panes' presence, Codex turns and `×N`
-    /// ([`remote_tick`]).
+    /// ([`status_tick`]).
     pub(crate) fn remote_ticks(&mut self) -> Task<Msg> {
         self.link_hosts();
         let mut tasks = Vec::new();
@@ -465,19 +497,11 @@ impl App {
                 continue;
             }
             self.remote_ticked.insert(host.clone(), Instant::now());
-            let panes: Vec<(String, PathBuf, PaneStatus)> = self
-                .tabs
-                .iter()
-                .filter(|w| w.host.as_deref() == Some(host.as_str()))
-                .map(|w| {
-                    let st = self.pane_status.get(&w.id).cloned().unwrap_or_default();
-                    (w.id.clone(), w.path.clone(), st)
-                })
-                .collect();
+            let panes = self.tick_panes(Some(&host));
             tasks.push(Task::perform(
                 async move {
                     let h = host.clone();
-                    let done = tokio::task::spawn_blocking(move || remote_tick(&machine, panes))
+                    let done = tokio::task::spawn_blocking(move || status_tick(&machine, panes))
                         .await
                         .unwrap_or_default();
                     (h, done)
@@ -488,14 +512,26 @@ impl App {
         Task::batch(tasks)
     }
 
-    /// A host's tick came back. A pane a hook changed meanwhile keeps the
-    /// hook's word (the next tick looks again).
+    /// This computer's tick came back.
+    pub(crate) fn on_local_tick(&mut self, panes: Vec<(String, PaneStatus, PaneStatus)>) {
+        self.local_busy = false;
+        self.apply_tick(panes);
+    }
+
+    /// A host's tick came back.
     pub(crate) fn on_remote_tick(
         &mut self,
         host: String,
         panes: Vec<(String, PaneStatus, PaneStatus)>,
     ) -> Task<Msg> {
         self.remote_busy.remove(&host);
+        self.apply_tick(panes);
+        Task::none()
+    }
+
+    /// Take a tick's answers. A pane a hook changed meanwhile keeps the
+    /// hook's word (the next tick looks again).
+    fn apply_tick(&mut self, panes: Vec<(String, PaneStatus, PaneStatus)>) {
         let mut dirty = false;
         for (id, before, after) in panes {
             if self.tab_for_pane(&id).is_none() {
@@ -505,7 +541,9 @@ impl App {
             if now != before {
                 continue;
             }
-            if (now.status, &now.agent) != (after.status, &after.agent) {
+            if (now.status, &now.agent, &now.owner_session)
+                != (after.status, &after.agent, &after.owner_session)
+            {
                 dirty = true;
             }
             self.pane_status.insert(id, after);
@@ -515,7 +553,6 @@ impl App {
         }
         self.sync_all_rows();
         self.flush_waits();
-        Task::none()
     }
 
     /// A call that reaches another computer's pane, tmux, git or scripts:
@@ -741,12 +778,12 @@ fn plan_attach(id: String, machine: Machine, st: PaneStatus) -> Task<Msg> {
 /// Off the UI thread, for one host: its panes' presence (one look) and
 /// Codex turns and `×N` from its files. Each pane comes back as it was
 /// and as it is now.
-fn remote_tick(
+fn status_tick(
     m: &Machine,
     panes: Vec<(String, PathBuf, PaneStatus)>,
 ) -> Vec<(String, PaneStatus, PaneStatus)> {
     let sessions: Vec<String> = panes.iter().map(|(id, ..)| catalog::session_name(id)).collect();
-    let who = presence::scan_remote(m, &sessions);
+    let who = presence::scan(m, &sessions);
     let mut claimed: HashSet<String> = HashSet::new();
     for (_, _, st) in &panes {
         if let (true, Some(sid)) = (st.is_codex(), st.owner_session.as_deref()) {

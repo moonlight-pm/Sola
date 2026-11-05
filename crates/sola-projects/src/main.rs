@@ -220,6 +220,8 @@ struct App {
     /// Hosts whose status tick is out, and when each last went out.
     remote_busy: HashSet<String>,
     remote_ticked: HashMap<String, Instant>,
+    /// This computer's status tick is out.
+    local_busy: bool,
     /// The desk menu open on a session's pane.
     desk: desk::PaneMenu,
 }
@@ -307,6 +309,8 @@ enum Msg {
     },
     /// A host's link came up, failed, or ended ([`link`]).
     Link(link::LinkEvent),
+    /// This computer's status tick: each pane as it was and is ([`remote`]).
+    LocalTick(Vec<(String, status::PaneStatus, status::PaneStatus)>),
     /// A host's status tick: each pane as it was and is ([`remote`]).
     RemoteTick {
         host: String,
@@ -518,6 +522,7 @@ impl App {
             remote_pending: HashSet::new(),
             remote_busy: HashSet::new(),
             remote_ticked: HashMap::new(),
+            local_busy: false,
             desk: desk::PaneMenu::default(),
         };
         app.link_hosts();
@@ -653,21 +658,13 @@ impl App {
                     .get(&id)
                     .map(|s| s.status)
                     .unwrap_or_default();
-                // A remote pane's files are read by its host's tick.
-                let cwd = self
-                    .tab_for_pane(&id)
-                    .filter(|w| w.host.is_none())
-                    .map(|w| w.path.clone());
                 let st = self.pane_status.entry(id.clone()).or_default();
                 st.apply_hook(&incoming);
                 let owner = (st.agent.clone(), st.owner_session.clone());
                 let owner_changed =
                     owner.1.is_some() && self.recorded.get(&id) != Some(&owner);
-                if incoming.mapped.compacted || incoming.mapped.session_id.is_some() {
-                    if let Some(cwd) = cwd.as_deref() {
-                        st.refresh_compaction(&Machine::Local, cwd);
-                    }
-                }
+                // The transcript's own count comes with the next tick: a
+                // transcript can be tens of MB, too long to read here.
                 if incoming.mapped.compacted && st.compaction_count == 0 {
                     st.compaction_count = 1;
                 }
@@ -708,58 +705,14 @@ impl App {
                 Task::none()
             }
             Msg::PresenceTick => {
-                // A remote pane's processes are not here to scan.
-                let ids: Vec<String> = self
-                    .tabs
-                    .iter()
-                    .filter(|w| w.host.is_none())
-                    .map(|w| w.id.clone())
-                    .collect();
-                let mut claimed: HashSet<String> = HashSet::new();
-                for id in &ids {
-                    let Some(st) = self.pane_status.get(id) else {
-                        continue;
-                    };
-                    if !st.is_codex() {
-                        continue;
-                    }
-                    if let Some(sid) = st.owner_session.clone() {
-                        if status::codex_rollout_exists(&Machine::Local, &sid) {
-                            claimed.insert(sid);
-                        }
-                    }
-                }
-                let mut dirty = false;
-                for id in ids {
-                    let tmux_session = catalog::session_name(&id);
-                    let who = presence::scan_session(&tmux_session);
-                    let cwd = self.tab_for_pane(&id).map(|w| w.path.clone());
-                    let st = self.pane_status.entry(id).or_default();
-                    let before = (st.status, st.agent.clone());
-                    st.apply_presence(who);
-                    if st.is_codex() {
-                        if let Some(cwd) = cwd.as_deref() {
-                            if st.observe_codex_turn(&Machine::Local, cwd, &claimed) {
-                                dirty = true;
-                            }
-                            if let Some(sid) = st.owner_session.clone() {
-                                claimed.insert(sid);
-                            }
-                        }
-                    }
-                    if let Some(cwd) = cwd.as_deref() {
-                        st.refresh_compaction(&Machine::Local, cwd);
-                    }
-                    if (st.status, st.agent.clone()) != before {
-                        dirty = true;
-                    }
-                }
-                if dirty {
-                    status::persist_all(&self.pane_status);
-                }
-                self.sync_all_rows();
+                // A wait's deadline does not depend on a tick coming back.
                 self.flush_waits();
-                self.remote_ticks()
+                let local = self.local_tick();
+                Task::batch([local, self.remote_ticks()])
+            }
+            Msg::LocalTick(panes) => {
+                self.on_local_tick(panes);
+                Task::none()
             }
             Msg::PaneFocused(pane_id) => {
                 // Hover focuses for typing. It must not spawn a shell —

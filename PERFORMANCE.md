@@ -73,6 +73,7 @@ windows are actually restarted.
 | Chrome `Tick` is not a 250 ms pump | `sola-browser` `Msg::Tick` | **Dogfooded.** 250 ms `time::every` only for copy-URL flash, vault TOTP on the open item, vault fill-wait. Helpers wake Tick. |
 | Working ring `At` ~20 Hz | `sola-kit` `status_mark` | **In code.** `RedrawRequest::At(50ms)`, not `NextFrame`. |
 | Volume spectrum `At` ~20 Hz | `sola-shell` audio meter | **Installed** `shell` release 2026-09-02. `pw-cat` tap → FFT → 12 warped-log bands + pink weight; canvas `RedrawRequest::At(50ms)` only while bands are live. No iced `time::every`. |
+| Projects status tick off the UI thread | `sola-projects` `remote.rs` `status_tick`, `presence.rs` | **On branch `projects-presence`, 2026-11-04, smoked on a private desk, not at the desk.** Was a 530 ms UI-thread freeze each second with 29 sessions: no `CONFIG_PROC_CHILDREN` on Oath's kernel made the walk read every process's `status` per process walked. Now one `tmux ls` and one read of `/proc/*/stat` per tick, on a worker. Key to pane 104 → 11 ms median, 620 → 30 ms worst. |
 | Projects pointer gated | `sola-projects` | **In code.** No `window::frames()`; `CursorMoved` only while split-dragging. |
 | Morph2 drag-only vsync | `sola-kit` `sidebar/strip.rs` | **Dogfooded** for tab reorder (stutter fixed by re-enabling vsync *during* drag). Idle must not leave `request_redraw` on. |
 | Overlay first-show at live output | `sola-shell` `overlay_open_rect` | **Dogfooded.** No 1920-wide placeholder / default-center jump. |
