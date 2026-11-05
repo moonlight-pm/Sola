@@ -4,8 +4,8 @@
 lets render that window even if its not show, that way its already rendering if
 i click it"; then "maybe we'll do that another time").** Status: `idea`.
 
-Hovering gives a head start of a few hundred milliseconds before a click, and it
-costs one window at a time.
+The pointer reaches a tab before the click does, and it costs one window at a
+time. How much head start that gives is not measured.
 
 ## What is known
 
