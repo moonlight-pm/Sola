@@ -13,6 +13,7 @@ path = "src/main.rs"
 sola-kit = { path = "../sola-kit" }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
+sola-google-client = { path = "../sola-google-client" }
 
 iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "svg"] }
 

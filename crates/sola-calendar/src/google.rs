@@ -5,7 +5,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use sola_bus::topics::google_calendar_client_secret;
 
 use crate::model::{CalEvent, CalKind, Calendar};
 
@@ -26,7 +25,7 @@ pub async fn refresh(
     client_id: &str,
     refresh_token: &str,
 ) -> Result<TokenResponse> {
-    let secret = google_calendar_client_secret();
+    let secret = sola_google_client::client_secret();
     token_request(
         http,
         &[

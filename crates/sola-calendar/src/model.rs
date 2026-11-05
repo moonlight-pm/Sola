@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, TimeZone, Timelike, Utc};
 use serde::{Deserialize, Serialize};
-use sola_bus::topics::{CalendarShelf, google_calendar_client_id};
+use sola_bus::topics::CalendarShelf;
 use sola_core::Encrypted;
 
 pub const LOCAL_CAL_ID: &str = "local";
@@ -446,7 +446,7 @@ impl Default for Settings {
         Self {
             view: View::Month,
             default_calendar: LOCAL_CAL_ID.into(),
-            google_client_id: google_calendar_client_id(),
+            google_client_id: sola_google_client::client_id(),
             sidebar_w: default_sidebar_w(),
             inspector_w: default_inspector_w(),
             accounts_collapsed: false,

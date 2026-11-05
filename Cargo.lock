@@ -8446,6 +8446,7 @@ dependencies = [
  "serde_json",
  "sola-bus",
  "sola-core",
+ "sola-google-client",
  "sola-kit",
  "tokio",
  "tracing",
@@ -8525,6 +8526,10 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width",
 ]
+
+[[package]]
+name = "sola-google-client"
+version = "0.1.0"
 
 [[package]]
 name = "sola-install"
@@ -8797,6 +8802,7 @@ dependencies = [
  "sha2 0.10.9",
  "sola-bus",
  "sola-core",
+ "sola-google-client",
  "sola-kit",
  "tokio",
  "tracing",

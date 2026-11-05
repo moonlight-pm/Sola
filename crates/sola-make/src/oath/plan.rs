@@ -51,7 +51,13 @@ pub fn text(p: &Plan) -> String {
 }
 
 /// `plan:sola-build`: every program in `bins`, one release build.
-pub fn build_script(bins: &[&str], src_hash: &str, crates_hash: &str, version: &str) -> String {
+pub fn build_script(
+    bins: &[&str],
+    src_hash: &str,
+    crates_hash: &str,
+    version: &str,
+    client: &crate::google_client::Vars,
+) -> String {
     let mut s = prologue(version);
     s += &format!("SRC=/oath/store/pkg/sola-src/{src_hash}/src\n");
     s += &format!("CRATES=/oath/store/pkg/sola-crates/{crates_hash}\n");
@@ -70,6 +76,11 @@ pub fn build_script(bins: &[&str], src_hash: &str, crates_hash: &str, version: &
     // The CEF programs link pkg:cef and name its Release/ in RUNPATH.
     s += &format!("export SOLA_CEF_DIR={OATH_CEF}\n");
     s += "ln -s \"$SOLA_CEF_DIR\" \"$HOME/.cache/sola/cef-$(cat cef-version)\"\n";
+    // Sola's Google client. A desktop program can't keep it secret, so this
+    // plan and the programs both carry it; `google_client` checked it for a shell.
+    for (key, value) in client {
+        s += &format!("export {key}={value}\n");
+    }
     let crates: Vec<String> = build_crates(bins.iter().copied())
         .iter()
         .map(|c| format!("-p {c}"))
@@ -122,7 +133,7 @@ mod tests {
     #[test]
     fn one_build_compiles_every_program() {
         let bins: Vec<&str> = PACKAGES.iter().flat_map(|p| p.bins.iter().copied()).collect();
-        let s = build_script(&bins, "sha256-s", "sha256-k", "0.1.0+gabc");
+        let s = build_script(&bins, "sha256-s", "sha256-k", "0.1.0+gabc", &Vec::new());
         assert!(s.starts_with("#!/bin/sh\nset -eu\n"));
         assert!(s.contains("SRC=/oath/store/pkg/sola-src/sha256-s/src"));
         assert!(s.contains("-p sola-shell") && s.contains("-p sola-browser"));
@@ -147,5 +158,19 @@ mod tests {
         assert!(t.contains("BUILD=/oath/store/pkg/sola-build/sha256-b"));
         assert!(t.contains("ln -s /oath/store/pkg/cef/live/cef /out/cef"));
         assert!(!t.contains("cargo build") && !t.contains("/src/share"));
+    }
+
+    #[test]
+    fn the_build_plan_hands_the_client_to_cargo() {
+        let client = vec![("SOLA_GOOGLE_CALENDAR_CLIENT_ID", "abc.apps".to_string())];
+        let s = build_script(&["sola-calendar"], "srchash", "crateshash", "0.1.0", &client);
+        let export = s.find("export SOLA_GOOGLE_CALENDAR_CLIENT_ID=abc.apps\n").unwrap();
+        assert!(export < s.find("cargo build").unwrap());
+    }
+
+    #[test]
+    fn a_build_plan_with_no_client_names_none() {
+        let s = build_script(&["sola-calendar"], "srchash", "crateshash", "0.1.0", &Vec::new());
+        assert!(!s.contains("SOLA_GOOGLE"));
     }
 }

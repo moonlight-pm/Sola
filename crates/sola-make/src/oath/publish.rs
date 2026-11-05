@@ -39,6 +39,13 @@ const SOURCES: &[&str] = &[".cargo", "Cargo.lock", "Cargo.toml", "cef-version", 
 /// `local`: build the plans here and upload nothing.
 pub fn publish(local: bool) -> Result<(), String> {
     let origin = if local { None } else { Some(Origin::from_env()?) };
+    let client = crate::google_client::vars()?;
+    if client.is_empty() && !local {
+        return Err(format!(
+            "no Google client in {}: a release without it cannot sign in to Google",
+            crate::google_client::file().display()
+        ));
+    }
     if git_dirty()? {
         return Err("commit first: a published source is the committed tree".into());
     }
@@ -74,7 +81,7 @@ pub fn publish(local: bool) -> Result<(), String> {
         name: BUILD.into(),
         build_needs,
         run_needs: Vec::new(),
-        script: plan::build_script(&bins, &src_hash, &crates_hash, &version),
+        script: plan::build_script(&bins, &src_hash, &crates_hash, &version, &client),
     };
     let (plan_hash, build_hash) = file_and_build(work, &build)?;
     plans.push((BUILD, plan_hash));

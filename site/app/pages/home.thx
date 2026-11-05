@@ -128,7 +128,7 @@ fn appList() -> Array<Entry> {
         Entry(name: "Projects", detail: "A window per project, its tabs (the checkout and its git worktrees) along the top, each with terminal panes. A tab shows whether the coding agent in it (Claude Code, Codex, Grok) is working, waiting, or done."),
         Entry(name: "Browser", detail: "Chromium's engine under Sola's own chrome: a window per page, a profile per workspace, a Bitwarden vault, downloads, and developer tools."),
         Entry(name: "Mail", detail: "IMAP and SMTP for several accounts, with drafts and attachments."),
-        Entry(name: "Calendar", detail: "Month, week, and day views of local, Google, and iCloud calendars, with reminders."),
+        Entry(name: "Calendar", detail: "Month, week, and day views of local, Google, and iCloud calendars, with reminders. Signing in to Google lets it show and edit your events from your own computer; nothing passes through a server of ours."),
         Entry(name: "Web apps", detail: "A website the browser runs as an application of its own, wrapped from one of its pages: a launcher entry, its own windows and menus."),
         Entry(name: "Settings", detail: "Appearance (light or dark for web pages, the background picture and the colors taken from it, every picture set before with the look it was worn with, the desk's opacity, the idle fade), the login (a password, auto-login), applications and web apps in the launcher, and mail and calendar accounts."),
         Entry(name: "Paint", detail: "The default image viewer and editor, a window per image; it sets the background picture."),

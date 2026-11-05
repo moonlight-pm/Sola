@@ -10,17 +10,17 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::RngCore;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use sola_bus::topics::google_calendar_client_secret;
 
-pub const REDIRECT_PORT: u16 = 8765;
 pub const REDIRECT_PATH: &str = "/oauth";
-const SCOPES: &str = "https://www.googleapis.com/auth/calendar";
+/// Only what Calendar calls: its calendar list, and events. Not `auth/calendar`,
+/// which also shares and deletes whole calendars.
+const SCOPES: &str = "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly";
 const AUTHORIZE_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
-pub fn redirect_uri() -> String {
-    format!("http://127.0.0.1:{REDIRECT_PORT}{REDIRECT_PATH}")
+pub fn redirect_uri(port: u16) -> String {
+    format!("http://127.0.0.1:{port}{REDIRECT_PATH}")
 }
 
 pub struct Flow {
@@ -29,7 +29,7 @@ pub struct Flow {
     pub url: String,
 }
 
-pub fn begin(client_id: &str) -> Result<Flow> {
+pub fn begin(client_id: &str, port: u16) -> Result<Flow> {
     let client_id = client_id.trim();
     if client_id.is_empty() {
         bail!("a Google OAuth Desktop client ID is required");
@@ -40,7 +40,7 @@ pub fn begin(client_id: &str) -> Result<Flow> {
     let url = format!(
         "{AUTHORIZE_URL}?client_id={}&response_type=code&redirect_uri={}&code_challenge_method=S256&code_challenge={challenge}&state={state}&scope={}&access_type=offline&prompt=consent",
         urlencoding::encode(client_id),
-        urlencoding::encode(&redirect_uri()),
+        urlencoding::encode(&redirect_uri(port)),
         urlencoding::encode(SCOPES),
     );
     Ok(Flow {
@@ -66,18 +66,20 @@ pub struct TokenResponse {
 }
 
 pub fn sign_in(client_id: String) -> Result<(TokenResponse, String)> {
-    let flow = begin(&client_id)?;
     let listener = bind_listener()?;
+    let port = listener.local_addr()?.port();
+    let flow = begin(&client_id, port)?;
     sola_core::open_url(&flow.url).map_err(|e| anyhow!(e))?;
     let code = wait_for_code(listener, &flow.state)?;
-    let tok = exchange_code(&client_id, &code, &flow.verifier)?;
+    let tok = exchange_code(&client_id, &code, &flow.verifier, port)?;
     let email = user_email(&tok.access_token).unwrap_or_else(|_| "Google".into());
     Ok((tok, email))
 }
 
+/// Any free port: Google takes any port on the loopback from a Desktop client.
 fn bind_listener() -> Result<TcpListener> {
-    let listener = TcpListener::bind(("127.0.0.1", REDIRECT_PORT))
-        .map_err(|e| anyhow!("unable to listen on 127.0.0.1:{REDIRECT_PORT}: {e}"))?;
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|e| anyhow!("unable to listen on 127.0.0.1: {e}"))?;
     listener.set_nonblocking(true)?;
     Ok(listener)
 }
@@ -166,14 +168,14 @@ fn failure_page(error: &str) -> String {
     )
 }
 
-fn exchange_code(client_id: &str, code: &str, verifier: &str) -> Result<TokenResponse> {
-    let secret = google_calendar_client_secret();
+fn exchange_code(client_id: &str, code: &str, verifier: &str, port: u16) -> Result<TokenResponse> {
+    let secret = sola_google_client::client_secret();
     let body = format!(
         "client_id={}&client_secret={}&grant_type=authorization_code&code={}&redirect_uri={}&code_verifier={}",
         urlencoding::encode(client_id),
         urlencoding::encode(&secret),
         urlencoding::encode(code),
-        urlencoding::encode(&redirect_uri()),
+        urlencoding::encode(&redirect_uri(port)),
         urlencoding::encode(verifier),
     );
     token_request(&body)
@@ -217,4 +219,53 @@ pub fn expiry_unix(expires_in: Option<u64>) -> u64 {
         .unwrap_or_default()
         .as_secs();
     now + expires_in.unwrap_or(3600).saturating_sub(60)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn query(url: &str, key: &str) -> String {
+        let (_, query) = url.split_once('?').unwrap();
+        let value = query
+            .split('&')
+            .find_map(|pair| pair.strip_prefix(&format!("{key}=")))
+            .unwrap();
+        urlencoding::decode(value).unwrap().into_owned()
+    }
+
+    #[test]
+    fn asks_only_for_what_calendar_uses() {
+        let flow = begin("id", 1234).unwrap();
+        let scopes = query(&flow.url, "scope");
+        let mut scopes: Vec<&str> = scopes.split(' ').collect();
+        scopes.sort();
+        assert_eq!(
+            scopes,
+            [
+                "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+                "https://www.googleapis.com/auth/calendar.events",
+            ]
+        );
+    }
+
+    #[test]
+    fn sends_google_back_to_the_port_it_listens_on() {
+        let flow = begin("id", 1234).unwrap();
+        assert_eq!(query(&flow.url, "redirect_uri"), "http://127.0.0.1:1234/oauth");
+    }
+
+    #[test]
+    fn no_client_stops_before_the_browser() {
+        let e = begin("  ", 1234).err().unwrap().to_string();
+        assert!(e.contains("client ID is required"), "{e}");
+    }
+
+    #[test]
+    fn listens_on_a_port_the_system_chose() {
+        let a = bind_listener().unwrap();
+        let b = bind_listener().unwrap();
+        assert_ne!(a.local_addr().unwrap().port(), 0);
+        assert_ne!(a.local_addr().unwrap().port(), b.local_addr().unwrap().port());
+    }
 }

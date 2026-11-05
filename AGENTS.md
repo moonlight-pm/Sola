@@ -89,6 +89,7 @@ crates/
   sola-call/           # Call host + client (request/reply; not the bus)
   sola-open/           # Opening links and files (handlers, xdg-open)
   sola-core/           # Shared primitives (env, process, watcher, config, log, ...)
+  sola-google-client/  # Sola's Google OAuth client, compiled in by `cargo make`; not in git
   sola-kit/            # Iced app kit (a library)
   sola-assets/         # Vendored icon/asset bundles
   sola-browser/        # Iced browser chrome + CEF engine (single crate)
@@ -191,7 +192,8 @@ docs/
   - `cargo make oath publish` — the release: from master only (clean,
     pushed, `HEAD == origin/master`; it refuses otherwise), plan builds in
     `oath build`'s sandbox, uploaded to `store.oath.moonlight.pm` with
-    `~/.config/oath/origin.env`. Outward-facing. `--local` builds the plans
+    `~/.config/oath/origin.env`, carrying Sola's Google client from
+    `~/.config/oath/sola-google-client.env`. Outward-facing. `--local` builds the plans
     here and uploads nothing (no asking).
   - Write what you applied with its source (`pkg:sola f2406bf… from
     next@ce6408de`), in `CURRENT.md`.

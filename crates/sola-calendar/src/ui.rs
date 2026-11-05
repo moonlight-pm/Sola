@@ -767,6 +767,11 @@ impl App {
             CalNotice::Snapshot(store) => {
                 self.store = store;
                 self.store.ensure_local();
+                if self.reminders.keep_calendars(&self.store) {
+                    if let Err(e) = self.reminders.save() {
+                        tracing::warn!(error = %e, "saving reminders failed");
+                    }
+                }
                 self.publish_config();
                 self.deliver_due();
                 if !self.loaded {

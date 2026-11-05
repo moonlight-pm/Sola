@@ -1239,40 +1239,13 @@ impl MailAccount {
     }
 }
 
-/// Google Cloud Desktop OAuth client (PKCE, Calendar API).
-/// Not stored in git (GitHub push protection). Set
-/// `SOLA_GOOGLE_CALENDAR_CLIENT_ID` / `SOLA_GOOGLE_CALENDAR_CLIENT_SECRET`,
-/// or `CalendarConfig.google_client_id`.
-pub const GOOGLE_CALENDAR_CLIENT_ID: &str = "";
-pub const GOOGLE_CALENDAR_CLIENT_SECRET: &str = "";
-
-/// Shipped client, or `SOLA_GOOGLE_CALENDAR_CLIENT_ID` when that env is set.
-pub fn google_calendar_client_id() -> String {
-    env_or("SOLA_GOOGLE_CALENDAR_CLIENT_ID", GOOGLE_CALENDAR_CLIENT_ID)
-}
-
-/// Shipped secret, or `SOLA_GOOGLE_CALENDAR_CLIENT_SECRET` when that env is set.
-pub fn google_calendar_client_secret() -> String {
-    env_or(
-        "SOLA_GOOGLE_CALENDAR_CLIENT_SECRET",
-        GOOGLE_CALENDAR_CLIENT_SECRET,
-    )
-}
-
-fn env_or(key: &str, default: &str) -> String {
-    match std::env::var(key) {
-        Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
-        _ => default.to_string(),
-    }
-}
-
 /// Calendar accounts. Edited by sola-settings, consumed by sola-calendar.
 /// Secrets (app password, OAuth tokens) encrypt on disk via [`Encrypted`].
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct CalendarConfig {
     /// Google OAuth Desktop client ID (shared by every Google account).
-    /// Empty on the wire means the shipped [`GOOGLE_CALENDAR_CLIENT_ID`].
+    /// Empty on the wire means the program's own (`sola-google-client`).
     pub google_client_id: String,
     pub accounts: Vec<CalendarAccount>,
     /// Discovered calendars (from sola-calendar). Settings edits hidden /
@@ -3720,18 +3693,6 @@ mod tests {
             }
             other => panic!("expected MailConfig, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn google_calendar_client_not_stored_in_tree() {
-        assert!(
-            GOOGLE_CALENDAR_CLIENT_ID.is_empty(),
-            "do not commit a Google OAuth client id"
-        );
-        assert!(
-            GOOGLE_CALENDAR_CLIENT_SECRET.is_empty(),
-            "do not commit a Google OAuth client secret"
-        );
     }
 
     #[test]

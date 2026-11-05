@@ -7,6 +7,7 @@
 /// See: https://github.com/matklad/cargo-xtask
 mod assets;
 mod cef;
+mod google_client;
 mod install;
 mod iso;
 mod isolated;
@@ -349,6 +350,7 @@ fn build(packages: &[String], release: bool) {
     let args = build_args(packages, release);
     let status = Command::new("cargo")
         .args(&args)
+        .envs(google_client::vars_or_exit())
         .status()
         .expect("failed to run cargo build");
     if !status.success() {
@@ -391,7 +393,10 @@ fn build_exec(target: Option<String>, release: bool) -> ! {
     };
     let args = build_args(&packages, release);
     // `exec` only returns on failure (e.g. cargo not on PATH).
-    let err = Command::new("cargo").args(&args).exec();
+    let err = Command::new("cargo")
+        .args(&args)
+        .envs(google_client::vars_or_exit())
+        .exec();
     eprintln!("failed to exec cargo: {err}");
     exit(1);
 }

@@ -83,8 +83,15 @@ fn chosen(only: &[String]) -> Vec<&'static Package> {
 }
 
 fn build(release: bool, packages: &[&Package]) {
+    let client = crate::google_client::vars().unwrap_or_else(|e| fail(e));
+    if client.is_empty() {
+        println!(
+            "[oath] no Google client ({}): this build cannot sign in to Google",
+            crate::google_client::file().display()
+        );
+    }
     let mut cmd = super::cpus::limited("cargo");
-    cmd.arg("build").env("SOLA_CEF_DIR", OATH_CEF);
+    cmd.arg("build").env("SOLA_CEF_DIR", OATH_CEF).envs(client);
     if release {
         cmd.arg("--release");
     }

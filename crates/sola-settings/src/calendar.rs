@@ -5,7 +5,7 @@ use iced::widget::{checkbox, column, container, mouse_area, row, Space};
 use iced::{Alignment, Background, Border, Color, Element, Length, Task, Theme};
 
 use sola_bus::topics::{
-    calendar_url_label, google_calendar_client_id, normalize_calendar_url, CalendarAccount,
+    calendar_url_label, normalize_calendar_url, CalendarAccount,
     CalendarAccountKind, CalendarConfig, CalendarShelf, Topic,
 };
 use sola_core::Encrypted;
@@ -222,7 +222,7 @@ pub fn update(msg: CalMsg, cfg: &mut CalendarConfig, ui: &mut CalendarState) -> 
         }
         CalMsg::Save => return save_draft(cfg, ui),
         CalMsg::SignInGoogle => {
-            let client_id = google_calendar_client_id();
+            let client_id = sola_google_client::client_id();
             cfg.google_client_id = client_id.clone();
             ui.signing_in = true;
             ui.error = None;
@@ -251,7 +251,7 @@ pub fn update(msg: CalMsg, cfg: &mut CalendarConfig, ui: &mut CalendarState) -> 
                 Ok((access, email, expiry, refresh)) => {
                     let refresh = refresh.filter(|s| !s.is_empty()).map(Encrypted);
                     let access = Encrypted(access);
-                    cfg.google_client_id = google_calendar_client_id();
+                    cfg.google_client_id = sola_google_client::client_id();
                     match &ui.detail {
                         Detail::Edit { id, .. } => {
                             if let Some(acc) = cfg.accounts.iter_mut().find(|a| a.id == *id) {
@@ -551,7 +551,7 @@ fn save_caldav(cfg: &mut CalendarConfig, ui: &mut CalendarState, mut draft: Draf
 }
 
 fn publish(cfg: &mut CalendarConfig, ui: &mut CalendarState, status: &str) {
-    cfg.google_client_id = google_calendar_client_id();
+    cfg.google_client_id = sola_google_client::client_id();
     ui.last_canonical = cfg.clone();
     ui.error = None;
     ui.status = Some(status.into());
@@ -560,7 +560,7 @@ fn publish(cfg: &mut CalendarConfig, ui: &mut CalendarState, status: &str) {
 
 fn publish_shelf(cfg: &mut CalendarConfig, ui: &mut CalendarState, status: &str) {
     write_calendar_draft(cfg, ui);
-    cfg.google_client_id = google_calendar_client_id();
+    cfg.google_client_id = sola_google_client::client_id();
     ui.last_canonical = cfg.clone();
     ui.error = None;
     ui.status = Some(status.into());

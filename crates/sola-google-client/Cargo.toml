@@ -1,0 +1,5 @@
+[package]
+name = "sola-google-client"
+version.workspace = true
+edition.workspace = true
+description = "Sola's Google Cloud Desktop OAuth client, for Calendar and Settings"

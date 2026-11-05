@@ -9,9 +9,10 @@ desktop.
 | Path | What |
 |------|------|
 | `main.thx` | Entry: listen, open the local browser |
-| `app/routes.thx` | `GET /`, `GET /manual`, static files, the 404 page; security and cache headers |
+| `app/routes.thx` | `GET /`, `GET /manual`, `GET /privacy`, static files, the 404 page; security and cache headers |
 | `app/ui/page.thx` | The HTML shell: head, the bar (Manual, Source), the footer |
 | `app/pages/home.thx` | The home page and the 404 page |
+| `app/pages/privacy.thx` | `/privacy`: what Calendar does with connected accounts; Google's verification reads it |
 | `app/pages/manual.thx` | `/manual`: the chapters in `names`, a numbered contents column |
 | `app/markdown.thx` | Markdown to nodes (from thoxa.moonlight.pm): chapter links become anchors, other relative links go to GitHub |
 | `app/highlight.thx` | Code blocks: comments in shell, Nix, and TOML |

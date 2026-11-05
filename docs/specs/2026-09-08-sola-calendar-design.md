@@ -16,7 +16,7 @@ Ship `crates/sola-calendar`: a bog-standard kit calendar. See a month, open a da
 | UI stack | sola-kit / iced. Familiar calendar grammar (sidebar calendars, month default, week/day, inspector — not a modal) |
 | Week start | Sunday (same as the menubar clock card) |
 | Local | Always **On This Computer**. Events live in `~/.local/state/sola/calendar/store.json` |
-| Google | Calendar API v3. Authorization Code + PKCE. Shipped Desktop OAuth client (`GOOGLE_CALENDAR_CLIENT_ID` + secret; env `SOLA_GOOGLE_CALENDAR_CLIENT_ID` / `SOLA_GOOGLE_CALENDAR_CLIENT_SECRET` override). Google's token endpoint requires the Desktop secret even with PKCE. Redirect `http://127.0.0.1:8765/oauth`. Multiple Google accounts allowed |
+| Google | Calendar API v3. Authorization Code + PKCE. Shipped Desktop OAuth client, compiled in by `cargo make` from `~/.config/oath/sola-google-client.env` and never in git (`sola-google-client`; env `SOLA_GOOGLE_CALENDAR_CLIENT_ID` / `SOLA_GOOGLE_CALENDAR_CLIENT_SECRET` override at run time). Google's token endpoint requires the Desktop secret even with PKCE. Scopes `calendar.events` and `calendar.calendarlist.readonly`. Redirect to a free port on `127.0.0.1`, path `/oauth`. Multiple Google accounts allowed |
 | Apple | iCloud CalDAV (`https://caldav.icloud.com`) with Apple ID + app-specific password |
 | URL | ICS / iCal / `webcal://` feed (GET, read-only). `webcal://` becomes `https://` |
 | CalDAV | Generic CalDAV (Fastmail, Nextcloud, …): server URL + username + password; same PROPFIND/REPORT path as iCloud |

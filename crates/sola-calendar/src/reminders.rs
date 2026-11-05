@@ -150,6 +150,15 @@ impl ReminderBook {
         self.events.retain(|e| e.event_id != event_id);
     }
 
+    /// Forget reminders on calendars that are gone (a disconnected account's):
+    /// they hold event titles and would still fire. True if any went.
+    pub fn keep_calendars(&mut self, store: &Store) -> bool {
+        let before = self.events.len();
+        self.events
+            .retain(|e| store.calendars.iter().any(|c| c.id == e.calendar_id));
+        self.events.len() != before
+    }
+
     /// Copy start, end, and title off events that are currently loaded
     /// so a later windowed sync still knows when to fire.
     pub fn note_events(&mut self, events: &[CalEvent]) -> bool {
@@ -502,5 +511,31 @@ mod tests {
         let loaded = ReminderBook::load(&path);
         assert_eq!(loaded.offsets("ev-1"), vec![15]);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reminders_go_with_their_calendar() {
+        let start = Utc.with_ymd_and_hms(2026, 10, 12, 15, 0, 0).unwrap();
+        let ev = event(start, start + Duration::hours(1));
+        let mut book = ReminderBook::default();
+        book.set_from_event(&ev, vec![15]);
+
+        let calendar: crate::model::Calendar = serde_json::from_value(serde_json::json!({
+            "id": ev.calendar_id,
+            "name": "c",
+            "color": "#000000",
+            "kind": "local",
+            "account_id": null,
+        }))
+        .unwrap();
+        let kept = Store {
+            calendars: vec![calendar],
+            ..Store::default()
+        };
+        assert!(!book.keep_calendars(&kept));
+        assert_eq!(book.offsets("ev-1"), vec![15]);
+
+        assert!(book.keep_calendars(&Store::default()));
+        assert!(book.offsets("ev-1").is_empty());
     }
 }

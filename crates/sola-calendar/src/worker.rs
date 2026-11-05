@@ -5,7 +5,7 @@ use std::time::Duration;
 use chrono::NaiveDate;
 use sola_bus::topics::{
     CalendarAccount, CalendarAccountKind, CalendarConfig, calendar_url_label,
-    google_calendar_client_id, normalize_calendar_url,
+    normalize_calendar_url,
 };
 use sola_core::Encrypted;
 
@@ -255,7 +255,7 @@ async fn google_token(state: &mut State, account_id: &str) -> anyhow::Result<Str
     let account = &state.store.accounts[idx];
     let mut access = account.access();
     let refresh = account.refresh();
-    let client_id = google_calendar_client_id();
+    let client_id = sola_google_client::client_id();
     if access.is_empty() {
         anyhow::bail!("not signed in");
     }
@@ -534,7 +534,7 @@ async fn apply_config(state: &mut State, cfg: CalendarConfig) {
         }
         return;
     }
-    let client_id = google_calendar_client_id();
+    let client_id = sola_google_client::client_id();
     let incoming: Vec<Account> = cfg
         .accounts
         .iter()
@@ -655,7 +655,7 @@ fn account_from_bus(a: &CalendarAccount, google_client_id: &str) -> Account {
 /// `CalendarConfig`, so what one leaves out is gone for the next reader.
 pub fn config_from_store(store: &Store) -> CalendarConfig {
     CalendarConfig {
-        google_client_id: google_calendar_client_id(),
+        google_client_id: sola_google_client::client_id(),
         accounts: store.accounts.iter().filter_map(account_to_bus).collect(),
         calendars: store.calendars.iter().map(Calendar::to_shelf).collect(),
     }

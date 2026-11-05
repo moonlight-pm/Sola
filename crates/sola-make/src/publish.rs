@@ -45,7 +45,14 @@ fn run_publish(explicit_version: Option<String>) -> Result<String, String> {
     println!(">>> publishing {tag}");
 
     println!(">>> cargo build --release (workspace)");
-    run("cargo", &["build", "--release"])?;
+    let status = Command::new("cargo")
+        .args(["build", "--release"])
+        .envs(crate::google_client::vars()?)
+        .status()
+        .map_err(|e| format!("spawn cargo: {e}"))?;
+    if !status.success() {
+        return Err(format!("cargo build exited with {}", status.code().unwrap_or(-1)));
+    }
 
     let staging = mkstaging()?;
     let bundle = staging.join("sola");

@@ -224,25 +224,24 @@ through it. Log rotation is still open.
 
 ---
 
-### D15 — Google Calendar's client on Oath (P2)
+### D15 — Google Calendar's client on Oath (P2) — **answered (2026-11-04)**
 
-**Context:** `GOOGLE_CALENDAR_CLIENT_ID` / `_SECRET` are empty constants on
-`next`, so Google sign-in needs `SOLA_GOOGLE_CALENDAR_CLIENT_ID` / `_SECRET`
-in the environment. *Found 2026-10-29 by the novus manual pass over `next` 30a43224 (read in code).*
+**Context:** the client was in the source until 2026-09-09, when GitHub's push
+protection rejected it and it was taken out, so every build after had none:
+novus's Google account last synced 2026-09-08, and sign-in needed
+`SOLA_GOOGLE_CALENDAR_CLIENT_ID` / `_SECRET` in the environment.
 
-**Ask:** how should Oath provide them (a secret in the desk profile, a file
-under `~/.config/sola`, built in at publish)? Does Google sign-in work on
-canto today?
+**Answer (Joshua, 2026-11-04: "we need this to work out of the box for other
+sola users"; "published it, go ahead with the four items"):** Sola ships its own
+client. `cargo make` compiles it in from `~/.config/oath/sola-google-client.env`
+(crate `sola-google-client`), never from git, and the release plan exports it. A
+publish refuses without it; a clone without it has no Google sign-in and may set
+the environment variables at run time. Google calls a desktop client public, so
+the programs and the public plan carrying it is expected.
 
-**Seen on novus, 2026-11-04:** with a Google account restored from before the
-rebuild, every sync stops at refresh with 400 "Could not determine client ID
-from request". The account's client ID is in its store, but refresh reads only
-the environment. The client's secret is nowhere in the old home, and that home's
-last release build of Calendar (2026-10-26) holds neither ID nor secret. The
-restored store's token expiry and event range (2026-08-01 to 10-31) put the
-last Google sync at 2026-09-08, the day of sign-in: Google stopped refreshing
-long before the rebuild. A refresh token is tied to its client, so a new
-client means signing in again; this one may have expired anyway.
+**Google's side:** project `sola-508017`, published (in production, unverified:
+a warning, and 100 new users). Verification still needs `moonlight.pm` proven in
+Search Console, the narrower scopes on Data Access, and `/privacy` live.
 
 **Related:** `calendar` capability.
 
@@ -382,6 +381,7 @@ runs `cloudflared` while open. Links work only while Design runs.
 | 2026-11-02 | Workspace islands | A setting to try another way (Joshua: "An alternative layout for workspace widgets"): each workspace an island right of the flower, no switcher in the bar; a dot per island for Super+Tab, a drag to reorder, the showing one's click for its menu. In Appearance while it is one setting. Super+Tab honors the switches only in this layout: turning it off is exactly as before | `docs/manual/sola-shell.md` § Workspaces as islands |
 | 2026-11-01 | Light mode | Settings → Appearance → Light or dark is global: Light gives the desk and every Sola window a light theme, and pages are told light; the light theme follows the picture as the dark one does (Joshua: "lets add dark/light mode as a global setting (in settings appearance) -- and lets also actually have a light theme -- This theme needs to be responsive to the background image too"; "just give it your best first effort", no Design pass) | [Background spec § Light mode](specs/2026-10-24-background-design.md#light-mode-2026-11-01), theme manual, capabilities `theme-bus`, `browser` |
 | 2026-10-31 | Bar app groups and keys | The apps that open a window per document (Browser pages, Projects, Terminal, Paint, Design) group in the bar under the app's header, a group even with one window; every other window is a loose row (Joshua: "these aren't ad-hoc groups, but group by app … 'Stand alone' apps like mail or settings, or any wrapped browser -- these all are ungrouped"). Groups don't fold; Projects is one flat group, a new session after its project's rows. Groups move by their header, rows within their group, per workspace. Look (2026-11-01): a caption — the app's name in small capitals, no icon, the windows a step in (way A of `design/bar-groups/`); every loose row above every group ("all 'loose' (singleton) apps go at the top"). Keys: Super+Tab steps workspaces and Super+CapsLock the windows of the zone under the pointer, bar order (swapped 2026-11-01: "so super tab is workspaces, and super capslock is 'window here'"; first every window whose place covered the pointer), and Caps Lock alone does nothing (2026-11-01: "caps lock by itself should be a no-op for now"); Super+\` the focused app's windows on this workspace, bar order (Joshua: "no more walking down the sidebar which i find useless") | [Next spec § App groups and keys](specs/2026-10-21-next-tab-bar-design.md), shell manual, capabilities `shell-desks`, `keybindings` |
+| 2026-11-04 | D15 Google client | Sola ships its own, compiled in by `cargo make` from a file outside git; the programs and the release plan carry it (Joshua: "we need this to work out of the box for other sola users") | capabilities `calendar`; [D15](#d15--google-calendars-client-on-oath-p2--answered-2026-11-04) |
 | 2026-10-31 | Link and file handlers | Custom, with backward compatibility (Joshua: "Since i run almost only sola apps -- i wonder if we couldn't do something custom"; "we put this in sola-kit -- any app can register itself for any custom protocol"). Apps claim **link schemes and file types** through the kit; a claim never changes the default (a newcomer is an alternative in Settings); an app may ask to become the default, and only the user's confirm changes it; defaults are the user's, in Settings. Sola's opener is `/bin/xdg-open` on Oath (D14); unclaimed schemes go to `.desktop` handlers and `mimeapps.list`. Spec not written. | CURRENT Now, D14 |
 | 2026-10-31 | Session names | "Session" in `solactl` means a Projects session. `sola-session`'s call owner is **`desk`** (`solactl desk launch\|close`, MCP `desk_*`; was `session`; Joshua: "I like desk"). Projects' `tab.*` are **`session.*`** as the sessions-anywhere spec named them (`session.list`, `session.new`, `session.end`, `session.set`, plus `session.select`, `session.exec`), `--tab/-t` is `--session/-s`, JSON `sessions` / `session` / `session_name`, the agent's own session id `agent_session`. No aliases. | manual solactl / session / call, CURRENT Locked models, capabilities `projects` / `session-mgr` |
 | 2026-10-31 | Apps without a window | An app that isn't Sola's runs only while it has a window on the desk (Joshua: "make sure we never have steam and all its processes running without some desktop representation … if we close the window or SUPER+Q or SUPER+W (and the last steam window is closed) that it completely clear out all steam processes as if we had quit steam from its own menus"). Asked and answered: the rule covers **every app that isn't Sola's**, not Steam alone (Sola has no tray, so any app that hides in one would run on unseen); **a game's window keeps Steam open** (closing Steam's own window mid-game leaves it for the game; it quits when the game closes). Quitting is the app's own quit command first (`steam -shutdown`), then SIGTERM and SIGKILL to every process carrying its launch tag. Not a tray (D-Bus, T3), not `STEAM_FRAME_FORCE_CLOSE` (gone from the client), no Oath change. | manual `session.md`, `sola-shell.md`; capabilities `session-mgr` |

@@ -46,6 +46,7 @@ conform Page to Component {
                         Sola is pre-release. Source and issues:
                         <a href={repository}>github.com/moonlight-pm/Sola</a>. This site is a
                         Thoxa program in <a href={"{repository}/tree/master/site"}>site/</a>.
+                        <a href="/privacy">Privacy</a>.
                     </p>
                 </footer>
             </body>

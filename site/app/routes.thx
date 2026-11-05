@@ -2,6 +2,7 @@
 
 import home from "./pages/home"
 import manual from "./pages/manual"
+import privacy from "./pages/privacy"
 import config from "./config"
 import httpStatic from "std/http/static"
 import { Request, Response, cached, withHeader } from "std/http"
@@ -20,6 +21,10 @@ type Routes {
 
     GET "/manual" (request: Request) -> Response {
         manual.page(request)
+    }
+
+    GET "/privacy" (request: Request) -> Response {
+        privacy.page(request)
     }
 }
 
