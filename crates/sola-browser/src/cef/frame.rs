@@ -225,7 +225,7 @@ impl shader::Program<crate::app::Msg> for CefProgram {
                             dy,
                             precise,
                             state.held_button_mods,
-                            kbd_mods,
+                            input::modifiers_to_cef_wheel(mods_now),
                         ))
                     }
                     _ => None,

@@ -188,6 +188,10 @@ whichever field has focus.
 bypasses the HTTP cache for this load. It does not empty the profile's
 disk cache.
 
+Pages show at 100%. Super with the wheel scrolls; it does not zoom. A
+page zoomed with Ctrl and the wheel goes back to 100% the next time it
+loads.
+
 Click back or forward to go one step; **hold** the button for a menu of
 that page's history, up to 12 steps. That history is saved with the
 session, so it survives a restart.

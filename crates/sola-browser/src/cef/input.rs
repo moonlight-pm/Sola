@@ -49,6 +49,15 @@ pub fn modifiers_to_cef_mouse(m: Modifiers) -> u32 {
     out
 }
 
+/// Mouse modifiers for a wheel event: the literal mapping, without
+/// [`modifiers_to_cef_mouse`]'s Super-as-CONTROL. Chromium takes a CONTROL
+/// wheel as page zoom, and zoom is kept per host, so a stuck Super zoomed
+/// whole sites (Joshua, 2026-11-06: "disable the 'zoom' with
+/// SUPER+MOUSEWHEEL feature altogether").
+pub fn modifiers_to_cef_wheel(m: Modifiers) -> u32 {
+    modifiers_to_cef(m)
+}
+
 /// Left-click that should open a background tab: CONTROL (real Ctrl, or
 /// Super mapped in [`modifiers_to_cef_mouse`]) or COMMAND.
 pub fn mouse_is_new_tab(modifiers: u32) -> bool {
@@ -444,6 +453,13 @@ mod tests {
         assert_ne!(m & F::EVENTFLAG_COMMAND_DOWN.0, 0);
         assert!(mouse_is_new_tab(m));
         assert!(!mouse_is_new_tab(0));
+    }
+
+    #[test]
+    fn wheel_super_is_not_control() {
+        // A CONTROL wheel is Chromium's page zoom: Super must not be one.
+        let m = modifiers_to_cef_wheel(Modifiers::LOGO);
+        assert_eq!(m & F::EVENTFLAG_CONTROL_DOWN.0, 0);
     }
 
     #[test]

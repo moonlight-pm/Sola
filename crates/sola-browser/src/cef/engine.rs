@@ -627,6 +627,15 @@ struct CefTabState {
     size_seq: Cell<u64>,
 }
 
+/// Every page but a board at 100%: zoom is per host in Chromium and kept
+/// in the profile, so one wheel-zoomed page zoomed its site everywhere and
+/// for good (Joshua, 2026-11-06: "force normal zoom level").
+fn apply_normal_zoom(host: &cef::BrowserHost) {
+    if host.zoom_level().abs() > 1e-6 {
+        host.set_zoom_level(0.0);
+    }
+}
+
 /// Keep a board page zoomed to its raster scale (zoom is per host in
 /// Chromium; served boards each have their own host).
 fn apply_board_zoom(host: &cef::BrowserHost, board: &BoardView) {
@@ -1752,9 +1761,13 @@ cef::wrap_load_handler! {
             ) {
                 mark_snapshot_dirty(&state);
             }
-            // A navigation can land on another host's zoom: keep the board's.
-            if let (Some(board), Some(host)) = (board_view(&state, Some(browser)), browser.host()) {
-                apply_board_zoom(&host, &board);
+            // A navigation can land on another host's zoom: keep the
+            // board's, and every other page's at 100%.
+            if let Some(host) = browser.host() {
+                match board_view(&state, Some(browser)) {
+                    Some(board) => apply_board_zoom(&host, &board),
+                    None => apply_normal_zoom(&host),
+                }
             }
         }
 
