@@ -28,13 +28,11 @@ and what it lacks, is listed in [docs/capabilities.md](../capabilities.md).
 
 ## Installing
 
-Sola is three Oath packages:
-
-| Package | Contents |
-|---------|----------|
-| `pkg:sola` | The bus, the call host, the window manager, the shell, the session manager, the lock screen, Terminal, Projects, Paint, Preview, Scope, Monitor, Mail, Calendar, Settings, Bots and its daemon, Oath (the catalog app), the KVM bridge, `solactl`, and the icons and cursors |
-| `pkg:sola-browser` | Browser, which also runs [web apps](web-apps.md) |
-| `pkg:sola-design` | Design |
+Sola is a set of Oath packages: `pkg:sola` is the desk core (the bus, the
+call host, the window manager, the shell, the session manager, the lock
+screen, the KVM bridge, `solactl`, and the icons and cursors), and each
+application has its own, `pkg:sola-<app>` (Terminal, Projects, Browser,
+Design, Oath, …). [Architecture](architecture.md#packages) lists them.
 
 Oath's `desk` profile pins each package by hash, together with the hashes
 of the packages it needs, so a machine installed from a desk image has
