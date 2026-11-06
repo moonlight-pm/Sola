@@ -485,8 +485,9 @@ the page or the field that has focus (the location bar, a vault field).
 ⌘Z and ⌘⇧Z undo and redo in the field that has focus (the location bar,
 the find bar, a vault field), each with its own history
 ([Text fields](theme.md#text-fields)), and otherwise in the page; never
-in a vault item's notes. Copy takes the page's selection in
-the engine and writes the system clipboard; Paste reads the clipboard and
+in a vault item's notes. Copy and Cut work in the part of the page that
+has the keys, an embedded frame too, and write what the page copies (the
+selection, or a web terminal's own) to the system clipboard; Paste reads the clipboard and
 inserts **once** into the focused field. A copied picture (`image/png`
 and the like) is pasted as a file, so chat composers that take a
 screenshot accept it. Text keeps its line breaks. Chromium's own

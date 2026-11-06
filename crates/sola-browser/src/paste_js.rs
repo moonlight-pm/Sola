@@ -6,10 +6,13 @@ pub const COPY_PREFIX: &str = "__sola_clipboard_copy__";
 /// Console prefix for a ⌘-click hit-test (`JSON.stringify` of the href).
 pub const LINK_HIT_PREFIX: &str = "__sola_linkhit__";
 
-/// Install-once hook so in-page Copy buttons (`navigator.clipboard.writeText`,
-/// `clipboard.write`, `execCommand('copy')`) report text through
-/// [`COPY_PREFIX`]. The helper has no Wayland seat — Chromium's own
-/// clipboard never reaches iced without this.
+/// Install-once hook so every copy reports its text through
+/// [`COPY_PREFIX`]: in-page Copy buttons (`navigator.clipboard.writeText`,
+/// `clipboard.write`, `execCommand('copy')`) and ⌘C / ⌘X, which run
+/// Chromium's own command and so fire `copy` / `cut`. The text is what the
+/// page put in `clipboardData` (a terminal's own selection), else the
+/// selection. The helper has no Wayland seat — Chromium's own clipboard
+/// never reaches iced without this.
 pub fn clipboard_bridge_script() -> String {
     format!(
         r#"(function(){{
@@ -42,34 +45,24 @@ pub fn clipboard_bridge_script() -> String {
       }}
     }}
   }}catch(e){{}}
+  function selected(){{
+    var el=document.activeElement;
+    var tag=el&&(el.tagName||'').toLowerCase();
+    if (el&&(tag==='input'||tag==='textarea')&&typeof el.selectionStart==='number'){{
+      if ((el.type||'').toLowerCase()==='password') return '';
+      return (el.value||'').slice(el.selectionStart,el.selectionEnd);
+    }}
+    return window.getSelection?window.getSelection().toString():'';
+  }}
   function onCopy(e){{
     try{{
-      var t=(e.clipboardData&&e.clipboardData.getData('text/plain'))||'';
-      if (!t&&window.getSelection) t=window.getSelection().toString();
-      report(t);
+      report((e.clipboardData&&e.clipboardData.getData('text/plain'))||selected());
     }}catch(err){{}}
   }}
-  document.addEventListener('copy', onCopy, true);
-  document.addEventListener('copy', onCopy, false);
-}})();"#,
-        prefix = COPY_PREFIX
-    )
-}
-
-/// IIFE that reports the current selection via `console.info`.
-pub fn copy_selection_script() -> String {
-    format!(
-        r#"(function(){{
-  var t='';
-  var el=document.activeElement;
-  var tag=el&&(el.tagName||'').toLowerCase();
-  if(el&&(tag==='input'||tag==='textarea')&&typeof el.selectionStart==='number'){{
-    t=(el.value||'').slice(el.selectionStart,el.selectionEnd);
-  }}else if(window.getSelection){{
-    t=window.getSelection().toString();
-  }}
-  try{{ console.info('{prefix}'+JSON.stringify(t)); }}catch(e){{}}
-  return t;
+  ['copy','cut'].forEach(function(type){{
+    document.addEventListener(type, onCopy, true);
+    document.addEventListener(type, onCopy, false);
+  }});
 }})();"#,
         prefix = COPY_PREFIX
     )
@@ -493,19 +486,14 @@ mod tests {
     }
 
     #[test]
-    fn copy_script_uses_prefix() {
-        let s = copy_selection_script();
-        assert!(s.contains(COPY_PREFIX));
-        assert!(s.contains("getSelection"));
-    }
-
-    #[test]
     fn clipboard_bridge_hooks_write_text() {
         let s = clipboard_bridge_script();
         assert!(s.contains(COPY_PREFIX));
         assert!(s.contains("writeText"));
         assert!(s.contains("__sola_clip_hook"));
-        assert!(s.contains("addEventListener('copy'"));
+        assert!(s.contains("['copy','cut']"));
+        assert!(s.contains("getSelection"));
+        assert!(s.contains("'password'"), "never copies out of a password field");
     }
 
     #[test]

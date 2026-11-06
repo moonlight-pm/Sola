@@ -216,17 +216,10 @@ impl<E: Engine> App<E> {
         if cmd == EditCmd::Paste {
             return crate::page_paste::read_task().map(Msg::PageOffer);
         }
-        if cmd == EditCmd::Copy || cmd == EditCmd::Cut {
-            // frame.copy() only fills Chromium's clipboard: extract the
-            // selection with a script and write it to Wayland ourselves.
-            let _ = self
-                .cmd_tx
-                .send(Cmd::EvaluateJs(crate::paste_js::copy_selection_script()));
-            if cmd == EditCmd::Cut {
-                let _ = self.cmd_tx.send(Cmd::Edit(EditCmd::Cut));
-            }
-            return Task::none();
-        }
+        // Copy and Cut: Chromium's own command in the focused frame. Its
+        // clipboard is not Wayland's, but the `copy` / `cut` event it fires
+        // reaches the page's clipboard bridge, which reports the text (the
+        // page's own, as a terminal sets it, or the selection).
         let _ = self.cmd_tx.send(Cmd::Edit(cmd));
         Task::none()
     }
