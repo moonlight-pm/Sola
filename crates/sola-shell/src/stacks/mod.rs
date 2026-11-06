@@ -246,14 +246,14 @@ impl Stacks {
                     self.came_back.insert(app_id.to_string(), window_id);
                 }
                 let copies = self.claim_ghost_copies(&slot, now);
-                return self.insert_slot(tab(slot.zone), &slot, false, &copies);
+                return self.insert_slot(tab(slot.zone), &slot, &copies);
             }
             if let Some(slot) = self.claim_restore(k, now) {
                 if by_app {
                     self.came_back.insert(app_id.to_string(), window_id);
                 }
                 let copies = self.claim_restore_copies(&slot);
-                return self.insert_slot(tab(slot.zone), &slot, true, &copies);
+                return self.insert_slot(tab(slot.zone), &slot, &copies);
             }
         }
         if key == app_id {
@@ -374,7 +374,7 @@ impl Stacks {
     /// Put `tab` in its remembered place, from the saved layout or from when
     /// it left. A pinned window's goes back to each other workspace too, where
     /// `copies` says it was there, else at the end.
-    fn insert_slot(&mut self, mut tab: Tab, slot: &Slot, saved: bool, copies: &[Slot]) -> Placed {
+    fn insert_slot(&mut self, mut tab: Tab, slot: &Slot, copies: &[Slot]) -> Placed {
         // A zone the layout no longer has: the end of Full.
         if !self.layout.contains(tab.zone) {
             tab.zone = FULL;
@@ -382,11 +382,11 @@ impl Stacks {
         let zone = tab.zone;
         let window_id = tab.window_id;
         let d = self.desk_index(&slot.workspace).unwrap_or(self.showing);
-        let mut shown = self.put_back(d, tab.clone(), slot, saved);
+        let mut shown = self.put_back(d, tab.clone(), slot);
         if slot.pinned {
             for copy in copies {
                 if let Some(i) = self.desk_index(&copy.workspace) {
-                    self.put_back(i, tab.clone(), copy, saved);
+                    self.put_back(i, tab.clone(), copy);
                 }
             }
             self.pinned.insert(window_id);
@@ -402,9 +402,9 @@ impl Stacks {
 
     /// Put `tab` in `slot` on workspace `d`: before the first tab saved after
     /// it, or that left from after it (or added since).
-    fn put_back(&mut self, d: usize, tab: Tab, slot: &Slot, saved: bool) -> bool {
+    fn put_back(&mut self, d: usize, tab: Tab, slot: &Slot) -> bool {
         let desk = &mut self.desks[d];
-        if saved {
+        if slot.saved {
             desk.insert_ranked(tab, slot.at, slot.shown)
         } else {
             desk.insert_back(tab, slot.at, slot.shown)
@@ -475,7 +475,11 @@ impl Stacks {
     /// A window closed. Its place waits [`GHOST_GRACE`] for its app to
     /// come back. A zone whose shown tab left shows the tab it showed
     /// before (else the next, else the previous). Returns the zone it was
-    /// in.
+    /// in. While the saved layout is still being restored, a window back in
+    /// its saved place keeps that place: the bar is only half back, and the
+    /// windows still to come line up by the saved layout (the desk restarted
+    /// just after the shell: Mail and Settings, back first, came back under
+    /// the pages, 2026-11-06).
     pub fn remove(&mut self, window_id: u32, now: Instant) -> Option<Zone> {
         self.parents.retain(|child, parent| *child != window_id && *parent != window_id);
         self.cinema_from.remove(&window_id);
@@ -486,6 +490,7 @@ impl Stacks {
         // under its tab's key, and a new window must not take this one.
         let leaves_a_place = !self.unsettled(window_id, now);
         let pinned = self.pinned.remove(&window_id);
+        let restoring = self.restore_until.is_some_and(|until| now < until);
         let mut left = None;
         for desk in &mut self.desks {
             let others_away = self
@@ -495,7 +500,8 @@ impl Stacks {
             if !others_away && desk.tab(window_id).is_some() {
                 desk.number_tabs();
             }
-            let at = desk.number_of(window_id);
+            let rank = desk.rank_of(window_id).filter(|_| restoring);
+            let at = rank.unwrap_or_else(|| desk.number_of(window_id));
             if let Some((zone, _, tab, shown)) = desk.take(window_id) {
                 left = Some(zone);
                 if leaves_a_place {
@@ -507,6 +513,7 @@ impl Stacks {
                             at,
                             shown,
                             pinned,
+                            saved: rank.is_some(),
                         },
                         now,
                     ));

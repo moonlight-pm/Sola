@@ -1150,3 +1150,34 @@ fn a_window_that_stays_away_leaves_no_gap_for_those_that_return() {
     let got = keys(&s);
     assert_eq!(got[2..5], ["sola-projects/a", "sola-projects/d", "sola-projects/b"]);
 }
+
+/// The desk restarted just after the shell (an apply, 2026-11-06): Mail was
+/// back in its saved place, the page not named yet, when both went. Back
+/// again, Mail lines up by its saved place among the restored, not by the
+/// half-restored bar it left.
+#[test]
+fn a_window_restored_and_gone_again_keeps_its_saved_place() {
+    let t = Instant::now();
+    let layout = TabLayout {
+        zones: vec![TabLayoutZone {
+            zone: LEFT,
+            apps: vec!["browser/a".into(), "mail".into()],
+            shown: Some(0),
+            workspace: "main".into(),
+        }],
+        workspaces: vec![Workspace { id: "main".into(), name: "Main".into() }],
+        showing: "main".into(),
+        ..TabLayout::default()
+    };
+    let mut s = Stacks::new();
+    s.load(&layout, t);
+    s.place(1, "mail", "mail", false, true, t);
+    s.place(2, "browser", "browser", false, true, t);
+    assert!(s.unsettled(2, t));
+
+    s.remove(1, t);
+    s.remove(2, t);
+    s.place(3, "browser", "browser/a", false, true, t);
+    s.place(4, "mail", "mail", false, true, t);
+    assert_eq!(keys(&s), ["browser/a", "mail"]);
+}

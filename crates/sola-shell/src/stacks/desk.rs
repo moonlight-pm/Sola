@@ -207,6 +207,11 @@ impl Desk {
         self.placed(window_id, zone, show)
     }
 
+    /// `window_id`'s index in the saved layout, when it was restored there.
+    pub fn rank_of(&self, window_id: u32) -> Option<usize> {
+        self.ranks.get(&window_id).copied()
+    }
+
     /// Windows are starting to leave: note the bar's order as it stands.
     pub fn number_tabs(&mut self) {
         self.numbers = self
