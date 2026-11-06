@@ -26,6 +26,11 @@ pub(super) struct Slot {
     pub shown: bool,
     /// A pinned window's: it has a place on each workspace.
     pub pinned: bool,
+    /// `at` is its index in the saved layout, not in the bar as windows
+    /// started leaving: the saved layout's places, and a window that took
+    /// one and left while the layout was still being restored. It goes back
+    /// among the windows restored by that index ([`Desk::insert_ranked`]).
+    pub saved: bool,
 }
 
 impl Stacks {
@@ -110,6 +115,7 @@ impl Stacks {
                     at: *start + i,
                     shown: z.shown == Some(i as u32),
                     pinned: false,
+                    saved: true,
                 });
             }
             *start += z.apps.len();
@@ -132,6 +138,7 @@ impl Stacks {
                     at: *at,
                     shown: false,
                     pinned: true,
+                    saved: true,
                 });
                 *at += 1;
             }
