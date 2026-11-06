@@ -219,7 +219,9 @@ answers.
   the mouse); after that it asks once a minute. The number dims after ten
   minutes without an answer (asleep, off, or out of range), and the chip
   goes when the receiver is unplugged. The Shell needs read and write
-  access to the receiver's hidraw node; without it there is no chip. Other
+  access to the receiver's hidraw node; without it there is no chip. On
+  Oath, give it with `sudo oath set host:local seat_hid='["3554:f510"]'`
+  and `sudo oath apply host:local` (Oath 220c74bb6867 and later). Other
   receivers and the wired cable are not read. The chip has no panel.
 - **Bluetooth** shows while BlueZ has an adapter: dim and crossed out
   while it is off, its connected glyph while a device is connected. Its

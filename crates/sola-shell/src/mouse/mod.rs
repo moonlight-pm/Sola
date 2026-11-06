@@ -7,7 +7,8 @@
 //! sleeping mouse ignores the question). The chip shows only once the
 //! mouse has answered, and dims when it has been silent for
 //! [`STALE_AFTER`] (asleep, off, or out of range). Needs RW on the
-//! receiver's hidraw node (udev rule in `nix/module.nix`).
+//! receiver's hidraw node: on Oath, `host:local.seat_hid` lists
+//! `3554:f510`; on NixOS, the udev rule in `nix/module.nix`.
 
 mod compx;
 
@@ -150,7 +151,7 @@ fn ask(warned: &mut bool) -> Event {
                 tracing::debug!(node = %node.display(), "mouse battery: no answer");
             }
             Err(e) if !*warned => {
-                tracing::warn!(node = %node.display(), "mouse battery: cannot ask the receiver: {e} (needs the hidraw udev rule from nix/module.nix)");
+                tracing::warn!(node = %node.display(), "mouse battery: cannot ask the receiver: {e} (on Oath list 3554:f510 in host:local.seat_hid; on NixOS the udev rule in nix/module.nix)");
                 *warned = true;
             }
             Err(_) => {}
