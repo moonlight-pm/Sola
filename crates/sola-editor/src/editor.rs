@@ -162,6 +162,7 @@ impl Editor {
             | Command::Find
             | Command::GotoLine
             | Command::Palette
+            | Command::NewFile
             | Command::OpenFile
             | Command::Save
             | Command::SaveAs

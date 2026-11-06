@@ -641,7 +641,8 @@ Super+Space opens the launcher; type to filter the apps and press Enter
 instead of starting again: its last used window is shown in its zone, on
 its workspace, and takes the keyboard. A hidden app is shown again rather
 than started twice. **Terminal** always opens a new tab, in a window of
-its own, right after the focused window, and a web app opens another window. **Projects** and **Browser** ask
+its own, right after the focused window, **Editor** a new empty file, and a
+web app opens another window. **Projects** and **Browser** ask
 first (below). Escape closes the launcher; so does a click outside the
 card.
 

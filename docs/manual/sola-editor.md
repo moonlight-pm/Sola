@@ -11,14 +11,21 @@ it ships in `pkg:sola-editor`.
   to the running editor (starting it if needed) and returns at once.
 - `edit new.txt`: a file that doesn't exist opens empty and is made when saved.
 - `edit` alone brings the editor up.
-- Launcher → **Editor**
+- **File → New File** (Super+N): an empty window, `untitled`, `untitled 2`
+  and so on.
+- Launcher → **Editor**: starts it, or, while it runs, a new empty window, as
+  Terminal's is a new tab.
 - `solactl open notes.md`, for the file types Editor claims: source and config
   files such as `rs`, `toml`, `md`, `py`, `sh`, `ts`, `yaml`, `nix`. `txt`,
   `json` and `xml` stay with the browser, which claimed them first.
 - **File → Open…** (`C-x C-f`, Super+O): Sola's file panel.
 
 Each file is its own window, a row in the bar named for the file. Opening a
-file already open brings its window up.
+file already open brings its window up. The empty window Editor starts with
+gives way to the first file you open, and so does an empty one you open a
+file from; one made with New File stays when a file opens elsewhere. The
+Open and Save panels belong to their window: the other windows go on taking
+keys while one is up.
 
 ## Keys
 
@@ -64,6 +71,7 @@ rather than finding. That holds only while Editor has focus.
 | Files and commands | |
 |---|---|
 | `C-s` `C-r` | Find. In it, `C-s` next, `C-r` previous, `C-g` close. Lower case matches either case; a capital makes it exact |
+| Super+N | New file, in a window of its own |
 | `C-x C-f` | Open |
 | `C-x C-s` | Save |
 | `C-x C-w` | Save as |
@@ -71,8 +79,8 @@ rather than finding. That holds only while Editor has focus.
 | `C-x C-c` | Quit |
 | `M-S-p` `M-x` | Command palette |
 
-Super keys that aren't Meta chords stay as in every Sola app: Super+S saves,
-Super+O opens, Super+Z and Super+Shift+Z undo and redo, Super+C copies. Find, Cut
+Super keys that aren't Meta chords stay as in every Sola app: Super+N makes a
+new file, Super+S saves, Super+O opens, Super+Z and Super+Shift+Z undo and redo, Super+C copies. Find, Cut
 and Paste have no Super key, since Super+F, Super+X and Super+V are `M-f`, `M-x`
 and `M-v`, and neither does closing a file.
 

@@ -1339,7 +1339,7 @@ impl Shell {
     /// Apps whose launch is a new window (their ⌘N): the launcher starts
     /// them even while they have windows. Every other app that has one is
     /// brought forward instead (the Dock's way).
-    const NEW_WINDOW_APPS: &'static [&'static str] = &["sola-browser", "sola-terminal"];
+    const NEW_WINDOW_APPS: &'static [&'static str] = &["sola-browser", "sola-terminal", "sola-editor"];
 
     /// The window the launcher brings forward for `app_id` instead of
     /// starting it: none for an app whose launch is a new window.
@@ -4108,16 +4108,21 @@ mod hide_tests {
                 win(2, "sola-calendar", "Calendar"),
                 win(3, "sola-paint", "a.png"),
                 win(4, "sola-paint", "b.png"),
+                win(5, "sola-editor", "notes.md"),
             ],
             Some("sola-calendar"),
-            &["sola-calendar", "sola-paint"],
+            &["sola-calendar", "sola-paint", "sola-editor"],
         );
         assert_eq!(shell.running_window_of("sola-calendar"), Some(2));
+        assert_eq!(shell.window_to_raise("sola-calendar"), Some(2));
         // The last used of several.
         shell.mru_window_by_app.insert("sola-paint".into(), 4);
         assert_eq!(shell.running_window_of("sola-paint"), Some(4));
         assert_eq!(shell.running_window_of("sola-mail"), None);
         assert!(Shell::NEW_WINDOW_APPS.contains(&"sola-browser"));
+        // Editor's launch is New File, as Terminal's is a tab.
+        assert_eq!(shell.running_window_of("sola-editor"), Some(5));
+        assert_eq!(shell.window_to_raise("sola-editor"), None);
     }
 
     #[test]

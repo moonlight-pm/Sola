@@ -52,6 +52,8 @@ pub enum Command {
     GotoLine,
     Palette,
 
+    /// An empty window, a file of its own.
+    NewFile,
     OpenFile,
     Save,
     SaveAs,
@@ -64,6 +66,7 @@ impl Command {
     pub const NAMED: &[(Command, &str)] = &[
         (Command::Find, "Find"),
         (Command::GotoLine, "Go to Line"),
+        (Command::NewFile, "New File"),
         (Command::OpenFile, "Open File"),
         (Command::Save, "Save"),
         (Command::SaveAs, "Save As"),

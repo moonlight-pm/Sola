@@ -49,7 +49,8 @@ pub enum Msg {
     Modifiers(keyboard::Modifiers),
     /// A modifier key came up.
     ModifierUp(keyboard::Modifiers),
-    Loaded(Result<files::Loaded, String>),
+    /// A file read for opening, and the window it was opened from.
+    Loaded(Option<window::Id>, Result<files::Loaded, String>),
     Picker(sola_kit::components::file_picker::Message),
     Pasted(window::Id, Option<String>),
     DiskChanged(PathBuf),
