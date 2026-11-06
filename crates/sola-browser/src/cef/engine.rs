@@ -3850,7 +3850,9 @@ fn process_cmd(state: &CefThreadState, cmd: Cmd<CefEngine>) -> bool {
                 active_tab(state).map(|t| t.browser.clone())
             };
             if let Some(browser) = browser {
-                if let Some(frame) = browser.main_frame() {
+                // The frame with the keys, as Chromium's own shortcuts: a
+                // terminal or editor in an iframe (CloudShell) is not main.
+                if let Some(frame) = browser.focused_frame().or_else(|| browser.main_frame()) {
                     use crate::engine::EditCmd;
                     match edit {
                         EditCmd::Copy => frame.copy(),
