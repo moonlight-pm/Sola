@@ -108,12 +108,17 @@ impl PendingUpdate {
         self.manage_dirty = true;
     }
 
+    /// The last request for a window wins. A tab entering Cinema is framed
+    /// twice, without fullscreen and then with it, and both can land in one
+    /// manage sequence.
     pub fn queue_fullscreen(&mut self, window_id: u32) {
+        self.exit_fullscreen_requests.retain(|id| *id != window_id);
         self.fullscreen_requests.push(window_id);
         self.manage_dirty = true;
     }
 
     pub fn queue_exit_fullscreen(&mut self, window_id: u32) {
+        self.fullscreen_requests.retain(|id| *id != window_id);
         self.exit_fullscreen_requests.push(window_id);
         self.manage_dirty = true;
     }
@@ -144,6 +149,24 @@ mod tests {
         assert_eq!(p.render_positions.get(&1).copied(), Some((100, 200)));
         assert!(p.manage_dirty);
         assert!(p.render_dirty);
+    }
+
+    #[test]
+    fn the_last_fullscreen_request_for_a_window_wins() {
+        let mut p = PendingUpdate::default();
+        p.queue_exit_fullscreen(1);
+        p.queue_fullscreen(1);
+        assert_eq!(p.fullscreen_requests, vec![1]);
+        assert!(p.exit_fullscreen_requests.is_empty());
+
+        p.queue_exit_fullscreen(1);
+        assert!(p.fullscreen_requests.is_empty());
+        assert_eq!(p.exit_fullscreen_requests, vec![1]);
+
+        // Another window's request stands.
+        p.queue_fullscreen(2);
+        assert_eq!(p.fullscreen_requests, vec![2]);
+        assert_eq!(p.exit_fullscreen_requests, vec![1]);
     }
 
     #[test]

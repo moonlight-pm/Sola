@@ -17,15 +17,16 @@
 //! It is cut in pieces around what the shell keeps in sight
 //! (`Topic::IdleKeep`: the top row's flower and agent islands, what you
 //! may want to answer); that piece stays at the floor, so they keep their
-//! rest while everything else goes. Nothing is over a fullscreen window
-//! (Cinema scans out). While the fade runs, `Topic::IdleFade`
+//! rest while everything else goes. Nothing is over a window that fills
+//! the screen (`background::screen_filled`: Cinema, a game's windowed
+//! fullscreen). While the fade runs, `Topic::IdleFade`
 //! says so (Projects shows a session's island even with its tab focused),
 //! and once it is full, that the windows are out of sight (the shell
 //! reports their tabs off screen, so a browser rests its pages).
 //!
 //! Idle comes from `ext_idle_notifier_v1.get_idle_notification`, which
 //! honors idle inhibitors (a video player keeping the screen awake); and
-//! no fade runs while a window is fullscreen (Cinema).
+//! no fade runs while a window fills the screen.
 //!
 //! Videos (`Topic::WindowVideos`, [`videos`]) are cut out of the overlay:
 //! at rest every video on screen is fully opaque. While the fade runs only
@@ -259,8 +260,9 @@ pub fn tick(state: &mut AppData) {
     let Some(since) = state.fade.since else {
         return;
     };
-    if !state.currently_fullscreen.is_empty() {
-        // A fullscreen window (a film): no fade; it starts over after.
+    if crate::client::background::screen_filled(state) {
+        // A window fills the screen (a film, a game): no fade; it starts
+        // over after.
         if state.fade.overlay.is_some() {
             drop_overlay(state);
         }
@@ -333,8 +335,8 @@ fn sync_overlay(state: &mut AppData) {
         state.fade.overlay = None;
         return;
     }
-    if !state.currently_fullscreen.is_empty() {
-        // A fullscreen window scans out with nothing over it.
+    if crate::client::background::screen_filled(state) {
+        // A window that fills the screen has nothing over it.
         state.fade.overlay = None;
         return;
     }

@@ -294,11 +294,15 @@ on the first output. For Xwayland games (Wine, Proton, SDL) this keeps the
 fullscreen window managed: when the request is refused, some of them open
 a separate surface that bypasses the window manager. It also tells the
 shell (`FullscreenRequest`), which moves the window's tab to Cinema, and
-back to the zone it came from when the application leaves fullscreen.
+back to the zone it came from when the application leaves fullscreen. A
+window that asks as it maps opens in Cinema, and leaves for the zone it would
+have been placed in.
 Cinema uses the same state: the `Frame` of the Cinema tab on screen asks
-for fullscreen. While a fullscreen window is in the composition the
+for fullscreen. While a window in the composition fills the screen the
 background picture is taken away, so what shows around or through it is
-black.
+black. A window fills the screen when it is fullscreen, or when it is as
+large as the output without that state, as a game's windowed fullscreen can
+be. The shell's own surfaces don't count.
 
 A window leaves fullscreen when it asks to, when the shell sends it a
 `Frame` without fullscreen (another zone's key, or another tab taking the
@@ -419,8 +423,9 @@ since nobody is looking at it. Once the fade is full, it adds `out`: the
 shell reports every tab window off screen (`TabWindow`), so the Browser
 rests its pages, until input brings the windows back.
 
-Nothing is drawn over a fullscreen window, at rest or idle. While a window
-is fullscreen the fade does not run; it starts over once none is. Idle
+Nothing is drawn over a window that fills the screen ([Fullscreen](#fullscreen)),
+at rest or idle: it is fully opaque whatever *Opacity* says. While one does
+the fade does not run; it starts over once none does. Idle
 comes from `ext-idle-notify`, which honors idle inhibitors: an application
 that keeps the screen awake stops the fade.
 

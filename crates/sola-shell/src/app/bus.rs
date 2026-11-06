@@ -412,6 +412,7 @@ impl Shell {
         for &wid in &removed_wids {
             self.tabs.remove(wid, now);
             self.pending_parents.remove(&wid);
+            self.pending_fullscreen.remove(&wid);
             if let Some(key) = self.pairing.window_closed(wid) {
                 retract_tab_window(key);
             }
@@ -451,6 +452,7 @@ impl Shell {
         let mut first_shown: Option<(u32, String)> = None;
         let mut placed_any = false;
         for (wid, app_id) in &added {
+            let asked_fullscreen = self.pending_fullscreen.remove(wid);
             if let Some(parent) = self.pending_parents.remove(wid) {
                 self.tabs.set_parent(*wid, parent);
                 self.zoning.float(app_id, *wid, false);
@@ -468,7 +470,11 @@ impl Shell {
             let placed = self.tabs.place_near(*wid, app_id, &key, floats, behind, &kin, opener, now);
             placed_any = true;
             tracing::info!(window_id = wid, %app_id, ?placed, "placed window");
-            if placed.zone == Zone::Float {
+            if asked_fullscreen {
+                // It leaves Cinema for where it was just placed.
+                tracing::info!(window_id = wid, %app_id, "app fullscreen as it mapped");
+                self.tabs.move_to(*wid, Zone::Cinema);
+            } else if placed.zone == Zone::Float {
                 let remembers = placed.returning || self.zoning.remembers(app_id);
                 float_frames.extend(self.zoning.float(app_id, *wid, remembers));
             }
