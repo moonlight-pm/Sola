@@ -55,8 +55,14 @@ pub fn set_plan(name: &str, plan: &Path) -> Result<String, String> {
 }
 
 /// `oath build plan:<name>` in its sandbox; returns the product's hash.
-pub fn build(name: &str) -> Result<String, String> {
-    let out = run(super::cpus::limited("sudo").args(["oath", "--json", "build", &format!("plan:{name}")]))?;
+/// `no_pkg`: make no `pkg:<name>` object for the product (`--no-pkg`).
+pub fn build(name: &str, no_pkg: bool) -> Result<String, String> {
+    let mut cmd = super::cpus::limited("sudo");
+    cmd.args(["oath", "--json", "build"]);
+    if no_pkg {
+        cmd.arg("--no-pkg");
+    }
+    let out = run(cmd.arg(format!("plan:{name}")))?;
     let v: serde_json::Value =
         serde_json::from_slice(&out.stdout).map_err(|e| format!("oath build plan:{name}: {e}"))?;
     v["product"]

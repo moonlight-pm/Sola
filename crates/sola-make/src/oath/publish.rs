@@ -15,8 +15,9 @@
 //! 5. Upload `pkg/<name>/<hash>.tar` for the sources and the products and
 //!    `plan/<name>/<hash>.plan` for every plan (skipping what the origin
 //!    has), then print the desk profile entries that pin the products,
-//!    each with its `source`. `pkg:sola-build` stays here: a rebuild runs
-//!    its plan.
+//!    each with its `source`. `pkg:sola-build` stays here, with no `pkg`
+//!    object (`oath build --no-pkg`): it is only the other plans' input,
+//!    and a rebuild runs its plan.
 //!
 //! The machine's own pins do not change: `oath build` leaves an existing
 //! `pkg:<name>` as it is.
@@ -87,7 +88,7 @@ pub fn publish(local: bool) -> Result<(), String> {
         run_needs: Vec::new(),
         script: plan::build_script(&bins, &src_hash, &crates_hash, &version, &client),
     };
-    let (plan_hash, build_hash) = file_and_build(work, &build)?;
+    let (plan_hash, build_hash) = file_and_build(work, &build, true)?;
     plans.push((BUILD, plan_hash));
 
     let mut products: BTreeMap<&str, String> = BTreeMap::new();
@@ -105,7 +106,7 @@ pub fn publish(local: bool) -> Result<(), String> {
             run_needs: run_needs.clone(),
             script: plan::package_script(pkg, &build_hash, &src_hash, &version),
         };
-        let (plan_hash, product) = file_and_build(work, &plan)?;
+        let (plan_hash, product) = file_and_build(work, &plan, false)?;
         products.insert(pkg.name, product);
         plans.push((pkg.name, plan_hash));
         run_needs_of.insert(pkg.name, run_needs);
@@ -154,7 +155,9 @@ fn upload_all(
 }
 
 /// Write, `oath fmt`, file and build `plan`; returns `(plan hash, product)`.
-fn file_and_build(work: &Path, plan: &Plan) -> Result<(String, String), String> {
+/// `input`: the product is only other plans' build input, so no `pkg`
+/// object is made for it.
+fn file_and_build(work: &Path, plan: &Plan, input: bool) -> Result<(String, String), String> {
     let file = work.join(format!("{}.plan", plan.name));
     fs::write(&file, plan::text(plan)).map_err(|e| format!("{}: {e}", file.display()))?;
     catalog::fmt(&file)?;
@@ -163,7 +166,7 @@ fn file_and_build(work: &Path, plan: &Plan) -> Result<(String, String), String> 
         "[publish] plan:{} {plan_hash}; building (oath logs plan:{})",
         plan.name, plan.name
     );
-    let product = catalog::build(&plan.name)?;
+    let product = catalog::build(&plan.name, input)?;
     println!("[publish] pkg:{} {product}", plan.name);
     Ok((plan_hash, product))
 }
