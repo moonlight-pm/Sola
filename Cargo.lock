@@ -8668,6 +8668,7 @@ name = "sola-oath"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "notify",
  "serde",
  "serde_json",
  "sola-bus",
@@ -8675,6 +8676,7 @@ dependencies = [
  "sola-kit",
  "tokio",
  "tracing",
+ "ureq",
 ]
 
 [[package]]

@@ -88,7 +88,8 @@ the desk.
 
 | Package | Programs |
 |---|---|
-| `pkg:sola` | `sola-bus`, `sola-call`, `sola-river`, `sola-shell`, `sola-session`, `sola-lock`, `sola-kvm`, `solactl`, and Oath (`sola-oath`) |
+| `pkg:sola` | `sola-bus`, `sola-call`, `sola-river`, `sola-shell`, `sola-session`, `sola-lock`, `sola-kvm`, `solactl` |
+| `pkg:sola-oath` | Oath |
 | `pkg:sola-terminal` | Terminal |
 | `pkg:sola-projects` | Projects |
 | `pkg:sola-paint`, `pkg:sola-preview`, `pkg:sola-scope` | Paint, Preview, Scope |
