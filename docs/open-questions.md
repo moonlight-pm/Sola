@@ -291,13 +291,11 @@ account settings). Recorded in the spec.
 
 ---
 
-### D18 — The new Oath app's package (P2)
+### D18 — The new Oath app's package (P2) — **decided (2026-11-05)**
 
-**Context:** the Oath app ships in `pkg:sola` (`crates/sola-make/src/oath/packages.rs`), and moving that package restarts the desk, so every overlay of the app would too. A package of its own moves alone, but needs an Oath pin in the profile.
+**Context:** the Oath app shipped in `pkg:sola` (`crates/sola-make/src/oath/packages.rs`), and moving that package restarts the desk, so every overlay of the app would too. A package of its own moves alone, but needs an Oath pin in the profile.
 
-**Ask:** does the new app ([`design/oath/`](../design/oath/)) get its own `pkg:sola-oath`? The session that designed it recommends yes.
-
-**Until decided:** it stays in `pkg:sola`.
+**Decided (Joshua, 2026-11-05):** "it needs to be stand-alone outside of 'sola'". The new app is `pkg:sola-oath` (branch `sola-oath`), out of `pkg:sola`. A release carries it once Oath's desk profile names it.
 
 **Related:** `oath-platform` capability; [CURRENT](../CURRENT.md).
 

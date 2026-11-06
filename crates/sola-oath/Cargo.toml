@@ -3,8 +3,11 @@ name = "sola-oath"
 version.workspace = true
 edition.workspace = true
 
-# The Oath catalog app: packages, their needs, pins and apply, over
-# `oath --json`. The shell lists it only on Oath.
+# Oath: the package ecosystem of this machine, for looking: what is here
+# and on the origin, where each package stands against the release, its
+# tree up and down, its weight, and what the security audit says. It runs
+# `oath --json` as home and changes nothing. Its own package, pkg:sola-oath;
+# the shell lists it only on Oath.
 
 [[bin]]
 name = "sola-oath"
@@ -14,8 +17,10 @@ path = "src/main.rs"
 sola-kit = { path = "../sola-kit" }
 sola-bus = { path = "../sola-bus" }
 sola-core = { path = "../sola-core" }
-iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "canvas"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt"] }
 tracing = "0.1"
+ureq = { workspace = true }
+notify = "8"

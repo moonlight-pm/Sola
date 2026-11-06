@@ -5,7 +5,7 @@
 //!
 //! `pkg:sola` is the desk core: the programs whose restart takes the
 //! session down (bus, call, river, shell, session, kvm, lock), `solactl`,
-//! the Oath catalog app, and `share/` (icons, cursors — `SOLA_SHARE_DIR`
+//! and `share/` (icons, cursors — `SOLA_SHARE_DIR`
 //! and `XCURSOR_PATH` name `/oath/store/pkg/sola/share`). Each app is its
 //! own `pkg:sola-<app>`, so an overlay that touches only an app moves only
 //! it and restarts nothing else (the `oath-packages` skill; split
@@ -121,7 +121,6 @@ pub const PACKAGES: &[Package] = &[
             "sola-kvm",
             "sola-lock",
             "solactl",
-            "sola-oath",
             // Sola's opener under the name every program calls (D14), and
             // the one Rust's `webbrowser` crate calls instead.
             "xdg-open",
@@ -151,6 +150,9 @@ pub const PACKAGES: &[Package] = &[
     app("sola-calendar", &["sola-calendar"], &[]),
     app("sola-mail", &["sola-mail"], &[]),
     app("sola-settings", &["sola-settings"], &[]),
+    // Oath, the package ecosystem app: it asks git whether a local
+    // build's commit is pushed.
+    app("sola-oath", &["sola-oath"], &["git"]),
     app("sola-bots", &["sola-bots", "sola-botsd"], &[]),
     // Vault and its daemon (`svc:sola-vault` runs `sola-vaultd`): moving
     // it restarts the vault only.
