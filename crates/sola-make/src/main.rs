@@ -131,12 +131,17 @@ enum OathAction {
         /// none is named.
         packages: Vec<String>,
     },
-    /// Build each from a plan in `oath build`'s sandbox and upload packs,
-    /// plans and sources to Oath's origin (needs the owner's go-ahead).
+    /// Build each from a plan in `oath build`'s sandbox, upload the plans
+    /// and sources, apply the products here, and publish each as its
+    /// signed head (needs the owner's go-ahead).
     Publish {
-        /// Build the plans here; upload nothing.
+        /// Build the plans here; upload, apply and publish nothing.
         #[arg(long)]
         local: bool,
+        /// Apply anyway, dropping live work this tree lacks (the owner
+        /// said so).
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -306,7 +311,7 @@ fn main() {
                 force,
                 packages,
             } => oath::run(oath::Action::Apply { force, only: packages }, !debug),
-            OathAction::Publish { local } => oath::run(oath::Action::Publish { local }, true),
+            OathAction::Publish { local, force } => oath::run(oath::Action::Publish { local, force }, true),
         },
     }
 }

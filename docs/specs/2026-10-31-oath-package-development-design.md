@@ -27,6 +27,18 @@ Sola's `cargo make oath apply` and Oath's `cargo make store` are overlay
 tools; `cargo make oath publish` and Oath's `cargo make publish` are
 release tools.
 
+**Since Oath R72 (2026-11-07): Sola's release is heads, not desk pins.**
+`cargo make oath publish` still builds the plans and uploads plans and
+sources, then applies the products on the publishing machine (with the
+guard) and `oath publish`es each as its head, `pkg/<name>.json`, signed
+by that machine's key. Every machine whose `host:local.publishers`
+trusts the key for `sola,sola-*` takes the heads at `oath update`; a head
+wins over the desk profile's pin, which stays only as a fresh install's
+start. The publishing machine runs what it publishes (Joshua: "I would
+really prefer that what we build on novus is what is published").
+Oath's desk profile still names Sola's packages and services: a new
+package or a service change goes through the Oath session.
+
 ## What goes wrong
 
 1. **A pin is only a hash.** Nothing says which commit or branch a live

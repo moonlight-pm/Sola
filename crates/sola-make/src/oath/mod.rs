@@ -11,9 +11,12 @@
 //!   repo at a commit this tree lacks refuses it ([`provenance`]; `--force`
 //!   drops that work). Named packages (`apply sola`) stage and move alone.
 //!   Only with the owner's go-ahead (`oath-packages`).
-//! - `publish` builds each package from a plan in `oath build`'s sandbox
-//!   and uploads packs, plans and sources to Oath's origin
-//!   ([`publish`]). Outward-facing: only with the owner's go-ahead.
+//! - `publish` builds each package from a plan in `oath build`'s sandbox,
+//!   uploads the plans and sources to Oath's origin, pins and applies the
+//!   products here as `apply` does, then `oath publish`es each as its
+//!   signed head (Oath R72), which every machine trusting novus's key for
+//!   `sola-*` takes at its next `oath update` ([`publish`]).
+//!   Outward-facing: only with the owner's go-ahead.
 
 mod catalog;
 mod cpus;
@@ -26,6 +29,7 @@ mod publish;
 mod stage;
 mod vendor;
 
+use std::path::Path;
 use std::process::exit;
 
 use stage::Staged;
@@ -35,8 +39,9 @@ pub enum Action {
     /// `force`: pin over live work this tree lacks. `only`: these
     /// packages (by name), or every one when empty.
     Apply { force: bool, only: Vec<String> },
-    /// `true`: build the plans here, upload nothing.
-    Publish { local: bool },
+    /// `local`: build the plans here; upload, pin and publish nothing.
+    /// `force`: as for `Apply`.
+    Publish { local: bool, force: bool },
 }
 
 pub fn run(action: Action, release: bool) {
@@ -44,8 +49,8 @@ pub fn run(action: Action, release: bool) {
         eprintln!("cargo make oath: not an Oath machine (no /oath/INDEX.md)");
         exit(1);
     }
-    if let Action::Publish { local } = action {
-        if let Err(e) = publish::publish(local) {
+    if let Action::Publish { local, force } = action {
+        if let Err(e) = publish::publish(local, force) {
             eprintln!("cargo make oath publish: {e}");
             exit(1);
         }
@@ -81,11 +86,8 @@ fn apply(staged: &[Staged], force: bool) -> Result<(), String> {
         let hash = catalog::store(&s.pkg.id(), &s.dir)?;
         stored.push((s.pkg.name, hash));
     }
-    // What moves: a package whose tree or needs differ from what is live.
-    let mut moves: Vec<(String, String, Vec<(String, String)>, String)> = Vec::new();
+    let mut wants = Vec::new();
     for (s, (_, hash)) in staged.iter().zip(&stored) {
-        let id = s.pkg.id();
-        let was = catalog::live_hash(&id).unwrap_or_else(|_| "none".into());
         let mut needs = Vec::new();
         for need in s.pkg.runtime_needs() {
             let need_hash = match stored.iter().find(|(n, _)| *n == need) {
@@ -94,63 +96,95 @@ fn apply(staged: &[Staged], force: bool) -> Result<(), String> {
             };
             needs.push((format!("pkg:{need}"), need_hash));
         }
-        let mut live_needs = catalog::live_needs(&id).unwrap_or_default();
+        wants.push(Want { id: s.pkg.id(), hash: hash.clone(), needs });
+    }
+    let solactl = Path::new(stage::STAGE_ROOT).join("sola/bin/solactl");
+    pin(&wants, &me, force, &solactl)
+}
+
+/// A package at the tree and needs it is to be pinned to.
+struct Want {
+    id: String,
+    hash: String,
+    /// `(id, hash)`.
+    needs: Vec<(String, String)>,
+}
+
+/// Pin each of `wants` whose tree or needs differ from what is live, with
+/// `me` as its source, and `oath apply` them together; then tell the desk
+/// through `solactl`. PID 1 restarts the services that run from a package
+/// that moved. Refuses to take off this machine work this tree lacks,
+/// unless `force`.
+fn pin(wants: &[Want], me: &provenance::Source, force: bool, solactl: &Path) -> Result<(), String> {
+    // What moves: a package whose tree or needs differ from what is live.
+    let mut moves: Vec<(&Want, String)> = Vec::new();
+    for w in wants {
+        let was = catalog::live_hash(&w.id).unwrap_or_else(|_| "none".into());
+        let mut live_needs = catalog::live_needs(&w.id).unwrap_or_default();
         live_needs.sort();
-        let mut sorted = needs.clone();
+        let mut sorted = w.needs.clone();
         sorted.sort();
-        if *hash == was && sorted == live_needs {
-            println!("[oath] {id}: {} (unchanged)", short(hash));
+        if w.hash == was && sorted == live_needs {
+            println!("[oath] {}: {} (unchanged)", w.id, short(&w.hash));
             continue;
         }
-        moves.push((id, hash.clone(), needs, was));
+        moves.push((w, was));
     }
     if moves.is_empty() {
         println!("[oath] nothing changed; nothing applied");
         return Ok(());
     }
-    let live: Vec<(String, String)> = moves.iter().map(|(id, _, _, was)| (id.clone(), was.clone())).collect();
-    let dropped = dropped_work(&live, &me, provenance::live, provenance::has_commit);
-    if !dropped.is_empty() {
-        let msg = format!(
-            "this tree lacks work that is live here:\n{}\n\
-             merge it (git merge <commit>), or apply from next (the oath-packages skill); \
-             --force drops it",
-            dropped.join("\n")
-        );
-        if !force {
-            return Err(msg);
-        }
-        eprintln!("[oath] --force: {msg}");
-    }
-    for (id, hash, needs, was) in &moves {
+    let live: Vec<(String, String)> = moves.iter().map(|(w, was)| (w.id.clone(), was.clone())).collect();
+    refuse_dropped(&live, me, force)?;
+    for (w, was) in &moves {
         // A package this machine does not have yet (an app split out of
         // the core): made, and its /bin names pass to it in this apply.
-        if was == "none" && !catalog::exists(id) {
-            catalog::create(id, hash, needs, &me)?;
+        if was == "none" && !catalog::exists(&w.id) {
+            catalog::create(&w.id, &w.hash, &w.needs, me)?;
         } else {
-            catalog::set(id, hash, needs, &me)?;
+            catalog::set(&w.id, &w.hash, &w.needs, me)?;
         }
-        println!("[oath] {id}: {} -> {}", short(was), short(hash));
+        println!("[oath] {}: {} -> {}", w.id, short(was), short(&w.hash));
     }
-    let ids: Vec<String> = moves.iter().map(|(id, ..)| id.clone()).collect();
+    let ids: Vec<String> = moves.iter().map(|(w, _)| w.id.clone()).collect();
     catalog::apply(&ids)?;
     println!("[oath] applied {} from {}", ids.join(" "), me.short());
-    tell_desk(&ids);
+    tell_desk(&ids, solactl);
+    Ok(())
+}
+
+/// An error naming the live work among `live` (`(id, its live hash)`)
+/// that this tree lacks, unless there is none, or `force` (then only
+/// said).
+fn refuse_dropped(live: &[(String, String)], me: &provenance::Source, force: bool) -> Result<(), String> {
+    let dropped = dropped_work(live, me, provenance::live, provenance::has_commit);
+    if dropped.is_empty() {
+        return Ok(());
+    }
+    let msg = format!(
+        "this tree lacks work that is live here:\n{}\n\
+         merge it (git merge <commit>), or apply from next (the oath-packages skill); \
+         --force drops it",
+        dropped.join("\n")
+    );
+    if !force {
+        return Err(msg);
+    }
+    eprintln!("[oath] --force: {msg}");
     Ok(())
 }
 
 /// Tell the running desk which packages moved (`Topic::PackagesMoved`):
 /// the session manager starts again each app on an old program. Not when
 /// `pkg:sola` moved — the bus and the session manager restart, and it
-/// checks as it starts. Through the `solactl` just staged, which knows the
-/// topic whatever the desk runs.
-fn tell_desk(ids: &[String]) {
+/// checks as it starts. Through the `solactl` just built (staged, or the
+/// plan's), which knows the topic whatever the desk runs.
+fn tell_desk(ids: &[String], solactl: &Path) {
     if ids.iter().any(|id| id == "pkg:sola") {
         return;
     }
-    let solactl = std::path::Path::new(stage::STAGE_ROOT).join("sola/bin/solactl");
     let payload = serde_json::to_string(ids).unwrap_or_else(|_| "[]".into());
-    match std::process::Command::new(&solactl)
+    match std::process::Command::new(solactl)
         .args(["emit", "PackagesMoved", &payload])
         .status()
     {

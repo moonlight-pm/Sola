@@ -191,10 +191,17 @@ docs/
     `sola-river`, so the whole desk: say so when asking.
   - `cargo make oath publish` — the release: from master only (clean,
     pushed, `HEAD == origin/master`; it refuses otherwise), plan builds in
-    `oath build`'s sandbox, uploaded to `store.oath.moonlight.pm` with
-    `~/.config/oath/origin.env`, carrying Sola's Google client from
-    `~/.config/oath/sola-google-client.env`. Outward-facing. `--local` builds the plans
-    here and uploads nothing (no asking).
+    `oath build`'s sandbox, carrying Sola's Google client from
+    `~/.config/oath/sola-google-client.env`; plans and sources uploaded to
+    `store.oath.moonlight.pm` with `~/.config/oath/origin.env`; the
+    products applied here, with the guard (so the machine runs what goes
+    out: say what restarts when asking); then each `oath publish`ed as
+    its signed head (Oath R72, key `~/.config/oath/sign_ed25519`), which
+    every machine trusting that key for `sola,sola-*` takes at its next
+    `oath update`. Outward-facing. `--local` builds the plans here and
+    uploads, applies and publishes nothing (no asking). A package no
+    machine has yet, or a new or changed service, still needs Oath's desk
+    profile: ask the Oath session.
   - Write what you applied with its source (`pkg:sola f2406bf… from
     next@ce6408de`), in `CURRENT.md`.
 - **On NixOS** (the Shape 1 colleague path): `cargo make install
@@ -234,8 +241,8 @@ cargo make install <app> --debug                  # Debug install
 cargo make install <app> --watch                  # Watch + reinstall (release)
 cargo make oath stage [--debug]                   # Oath: build + assemble package trees
 cargo make oath apply [<pkg>…] [--debug]          # Oath: stage + oath store/set/apply (permission); named packages alone
-cargo make oath publish                           # Oath: plan builds + upload to the origin (permission)
-cargo make oath publish --local                   # Oath: the plan builds only, nothing uploaded
+cargo make oath publish                           # Oath: plan builds, applied here, signed heads (permission)
+cargo make oath publish --local                   # Oath: the plan builds only, nothing uploaded or applied
 ```
 
 Alias configured in `.cargo/config.toml`:

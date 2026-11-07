@@ -1,7 +1,8 @@
 //! `cargo make oath publish`: build Sola's packages from plans in `oath
-//! build`'s sandbox and put them, with their plans and sources, on Oath's
-//! default origin, as Oath publishes its own (R13: a pack's source beside
-//! it).
+//! build`'s sandbox, put their plans and sources on Oath's default origin
+//! (R13: a pack's source beside it), run them here, and publish each as
+//! its head (Oath R72), signed with this machine's key. What goes out is
+//! what this machine runs.
 //!
 //! 1. `pkg:sola-src`: the committed tree (`git archive HEAD`, so a clean
 //!    tree only) at `src/sola`, the icon and cursor packs at `src/share`.
@@ -12,15 +13,24 @@
 //! 4. A plan per package copies its programs out of `pkg:sola-build`.
 //!    `pkg:sola-browser` and `pkg:sola-design` need the `pkg:sola` just
 //!    built.
-//! 5. Upload `pkg/<name>/<hash>.tar` for the sources and the products and
+//! 5. Upload `pkg/<name>/<hash>.tar` for the two sources and
 //!    `plan/<name>/<hash>.plan` for every plan (skipping what the origin
-//!    has), then print the desk profile entries that pin the products,
-//!    each with its `source`. `pkg:sola-build` stays here, with no `pkg`
-//!    object (`oath build --no-pkg`): it is only the other plans' input,
-//!    and a rebuild runs its plan.
+//!    has). `pkg:sola-build` stays here, with no `pkg` object (`oath build
+//!    --no-pkg`): it is only the other plans' input, and a rebuild runs
+//!    its plan.
+//! 6. Pin and apply the products here, as `apply` does, with its guard: a
+//!    head is a pin its machine runs. A package that moves restarts its
+//!    services (`pkg:sola`: the desk).
+//! 7. `oath publish --confirm pkg:<name> --committed <its commit's time>`
+//!    for each: the pack (if the origin lacks it), then `pkg/<name>.json`,
+//!    signed with `~/.config/oath/sign_ed25519`. One whose head is that
+//!    hash already stays as it is. A machine whose `host:local.publishers`
+//!    trusts that key for `sola,sola-*` takes the heads at its next `oath
+//!    update`; a head wins over the desk profile's pin.
 //!
-//! The machine's own pins do not change: `oath build` leaves an existing
-//! `pkg:<name>` as it is.
+//! A package no machine has yet, or a new or changed service, still needs
+//! Oath's desk profile: a machine reads heads only for the packages it
+//! has. Tell the Oath session.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
@@ -40,8 +50,9 @@ const WORK: &str = "target/oath/publish";
 /// docs) leaves `pkg:sola-src` and every plan as they were: nothing rebuilds.
 const SOURCES: &[&str] = &[".cargo", "Cargo.lock", "Cargo.toml", "cef-version", "crates"];
 
-/// `local`: build the plans here and upload nothing.
-pub fn publish(local: bool) -> Result<(), String> {
+/// `local`: build the plans here; upload, pin and publish nothing.
+/// `force`: pin over live work this tree lacks (as `apply --force`).
+pub fn publish(local: bool, force: bool) -> Result<(), String> {
     let origin = if local { None } else { Some(Origin::from_env()?) };
     let client = crate::google_client::vars()?;
     if client.is_empty() && !local {
@@ -53,10 +64,17 @@ pub fn publish(local: bool) -> Result<(), String> {
     if git_dirty()? {
         return Err("commit first: a published source is the committed tree".into());
     }
+    let source = provenance::here()?;
     if !local {
         released_from_master()?;
+        can_sign()?;
+        // Before the build, not after it.
+        let live: Vec<(String, String)> = PACKAGES
+            .iter()
+            .filter_map(|p| Some((p.id(), catalog::live_hash(&p.id()).ok()?)))
+            .collect();
+        super::refuse_dropped(&live, &source, force)?;
     }
-    let source = provenance::here()?;
     // Not the commit (see `stage`): an untouched package builds to the
     // hash it had.
     let version = env!("CARGO_PKG_VERSION");
@@ -112,26 +130,98 @@ pub fn publish(local: bool) -> Result<(), String> {
         run_needs_of.insert(pkg.name, run_needs);
     }
 
-    let mut packs = vec![("sola-src", src_hash), ("sola-crates", crates_hash)];
-    packs.extend(products.iter().map(|(n, h)| (*n, h.clone())));
-    if let Some(origin) = &origin {
-        upload_all(origin, work, &packs, &plans)?;
-    } else {
-        println!("[publish] --local: nothing uploaded");
-    }
+    let Some(origin) = &origin else {
+        println!("[publish] --local: nothing uploaded, applied or published");
+        return Ok(());
+    };
+    let packs = [("sola-src", src_hash), ("sola-crates", crates_hash)];
+    upload_all(origin, work, &packs, &plans)?;
 
-    println!("\n[publish] desk profile entries (Oath's crates/oath-core/seed/desk.json):");
+    let new: Vec<String> = PACKAGES.iter().map(|p| p.id()).filter(|id| !catalog::exists(id)).collect();
+    let wants: Vec<super::Want> = PACKAGES
+        .iter()
+        .map(|p| super::Want {
+            id: p.id(),
+            hash: products[p.name].clone(),
+            needs: run_needs_of[p.name].clone(),
+        })
+        .collect();
+    let solactl = Path::new("/oath/store/pkg/sola").join(&products["sola"]).join("bin/solactl");
+    super::pin(&wants, &source, force, &solactl)?;
+    heads(&products)?;
+    if !new.is_empty() {
+        println!(
+            "\n[publish] new here: {}. A machine reads heads only for the packages it has: \
+             ask the Oath session to add them to the desk profile",
+            new.join(" ")
+        );
+    }
+    Ok(())
+}
+
+/// `oath publish --confirm` each package's pin as its head, ordered by the
+/// time its source commit was made. One whose head is that hash already
+/// stays as it is.
+fn heads(products: &BTreeMap<&str, String>) -> Result<(), String> {
+    let mut published = Vec::new();
     for pkg in PACKAGES {
-        let entry = serde_json::json!({
-            "present": true,
-            "hash": products[pkg.name],
-            "needs": run_needs_of[pkg.name]
-                .iter()
-                .map(|(id, hash)| serde_json::json!({ "id": id, "hash": hash }))
-                .collect::<Vec<_>>(),
-            "source": source,
-        });
-        println!("\"{}\": {entry},", pkg.id());
+        let id = pkg.id();
+        let hash = &products[pkg.name];
+        // The pin's own commit: a package that did not move keeps the
+        // source it was pinned with.
+        let commit = provenance::live(&id, hash).map(|s| s.commit).unwrap_or_else(|| "HEAD".into());
+        let committed = commit_time(&commit)
+            .or_else(|| commit_time("HEAD"))
+            .ok_or("git: no commit time for HEAD")?;
+        match catalog::publish_head(&id, &committed) {
+            Ok(true) => {
+                println!("[publish] {id} {}: its head now", super::short(hash));
+                published.push(id);
+            }
+            Ok(false) => println!("[publish] {id} {}: its head already", super::short(hash)),
+            Err(e) if published.is_empty() => return Err(e),
+            Err(e) => return Err(format!("{e}\n(heads published before it: {})", published.join(" "))),
+        }
+    }
+    Ok(())
+}
+
+/// When `commit` was made, in UTC with a `Z` (`oath publish --committed`:
+/// heads are ordered by that text).
+fn commit_time(commit: &str) -> Option<String> {
+    let out = Command::new("git")
+        .env("TZ", "UTC")
+        .args(["show", "-s", "--date=format-local:%Y-%m-%dT%H:%M:%SZ", "--format=%cd", commit])
+        .output()
+        .ok()?;
+    let t = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !t.is_empty()).then_some(t)
+}
+
+/// This machine can sign heads: its `oath` has `publish` (Oath R72) and
+/// the signing key is there.
+fn can_sign() -> Result<(), String> {
+    let has_publish = Command::new("oath")
+        .args(["publish", "--help"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    if !has_publish {
+        return Err(
+            "this machine's oath has no `publish` (Oath R72, in desk release bda181db1fc6): \
+             it needs that update first, the owner's call"
+                .into(),
+        );
+    }
+    let key = origin::sign_key();
+    if !key.is_file() {
+        return Err(format!(
+            "no signing key at {0}: ssh-keygen -t ed25519 -N '' -C oath@<host> -f {0}, \
+             and the owner adds its .pub to each machine's host:local.publishers \
+             as names=\"sola,sola-*\" ssh-ed25519 …",
+            key.display()
+        ));
     }
     Ok(())
 }

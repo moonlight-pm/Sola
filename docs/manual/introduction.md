@@ -80,15 +80,24 @@ cargo make oath apply     # only with the machine owner's go-ahead
 |---------|--------------|-----------------|
 | `cargo make oath stage` | Builds every program in the three packages, optimized (`--debug` for an unoptimized build), against this machine's packages and `pkg:cef`. Lays out each package under `target/oath/<name>/`: `bin/`, `share/` for `pkg:sola`, a `cef` link to `pkg:cef` for Browser and Design, and `components.json` with the version | The checkout. If `~/.cache/sola/cef-<version>` holds no engine, it becomes a link to `pkg:cef`'s. |
 | `cargo make oath apply` | Stages, then puts each tree in the store (`sudo oath store`), pins it (`sudo oath set pkg:<name> hash=… needs=…`, each need at the hash this machine has live, or the one just stored), and applies the ones that changed in one `sudo oath apply`. Name packages (`cargo make oath apply sola`) to build and move only those | The machine: one apply and one generation. The `/bin` links move, and PID 1 restarts every service whose program moved ([Updating and rolling back](#updating-and-rolling-back)). |
-| `cargo make oath publish` | From a committed tree only. Stores what a build reads of the source (`pkg:sola-src`) and of every crate the lock file names (`pkg:sola-crates`); files `plan:sola-build`, which compiles every program once in `oath build`'s sandbox against this machine's live packages, and a plan per package that copies its programs out; builds them; uploads the packages, plans, and sources to Oath's default origin (not `pkg:sola-build` itself: a rebuild runs its plan); and prints the desk profile entries that pin the products, each with its `source`. `--local` builds the plans and uploads nothing | This machine's store and its `plan:*` objects, and the origin, which anyone can read. This machine's own `pkg:sola*` pins do not change. |
+| `cargo make oath publish` | From a committed tree only. Stores what a build reads of the source (`pkg:sola-src`) and of every crate the lock file names (`pkg:sola-crates`); files `plan:sola-build`, which compiles every program once in `oath build`'s sandbox against this machine's live packages, and a plan per package that copies its programs out; builds them; uploads the plans and sources to Oath's default origin (not `pkg:sola-build` itself: a rebuild runs its plan); pins and applies the products here as `apply` does, refusing as it does; then runs `oath publish --confirm pkg:<name> --committed <commit time>` for each, which uploads the package if the origin lacks it and its head, `pkg/<name>.json`, signed with `~/.config/oath/sign_ed25519`. A package whose head is that hash already is left alone. Only from a clean `master` that is `origin/master`. `--local` builds the plans and uploads, applies and publishes nothing | This machine: one apply, as `apply` makes, so it runs what it publishes. The origin, which anyone can read. Every machine whose `host:local.publishers` trusts this machine's key for `sola,sola-*` takes the new heads at its next `oath update`. |
 
 `apply` and `publish` need the machine owner's go-ahead: `apply` changes
-what the machine runs, and `publish` puts out a release that other
-machines install. `publish` reads the origin's write key from
+what the machine runs, and `publish` changes it too and puts out heads
+that other machines install. `publish` reads the origin's write key from
 `OATH_ORIGIN_S3`, `OATH_ORIGIN_KEY_ID`, and `OATH_ORIGIN_SECRET`, in the
-environment or in `~/.config/oath/origin.env`. A package's version is the
-workspace version and the short commit (`0.1.0+g<commit>`), with `.dirty`
-added when the checkout has uncommitted changes.
+environment or in `~/.config/oath/origin.env`, and signs with
+`~/.config/oath/sign_ed25519` (or `OATH_SIGN_KEY`). That key signs heads
+of Sola's packages only where a person added its public half to a
+machine's `host:local.publishers` as `names="sola,sola-*" ssh-ed25519 …`.
+It needs an `oath` with `publish` (Oath R72, desk release bda181db1fc6).
+If it stops after the apply, running it again finishes: the builds are
+cached, nothing moves again, and heads already out are left alone. A
+package's version is the crate's version, never the commit: where a
+package came from is its `source` (`oath get pkg:<name>`).
+
+A new package, or a new or changed service, still needs Oath's desk
+profile: a machine reads heads only for the packages it has.
 
 On Oath, `cargo make install` and `cargo make install-cef` are not used:
 `install` copies binaries into `/opt/sola/bin`, which nothing on Oath runs,
@@ -169,6 +178,8 @@ covers the log filter.
 | `sola: not on Oath; PID 1 runs Sola's services (oath ls --kind svc)` | `sola` was run on Oath, where PID 1 runs the session. Nothing needs starting. |
 | `cargo make oath: not an Oath machine (no /oath/INDEX.md)` | `cargo make oath` runs only on an Oath machine. |
 | `commit first: a published source is the committed tree` | `cargo make oath publish` was run with uncommitted changes. |
+| `this machine's oath has no publish` | `cargo make oath publish` needs Oath R72 (desk release bda181db1fc6) on the machine. |
+| `no signing key at …` | `cargo make oath publish` signs heads with `~/.config/oath/sign_ed25519`. Make one with the `ssh-keygen` line in the message. |
 | `oath apply` refuses a published release, naming a need | The release was built against a package the machine has at another hash. Build Sola on the machine. |
 | A new build does not run | `cargo make install` copied it into `/opt/sola/bin`, which nothing on Oath runs. Use `cargo make oath apply`. |
 | Bots and `solactl bots` cannot reach the bots daemon | The desk profile runs no service for `sola-botsd`. |

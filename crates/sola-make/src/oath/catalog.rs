@@ -110,6 +110,28 @@ pub fn apply(ids: &[String]) -> Result<(), String> {
     run(Command::new("sudo").args(["oath", "apply"]).args(ids)).map(drop)
 }
 
+/// `oath publish --confirm <id> --committed <time>`: this machine's pin
+/// of `id` as its signed head on the default origin (Oath R72). As the
+/// user, not root: the signing and origin keys are the user's. True when
+/// it published; false when the origin's head was that hash already.
+pub fn publish_head(id: &str, committed: &str) -> Result<bool, String> {
+    let out = Command::new("oath")
+        .args(["--json", "publish", "--confirm", id, "--committed", committed])
+        .output()
+        .map_err(|e| format!("oath publish {id}: {e}"))?;
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+    if !out.status.success() || v.get("error").is_some() {
+        let mut why = v["error"].as_str().map(str::to_string).unwrap_or_else(|| {
+            String::from_utf8_lossy(&out.stderr).trim().to_string()
+        });
+        if let Some(hint) = v["hint"].as_str() {
+            why = format!("{why} ({hint})");
+        }
+        return Err(format!("oath publish {id}: {why}"));
+    }
+    Ok(v["published"] == true)
+}
+
 /// `{"hash", "needs", "source"}` for `--from-json`.
 fn pin_json(hash: &str, needs: &[(String, String)], source: &Source) -> String {
     serde_json::json!({ "hash": hash, "needs": needs_json(needs), "source": source }).to_string()

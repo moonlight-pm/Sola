@@ -114,6 +114,15 @@ pub fn published(key: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
+/// The key heads are signed with, as `oath publish` finds it:
+/// `$OATH_SIGN_KEY`, else `sign_ed25519` beside `origin.env`.
+pub fn sign_key() -> PathBuf {
+    std::env::var_os("OATH_SIGN_KEY")
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| config_file().with_file_name("sign_ed25519"))
+}
+
 fn config_file() -> PathBuf {
     std::env::var_os("XDG_CONFIG_HOME")
         .filter(|p| !p.is_empty())
