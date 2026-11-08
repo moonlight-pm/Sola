@@ -22,10 +22,11 @@ have an enable box; uncheck IMAP for send-only. Gmail, Google Workspace,
 Yahoo, and iCloud need an **app password**, and Settings says so under the
 password. SMTP port 465 uses implicit TLS; other ports use STARTTLS.
 
-**Send from** on the inbox lists the addresses its server reports
-(`GET /api/auth/me` on the IMAP host, as a Wicket server answers); check
-the ones Mail should offer. Extra SMTP accounts take typed addresses.
-Catch-alls (`*@example.com`) are left out, and the list is sorted A–Z.
+Once an account's form has changes, **Save** and **Discard** appear on
+the account's own row, and they cover the whole form.
+
+**Send from** on an added account takes typed addresses; check the ones
+Mail should offer. Catch-alls (`*@example.com`) are not allowed.
 **Sending → New messages from** is the address a new message uses. A
 reply uses the address of yours that the original was sent to (To or
 Cc), else that one.

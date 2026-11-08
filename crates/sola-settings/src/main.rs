@@ -36,7 +36,6 @@ mod keybindings;
 mod login;
 mod mail;
 mod mail_discover;
-mod mail_from_api;
 mod page;
 mod procfs;
 mod zones;

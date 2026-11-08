@@ -250,54 +250,6 @@ fn pad_alias_show(d: &mut AccountDraft) {
     d.alias_show.resize(d.aliases.len(), true);
 }
 
-fn uses_host_from_list(idx: usize, is_draft: bool) -> bool {
-    idx == 0 && !is_draft
-}
-
-fn clear_host_emails(ui: &mut MailState) {
-    ui.host_emails = None;
-    ui.host_emails_error = None;
-    ui.host_emails_loading = false;
-    ui.host_emails_gen = ui.host_emails_gen.saturating_add(1);
-}
-
-fn begin_host_emails_fetch(ui: &mut MailState, draft: &AccountDraft) -> Task<MailMsg> {
-    let host = draft.imap_host.trim();
-    let user = draft.username.trim();
-    if host.is_empty() || user.is_empty() || draft.password.is_empty() {
-        ui.host_emails = None;
-        ui.host_emails_loading = false;
-        ui.host_emails_error =
-            Some("IMAP host, username, and password are needed to load addresses.".into());
-        return Task::none();
-    }
-    let host = host.to_string();
-    let user = user.to_string();
-    let pass = draft.password.clone();
-    ui.host_emails_loading = true;
-    ui.host_emails_error = None;
-    ui.host_emails_gen = ui.host_emails_gen.saturating_add(1);
-    let load_id = ui.host_emails_gen;
-    Task::perform(
-        async move {
-            match tokio::task::spawn_blocking(move || {
-                crate::mail_from_api::fetch(&host, &user, &pass)
-            })
-            .await
-            {
-                Ok(r) => r,
-                Err(e) => Err(e.to_string()),
-            }
-        },
-        move |result| MailMsg::HostEmailsLoaded { load_id, result },
-    )
-}
-
-fn alias_checked(draft: &AccountDraft, addr: &str) -> bool {
-    let key = mail_addr_key(addr);
-    draft.aliases.iter().any(|a| mail_addr_key(a) == key)
-}
-
 fn account_count(cfg: &MailConfig) -> usize {
     1 + cfg.accounts.len()
 }
@@ -559,11 +511,6 @@ pub struct MailState {
     pub error: Option<String>,
     pub account_error: Option<String>,
     pub last_canonical: MailConfig,
-    /// Inbox host `/api/auth/me` extras (Wicket). `None` = not loaded.
-    host_emails: Option<Vec<String>>,
-    host_emails_error: Option<String>,
-    host_emails_loading: bool,
-    host_emails_gen: u64,
 }
 
 impl Default for MailState {
@@ -576,10 +523,6 @@ impl Default for MailState {
             error: None,
             account_error: None,
             last_canonical: cfg,
-            host_emails: None,
-            host_emails_error: None,
-            host_emails_loading: false,
-            host_emails_gen: 0,
         }
     }
 }
@@ -713,12 +656,6 @@ pub enum MailMsg {
     AliasShow(usize, bool),
     AddAlias,
     RemoveAlias(usize),
-    HostEmailShow(String, bool),
-    HostEmailsLoaded {
-        load_id: u64,
-        result: Result<Vec<String>, String>,
-    },
-    RetryHostEmails,
     GoogleMx {
         domain: String,
         is_google: bool,
@@ -832,53 +769,6 @@ pub fn update(msg: MailMsg, cfg: &mut MailConfig, ui: &mut MailState) -> Task<Ma
                 }
             }
         }
-        MailMsg::HostEmailShow(addr, on) => {
-            ui.account_error = None;
-            if let Some(d) = open_account_mut(&mut ui.account) {
-                let key = mail_addr_key(&addr);
-                if on {
-                    if !d.aliases.iter().any(|a| mail_addr_key(a) == key) {
-                        d.aliases.push(addr);
-                        d.alias_show.push(true);
-                    }
-                } else {
-                    if let Some(i) = d.aliases.iter().position(|a| mail_addr_key(a) == key) {
-                        d.aliases.remove(i);
-                        if i < d.alias_show.len() {
-                            d.alias_show.remove(i);
-                        }
-                    }
-                }
-            }
-        }
-        MailMsg::HostEmailsLoaded { load_id, result } => {
-            if load_id != ui.host_emails_gen {
-                return Task::none();
-            }
-            ui.host_emails_loading = false;
-            match result {
-                Ok(raw) => {
-                    let email = match &ui.account {
-                        AccountDetail::Edit { draft, .. } | AccountDetail::Draft(draft) => {
-                            draft.email.clone()
-                        }
-                        AccountDetail::Closed => String::new(),
-                    };
-                    let list = crate::mail_from_api::prepare_from_list(&raw, &email);
-                    if let Some(d) = open_account_mut(&mut ui.account) {
-                        d.aliases
-                            .retain(|a| list.iter().any(|e| mail_addr_key(e) == mail_addr_key(a)));
-                        d.alias_show.resize(d.aliases.len(), true);
-                    }
-                    ui.host_emails = Some(list);
-                    ui.host_emails_error = None;
-                }
-                Err(e) => {
-                    ui.host_emails = None;
-                    ui.host_emails_error = Some(e);
-                }
-            }
-        }
         MailMsg::GoogleMx { domain, is_google } => {
             if !is_google {
                 return Task::none();
@@ -890,30 +780,15 @@ pub fn update(msg: MailMsg, cfg: &mut MailConfig, ui: &mut MailState) -> Task<Ma
                 }
             }
         }
-        MailMsg::RetryHostEmails => {
-            if let AccountDetail::Edit { idx, draft } = &ui.account {
-                if uses_host_from_list(*idx, false) {
-                    let draft = draft.clone();
-                    return begin_host_emails_fetch(ui, &draft);
-                }
-            }
-        }
         MailMsg::SelectAccount(idx) => {
             if !can_leave_account(&ui.account, cfg) {
                 ui.account_error = Some("Save or revert this account first".into());
                 return Task::none();
             }
-            if let Some(d) = account_at(cfg, idx) {
-                ui.account = AccountDetail::Edit {
-                    idx,
-                    draft: d.clone(),
-                };
+            if let Some(draft) = account_at(cfg, idx) {
+                ui.account = AccountDetail::Edit { idx, draft };
                 ui.account_error = None;
                 ui.open_menu = None;
-                if uses_host_from_list(idx, false) {
-                    return begin_host_emails_fetch(ui, &d);
-                }
-                clear_host_emails(ui);
             }
         }
         MailMsg::StartNewAccount => {
@@ -924,7 +799,6 @@ pub fn update(msg: MailMsg, cfg: &mut MailConfig, ui: &mut MailState) -> Task<Ma
             ui.account = AccountDetail::Draft(AccountDraft::empty());
             ui.account_error = None;
             ui.open_menu = None;
-            clear_host_emails(ui);
         }
         MailMsg::AccountSave => match &ui.account {
             AccountDetail::Closed => {}
@@ -992,11 +866,6 @@ pub fn update(msg: MailMsg, cfg: &mut MailConfig, ui: &mut MailState) -> Task<Ma
                 ui.last_canonical = cfg.clone();
                 ui.account_error = None;
                 emit(Topic::MailConfig(cfg.clone()));
-                if uses_host_from_list(idx, false) {
-                    if let Some(d) = account_at(cfg, idx) {
-                        return begin_host_emails_fetch(ui, &d);
-                    }
-                }
             }
         },
         MailMsg::AccountRevert => match &ui.account {
@@ -1007,15 +876,8 @@ pub fn update(msg: MailMsg, cfg: &mut MailConfig, ui: &mut MailState) -> Task<Ma
             }
             AccountDetail::Edit { idx, .. } => {
                 let idx = *idx;
-                if let Some(d) = account_at(cfg, idx) {
-                    ui.account = AccountDetail::Edit {
-                        idx,
-                        draft: d.clone(),
-                    };
-                    ui.account_error = None;
-                    if uses_host_from_list(idx, false) {
-                        return begin_host_emails_fetch(ui, &d);
-                    }
+                if let Some(draft) = account_at(cfg, idx) {
+                    ui.account = AccountDetail::Edit { idx, draft };
                 }
                 ui.account_error = None;
             }
@@ -1027,7 +889,6 @@ pub fn update(msg: MailMsg, cfg: &mut MailConfig, ui: &mut MailState) -> Task<Ma
             ui.account = AccountDetail::Closed;
             ui.account_error = None;
             ui.open_menu = None;
-            clear_host_emails(ui);
         }
         MailMsg::AccountRemove => match &ui.account {
             AccountDetail::Draft(_) => {
@@ -1274,21 +1135,21 @@ fn accounts_section<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, M
         };
         let open = matches!(ui.account, AccountDetail::Edit { idx: at, .. } if at == idx);
         let mark = if idx == 0 { "lucide/inbox" } else { "lucide/send" };
-        rows.push(
-            page::item(account_title(&d))
-                .subtitle(account_caption(cfg, idx, &d))
-                .leading(page::glyph(page::icon(mark), 16, 0.7))
-                .open(open)
-                .on_press(if open {
-                    MailMsg::CloseAccount
-                } else {
-                    MailMsg::SelectAccount(idx)
-                })
-                .into(),
-        );
+        let mut item = page::item(account_title(&d))
+            .subtitle(account_caption(cfg, idx, &d))
+            .leading(page::glyph(page::icon(mark), 16, 0.7))
+            .open(open)
+            .on_press(if open {
+                MailMsg::CloseAccount
+            } else {
+                MailMsg::SelectAccount(idx)
+            });
+        if open && account_is_dirty(&ui.account, cfg) {
+            item = item.trailing(account_actions("Save"));
+        }
+        rows.push(item.into());
         if let (true, AccountDetail::Edit { draft, .. }) = (open, &ui.account) {
-            let dirty = account_is_dirty(&ui.account, cfg);
-            rows.push(page::editor(account_editor(draft, ui, dirty, /* is_draft */ false, idx)));
+            rows.push(page::editor(account_editor(draft, ui, /* is_draft */ false, idx)));
         }
     }
     if let AccountDetail::Draft(d) = &ui.account {
@@ -1296,11 +1157,12 @@ fn accounts_section<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, M
             page::item(account_title(d))
                 .subtitle("New account")
                 .leading(page::glyph(page::icon("lucide/mail"), 16, 0.7))
+                .trailing(account_actions("Add"))
                 .open(true)
                 .on_press(MailMsg::AccountRevert)
                 .into(),
         );
-        rows.push(page::editor(account_editor(d, ui, true, /* is_draft */ true, 0)));
+        rows.push(page::editor(account_editor(d, ui, /* is_draft */ true, 0)));
     }
     if rows.is_empty() {
         rows.push(page::empty("No accounts yet."));
@@ -1352,67 +1214,16 @@ fn sending_section<'a>(cfg: &'a MailConfig, ui: &'a MailState) -> Element<'a, Ma
     )
 }
 
-fn send_from_editor<'a>(
-    draft: &'a AccountDraft,
-    ui: &'a MailState,
-    idx: usize,
-    is_draft: bool,
-) -> Element<'a, MailMsg> {
-    if uses_host_from_list(idx, is_draft) {
-        return host_from_editor(draft, ui);
-    }
-    extra_from_editor(draft)
-}
-
-fn host_from_editor<'a>(draft: &'a AccountDraft, ui: &'a MailState) -> Element<'a, MailMsg> {
-    let mut col = column![
-        kit_text::caption("Send from").style(kit_text::muted),
-        kit_text::caption("Addresses on this server. Check the ones Mail should offer as From.")
-            .style(kit_text::muted),
+/// Discard and `save` for the row of the open account: they act on the
+/// whole form under it, so they sit above it, not among its fields.
+fn account_actions<'a>(save: &'static str) -> Element<'a, MailMsg> {
+    row![
+        page::action("Discard", kit_btn::ghost, MailMsg::AccountRevert),
+        page::action(save, kit_btn::primary, MailMsg::AccountSave),
     ]
     .spacing(SPACE_SM)
-    .width(Length::Fill);
-
-    if ui.host_emails_loading {
-        col = col.push(kit_text::caption("Loading addresses…").style(kit_text::muted));
-        if ui.host_emails.is_none() {
-            return col.into();
-        }
-    }
-    if let Some(err) = ui.host_emails_error.as_deref() {
-        col = col
-            .push(kit_text::caption(err).style(kit_text::danger))
-            .push(kit_btn::labeled_sm("Retry", kit_btn::ghost).on_press(MailMsg::RetryHostEmails));
-    }
-
-    let rows: Vec<String> = if let Some(list) = &ui.host_emails {
-        list.clone()
-    } else {
-        crate::mail_from_api::prepare_from_list(&draft.aliases, &draft.email)
-    };
-    if rows.is_empty() && ui.host_emails_error.is_none() && !ui.host_emails_loading {
-        col = col
-            .push(kit_text::caption("No extra addresses on this server.").style(kit_text::muted));
-        return col.into();
-    }
-    for addr in rows {
-        let on = alias_checked(draft, &addr);
-        let label = addr.clone();
-        col = col.push(
-            row![
-                checkbox(on)
-                    .on_toggle({
-                        let addr = addr.clone();
-                        move |v| MailMsg::HostEmailShow(addr.clone(), v)
-                    })
-                    .style(checkbox_style),
-                kit_text::body(label),
-            ]
-            .spacing(SPACE_SM)
-            .align_y(Alignment::Center),
-        );
-    }
-    col.into()
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn extra_from_editor<'a>(draft: &'a AccountDraft) -> Element<'a, MailMsg> {
@@ -1459,14 +1270,14 @@ fn extra_from_editor<'a>(draft: &'a AccountDraft) -> Element<'a, MailMsg> {
 fn account_editor<'a>(
     draft: &'a AccountDraft,
     ui: &'a MailState,
-    dirty: bool,
     is_draft: bool,
     idx: usize,
 ) -> Element<'a, MailMsg> {
-    let about = if is_draft || idx > 0 {
-        "Uncheck IMAP for send-only (mail forwarded into another inbox)."
+    let inbox = idx == 0 && !is_draft;
+    let about = if inbox {
+        "IMAP receive + SMTP send."
     } else {
-        "IMAP receive + SMTP send. Extra addresses on this SMTP go under Send from."
+        "Uncheck IMAP for send-only (mail forwarded into another inbox)."
     };
 
     let imap_row = form_row(
@@ -1504,23 +1315,6 @@ fn account_editor<'a>(
     ]
     .spacing(SPACE_MD);
 
-    let aliases = send_from_editor(draft, ui, idx, is_draft);
-
-    let mut left: Vec<Element<'a, MailMsg>> = Vec::new();
-    let mut right: Vec<Element<'a, MailMsg>> = Vec::new();
-    if is_draft {
-        left.push(page::action("Add", kit_btn::primary, MailMsg::AccountSave));
-        left.push(page::action("Discard", kit_btn::ghost, MailMsg::AccountRevert));
-    } else {
-        if dirty {
-            left.push(page::action("Save", kit_btn::primary, MailMsg::AccountSave));
-            left.push(page::action("Discard", kit_btn::ghost, MailMsg::AccountRevert));
-        }
-        if idx > 0 {
-            right.push(page::action("Remove", kit_btn::danger_outline, MailMsg::AccountRemove));
-        }
-    }
-
     let email_help = Some("Known providers fill IMAP and SMTP from this address.");
     let password_help = if mail_discover::needs_app_password(&draft.email)
         || mail_discover::uses_gmail_servers(&draft.imap_host)
@@ -1530,25 +1324,34 @@ fn account_editor<'a>(
         None
     };
 
-    let mut fields = column![
-        kit_text::caption(about).style(kit_text::muted),
-        account_input_help("Email", &draft.email, AccountField::Email, email_help),
-        row![
-            account_input("Username", &draft.username, AccountField::Username),
-            password_input("Password", &draft.password, password_help),
-        ]
-        .spacing(SPACE_MD),
-        imap_row,
-        hosts,
-        smtp_row,
-        smtp,
-        aliases,
-    ]
-    .spacing(SPACE_LG);
+    let mut fields = column![].spacing(SPACE_LG);
     if let Some(err) = ui.account_error.as_deref() {
         fields = fields.push(kit_text::caption(err).style(kit_text::danger));
     }
-    fields.push(page::footer(left, right)).into()
+    fields = fields
+        .push(kit_text::caption(about).style(kit_text::muted))
+        .push(account_input_help("Email", &draft.email, AccountField::Email, email_help))
+        .push(
+            row![
+                account_input("Username", &draft.username, AccountField::Username),
+                password_input("Password", &draft.password, password_help),
+            ]
+            .spacing(SPACE_MD),
+        )
+        .push(imap_row)
+        .push(hosts)
+        .push(smtp_row)
+        .push(smtp);
+    if !inbox {
+        fields = fields.push(extra_from_editor(draft));
+    }
+    if !inbox && !is_draft {
+        fields = fields.push(page::footer(
+            Vec::new(),
+            vec![page::action("Remove", kit_btn::danger_outline, MailMsg::AccountRemove)],
+        ));
+    }
+    fields.into()
 }
 
 /// The rules, in order; the open one's editor under its row.

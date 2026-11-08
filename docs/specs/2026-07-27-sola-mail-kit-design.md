@@ -135,7 +135,7 @@ SEARCH). `failed` names accounts whose part failed so their rows stay.
 ### Source of truth
 
 - **sola-settings** edits accounts + rules and emits sticky `Topic::MailConfig`.
-- Inbox credentials stay on the top-level fields (old configs load). Inbox **Send from** is the host’s address list (`GET /api/auth/me`); the operator checks which ones Mail offers. Catch-alls (`*@…`) are omitted. Extra accounts still type aliases (`from_hidden` for those). `primary_from` is the default From. Compose does not dump the host’s full alias list.
+- Inbox credentials stay on the top-level fields (old configs load). The inbox has no **Send from** list (the Wicket `GET /api/auth/me` checklist was removed 2026-11-08). Extra accounts type aliases (`from_hidden` for those); catch-alls (`*@…`) are refused. `primary_from` is the default From.
 - **sola-mail** subscribes and on each delivery:
   1. stores config in UI state for display needs (from address default, rules for smart mailboxes),
   2. sends `MailCmd::Reconfigure(cfg)` (or `Connect` if first time).
