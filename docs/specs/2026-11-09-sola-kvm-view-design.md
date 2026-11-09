@@ -1,12 +1,13 @@
-# sola-kvm remote view
+# Remote Desktop (`sola-kvm view`)
 
-**Status:** first slice built on branch `remote-desktop`. Checked end to end
-with a test card; the agent is installed on ember and the real screen shows in a window on novus.
+**Status:** first slice on master. The agent is installed on ember and the
+real screen shows in a window on novus, driven from novus's keyboard and
+pointer (Joshua, 2026-11-09: "everything works great").
 
 **Decided by Joshua (2026-11-09):** remote view is a mode of `sola-kvm`, not a
 new product ("this would just be another mode for kvm"); our own agent on the
 Mac rather than a VNC client; while the window has focus Super goes to the Mac
-as Cmd.
+as Cmd. The app is called **Remote Desktop**; the command stays `sola-kvm view`.
 
 ## Shape
 

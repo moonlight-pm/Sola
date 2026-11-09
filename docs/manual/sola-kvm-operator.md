@@ -266,6 +266,42 @@ sola-kvm send-test --to <peer-ip>:4242
 4. Run the full path: `sola-kvm server` (or the feed backend), and the
    Mac agent injects.
 
+## Remote Desktop
+
+Remote Desktop shows another machine's screen in a window here, driven from
+this keyboard and pointer. It is separate from sharing the keyboard and
+mouse: it has its own pairing and does not need the server running, so one
+machine can share input with one peer and view another.
+
+The host is a Mac for now, and the machine viewing needs an NVIDIA GPU.
+
+To set it up, install the Mac agent (above), then on the viewing machine:
+
+```bash
+sola-kvm pair <mac-host> --view --remote-bin /Applications/SolaKvmMac.app/Contents/MacOS/sola-kvm-mac
+```
+
+Restart the agent, connect once so macOS lists it, then turn on **Sola KVM
+Mac** in System Settings, Privacy & Security, Screen & System Audio
+Recording, and restart the agent again. macOS also asks whether the agent may
+capture the screen directly; choose Allow.
+
+```bash
+sola-kvm view <mac-host>
+```
+
+While the window has the keyboard, every key goes to the Mac, and Super acts
+as Cmd. **Ctrl+Alt+Esc** gives the keyboard and pointer back to Sola, and a
+click on the picture takes them again. Clicking another window also gives
+Sola its shortcuts back.
+
+The Mac listens on TCP 4243 (the KVM port plus one) and only starts capturing
+when a viewer connects. Only the paired machine's key gets in, and the traffic
+is encrypted. If the connection drops, the window connects again by itself.
+
+It shows the Mac's main display, one viewer at a time, with no sound and no
+shared clipboard.
+
 ## How it works
 
 The server is a state machine in

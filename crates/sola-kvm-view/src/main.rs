@@ -1,4 +1,4 @@
-//! sola-kvm-view — remote view (`sola-kvm view <host>`): another machine's
+//! sola-kvm-view — the Remote Desktop app (`sola-kvm view <host>`): another machine's
 //! screen in a window here, driven from this keyboard and pointer. The other
 //! half is the host's agent (on a Mac, `apps/sola-kvm-mac`); the wire is
 //! `sola_kvm::view_wire`.
@@ -35,8 +35,8 @@ fn main() -> iced::Result {
     BusSetup::new(APP_ID)
         .subscribe(sola_bus::topics::TopicKind::ALL)
         .app_menu(
-            "View",
-            [sola_kit::menu::close_window_item(), sola_kit::menu::quit_item("Quit View")],
+            "Remote Desktop",
+            [sola_kit::menu::close_window_item(), sola_kit::menu::quit_item("Quit Remote Desktop")],
         )
         .install();
 

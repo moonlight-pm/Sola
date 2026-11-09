@@ -20,7 +20,7 @@ CGEvent inject must be verified on ember.**
 | `Leave` | Release any keys we still think are down |
 | Session | **GUI login** LaunchAgent — not SSH |
 
-## Remote view
+## Remote Desktop
 
 `sola-kvm view <this mac>` on the viewer shows this Mac's main display and
 drives it. The agent listens on the KVM port plus one and starts capturing
