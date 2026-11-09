@@ -18,8 +18,8 @@
 //! row (its name, faint, a turning ring) stands where its window will
 //! land — in its group when the group is on the bar. A Projects window's
 //! row shows its parts apart (`sola_core::window_label`): the project, the
-//! session in it, quieter, and the computer it runs on as a chip in that
-//! computer's prompt color.
+//! session in it, quieter, and, on another computer, that computer as a
+//! chip in its prompt color.
 
 use iced::widget::{row, text};
 use iced::{Alignment, Color, Element, Theme};
