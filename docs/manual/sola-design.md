@@ -94,7 +94,7 @@ Launcher → **Design**, or `solactl desk launch sola-design`. On Oath,
 Design is its own package, `pkg:sola-design`, and its pages run on Oath's
 CEF (`pkg:cef`). A second launch brings the active window up.
 
-Each window's titlebar carries Design's menus: **Design** (Close Window), **Project**,
+Each window's titlebar carries Design's menus: **Design** (Close Window, Quit Design), **Project**,
 **Share**, and **View**, then the Window menu. Their shortcuts work while a
 page has the keyboard.
 
@@ -119,7 +119,9 @@ its own canvas, view, pick, tour and notes. The one you last touched takes
 the keys and the View and Share menus; moving between them loses nothing.
 
 **Design → Close Window** (⌘W) closes only the window; **Project → Open
-*name*** brings it back. Closing the last window quits Design. **Project →
+*name*** brings it back. Closing the last window quits Design; **Design →
+Quit Design** (⌘Q) closes them all at once, and every project's window comes
+back at the next launch. **Project →
 Drop Project** forgets the active window's project and closes its window
 (with no project left, the window offering **Add project** comes back), and
 `solactl design project.remove --path <folder>` forgets any project. The

@@ -72,6 +72,7 @@ pub fn run() -> iced::Result {
 
     BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
+        .app_menu("Paint", [("quit", "Quit Paint", KeyCode::Q.meta())])
         .app_menu_definition(MenuDefinition {
             label: "File".into(),
             items: vec![

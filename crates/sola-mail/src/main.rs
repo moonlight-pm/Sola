@@ -43,6 +43,7 @@ fn main() -> iced::Result {
                 item("refresh", "Get New Mail", Some(KeyCode::N.meta_shift())),
                 MenuItem::Divider,
                 sola_kit::menu::close_window_menu_item(),
+                sola_kit::menu::quit_menu_item("Quit Mail"),
             ],
         ))
         .app_menu_definition(menu(

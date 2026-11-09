@@ -423,3 +423,29 @@ fn a_session_started_from_a_pinned_window_lands_where_you_are() {
     assert!(!bar_on(&s, other).contains(&3));
     assert!(!s.is_pinned(3));
 }
+
+#[test]
+fn a_folded_group_is_per_workspace_and_is_saved() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    open(&mut s, 1, TERMINAL, t);
+    open(&mut s, 2, TERMINAL, t);
+    assert!(!s.is_folded(TERMINAL));
+    s.toggle_folded(TERMINAL);
+    assert!(s.is_folded(TERMINAL));
+    // Down to a lone row and back, it stays folded; its rows are all there.
+    s.remove(2, t);
+    open(&mut s, 3, TERMINAL, t);
+    assert!(s.is_folded(TERMINAL));
+    assert_eq!(bar(&s), vec![1, 3]);
+
+    let saved = s.layout(t);
+    assert_eq!(saved.folded.len(), 1);
+    assert_eq!(saved.folded[0].app, TERMINAL);
+    let mut back = Stacks::new();
+    back.load(&saved, t);
+    assert!(back.is_folded(TERMINAL));
+    back.toggle_folded(TERMINAL);
+    assert!(!back.is_folded(TERMINAL));
+    assert!(back.layout(t).folded.is_empty());
+}

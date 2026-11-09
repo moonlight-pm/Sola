@@ -874,6 +874,13 @@ impl Shell {
                     self.activate_window(wid);
                 }
             }
+            SidebarEvent::ToggleSection { id } => {
+                if let Some(crate::stacks::BlockId::Group(app)) = block_of_row(&id) {
+                    self.tabs.toggle_folded(&app);
+                    tracing::info!(%app, folded = self.tabs.is_folded(&app), "fold a group");
+                    self.persist_tabs();
+                }
+            }
             SidebarEvent::Drop(drop) => {
                 let moved = match &drop.dest {
                     // A group's row, within its group.
@@ -2616,6 +2623,10 @@ impl Shell {
                         mark_clean_shutdown();
                         let _ = bus.emit(Topic::Shutdown);
                         return iced::exit();
+                    } else if action_id == crate::menu::state::SYNTHESIZED_CLOSE_ACTION {
+                        if let Some(ref focused) = self.focused_app_id.clone() {
+                            let _ = bus.emit(Topic::CloseApp(focused.clone()));
+                        }
                     } else {
                         let _ =
                             bus.emit(Topic::MenuAction(MenuActionPayload { app_id, action_id }));

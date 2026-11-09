@@ -108,17 +108,25 @@ pub fn fill_window_menu(
 }
 
 /// Build a default menu for an external app that hasn't shipped its own:
-/// **Close Window** (Super+W), under its name.
+/// **Close Window** (Super+W) and **Quit *App*** (Super+Q, a system key),
+/// under its name.
 pub fn synthesized_menu(app_id: &str, label: &str) -> AppMenuPayload {
     AppMenuPayload {
         app_id: app_id.to_string(),
         menus: vec![MenuDefinition {
             label: label.to_string(),
-            items: vec![action(
-                SYNTHESIZED_CLOSE_WINDOW_ACTION,
-                "Close Window",
-                Some(SYNTHESIZED_CLOSE_WINDOW_KEY),
-            )],
+            items: vec![
+                action(
+                    SYNTHESIZED_CLOSE_WINDOW_ACTION,
+                    "Close Window",
+                    Some(SYNTHESIZED_CLOSE_WINDOW_KEY),
+                ),
+                action(
+                    SYNTHESIZED_CLOSE_ACTION,
+                    &format!("Quit {label}"),
+                    Some(sola_kit::menu::QUIT_KEY),
+                ),
+            ],
         }],
     }
 }
@@ -308,18 +316,26 @@ mod tests {
     }
 
     #[test]
-    fn synthesized_menu_only_closes_the_window() {
+    fn synthesized_menu_has_close_window_and_quit() {
         let payload = synthesized_menu("firefox", "Firefox");
         assert_eq!(payload.app_id, "firefox");
         assert_eq!(payload.menus.len(), 1);
         let menu = &payload.menus[0];
         assert_eq!(menu.label, "Firefox");
-        assert_eq!(menu.items.len(), 1);
+        assert_eq!(menu.items.len(), 2);
         match &menu.items[0] {
             MenuItem::Action { id, label, shortcut, .. } => {
                 assert_eq!(id, SYNTHESIZED_CLOSE_WINDOW_ACTION);
                 assert_eq!(label, "Close Window");
                 assert_eq!(*shortcut, Some(KeyCode::W.meta()));
+            }
+            other => panic!("expected Action item, got {other:?}"),
+        }
+        match &menu.items[1] {
+            MenuItem::Action { id, label, shortcut, .. } => {
+                assert_eq!(id, SYNTHESIZED_CLOSE_ACTION);
+                assert_eq!(label, "Quit Firefox");
+                assert_eq!(*shortcut, Some(KeyCode::Q.meta()));
             }
             other => panic!("expected Action item, got {other:?}"),
         }
@@ -333,7 +349,8 @@ mod tests {
         let action = cache.lookup_shortcut(&chord, "firefox").expect("its Close Window");
         assert_eq!(action.app_id, "firefox");
         assert_eq!(action.action_id, SYNTHESIZED_CLOSE_WINDOW_ACTION);
-        assert!(cache.lookup_shortcut(&KeyCode::Q.meta(), "firefox").is_none(), "no Quit");
+        let quit = cache.lookup_shortcut(&KeyCode::Q.meta(), "firefox").expect("its Quit");
+        assert_eq!(quit.action_id, SYNTHESIZED_CLOSE_ACTION);
     }
 
     #[test]

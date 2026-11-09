@@ -4,7 +4,8 @@
 //! title) in the workspace's bar order — one list, not grouped by zone. The
 //! windows of each app that opens a window per document, from its second on
 //! the workspace, sit in that app's group, under its name in small capitals,
-//! one step in; the group does not fold. Every loose row comes before the
+//! one step in; a click on its name folds it to that one line (its count,
+//! and its loudest mark). Every loose row comes before the
 //! groups (spec § App groups
 //! and keys; `design/bar-groups/`, way A). Board 05's rows: the focused window is
 //! the pill; a tiled zone's shown tab is lifted a step while its zone is
@@ -26,7 +27,7 @@ use sola_bus::topics::{Activity, Zone};
 use sola_core::host_color::{PROMPT_LIGHTNESS, PROMPT_SATURATION, host_hue, hsl_rgb};
 use sola_core::window_label::WindowLabel;
 use sola_kit::components::{
-    LEADING_SLOT, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection, SidebarTag, icon,
+    CaptionFold, LEADING_SLOT, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection, SidebarTag, icon,
     island, status_mark,
 };
 
@@ -73,13 +74,17 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                 if !loose.is_empty() {
                     sections.push(SidebarSection::unlabeled(std::mem::take(&mut loose)));
                 }
-                let mut items: Vec<SidebarItem<'_, Msg>> =
-                    tabs.iter().map(|t| tab_row(shell, &now, t, true)).collect();
+                let folded = shell.tabs.is_folded(app);
+                let mut items: Vec<SidebarItem<'_, Msg>> = if folded {
+                    Vec::new()
+                } else {
+                    tabs.iter().map(|t| tab_row(shell, &now, t, true)).collect()
+                };
                 if let Some((ghost_at, label, _)) = ghost_group.filter(|(_, _, g)| g == app) {
                     let i = ghost_at.saturating_sub(at).min(items.len());
                     items.insert(i, ghost_row(label));
                 }
-                sections.push(group_section(shell, app, items));
+                sections.push(group_section(shell, &now, app, tabs, items));
             }
         }
         at += rows.len();
@@ -105,16 +110,30 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     island(panel)
 }
 
-/// An app's group: its name as a caption, its rows one step in. It does
-/// not fold; Super+H says "hidden" here once, not on each row.
+/// An app's group: its name as a caption, its rows one step in. A click
+/// on the name folds it; folded, the caption stands for its rows: how many,
+/// the loudest of their marks, and bright while one of them has focus.
+/// Super+H says "hidden" here once, not on each row.
 fn group_section<'a>(
     shell: &'a Shell,
+    now: &Now,
     app: &str,
+    tabs: &[Tab],
     items: Vec<SidebarItem<'a, Msg>>,
 ) -> SidebarSection<'a, Msg> {
+    let activity: Vec<Activity> = tabs.iter().filter_map(|t| tab_activity(shell, t)).collect();
+    let loudest = [Activity::Waiting, Activity::Working]
+        .into_iter()
+        .find(|a| activity.contains(a));
     let mut section = SidebarSection::new(app_label(shell, app), items)
         .id(group_row_id(shell.tabs.showing_id(), app))
-        .caption();
+        .caption()
+        .foldable(CaptionFold {
+            folded: shell.tabs.is_folded(app),
+            count: tabs.len(),
+            mark: mark(loudest),
+            current: tabs.iter().any(|t| now.focused == Some(t.window_id)),
+        });
     if shell.is_app_hidden(app) {
         section = section.note("hidden");
     }
@@ -146,7 +165,7 @@ fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab, in_group: bool) -> SidebarI
             .unwrap_or_else(|| app_label(shell, &t.app_id)),
     };
     let key = shell.pairing.key_of(t.window_id);
-    let activity = key.and_then(|key| shell.tab_activity.get(key)).copied();
+    let activity = tab_activity(shell, t);
     // The tab's own icon (a page's favicon), else its app's.
     let face = key
         .and_then(|key| shell.tab_icons.get(key))
@@ -186,6 +205,12 @@ fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab, in_group: bool) -> SidebarI
         item = item.secondary("hidden");
     }
     item
+}
+
+/// What a tab is doing, when it says.
+fn tab_activity(shell: &Shell, t: &Tab) -> Option<Activity> {
+    let key = shell.pairing.key_of(t.window_id)?;
+    shell.tab_activity.get(key).copied()
 }
 
 /// Where a starting app's window will land: its name, faint, beside a

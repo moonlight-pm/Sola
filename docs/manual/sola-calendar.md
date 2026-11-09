@@ -89,7 +89,7 @@ quits.
 
 | Menu | Items |
 |---|---|
-| Calendar | New Event (⌘N), Refresh (⌘R), Close Window (⌘W) |
+| Calendar | New Event (⌘N), Refresh (⌘R), Close Window (⌘W), Quit Calendar (⌘Q) |
 | View | Month, Week, Day, Go to Today |
 | Window | The Window menu every Sola application has |
 

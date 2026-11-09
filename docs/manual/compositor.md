@@ -348,7 +348,7 @@ Fullscreen windows have no shadow.
 On `CloseApp` with an app id, `sola-river` sends the compositor's close
 request to every window with exactly that app id; on `CloseWindow`, to
 that one window. This is the polite close: the application may ask to
-save, or ignore it. `solactl desk close` sends `CloseApp`, and a bar row's
+save, or ignore it. The shell's Super+Q sends `CloseApp`, and a bar row's
 stoplight sends `CloseWindow` for a window that is not a tab
 ([Session manager](session.md) describes the stop that runs alongside
 `CloseApp`).

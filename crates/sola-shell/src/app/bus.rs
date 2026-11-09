@@ -1162,6 +1162,15 @@ impl Shell {
             Act::Shortcuts if self.shortcuts.active => Task::done(Msg::CloseShortcuts),
             Act::Shortcuts => Task::done(Msg::OpenShortcuts),
             Act::Lock => self.lock_screen("key"),
+            Act::CloseApp => {
+                if let Some(focused) = self.focused_app_id.clone() {
+                    tracing::info!(app_id = %focused, "quit focused app");
+                    if let Ok(mut bus) = sola_kit::app::bus().lock() {
+                        let _ = bus.emit(Topic::CloseApp(focused));
+                    }
+                }
+                Task::none()
+            }
             Act::Hide => {
                 self.hide_focused_app();
                 Task::none()

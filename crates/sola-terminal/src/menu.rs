@@ -19,6 +19,7 @@ pub fn terminal_menu() -> AppMenuPayload {
                     },
                     MenuItem::Divider,
                     sola_kit::menu::close_window_menu_item(),
+                    sola_kit::menu::quit_menu_item("Quit Terminal"),
                 ],
             },
             MenuDefinition {

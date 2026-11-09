@@ -94,7 +94,7 @@ pub const SUBSCRIBE: &[TopicKind] = &[
 /// The "Browser" app-menu published to the shell at startup. Each entry is
 /// `(action_id, label, chord)`; chords are meta-bound. The shell binds them
 /// globally and routes `Topic::MenuAction` back when one is pressed.
-pub const MENU_ITEMS: [(&str, &str, KeyChord); 9] = [
+pub const MENU_ITEMS: [(&str, &str, KeyChord); 10] = [
     (ACTION_NEW_TAB, "New Tab", KeyCode::T.meta()),
     (ACTION_CLOSE_TAB, "Close Tab", KeyCode::W.meta()),
     (
@@ -108,6 +108,7 @@ pub const MENU_ITEMS: [(&str, &str, KeyChord); 9] = [
     (ACTION_BACK, "Back", KeyCode::LEFT.meta()),
     (ACTION_FORWARD, "Forward", KeyCode::RIGHT.meta()),
     (ACTION_DEVTOOLS, "Developer Tools", KeyCode::I.meta().alt()),
+    (ACTION_QUIT, "Quit Browser", KeyCode::Q.meta()),
 ];
 
 /// The "Edit" app-menu published alongside "Browser". Meta-bound so the

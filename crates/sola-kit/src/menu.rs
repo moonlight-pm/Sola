@@ -354,6 +354,27 @@ pub fn close_window_menu_item() -> MenuItem {
     }
 }
 
+/// The key for Quit: the system's Close App, which every Quit item shows
+/// (it follows your change of it, [`crate::keys`]).
+pub const QUIT_KEY: KeyChord = KeyCode::Q.meta();
+
+/// **Quit** (Super+Q), for [`crate::app::BusSetup::app_menu`]; `label` reads
+/// "Quit Monitor".
+pub const fn quit_item(label: &'static str) -> (&'static str, &'static str, KeyChord) {
+    (crate::app::QUIT_ACTION_ID, label, QUIT_KEY)
+}
+
+/// [`quit_item`] as a [`MenuItem`].
+pub fn quit_menu_item(label: &str) -> MenuItem {
+    MenuItem::Action {
+        id: crate::app::QUIT_ACTION_ID.into(),
+        label: label.into(),
+        shortcut: Some(QUIT_KEY),
+        disabled: false,
+        checked: false,
+    }
+}
+
 /// A menu action the shell carries out rather than the app.
 fn is_shell_action(id: &str) -> bool {
     id == ACTION_CLOSE_WINDOW || parse_window_action(id).is_some()

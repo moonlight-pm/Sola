@@ -690,8 +690,11 @@ are the apps themselves.
   Steam, games, anything not Sola's.
 - **A group of one** is still a group: a header and its row. A row never
   moves when the app's second window opens.
-- **No folding.** A long group (a browser with seventy pages) makes the
-  bar scroll.
+- ~~**No folding.**~~ *Amended 2026-11-08 (Joshua: "add the ability to
+  'close' a group ... i finally got to the point where my sidebar items
+  exceeded its height"):* a click on a group's caption folds it to that
+  line, with its count, its loudest mark, and bright while it holds the
+  focus; per workspace, saved (`TabLayout.folded`). The bar still scrolls.
 - **The look (2026-11-01):** way A of `design/bar-groups/` (Joshua: "i
   like the 'CAPTION' style design"; asked for "Remove the icon from group
   rows … indent their children … Group titles or the groups themselves

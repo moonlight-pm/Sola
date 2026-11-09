@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use sola_bus::topics::{
-    PINNED_LAYOUT_ID, TabLayout, TabLayoutGroup, TabLayoutZone, Workspace, WorkspacePicks, Zone,
+    FoldedGroup, PINNED_LAYOUT_ID, TabLayout, TabLayoutGroup, TabLayoutZone, Workspace, WorkspacePicks, Zone,
 };
 
 use super::bar::{Bar, Block, app_of_key, grouped};
@@ -153,6 +153,7 @@ impl Stacks {
                 first
             });
             d.bar = Bar::of_groups(ws_groups.into_iter().map(|(at, _, app)| (app, at)).collect());
+            d.bar.fold(layout.folded.iter().filter(|f| f.workspace == d.id).map(|f| f.app.clone()));
         }
         self.restore_until = Some(now + RESTORE_GRACE);
     }
@@ -282,6 +283,16 @@ impl Stacks {
                 })
                 .collect(),
             groups,
+            folded: self
+                .desks
+                .iter()
+                .flat_map(|d| {
+                    d.bar.folded().map(|app| FoldedGroup {
+                        workspace: d.id.clone(),
+                        app: app.clone(),
+                    })
+                })
+                .collect(),
         }
     }
 

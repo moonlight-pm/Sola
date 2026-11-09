@@ -30,6 +30,7 @@ pub const ACTION_NEW_WINDOW: &str = "web-new-window";
 pub const ACTION_OPEN_IN_BROWSER: &str = "web-open-in-browser";
 pub const ACTION_COPY_LINK: &str = "web-copy-link";
 pub const ACTION_CLOSE_WINDOW: &str = "web-close-window";
+pub const ACTION_QUIT: &str = "web-quit";
 pub const ACTION_REMOVE: &str = "web-remove";
 
 /// What the browser knows of web apps.
@@ -127,6 +128,8 @@ pub fn app_menu(app: &Application) -> AppMenuPayload {
         MenuItem::Divider,
         action(ACTION_CLOSE_WINDOW, "Close Window".into(), Some(KeyCode::W.meta())),
         action(ACTION_REMOVE, "Remove Web App…".into(), None),
+        MenuItem::Divider,
+        action(ACTION_QUIT, format!("Quit {}", app.label), Some(KeyCode::Q.meta())),
     ];
     // Undo through Select All: a web app has no find bar.
     let edit = EDIT_MENU_ITEMS
@@ -385,6 +388,7 @@ impl<E: Engine> App<E> {
                 self.webapps.removing = Some(app_id.to_string());
                 Task::none()
             }
+            ACTION_QUIT => self.close_app_windows(app_id),
             // Reload and Edit act on the active page: the app's, since its
             // window has the keys.
             other => integration::run_intent(self, integration::intent_for_menu_action(other)),

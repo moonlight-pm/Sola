@@ -720,6 +720,16 @@ impl Stacks {
         self.desks[self.showing].bar.blocks()
     }
 
+    /// Whether `app`'s group is folded on the showing workspace.
+    pub fn is_folded(&self, app: &str) -> bool {
+        self.desks[self.showing].bar.is_folded(app)
+    }
+
+    /// Fold `app`'s group on the showing workspace, or open it.
+    pub fn toggle_folded(&mut self, app: &str) {
+        self.desks[self.showing].bar.toggle_folded(app);
+    }
+
     pub fn shown(&self, zone: Zone) -> Option<u32> {
         self.desks[self.showing].column(zone).shown
     }

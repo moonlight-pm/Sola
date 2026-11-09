@@ -55,6 +55,7 @@ pub fn app_menu(app_id: &str, sort: Sort) -> AppMenuPayload {
                     item(SIGN_OUT, "Sign Out…", None),
                     MenuItem::Divider,
                     sola_kit::menu::close_window_menu_item(),
+                    sola_kit::menu::quit_menu_item("Quit Vault"),
                 ],
             ),
             menu(

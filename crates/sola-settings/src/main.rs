@@ -56,7 +56,10 @@ fn main() -> iced::Result {
 
     BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
-        .app_menu("Settings", [sola_kit::menu::close_window_item()])
+        .app_menu(
+            "Settings",
+            [sola_kit::menu::close_window_item(), sola_kit::menu::quit_item("Quit Settings")],
+        )
         .app_menu(
             "Edit",
             [

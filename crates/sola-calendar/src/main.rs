@@ -61,6 +61,7 @@ fn main() -> iced::Result {
                 item("refresh", "Refresh", Some(KeyCode::R.meta())),
                 MenuItem::Divider,
                 sola_kit::menu::close_window_menu_item(),
+                sola_kit::menu::quit_menu_item("Quit Calendar"),
             ],
         })
         .app_menu_definition(MenuDefinition {

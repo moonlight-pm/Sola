@@ -440,6 +440,20 @@ pub struct SidebarSection<'a, Message> {
     pub caption: bool,
     /// Dim word at the end of a caption ([`Self::note`]).
     pub note: Option<String>,
+    /// A caption group that folds ([`Self::foldable`]).
+    pub fold: Option<CaptionFold>,
+}
+
+/// What a foldable caption shows ([`SidebarSection::foldable`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CaptionFold {
+    pub folded: bool,
+    /// How many rows it folds away.
+    pub count: usize,
+    /// The loudest activity among them, so a folded row can still ask.
+    pub mark: Option<SidebarIndicator>,
+    /// The focused row is among them: the caption reads bright.
+    pub current: bool,
 }
 
 /// Header chrome for a [`SidebarSection::collapsible`] section.
@@ -478,6 +492,7 @@ impl<'a, Message> SidebarSection<'a, Message> {
             on_add: None,
             caption: false,
             note: None,
+            fold: None,
         }
     }
 
@@ -492,6 +507,7 @@ impl<'a, Message> SidebarSection<'a, Message> {
             on_add: None,
             caption: false,
             note: None,
+            fold: None,
         }
     }
 
@@ -515,10 +531,18 @@ impl<'a, Message> SidebarSection<'a, Message> {
 
     /// A caption group (the shell's app groups): the label in small
     /// capitals with air above it, the members [`CAPTION_NEST`] in, no
-    /// fill, no fold. Drawn by the reorder strip, where the caption is a
+    /// fill; it folds with [`Self::foldable`]. Drawn by the reorder strip, where the caption is a
     /// reorder row that moves the group; give the section an [`Self::id`].
     pub fn caption(mut self) -> Self {
         self.caption = true;
+        self
+    }
+
+    /// A caption group that folds: a chevron at its end, and a press on
+    /// the caption is [`Event::ToggleSection`]. The caller leaves out the
+    /// rows of a folded one.
+    pub fn foldable(mut self, fold: CaptionFold) -> Self {
+        self.fold = Some(fold);
         self
     }
 
@@ -1312,9 +1336,18 @@ pub const CAPTION_NEST: f32 = 14.0;
 /// A caption group's header: its name in small capitals, semibold, in
 /// the secondary ink, with air above it and its text where a row's icon
 /// starts; a dim note at the end.
-fn caption_header<'a, Message: 'a>(label: String, note: Option<String>) -> Element<'a, Message> {
-    let ink = |theme: &Theme| iced::widget::text::Style {
-        color: Some(theme.extended_palette().secondary.base.text),
+fn caption_header<'a, Message: 'a>(
+    label: String,
+    note: Option<String>,
+    fold: Option<CaptionFold>,
+) -> Element<'a, Message> {
+    let bright = fold.is_some_and(|f| f.folded && f.current);
+    let ink = move |theme: &Theme| iced::widget::text::Style {
+        color: Some(if bright {
+            theme.extended_palette().background.base.text
+        } else {
+            theme.extended_palette().secondary.base.text
+        }),
     };
     let name = text(label.to_uppercase())
         .font(iced::Font {
@@ -1324,12 +1357,22 @@ fn caption_header<'a, Message: 'a>(label: String, note: Option<String>) -> Eleme
         .size(10.5)
         .wrapping(Wrapping::None)
         .style(ink);
-    let mut body = row![name].align_y(iced::Alignment::End).width(Length::Fill);
+    let mut end = row![].spacing(6.0).align_y(iced::Alignment::Center);
     if let Some(note) = note {
-        body = body
-            .push(Space::new().width(Length::Fill))
-            .push(text(note).font(fonts::ui()).size(11).style(ink));
+        end = end.push(text(note).font(fonts::ui()).size(11).style(ink));
     }
+    if let Some(fold) = fold {
+        if fold.folded {
+            if let Some(mark) = fold.mark {
+                end = end.push(status_mark(mark));
+            }
+            end = end.push(text(fold.count.to_string()).font(fonts::ui()).size(11).style(ink));
+        }
+        end = end.push(caption_chevron(fold.folded));
+    }
+    let body = row![name, Space::new().width(Length::Fill), end]
+        .align_y(iced::Alignment::Center)
+        .width(Length::Fill);
     container(body)
         .width(Length::Fill)
         .padding(Padding {
@@ -1337,6 +1380,21 @@ fn caption_header<'a, Message: 'a>(label: String, note: Option<String>) -> Eleme
             bottom: 6.0,
             left: 9.0,
             right: 10.0,
+        })
+        .into()
+}
+
+/// The chevron at a foldable caption's end, in the caption's ink.
+fn caption_chevron<'a, Message: 'a>(folded: bool) -> Element<'a, Message> {
+    let name = if folded { "lucide/chevron-right" } else { "lucide/chevron-down" };
+    iced::widget::svg(icon_handle(name))
+        .width(12.0)
+        .height(12.0)
+        .style(|theme: &Theme, _| iced::widget::svg::Style {
+            color: Some(Color {
+                a: 0.7,
+                ..theme.extended_palette().secondary.base.text
+            }),
         })
         .into()
 }
@@ -1586,7 +1644,7 @@ fn build_reorder_strip<'a, Message: Clone + 'a>(
         } else if let (Some(label), Some(hid)) = (section.label.clone(), gid.clone()) {
             if !collapsed {
                 let el = if section.caption {
-                    caption_header(label, section.note.clone())
+                    caption_header(label, section.note.clone(), section.fold)
                 } else {
                     section_header(label, None, section.on_add)
                 };

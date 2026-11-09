@@ -39,7 +39,10 @@ fn main() -> iced::Result {
 
     BusSetup::new(APP_ID)
         .subscribe(TopicKind::ALL)
-        .app_menu("Preview", [sola_kit::menu::close_window_item()])
+        .app_menu(
+            "Preview",
+            [sola_kit::menu::close_window_item(), sola_kit::menu::quit_item("Quit Preview")],
+        )
         .install();
 
     let app = iced::application(App::boot, App::update, App::view)

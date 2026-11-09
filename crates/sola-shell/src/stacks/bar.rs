@@ -9,6 +9,8 @@
 //! the keys and the saved layout read. A group down to one window or none
 //! stays as an empty block: its place, for when the app has two again.
 
+use std::collections::BTreeSet;
+
 use super::Tab;
 
 /// The apps whose windows group in the bar: each opens a window per
@@ -78,6 +80,9 @@ impl Block {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Bar {
     blocks: Vec<Block>,
+    /// The apps whose group is folded here, kept while the group is empty
+    /// or a lone row, so it comes back as it was.
+    folded: BTreeSet<String>,
 }
 
 impl Bar {
@@ -93,7 +98,27 @@ impl Bar {
                     rank: Some(rank),
                 })
                 .collect(),
+            folded: BTreeSet::new(),
         }
+    }
+
+    pub fn is_folded(&self, app: &str) -> bool {
+        self.folded.contains(app)
+    }
+
+    pub fn toggle_folded(&mut self, app: &str) {
+        if !self.folded.remove(app) {
+            self.folded.insert(app.to_string());
+        }
+    }
+
+    pub fn folded(&self) -> impl Iterator<Item = &String> {
+        self.folded.iter()
+    }
+
+    /// Fold these apps' groups (a saved layout's).
+    pub fn fold(&mut self, apps: impl IntoIterator<Item = String>) {
+        self.folded.extend(apps);
     }
 
     pub fn blocks(&self) -> &[Block] {

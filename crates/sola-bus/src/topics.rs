@@ -346,6 +346,16 @@ pub struct TabLayout {
     /// bar, so the app's next window brings it back there.
     #[serde(default)]
     pub groups: Vec<TabLayoutGroup>,
+    /// The app groups folded shut, each in its workspace's bar.
+    #[serde(default)]
+    pub folded: Vec<FoldedGroup>,
+}
+
+/// An app group folded shut (`TabLayout.folded`).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct FoldedGroup {
+    pub workspace: String,
+    pub app: String,
 }
 
 /// An empty app group's place (`TabLayout.groups`): before the tab at

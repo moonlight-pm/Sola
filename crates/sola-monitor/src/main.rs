@@ -23,7 +23,10 @@ fn main() -> iced::Result {
 
     BusSetup::new(APP_ID)
         .subscribe(sola_bus::topics::TopicKind::ALL)
-        .app_menu("Monitor", [sola_kit::menu::close_window_item()])
+        .app_menu(
+            "Monitor",
+            [sola_kit::menu::close_window_item(), sola_kit::menu::quit_item("Quit Monitor")],
+        )
         .install();
     sola_kit::install_observer(APP_ID);
 

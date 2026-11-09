@@ -34,6 +34,7 @@ system key.
 |-------|--------|
 | Super+Space | Open the launcher |
 | Super+K | Keyboard shortcuts overlay (press again to close) |
+| Super+Q | Quit the focused app: every window of it. One that isn't Sola's quits whole ([Session manager](session.md#applications-that-arent-solas)) |
 | Super+H | Hide the focused app |
 | Super+L | Lock the screen (needs a password: [Security](security.md#locking)) |
 | Super+CapsLock | Show the next window in the zone under the pointer (Super+Shift+CapsLock: the previous) |
@@ -80,11 +81,11 @@ The focused app's menu shortcuts that use Super (Super+C, Super+T, …) are
 taken by the Shell while that app has focus and handed to it as the menu
 choice, so a shortcut and a click on the menu item do the same thing.
 
-The desk works by windows, not apps: there is no Quit. **Close Window**
-(Super+W) closes the focused window, as its bar row's × does, and an app
-ends when its last window closes. It is in each app's own menu; an app that
-isn't Sola's has no menu of its own, so the Shell gives it one with this
-item. Browser pages, Paint and Projects give Super+W their own close, which
+**Close Window** (Super+W) closes the focused window, as its bar row's ×
+does, and an app ends when its last window closes. **Quit *App*** (Super+Q)
+closes every window of the focused app at once, and it ends. Both are in
+each app's own menu; an app that isn't Sola's has no menu of its own, so the
+Shell gives it one with these items. Browser pages, Paint and Projects give Super+W their own close, which
 does the same. Editor alone is different: Super is Emacs's Meta there, and
 there only, so Super+W copies (its menu has the item, with no key).
 
@@ -271,8 +272,16 @@ their windows together in a **group** once a workspace has two of them: the
 app's name in small capitals, with its windows a step in under it. One
 window is a row of its own, as is every window of any other app (Mail,
 Settings, Calendar, Steam, games), and these rows come first, above every
-group. A group
-does not fold; a long one makes the bar scroll. A Projects window's row names up to three things,
+group.
+
+Click a group's name to fold it to one line, and again to open it: folded,
+the line says how many windows it holds, shows the loudest mark among them
+(an amber diamond while one waits on a decision, else a spinning ring while
+one works), and reads brighter while one of them has focus. Each workspace
+folds its own groups, and they stay folded across restarts. A bar longer than
+the screen scrolls with the wheel; it has no scrollbar.
+
+A Projects window's row names up to three things,
 drawn apart: the project, the session in a quieter ink (when it is not the
 project's main one), and, when the session runs on another computer, that
 computer as a chip in its prompt color.

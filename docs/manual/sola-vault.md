@@ -365,7 +365,7 @@ server's latest copy.
 
 | Menu | Items |
 |---|---|
-| Vault | Settings… (⌘,), Sync Now (⌘R), Lock (⌘⇧L), Sign Out…, Close Window (⌘W) |
+| Vault | Settings… (⌘,), Sync Now (⌘R), Lock (⌘⇧L), Sign Out…, Close Window (⌘W), Quit Vault (⌘Q) |
 | File | New Item (⌘N), New Folder… (⌘⇧N), Generator… (⌘G), Export… |
 | Edit | Undo (⌘Z), Redo (⌘⇧Z), Cut (⌘X), Copy (⌘C), Paste (⌘V), Select All (⌘A), Find (⌘F) |
 | Item | Edit (⌘E), Copy Username (⌘U), Copy Password (⌘P), Copy Code (⌘T), Favorite, Clone, Move to Folder…, Move to Organization…, Move to Trash |
@@ -373,7 +373,7 @@ server's latest copy.
 | Window | The Window menu every Sola application has |
 
 The Item menu acts on the open record. While the vault is locked, only
-Settings, Lock, Sign Out, Close Window, and Edit's field actions do anything. Lock
+Settings, Lock, Sign Out, Close Window, Quit, and Edit's field actions do anything. Lock
 is ⌘⇧L because ⌘L locks the screen.
 
 | Key | Action |

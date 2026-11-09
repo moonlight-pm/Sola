@@ -900,7 +900,8 @@ missing control; it does not succeed just because CEF fired load.
 ### Troubleshooting
 
 If `tabs` or `tab.open` time out while the Browser's windows are still
-up, the Browser is not answering its calls. Close its windows and launch it again. Do not kill the process from a bot.
+up, the Browser is not answering its calls. Quit it (**Browser → Quit
+Browser**, ⌘Q) and launch it again. Do not kill the process from a bot.
 
 Vault fill and confirm gates are not on this plane. Which methods need a
 human confirm is an open question

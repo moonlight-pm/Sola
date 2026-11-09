@@ -12,7 +12,10 @@ fn main() -> iced::Result {
         .subscribe(TopicKind::ALL)
         .app_menu_definition(MenuDefinition {
             label: "Bots".into(),
-            items: vec![sola_kit::menu::close_window_menu_item()],
+            items: vec![
+                sola_kit::menu::close_window_menu_item(),
+                sola_kit::menu::quit_menu_item("Quit Bots"),
+            ],
         })
         .app_menu_definition(MenuDefinition {
             label: "Edit".into(),
