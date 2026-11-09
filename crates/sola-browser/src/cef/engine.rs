@@ -1717,6 +1717,12 @@ cef::wrap_display_handler! {
                     tracing::warn!(detail = %detail.trim(), "webauthn page resolve failed");
                     return 1;
                 }
+                if let Some(rest) = msg.strip_prefix("__sola_vault_code__:") {
+                    // For the log only: what a page claims here changes nothing.
+                    let said: String = rest.chars().filter(|c| !c.is_control()).take(400).collect();
+                    tracing::info!(report = %said, "vault: code fill");
+                    return 1;
+                }
                 if let Some(rest) = msg.strip_prefix("__sola_vault_fill__:") {
                     // Only decides chrome's "saved, no fields" note; a page
                     // faking it changes nothing else.

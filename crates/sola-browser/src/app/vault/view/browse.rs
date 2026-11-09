@@ -179,7 +179,7 @@ impl<E: Engine> App<E> {
             let (trailing, press) = match mode {
                 Mode::Site => (
                     if on {
-                        Trailing::Hint("Fill")
+                        Trailing::HintOpen("Fill", VaultMsg::Open(item.id.clone()))
                     } else {
                         Trailing::Open(VaultMsg::Open(item.id.clone()))
                     },

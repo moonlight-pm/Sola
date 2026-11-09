@@ -224,6 +224,8 @@ pub(crate) enum Trailing<'a> {
     None,
     /// The chosen row's key hint (`Fill ↵`).
     Hint(&'a str),
+    /// The chosen row's key hint, and the › that opens the record.
+    HintOpen(&'a str, VaultMsg),
     /// A › that opens the record.
     Open(VaultMsg),
     /// A quiet ›.
@@ -287,6 +289,14 @@ pub(crate) fn item_row_parts<'a>(
             .spacing(6)
             .align_y(Alignment::Center)
             .into(),
+        Trailing::HintOpen(h, m) => row![
+            label(h, 11.0, ink2),
+            kbd("↵"),
+            icon_button("chevron-right", 15, Some(m))
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into(),
         Trailing::Open(m) => icon_button("chevron-right", 15, Some(m)),
         Trailing::Chevron => icon("chevron-right", 15, ink3),
     };

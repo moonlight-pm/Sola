@@ -152,9 +152,15 @@ pub fn fill_totp_script(code: &str) -> String {
     script(&[("code", js_str(Some(code)))], TOTP_JS, false)
 }
 
-const TOTP_JS: &str = r#"  var OTP=/otp|totp|2fa|mfa|one.?time|verification|security.?code|auth.?code|token/;
+const TOTP_JS: &str = r#"  var OTP=/otp|totp|(two|2).?(factor|step|fa)|tfa|mfa|one.?time|verif|confirmation.?code|security.?code|authenticat|auth.?code|passcode|token/;
   // Identifiers only: a real code field's label often says "sent to your phone".
   var NOT_OTP=/postal|zip|phone|\btel\b|search|card|cc-|cvv|cvc|email|username|password/;
+  // A field called just "code" or "pin" is a code field, unless the page has
+  // a password box or the words are a shop's or an address form's.
+  var MAYBE=/(^|[^a-z])(code|pin)([^a-z]|$)/;
+  var NOT_CODE=/promo|coupon|discount|voucher|gift|referr|invit|captcha|zip|postal|post.?code|area|country/;
+  // A field nothing names: the only one on a short page asking for a code.
+  var ASKS=/(two|2).?(factor|step|fa)|authenticator|one.?time|(verification|security|authentication) code|(\d|six|eight).?digit/;
   function ids(el){
     return ((el.getAttribute('autocomplete')||'')+' '+(el.name||'')+' '+(el.id||'')).toLowerCase();
   }
@@ -163,18 +169,26 @@ const TOTP_JS: &str = r#"  var OTP=/otp|totp|2fa|mfa|one.?time|verification|secu
     for(var i=0;el.labels&&i<el.labels.length;i++) t+=' '+el.labels[i].textContent;
     return t.toLowerCase();
   }
+  var els=inputs(document);
+  var pwd=Array.prototype.some.call(document.querySelectorAll('input[type="password"]'),visible);
+  var text=document.body?String(document.body.innerText||'').toLowerCase():'';
+  var asks=text.length<4000&&ASKS.test(text);
   function score(el){
     if(NOT_OTP.test(ids(el))||el.type==='search'||el.type==='email') return 0;
+    var words=blob(el)+labels(el);
     var s=0;
     if((el.getAttribute('autocomplete')||'').toLowerCase().indexOf('one-time-code')>=0) s+=10;
-    if(OTP.test(blob(el)+labels(el))) s+=8;
-    // Numeric and 6-8 long fit a postal code too: they only rank OTP fields.
+    if(OTP.test(words)) s+=8;
+    if(!s&&!pwd&&!NOT_CODE.test(words)){
+      if(MAYBE.test(words)) s=4;
+      else if(els.length===1&&asks) s=2;
+    }
+    // Numeric and 6-8 long fit a postal code too: they only rank code fields.
     if(!s) return 0;
     if((el.getAttribute('inputmode')||'').toLowerCase()==='numeric') s+=2;
     if(el.maxLength>=6&&el.maxLength<=8) s+=2;
     return s;
   }
-  var els=inputs(document);
   // Split boxes: code.length maxlength=1 inputs under one parent (or one
   // grandparent, when each box has a wrapper) take a character each.
   function boxRun(){
@@ -202,6 +216,10 @@ const TOTP_JS: &str = r#"  var OTP=/otp|totp|2fa|mfa|one.?time|verification|secu
     els.sort(function(a,b){ return score(b)-score(a); });
     if(els.length&&score(els[0])>0&&setVal(els[0],code)){ ok=true; rest(els[0]); }
   }
+  // For the log: what this frame's fields are called, never what they hold.
+  try{ if(ok||els.length) console.info('__sola_vault_code__:'+(ok?'filled on ':'no code field on ')+location.host+(ok?'':': '+els.map(function(el){
+    return (el.type||'')+' name='+(el.name||'')+' id='+(el.id||'')+' ac='+(el.getAttribute('autocomplete')||'')+' max='+el.maxLength;
+  }).join(' | '))); }catch(e){}
 "#;
 
 /// IIFE that fills typical checkout card fields (number, name, expiry, CVC).
@@ -721,12 +739,35 @@ mod tests {
     fn totp_numeric_length_needs_an_otp_signal() {
         let s = fill_totp_script("123456");
         assert!(s.contains("indexOf('one-time-code')>=0) s+=10;"));
-        assert!(s.contains("var OTP=/otp|totp|2fa|mfa|one.?time|verification|"));
-        assert!(s.contains("|security.?code|auth.?code|token/;"));
-        assert!(s.contains("OTP.test(blob(el)+labels(el))"));
+        assert!(s.contains("var OTP=/otp|totp|(two|2).?(factor|step|fa)|tfa|mfa|one.?time|verif|"));
+        assert!(s.contains("|security.?code|authenticat|auth.?code|passcode|token/;"));
+        assert!(s.contains("var words=blob(el)+labels(el);"));
+        assert!(s.contains("OTP.test(words)"));
         let gate = s.find("if(!s) return 0;").unwrap();
         assert!(gate < s.find("==='numeric') s+=2;").unwrap());
         assert!(gate < s.find("el.maxLength<=8) s+=2;").unwrap());
+    }
+
+    #[test]
+    fn totp_takes_a_bare_code_field_only_without_a_password_box() {
+        let s = fill_totp_script("123456");
+        assert!(s.contains("if(!s&&!pwd&&!NOT_CODE.test(words)){"));
+        assert!(s.contains("if(MAYBE.test(words)) s=4;"));
+        assert!(s.contains("var NOT_CODE=/promo|coupon|discount|voucher|gift|referr|invit|captcha|"));
+    }
+
+    #[test]
+    fn totp_takes_an_unnamed_field_only_alone_on_a_short_page_that_asks() {
+        let s = fill_totp_script("123456");
+        assert!(s.contains("var asks=text.length<4000&&ASKS.test(text);"));
+        assert!(s.contains("else if(els.length===1&&asks) s=2;"));
+    }
+
+    #[test]
+    fn totp_reports_field_names_and_never_values() {
+        assert!(TOTP_JS.contains("console.info('__sola_vault_code__:'"));
+        assert!(!TOTP_JS.contains(".value"));
+        assert!(!TOTP_JS[TOTP_JS.find("__sola_vault_code__").unwrap()..].contains("+code"));
     }
 
     #[test]
