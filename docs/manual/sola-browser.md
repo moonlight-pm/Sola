@@ -386,7 +386,8 @@ above. Typing in **Search vault** searches every item, the page's own
 first, with a count.
 
 - On a site's login, a click or Return **fills** it, and the arrow at its
-  right opens it. Anywhere else, a click or Return opens the item.
+  right opens it, on every row. Anywhere else, a click or Return opens
+  the item.
 - ↑ and ↓ choose a row; ↓ past the site's last login goes on into the
   whole vault. → opens the chosen item.
 - When the last sync failed, a line says so, with **Retry**: the items
@@ -425,9 +426,13 @@ frames that may have it, while the page stays on the origin it had:
 - **A login**: its username and password into the page's frames of the
   same origin, and into frames one of its websites matches (a sign-in form
   in another site's frame gets nothing). A login with a one-time code also
-  puts the code into the page's code field, if it has one, and copies it
-  (Vault → Settings → **Filling a login copies its code**, on at first);
-  the code leaves the clipboard after the clipboard time.
+  puts the code into the code field in those frames, if there is one, and
+  copies it (Vault → Settings → **Filling a login copies its code**, on at
+  first); the code leaves the clipboard after the clipboard time. A code
+  field is one named or labelled for a code, or the only box on a short
+  page that asks for one; a page with a password box needs the plainer
+  names spelled out (`otp`, `two-factor`, and the like), and a shop's or
+  an address form's code is left alone.
 - **A card**: the card's fields, in every frame of the page, since
   payment forms live in the payment processor's frames.
 - **An identity**: name, address, email, phone, and numbers, in the

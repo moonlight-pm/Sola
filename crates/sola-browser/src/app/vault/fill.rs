@@ -210,17 +210,11 @@ impl<E: Engine> App<E> {
             }
         };
         zeroize_material(&mut material);
-        self.send_fill(aim.tab, scope, script);
+        self.send_fill(aim.tab, scope.clone(), script);
         if let Some(mut code) = code {
-            // The code field, if this page has one too.
-            self.send_fill(
-                aim.tab,
-                FrameScope::Site {
-                    origin: aim.origin.clone(),
-                    uris: Vec::new(),
-                },
-                fill_totp_script(&code),
-            );
+            // The code field, if this page has one too: in the frames the
+            // password may go to (a sign-in frame from the login's site).
+            self.send_fill(aim.tab, scope, fill_totp_script(&code));
             if self.vault.settings.copy_code_on_fill {
                 copy = self.vault_copy_secret(std::mem::take(&mut code));
             }
