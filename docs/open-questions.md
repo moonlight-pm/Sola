@@ -242,8 +242,10 @@ the programs and the public plan carrying it is expected.
 **Google's side:** project `sola-508017`, published (in production, unverified:
 a warning, and 100 new users), with the two narrow scopes on Data Access and the
 home page, `/privacy` and `moonlight.pm` on Branding. `/privacy` is live (2026-11-09).
-Verification still needs `moonlight.pm` proven in Search Console, and on Data
-Access a justification and a demo video for `calendar.events`.
+`moonlight.pm` is proven in Search Console (2026-11-09, auto-verified by the
+`google-site-verification` TXT record it already had; keep that record).
+Verification still needs, on Data Access, a justification and a demo video for
+`calendar.events`.
 
 **Related:** `calendar` capability.
 
