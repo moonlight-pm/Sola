@@ -175,10 +175,12 @@ fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab, in_group: bool) -> SidebarI
         item = item.pinned();
     }
     if let Some(p) = parts {
+        if !p.is_here() {
+            item = item.tag(host_tag(&p.host));
+        }
         if let Some(session) = p.session {
             item = item.detail(session);
         }
-        item = item.tag(host_tag(&p.host));
     }
     if hidden(&t.app_id) && !in_group {
         item = item.secondary("hidden");

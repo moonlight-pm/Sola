@@ -93,7 +93,10 @@ alternatively other sessions could tell them to start." So both:
 - **On request.** *(As built: no separate verb.)* Any computer that links
   the host — opening a project there, or a window of one of its sessions —
   runs the same restore there over ssh first, so a host with no Sola (tmux
-  only) gets its sessions back that way too.
+  only) gets its sessions back that way too. *(Amended 2026-11-08: a host
+  with `svc:sola-sessions` runs its own `--restore`, over that ssh, and the
+  linking side waits for it. Restored from outside, sessions got no
+  `WAYLAND_DISPLAY`, so their agents could never paste an image.)*
 - The file: `~/.config/sola/projects/sessions/<id>.json` (project, name,
   title, kind, folder, agent, agent session). Written when a session is made
   or first attached, rewritten when its agent's session changes or it is
@@ -128,7 +131,9 @@ megabytes (a tool's input), and a Codex hook can run outside its session.)*
 - **One window per session.** The in-window tab bar, its `+` card, drag
   reorder and the project window's roll-up go. The shell's tab bar is the one
   list; each row carries its own session's mark.
-- **Label** — three parts, always all shown, this computer included: the
+- **Label** — three parts (amended 2026-11-08, Joshua: "lets not put the
+  machine name if the session is the current machine": this computer goes
+  unnamed on the row and the frame, and stays in the xdg title below): the
   project, the session (when it is not the project's main one: its title,
   else its name) and the host. Drawn with the kit, not as one run of text
   (Joshua: "lets avail ourself of our gui toolkit and not rely on text alone

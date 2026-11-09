@@ -369,20 +369,6 @@ exit 0"#;
 /// `$1` from stdin, mode `$2`, by a rename in its folder.
 const WRITE_SCRIPT: &str = r#"t="$1.sola-$$" && cat > "$t" && chmod "$2" "$t" && mv -f "$t" "$1" || { rm -f "$t"; exit 1; }"#;
 
-/// This computer's hostname (what its prompt and a tab's host chip name).
-pub fn this_host() -> String {
-    // Read once: every window's title asks, on every update.
-    static HOST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    HOST.get_or_init(|| {
-        std::fs::read_to_string("/proc/sys/kernel/hostname")
-            .map(|h| h.trim().to_string())
-            .ok()
-            .filter(|h| !h.is_empty())
-            .unwrap_or_else(|| "here".into())
-    })
-    .clone()
-}
-
 fn parse_entries(out: &[u8]) -> Vec<Entry> {
     String::from_utf8_lossy(out)
         .lines()

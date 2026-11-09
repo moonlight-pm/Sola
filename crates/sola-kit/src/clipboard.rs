@@ -166,6 +166,13 @@ pub fn read_string() -> Option<String> {
     }
 }
 
+/// The clipboard offers a picture. Blocking, but asks the compositor only:
+/// the bytes stay with their owner.
+pub fn has_image() -> bool {
+    paste::get_mime_types(ClipboardType::Regular, Seat::Unspecified)
+        .is_ok_and(|types| pick_image_mime(&types).is_some())
+}
+
 /// Read a file and offer it as an image. Sniffs magic, then extension.
 pub fn write_image_path(path: &Path) -> Result<(), Error> {
     let bytes = std::fs::read(path)?;

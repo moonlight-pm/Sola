@@ -470,11 +470,16 @@ project's folder; a project can have any number. A project is a folder in
 `~/Projects`, here or on another computer.
 
 Each session open here is its own window, a row in the shell's bar. The
-row names three things, drawn apart: the project, the session (when it is
-not the project's main one), and the computer it runs on — always, this
-one too — as a chip in that computer's prompt color. In place of its icon
+row names up to three things, drawn apart: the project, the session (when
+it is not the project's main one), and, when it runs on another computer,
+that computer as a chip in its prompt color. In place of its icon
 the row shows the session's activity: an amber diamond while it waits on
 a decision, a spinning ring while it works.
+
+Super+V pastes the clipboard's text into the session. With a picture and
+no text on the clipboard, it goes to the agent in the session the way
+Ctrl+V does: the agent reads the clipboard itself, of the computer it runs
+on, so a picture copied here reaches a session here. A shell gets nothing.
 
 Under its title, a session's window has a bar: its agent (Claude, Codex,
 Grok, or Shell) and model at the left; at the right its turns (prompts
@@ -705,9 +710,11 @@ title, folder, and the agent in it with that agent's session). Any session
 recorded there whose tmux is gone is made again, in its folder, with its
 agent resumed (`claude --resume`, `grok -r`) when its transcript is still
 there, else a shell: when Projects starts, when any computer's Projects
-connects to that computer, and at boot (`sola-projects --restore`). Ending
-a session (End Session…, `session.end`), or its shell exiting, removes its
-record.
+connects to that computer, and at boot (`sola-projects --restore`). A
+computer connecting to one with that boot restore has it run there, and
+waits for it, so what comes back has that computer's display; one without
+it is restored over ssh. Ending a session (End Session…, `session.end`),
+or its shell exiting, removes its record.
 
 ### Panes
 

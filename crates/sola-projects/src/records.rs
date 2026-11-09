@@ -118,6 +118,10 @@ fn parse(text: &str) -> Vec<Record> {
         .collect()
 }
 
+/// The Oath service that brings a computer's sessions back at boot
+/// (`sola-projects --restore`, Oath's desk profile).
+const OWN_RESTORE: &str = "svc:sola-sessions";
+
 /// How [`restore`] makes sessions.
 #[derive(Clone, Debug, Default)]
 pub struct Restore {
@@ -183,6 +187,32 @@ pub fn restore(m: &Machine, how: &Restore) -> Vec<String> {
         }
     }
     made
+}
+
+/// What a computer linking `m` does for the sessions a reboot took there.
+/// One with its own restore ([`OWN_RESTORE`]) runs it, and this waits for
+/// it: only it knows its desk, and what starts in a session without the
+/// display can never reach the clipboard. One without is restored from
+/// here.
+pub fn restore_linked(m: &Machine) -> Vec<String> {
+    let own = m
+        .run(None, &[], &["oath", "get", OWN_RESTORE], None)
+        .is_ok_and(|o| o.status.success());
+    if !own {
+        return restore(m, &Restore::default());
+    }
+    match m.run(None, &[], &["sola-projects", "--restore"], None) {
+        Ok(out) if out.status.success() => {
+            tracing::info!(host = ?m.host(), "its own restore has run");
+        }
+        Ok(out) => tracing::warn!(
+            host = ?m.host(),
+            "its own restore failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+        Err(e) => tracing::warn!(host = ?m.host(), "could not run its own restore: {e}"),
+    }
+    Vec::new()
 }
 
 /// `tmux new-session -d` for `rec`, then its options.

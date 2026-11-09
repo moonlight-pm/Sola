@@ -203,12 +203,11 @@ impl App {
                 );
                 // Its sessions a reboot took come back first (any
                 // computer linking it brings them back), then attach.
+                self.remote_restoring.insert(host.clone());
                 Task::perform(
                     async move {
                         let h = host.clone();
-                        // Its desk's environment is its own: none given.
-                        let how = crate::records::Restore::default();
-                        let made = tokio::task::spawn_blocking(move || crate::records::restore(&machine, &how))
+                        let made = tokio::task::spawn_blocking(move || crate::records::restore_linked(&machine))
                             .await
                             .unwrap_or_default();
                         (h, made)
@@ -232,6 +231,7 @@ impl App {
     /// `host`'s sessions are back (those a reboot took): attach the panes
     /// that waited for it.
     pub(crate) fn on_host_restored(&mut self, host: String, made: Vec<String>) -> Task<Msg> {
+        self.remote_restoring.remove(&host);
         if !made.is_empty() {
             tracing::info!(%host, count = made.len(), "restored sessions there");
         }
@@ -294,7 +294,9 @@ impl App {
     ) -> Task<Msg> {
         self.remote_down.remove(id);
         let machine = match self.links.get(host) {
-            Some(Link::Up { machine, .. }) => machine.clone(),
+            // Not while its sessions are coming back: attaching makes a
+            // missing one, without what its restore gives it.
+            Some(Link::Up { machine, .. }) if !self.remote_restoring.contains(host) => machine.clone(),
             _ => {
                 self.remote_pending.insert(id.to_string());
                 self.ensure_link(host);

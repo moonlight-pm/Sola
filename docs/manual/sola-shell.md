@@ -272,10 +272,10 @@ app's name in small capitals, with its windows a step in under it. One
 window is a row of its own, as is every window of any other app (Mail,
 Settings, Calendar, Steam, games), and these rows come first, above every
 group. A group
-does not fold; a long one makes the bar scroll. A Projects window's row names three things,
+does not fold; a long one makes the bar scroll. A Projects window's row names up to three things,
 drawn apart: the project, the session in a quieter ink (when it is not the
-project's main one), and the computer the session runs on — this one too —
-as a chip in that computer's prompt color.
+project's main one), and, when the session runs on another computer, that
+computer as a chip in its prompt color.
 
 - **The focused window's row** is the bright pill, in the theme's
   highlight colour.

@@ -20,7 +20,7 @@ use sola_bus::topics::{
 use sola_kit::app::{
     BusSetup, apply_theme_update, bus, bus_subscription, is_self_quit, startup,
 };
-use sola_core::window_label::WindowLabel;
+use sola_core::window_label::{this_host, WindowLabel};
 use sola_kit::fonts;
 use sola_kit::scope;
 use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
@@ -91,6 +91,8 @@ fn tmux_server_up() -> bool {
         .is_ok_and(|s| s.success())
 }
 
+/// What the terminal sends for Ctrl+V.
+const CTRL_V: u8 = 0x16;
 const DEFAULT_COLS: u16 = 80;
 /// A window's size before it reports one.
 const DEFAULT_WINDOW: iced::Size = iced::Size::new(1100.0, 720.0);
@@ -221,6 +223,8 @@ struct App {
     recorded: HashMap<String, (Option<String>, Option<String>)>,
     /// Remote panes waiting for their link to attach.
     remote_pending: HashSet<String>,
+    /// Hosts whose link is up and whose sessions are still coming back.
+    remote_restoring: HashSet<String>,
     /// Hosts whose status tick is out, and when each last went out.
     remote_busy: HashSet<String>,
     remote_ticked: HashMap<String, Instant>,
@@ -264,6 +268,8 @@ enum Msg {
     /// Left-button reports for the program in a pane.
     MouseToPty(String, Vec<u8>),
     Pasted(Option<String>),
+    /// Whether the clipboard holds a picture, for this pane's agent.
+    PasteImage(String, bool),
     /// A right-click on a pane (its id, the point in its window): the desk
     /// menu.
     DeskMenu(String, iced::Point),
@@ -327,7 +333,7 @@ enum Msg {
         /// Open this session alone (its id there), not all of them.
         only: Option<String>,
     },
-    /// A host's sessions a reboot took are back ([`records::restore`]).
+    /// A host's sessions a reboot took are back ([`records::restore_linked`]).
     HostRestored {
         host: String,
         made: Vec<String>,
@@ -524,6 +530,7 @@ impl App {
             links: HashMap::new(),
             recorded: HashMap::new(),
             remote_pending: HashSet::new(),
+            remote_restoring: HashSet::new(),
             remote_busy: HashSet::new(),
             remote_ticked: HashMap::new(),
             local_busy: false,
@@ -554,9 +561,9 @@ impl App {
 
     /// A session window's label: its project's folder, the session when
     /// it is not the project's main one (its title, else its name), and
-    /// the computer it runs on — always named, this one too (Joshua,
-    /// 2026-10-30: "tab should always show the host even if local"). The
-    /// shell's bar draws the parts apart.
+    /// the computer it runs on. The shell's bar draws the parts apart, and
+    /// leaves this computer unnamed (Joshua, 2026-11-08: "lets not put the
+    /// machine name if the session is the current machine").
     fn label(&self, window: window::Id) -> Option<WindowLabel> {
         let tab = self.tab_for_pane(self.windows.tab_of(window)?)?;
         let p = catalog::find_project(&self.projects, &tab.project_id)?;
@@ -565,7 +572,7 @@ impl App {
         Some(WindowLabel {
             project: catalog::island_name(p).to_string(),
             session,
-            host: p.host.clone().unwrap_or_else(machine::this_host),
+            host: p.host.clone().unwrap_or_else(|| this_host().to_string()),
         })
     }
 
@@ -579,7 +586,9 @@ impl App {
 
     /// The name in a project window's own frame: the same parts as its tab.
     fn frame_title(&self, window: window::Id) -> String {
-        self.title(window)
+        self.label(window)
+            .map(|l| l.shown())
+            .unwrap_or_else(|| WINDOW_TITLE.into())
     }
 
     fn theme(&self, window: window::Id) -> Theme {
@@ -652,6 +661,7 @@ impl App {
             | Msg::RemoteTick { .. }
             | Msg::Seen { .. }
             | Msg::Title(..)
+            | Msg::PasteImage(..)
             | Msg::WheelToPty(..) => scope::touch_none(),
             _ => {}
         }
@@ -906,13 +916,21 @@ impl App {
                 }
                 Task::none()
             }
-            Msg::DeskPaste(pane, text) => {
-                if let (Some(text), Some(rt)) = (text, self.runtimes.get(&pane)) {
+            Msg::DeskPaste(pane, None) => self.paste_image(pane),
+            Msg::DeskPaste(pane, Some(text)) => {
+                if let Some(rt) = self.runtimes.get(&pane) {
                     let mode = { *rt.emulator.term().lock().mode() };
                     rt.backend.write(&input::paste(&text, mode));
                 }
                 Task::none()
             }
+            Msg::PasteImage(pane, true) => {
+                if let Some(rt) = self.runtimes.get(&pane) {
+                    rt.backend.write(&[CTRL_V]);
+                }
+                Task::none()
+            }
+            Msg::PasteImage(_, false) => Task::none(),
             Msg::DeskInsert(pane, value) => {
                 match (value, self.runtimes.get(&pane)) {
                     // As typed (a password prompt takes keys); lines as a paste.
@@ -1128,7 +1146,7 @@ impl App {
         self.end = cards::EndDraft {
             tab: Some(id.to_string()),
             label,
-            host: tab.host.clone().unwrap_or_else(machine::this_host),
+            host: tab.host.clone().unwrap_or_else(|| this_host().to_string()),
             waiting: tab.status == status::AgentStatus::Waiting,
         };
         Task::none()
@@ -2860,9 +2878,28 @@ impl App {
         iced::clipboard::read().map(Msg::Pasted)
     }
 
+    /// The clipboard has no text to type. A picture goes to the pane's
+    /// agent by the key it takes one with: it reads the clipboard itself
+    /// (Joshua, 2026-11-08). Not to a shell, where that key quotes the next.
+    fn paste_image(&self, pane: String) -> Task<Msg> {
+        if !self.pane_status.get(&pane).is_some_and(|s| s.agent.is_some()) {
+            return Task::none();
+        }
+        Task::perform(
+            async {
+                tokio::task::spawn_blocking(sola_kit::clipboard::has_image)
+                    .await
+                    .unwrap_or(false)
+            },
+            move |yes| Msg::PasteImage(pane, yes),
+        )
+    }
+
     fn on_pasted(&mut self, text: Option<String>) -> Task<Msg> {
         let Some(text) = text else {
-            return Task::none();
+            let in_field = self.spawn.is_open()
+                || self.windows.focused.is_some_and(|w| self.navigators.contains_key(&w));
+            return if in_field { Task::none() } else { self.paste_image(self.focused.clone()) };
         };
         if self.spawn.is_open() {
             self.spawn.name.push_str(&text.replace('\n', ""));
