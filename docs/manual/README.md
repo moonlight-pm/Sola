@@ -1,9 +1,7 @@
 # Sola manual
 
-The manual for Sola as it works today: on Oath, from the `next` branch. On
-master it describes `next` too (Joshua, 2026-10-29), so check a chapter
-against `next`'s code, not master's. The site renders these
-chapters, in this order, as one page at
+The manual for Sola as it works today, on Oath. The site renders these
+chapters from `master`, in this order, as one page at
 [sola.moonlight.pm/manual](https://sola.moonlight.pm/manual) (`CHAPTERS` in
 [`site/src/manual.rs`](../../site/src/manual.rs) — keep the two lists the
 same; a test holds them together).
