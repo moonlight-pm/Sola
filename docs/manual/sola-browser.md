@@ -430,9 +430,9 @@ frames that may have it, while the page stays on the origin it had:
   copies it (Vault → Settings → **Filling a login copies its code**, on at
   first); the code leaves the clipboard after the clipboard time. A code
   field is one named or labelled for a code, or the only box on a short
-  page that asks for one; a page with a password box needs the plainer
-  names spelled out (`otp`, `two-factor`, and the like), and a shop's or
-  an address form's code is left alone.
+  page that asks for one. On a page with a password box, a field called
+  only "code" or "pin" does not count, and a shop's or an address form's
+  code is left alone.
 - **A card**: the card's fields, in every frame of the page, since
   payment forms live in the payment processor's frames.
 - **An identity**: name, address, email, phone, and numbers, in the
