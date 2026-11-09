@@ -11,11 +11,11 @@ web
 
 ## Stack
 
-**Thoxa HTTP container** in this repo at [`site/`](../../site/) (moved
-from Thoxa's `workloads/sola` on 2026-10-19): JSX pages,
-`std/http/server`, Debian image, Wicket workload `sola` on aulos
-(`wl-f2835fc5634e`, image `registry.wicket.cloud/sola-landing:latest`,
-host `sola.moonlight.pm`). Build and deploy steps:
+**Static files** in this repo at [`site/`](../../site/): a small Rust
+generator writes HTML pages and the manual into `dist/`, and a Cloudflare
+Worker with static assets (`sola-site`, host `sola.moonlight.pm`) serves them.
+A GitHub workflow deploys on every push to `master` that touches the site or
+the manual. Build and deploy steps:
 [`site/README.md`](../../site/README.md).
 
 `sola.computer` is **parked** (2026-10-19): no route, no apex A record.
@@ -49,7 +49,7 @@ documenting them.
 
 1. **Intro** — flower + "Sola"; one-paragraph definition; facts line
    (Pre-release · Oath, x86-64 · No releases yet · Manual · Source); then
-   a screenshot of the desk (`site/web/desk.webp`), captioned with its
+   a screenshot of the desk (`site/static/desk.webp`), captioned with its
    date.
 2. **Design** — four bold-lead paragraphs: one toolkit + live theme;
    separate restartable processes; native, not web (CEF only where pages

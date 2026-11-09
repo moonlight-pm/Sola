@@ -4,9 +4,9 @@ The manual for Sola as it works today: on Oath, from the `next` branch. On
 master it describes `next` too (Joshua, 2026-10-29), so check a chapter
 against `next`'s code, not master's. The site renders these
 chapters, in this order, as one page at
-[sola.moonlight.pm/manual](https://sola.moonlight.pm/manual) (`names` in
-[`site/app/pages/manual.thx`](../../site/app/pages/manual.thx) — keep the
-two lists the same).
+[sola.moonlight.pm/manual](https://sola.moonlight.pm/manual) (`CHAPTERS` in
+[`site/src/manual.rs`](../../site/src/manual.rs) — keep the two lists the
+same; a test holds them together).
 
 | Chapter | Contents |
 |---------|----------|
@@ -51,7 +51,7 @@ and [`../../CURRENT.md`](../../CURRENT.md).
   promotional language. Name applications as the launcher does (Browser,
   Mail); crate and binary names (`sola-browser`) are for commands and paths.
 - No host names of particular machines; use placeholders (`<server>`).
-- The site's renderer supports a Markdown subset; stay inside it:
+- The manual keeps to a Markdown subset; stay inside it:
   - one `#` heading per file (the chapter title, unnumbered); `##` and `###`
     for sections, `####` sparingly;
   - paragraphs, `- ` and `1. ` lists (continuation lines indented to the
@@ -66,5 +66,5 @@ and [`../../CURRENT.md`](../../CURRENT.md).
 - Link another chapter as `sola-shell.md#section-slug`, the same chapter as
   `#slug`, and anything outside the manual by a relative path
   (`../specs/…`); the site turns those into links to the repository.
-- A new chapter goes in the table above and in `names` in the site, in the
-  same commit.
+- A new chapter goes in the table above and in `CHAPTERS` in the site, in
+  the same commit.

@@ -1,0 +1,48 @@
+name: Site
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - site/**
+      - docs/manual/**
+      - .github/workflows/site.yml
+  pull_request:
+    paths:
+      - site/**
+      - docs/manual/**
+      - .github/workflows/site.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-${{ github.ref }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    env:
+      CF_SEND_TELEMETRY: "false"
+      SITE_DOMAIN: ${{ vars.SITE_DOMAIN }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - run: cargo test --locked
+      - run: cargo run --locked
+      - run: npx cf build
+      - run: npx cf deploy --prebuilt --dry-run
+      - if: github.event_name != 'pull_request'
+        run: npx cf deploy --prebuilt
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

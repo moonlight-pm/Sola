@@ -3,21 +3,24 @@
 The public site: the project page (`/`) — what Sola is, its design, the
 applications, the processes of a session, status, building — and the
 manual (`/manual`), which is `docs/manual/*.md` rendered as one numbered
-page. A Thoxa program, served from a container on Wicket. Not part of the
-desktop.
+page. Not part of the desktop.
+
+A small Rust program in its own Cargo workspace writes it all as plain files
+into `dist/`, and Cloudflare serves them as a Worker with static assets.
 
 | Path | What |
 |------|------|
-| `main.thx` | Entry: listen, open the local browser |
-| `app/routes.thx` | `GET /`, `GET /manual`, `GET /privacy`, static files, the 404 page; security and cache headers |
-| `app/ui/page.thx` | The HTML shell: head, the bar (Manual, Source), the footer |
-| `app/pages/home.thx` | The home page and the 404 page |
-| `app/pages/privacy.thx` | `/privacy`: what Calendar does with connected accounts; Google's verification reads it |
-| `app/pages/manual.thx` | `/manual`: the chapters in `names`, a numbered contents column |
-| `app/markdown.thx` | Markdown to nodes (from thoxa.moonlight.pm): chapter links become anchors, other relative links go to GitHub |
-| `app/highlight.thx` | Code blocks: comments in shell, Nix, and TOML |
-| `app/config.thx` | Listen port, asset root, and manual root from the environment |
-| `web/` | `style.css`, the flower mark, and `desk.webp` |
+| `pages/page.html` | The HTML shell: head, the bar (Manual, Source), the footer. `{{name}}` is filled in by `src/site.rs` |
+| `pages/home.html` | The home page |
+| `pages/privacy.html` | `/privacy`: what Calendar does with connected accounts. Google's verification reads it; every claim has to stay true of `crates/sola-calendar` and `crates/sola-settings` |
+| `pages/manual.html` | The frame of `/manual`: the title and the contents column |
+| `pages/missing.html` | The 404 page |
+| `src/manual.rs` | Markdown to HTML (pulldown-cmark): the chapters in `CHAPTERS`, numbered; chapter links become anchors, other relative links go to GitHub; comments coloured in shell, Nix, and TOML blocks |
+| `src/site.rs` | Puts the pages together; `STATIC` lists the files in `static/` |
+| `src/main.rs` | Writes every file into `dist/` |
+| `static/` | `style.css`, `_headers`, the flower mark, and `desk.webp` |
+| `cloudflare.config.ts`, `wrangler.config.ts` | The Worker and where its files are |
+| `package.json`, `package-lock.json` | Pin `cf` and the Wrangler it builds with |
 
 The look is the desk in the home page screenshot: [`DESIGN.md`](../DESIGN.md)'s
 graphite ladder tinted violet, one rose signal, contrast as DESIGN.md's.
@@ -27,77 +30,54 @@ graphite ladder tinted violet, one rose signal, contrast as DESIGN.md's.
 Every claim on the home page comes from the repo. When an application, a
 process, or the release state changes, update the page with
 [`docs/capabilities.md`](../docs/capabilities.md) and
-[`docs/architecture.md`](../docs/architecture.md). The application list is
-`appList()` and the process table `partList()` in `app/pages/home.thx`; an
-application's `chapter` links its name to the manual.
+[`docs/architecture.md`](../docs/architecture.md). The applications and the
+processes are the two `<dl>` lists in `pages/home.html`; a process links to
+its chapter of the manual.
 
-`web/desk.webp` is a screenshot of Joshua's desk (1920 × 1080, taken
+`static/desk.webp` is a screenshot of Joshua's desk (1920 × 1080, taken
 2026-10-29), WebP at quality 95 (`magick shot.png -alpha off -strip
 -quality 95 -define webp:method=6 desk.webp`, about 240 KB). The caption
 gives its date; a new screenshot gets a new date, and the colors in
 `style.css` follow it.
 
-The manual is read from disk at each request (locally) and copied into the
-image, so a change to `docs/manual` reaches the site at the next deploy. A
-new chapter goes in `names` in `app/pages/manual.thx` and in the table in
+A new chapter goes in `CHAPTERS` in `src/manual.rs` and in the table in
 [`docs/manual/README.md`](../docs/manual/README.md), which also has the
-Markdown subset the renderer supports.
+Markdown rules the manual keeps to. `cargo test` fails until the two lists
+match, or if an anchor or a link on the site has no target.
 
 ## Local
 
-Needs `thoxa` on `PATH` (a build of the Thoxa repo). From the repo root:
-
 ```sh
-thoxa run site
-# prints http://127.0.0.1:8089/ and opens it (xdg-open)
-# THOXA_NO_BROWSER=1 skips the browser
+cd site
+cargo test
+cargo run          # writes dist/
 ```
-
-| Env | Default |
-|-----|---------|
-| `THOXA_PORT` | `8089` locally. The image sets `8080`. |
-| `THOXA_STATIC` | `site/web` |
-| `THOXA_MANUAL` | `docs/manual`. The image sets `/app/manual`. |
-
-The listen port is the first of `PORT` (Wicket), `WICKET_PORT_HTTP`,
-`THOXA_PORT` that is set.
 
 ## Headers
 
-`finish` in `app/routes.thx` adds them to every response: a
-Content-Security-Policy (styles and images from here, fonts from
-`fonts.gstatic.com` with the Google Fonts stylesheet; no script, frames,
-or forms), `nosniff`, `Referrer-Policy`, and HSTS. A 200 carries an ETag,
-so a repeat request gets a 304. Pages and CSS are `no-cache`; images and
-fonts are reused for a day. A page that loads something new needs the CSP
+`static/_headers` sets them on every response: a Content-Security-Policy
+(styles and images from here, fonts from `fonts.gstatic.com` with the Google
+Fonts stylesheet; no script, frames, or forms), `nosniff`, `Referrer-Policy`,
+and HSTS. Images are reused for a day; pages and CSS are checked on every
+load, Cloudflare's default. A page that loads something new needs the CSP
 widened there.
 
-## Deploy (Wicket on aulos)
+## Deploy
 
-From the repo root, with the Thoxa repo checked out at `../Thoxa`:
+[`.github/workflows/site.yml`](../.github/workflows/site.yml) tests and builds
+on every pull request that touches `site/` or `docs/manual/`, and deploys on a
+push to `master`, so the public manual follows `master`. To deploy by hand:
+`gh workflow run site.yml`.
 
-```sh
-podman build -f site/Containerfile --ignorefile site/.containerignore \
-  --build-context thoxa=../Thoxa \
-  -t sola-landing:latest -t registry.wicket.cloud/sola-landing:latest .
-wicketctl registry push aulos --image sola-landing:latest
-wicketctl workload apply aulos --file site/workload.toml --confirm
-```
+It reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from the repo's
+secrets. The public name is the repo's `SITE_DOMAIN` variable; without it the
+site deploys to its `workers.dev` address only.
 
-`workload apply` pulls the new `:latest` and replaces the container.
-(`wicketctl workload roll` also exists, but its job sat in `pending` on
-aulos on 2026-10-19.)
-
-The image builds `thoxa` from that checkout, emits the site's C, compiles
-it with `thoxa_rt`, and copies `site/web` and `docs/manual` in. It runs the
-Thoxa of the checkout, not a binary from the host, and serves the manual of
-the commit it was built from. The server runs as UID 65534 and exits on SIGTERM.
-Wicket injects `PORT`. The workload keeps the id of the `sola` workload
-that Thoxa's `workloads/sola` created.
+On Oath, build and deploy in CI: `npx cf` fails there (no `/usr/bin/env`).
 
 ## Domains
 
-`sola.moonlight.pm` is the address. `*.moonlight.pm` already points at
-aulos, so the name needs no record of its own. `sola.computer` is parked:
-the apex A record is gone and no route serves it. `*.sola.computer` stays
-for `bot.sola.computer` (the Bots phone API).
+`sola.moonlight.pm` is the address. Cloudflare manages its DNS record (it shows
+as `AAAA 100::`; leave it alone). `sola.computer` is parked: the apex A record
+is gone and nothing serves it. `*.sola.computer` stays for `bot.sola.computer`
+(the Bots phone API).

@@ -1,0 +1,11 @@
+/*
+  Content-Security-Policy: default-src 'none'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000
+
+/desk.webp
+  Cache-Control: public, max-age=86400
+
+/flower.svg
+  Cache-Control: public, max-age=86400

@@ -9,6 +9,13 @@
 crates/*/target/
 crates/*/Cargo.lock
 
+# The site's build (site/README.md)
+/site/target
+/site/dist
+/site/node_modules
+/site/.cloudflare
+/site/.wrangler
+
 # nix-build result symlinks
 /result
 /result-*

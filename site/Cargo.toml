@@ -1,0 +1,12 @@
+# The project page and the manual. Its own workspace, so the site's crates
+# stay out of the root Cargo.lock.
+[workspace]
+
+[package]
+name = "sola-site"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }

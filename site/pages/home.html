@@ -1,0 +1,152 @@
+<main class="home" id="main">
+<header class="intro">
+<h1><span class="mark" aria-hidden="true"></span>Sola</h1>
+<p class="lede">
+A desktop environment for Linux on Wayland, written in Rust. Sola runs the
+session, the shell, and its own applications, all drawn with one toolkit and
+one theme. The compositor is rivulet, Oath's port of River.
+</p>
+<p class="facts">
+<span>Pre-release</span>
+<span>Oath, x86-64</span>
+<span>No releases yet</span>
+<a href="/manual">Manual</a>
+<a href="https://github.com/moonlight-pm/Sola">Source</a>
+</p>
+</header>
+
+<figure class="desk">
+<img src="/desk.webp" width="1920" height="1080" alt="The Sola desk on Oath over a violet picture of raindrops on glass: the top row of status across the top; the bar on the left, the workspace Main at its head and its windows below; a Projects window with a Claude Code session at work; Settings open on Appearance.">
+<figcaption>
+The desk on Oath, 2026-10-29. The bar on the left lists the windows
+of the workspace Main; Projects runs Claude Code beside Settings on
+Appearance.
+</figcaption>
+</figure>
+
+<section id="design">
+<h2>Design</h2>
+<p>
+<strong>One toolkit for the whole desktop.</strong>
+The shell and every first-party application are Iced programs built on
+sola-kit, which supplies the buttons, fields, sidebars, menus, type roles,
+and colors. The theme travels on Sola's bus: change a color or a font and
+every running application redraws with it, without a restart.
+</p>
+<p>
+<strong>Separate processes, each restartable.</strong>
+Oath's PID 1 runs the event bus, the request/reply host, the window manager,
+the shell, and the session manager as services. When one of them fails it is
+started again, and the rest of the session carries on. Applications are
+separate processes too, and they reconnect when the bus or the window
+manager comes back.
+</p>
+<p>
+<strong>Native, not web.</strong>
+The shell and the applications draw with Iced on the GPU. There is no HTML in
+the desktop's own interface. A web engine (Chromium, through CEF) runs only
+where web pages are the content: the browser, the web apps it hosts, and
+Design's artboards.
+</p>
+<p>
+<strong>Scriptable, by people and by agents.</strong>
+Each application registers its methods with the request/reply host, and
+<a href="/manual#solactl"><code>solactl</code></a> calls them from a shell.
+<code>solactl mcp</code> offers every live method to an AI agent as an MCP
+tool; the list changes as applications start and quit.
+</p>
+<pre><code>solactl compositor windows          <span class="tk-cm"># every window, by application</span>
+solactl compositor screenshot       <span class="tk-cm"># the screen, as PNG</span>
+solactl browser tabs                <span class="tk-cm"># id, URL, and title of each page</span>
+solactl open https://example.com    <span class="tk-cm"># in Sola's browser</span>
+claude mcp add sola -- solactl mcp  <span class="tk-cm"># every live method as an MCP tool</span>
+</code></pre>
+</section>
+
+<section id="applications">
+<h2>Applications</h2>
+<p>
+Each is its own process, with its menus in its windows' titlebars. The shell is
+stable in daily use; the applications are early, and each is incomplete.
+<a href="https://github.com/moonlight-pm/Sola/blob/master/docs/capabilities.md">docs/capabilities.md</a>
+lists what each can do and what it lacks.
+</p>
+<dl class="entries">
+<div><dt>Shell</dt><dd>The top row (system status, missed notifications, and an island for each agent that asks or finishes), the bar of windows on the left with the desktop workspaces at its head (Super+1…9), the launcher (Super+Space), and window zones.</dd></div>
+<div><dt>Terminal</dt><dd>A terminal on Alacritty's grid: a window per tab, split panes, each in tmux.</dd></div>
+<div><dt>Projects</dt><dd>A window per project, its tabs (the checkout and its git worktrees) along the top, each with terminal panes. A tab shows whether the coding agent in it (Claude Code, Codex, Grok) is working, waiting, or done.</dd></div>
+<div><dt>Browser</dt><dd>Chromium's engine under Sola's own chrome: a window per page, a profile per workspace, a Bitwarden vault, downloads, and developer tools.</dd></div>
+<div><dt>Mail</dt><dd>IMAP and SMTP for several accounts, with drafts and attachments.</dd></div>
+<div><dt>Calendar</dt><dd>Month, week, and day views of local, Google, and iCloud calendars, with reminders. Signing in to Google lets it show and edit your events from your own computer; nothing passes through a server of ours.</dd></div>
+<div><dt>Web apps</dt><dd>A website the browser runs as an application of its own, wrapped from one of its pages: a launcher entry, its own windows and menus.</dd></div>
+<div><dt>Settings</dt><dd>Appearance (light or dark for web pages, the background picture and the colors taken from it, every picture set before with the look it was worn with, the desk's opacity, the idle fade), the login (a password, auto-login), applications and web apps in the launcher, and mail and calendar accounts.</dd></div>
+<div><dt>Paint</dt><dd>The default image viewer and editor, a window per image; it sets the background picture.</dd></div>
+<div><dt>Preview</dt><dd>A quick viewer for screenshots and images.</dd></div>
+<div><dt>Design</dt><dd>HTML artboards on a canvas, written and edited by AI agents: a window per project.</dd></div>
+<div><dt>Oath</dt><dd>Oath's packages: turn one on or off and apply, or undo the last change.</dd></div>
+<div><dt>Monitor</dt><dd>A live view of bus traffic and of the methods each application offers.</dd></div>
+<div><dt>Scope</dt><dd>A pixel loupe: the screen under the pointer, magnified.</dd></div>
+<div><dt>KVM</dt><dd>One keyboard and mouse across two machines, with a shared clipboard. Paired machines seal every packet with a shared key and drop what they did not seal.</dd></div>
+</dl>
+</section>
+
+<section id="architecture">
+<h2>Architecture</h2>
+<p>
+A session is these processes, plus one for each application that is open.
+The <a href="/manual#architecture">manual</a> covers each in full: sockets,
+wire formats, topics, restart rules, and the command line.
+</p>
+<dl class="entries parts">
+<div><dt><a href="/manual#process-manager"><code>PID 1</code></a></dt><dd>Oath's init. Runs rivulet and each component below as a service of the desk user, and restarts one that fails.</dd></div>
+<div><dt><a href="/manual#bus"><code>sola-bus</code></a></dt><dd>Event bus on a Unix socket. Fans facts out to every client: focus, windows, the theme, application menus.</dd></div>
+<div><dt><a href="/manual#call"><code>sola-call</code></a></dt><dd>Request/reply host. Applications register methods; solactl and agents call them.</dd></div>
+<div><dt><a href="/manual#compositor"><code>sola-river</code></a></dt><dd>Window manager for River's protocol (rivulet on Oath), and its bridge to the bus.</dd></div>
+<div><dt><a href="/manual#session"><code>sola-session</code></a></dt><dd>Launches applications and tracks them.</dd></div>
+<div><dt><a href="/manual#sola-shell"><code>sola-shell</code></a></dt><dd>The top row, the bar of windows, the launcher, and notifications, in one Iced program.</dd></div>
+<div><dt><a href="/manual#theme"><code>sola-kit</code></a></dt><dd>The shared Iced toolkit and the theme every application follows.</dd></div>
+</dl>
+</section>
+
+<section id="status">
+<h2>Status</h2>
+<p>
+Sola is pre-release. It runs every day on
+<a href="https://oath.moonlight.pm">Oath</a>, which carries it as packages
+built from this repository's <code>master</code> branch: <code>pkg:sola</code>
+for the desk, and one package for each application. Not there yet:
+</p>
+<ul>
+<li>Releases of its own. x86-64 is the only platform.</li>
+<li>Other systems. Sola is built and packaged for Oath.</li>
+<li>Complete applications. Each has gaps, and the capability list names them.</li>
+</ul>
+<p>
+The work under way is in
+<a href="https://github.com/moonlight-pm/Sola/blob/master/CURRENT.md">CURRENT.md</a>, and what each
+part can do in
+<a href="https://github.com/moonlight-pm/Sola/blob/master/docs/capabilities.md">docs/capabilities.md</a>.
+</p>
+</section>
+
+<section id="building">
+<h2>Building</h2>
+<p>
+Sola builds on an Oath machine with the desk profile, on x86-64 with an AMD
+GPU. Oath supplies the compositor, the browser
+engine (<code>pkg:cef</code>), and the graphics stack as packages; Sola's
+packages run as Oath services, and <code>oath apply</code> restarts them
+when a package moves. From a clone:
+</p>
+<pre><code>git clone https://github.com/moonlight-pm/Sola
+cd Sola
+cargo make oath stage  <span class="tk-cm"># build the packages under target/oath</span>
+cargo make oath apply  <span class="tk-cm"># stage, store, pin, and apply them</span>
+</code></pre>
+<p>
+<code>oath undo</code> goes back a generation. The
+<a href="/manual#architecture">manual</a> covers the processes of a session,
+the bus, the call plane, and the command line.
+</p>
+</section>
+</main>

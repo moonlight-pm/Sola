@@ -387,7 +387,7 @@ window: choosing it brings that application's last-used window forward
 (a hidden one is shown again). Terminal is always started again, so its
 launch opens a new window. Choosing Projects lists your projects
 ([Shell](sola-shell.md)). Choosing Browser asks for an address or a search
-and opens it as a new page through `open_url` ([URLs](#urls)); when no
+and opens it as a new page through `open_url` ([Opening links and files](#opening-links-and-files)); when no
 Browser is running, `sola-session` starts it. Other ways in
 (`solactl desk launch`, opening a file) still reach the application's
 own single-instance handling.
