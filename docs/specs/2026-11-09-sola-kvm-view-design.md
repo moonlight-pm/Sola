@@ -1,7 +1,7 @@
 # sola-kvm remote view
 
 **Status:** first slice built on branch `remote-desktop`. Checked end to end
-with a test card; the real screen waits on the agent being installed on ember.
+with a test card; the real screen waits on Screen Recording on the Mac.
 
 **Decided by Joshua (2026-11-09):** remote view is a mode of `sola-kvm`, not a
 new product ("this would just be another mode for kvm"); our own agent on the
