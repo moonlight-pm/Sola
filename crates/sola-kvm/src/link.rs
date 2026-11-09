@@ -126,6 +126,29 @@ pub fn forget_peer(dir: &Path) -> io::Result<bool> {
     }
 }
 
+/// Keep `peer` as the key of `host`, a machine this one views. Apart from
+/// `peer.pub`: input sharing has one peer, and viewing can have others.
+pub fn save_view_peer(dir: &Path, host: &str, peer: &[u8; 32]) -> io::Result<()> {
+    write_key(&view_peer_path(dir, host)?, peer, 0o644)
+}
+
+/// The keys for viewing `host`; `None` until `sola-kvm pair <host> --view`.
+pub fn load_view(dir: &Path, host: &str) -> io::Result<Option<Keys>> {
+    let (Some((private, public)), Some(peer)) =
+        (own(dir)?, read_key(&view_peer_path(dir, host)?)?)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(Keys { private, public, peer }))
+}
+
+fn view_peer_path(dir: &Path, host: &str) -> io::Result<PathBuf> {
+    if host.is_empty() || host.contains(['/', '\\']) || host.starts_with('.') {
+        return Err(bad(format!("{host:?} is not a host name")));
+    }
+    Ok(dir.join("view").join(format!("{host}.pub")))
+}
+
 /// The pairing; `None` when this machine is not paired. Files that are not
 /// keys, and a shared key from an older sola-kvm, are errors: the caller
 /// must not start then.
@@ -490,9 +513,9 @@ fn u32_at(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(bytes[at..at + 4].try_into().expect("4"))
 }
 
-// ── Clipboard: the stream ────────────────────────────────────────────────
+// ── The stream (clipboard, remote view) ──────────────────────────────────
 
-/// One paired clipboard connection's Noise session.
+/// One paired stream connection's Noise session.
 pub struct Conn {
     noise: TransportState,
     /// Bytes read and not yet a whole record.
@@ -572,15 +595,15 @@ impl Conn {
                     let n = self
                         .noise
                         .read_message(&self.inbuf[2..2 + len], &mut plain)
-                        .map_err(|_| bad("a clipboard record does not open".into()))?;
+                        .map_err(|_| bad("a record does not open".into()))?;
                     self.inbuf.drain(..2 + len);
                     if n == 0 {
-                        return Err(bad("an empty clipboard record".into()));
+                        return Err(bad("an empty record".into()));
                     }
                     self.frame.extend_from_slice(&plain[1..n]);
                     if self.frame.len() > max as usize + 64 {
                         self.frame.clear();
-                        return Err(bad(format!("a clipboard frame over {max} bytes")));
+                        return Err(bad(format!("a frame over {max} bytes")));
                     }
                     if plain[0] == 0 {
                         return Ok(std::mem::take(&mut self.frame));

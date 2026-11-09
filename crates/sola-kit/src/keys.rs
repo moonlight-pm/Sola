@@ -341,6 +341,26 @@ pub fn chord_from_iced(physical: &Physical, modifiers: Modifiers) -> Option<KeyC
     })
 }
 
+/// A key pressed in an iced window, as its Linux evdev code, modifiers
+/// included. For sending the key on to another machine.
+pub fn evdev_of(physical: &Physical) -> Option<u32> {
+    let Physical::Code(code) = physical else {
+        return None;
+    };
+    Some(match code {
+        Code::ControlLeft => 29,
+        Code::ShiftLeft => 42,
+        Code::ShiftRight => 54,
+        Code::AltLeft => 56,
+        Code::ControlRight => 97,
+        Code::AltRight => 100,
+        Code::SuperLeft => 125,
+        Code::SuperRight => 126,
+        // `KeyCode` is XKB's numbering: evdev's plus 8.
+        other => keycode_of(*other)?.0.checked_sub(8)?,
+    })
+}
+
 fn keycode_of(code: Code) -> Option<KeyCode> {
     Some(match code {
         Code::Escape => KeyCode::ESCAPE,
@@ -445,6 +465,20 @@ fn keycode_of(code: Code) -> Option<KeyCode> {
         Code::NumpadEqual => KeyCode::KP_EQUAL,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod evdev_tests {
+    use super::*;
+
+    #[test]
+    fn modifiers_and_ordinary_keys_get_evdev_codes() {
+        let code = |c| evdev_of(&Physical::Code(c));
+        assert_eq!(code(Code::SuperLeft), Some(125));
+        assert_eq!(code(Code::ControlLeft), Some(29));
+        assert_eq!(code(Code::KeyA), Some(30));
+        assert_eq!(code(Code::Escape), Some(1));
+    }
 }
 
 #[cfg(test)]
