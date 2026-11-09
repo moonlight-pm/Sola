@@ -25,3 +25,16 @@ getrandom = "0.2"
 # CoreGraphics / CoreFoundation are linked only on macOS (see inject.rs).
 # This package is intentionally standalone (not a Sola workspace member) so
 # it can be built on ember without pulling the full desktop tree.
+
+# Remote view: the screen (ScreenCaptureKit) and its encoder (VideoToolbox).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+dispatch2 = "0.3"
+objc2-foundation = "0.3"
+objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+objc2-core-media = "0.3"
+objc2-core-video = "0.3"
+objc2-video-toolbox = "0.3"
+objc2-screen-capture-kit = "0.3"

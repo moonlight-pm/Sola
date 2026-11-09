@@ -17,6 +17,11 @@ mod protocol;
 #[allow(dead_code)]
 #[path = "../../../crates/sola-kvm/src/link.rs"]
 mod link;
+mod view;
+/// Remote view's wire, the same file as sola-kvm's.
+#[allow(dead_code)]
+#[path = "../../../crates/sola-kvm/src/view_wire.rs"]
+mod view_wire;
 
 use clap::{Parser, Subcommand};
 use tracing::info;
@@ -33,6 +38,10 @@ struct Cli {
     /// Bind address (default when no subcommand: 0.0.0.0:4242).
     #[arg(long, global = true, default_value = "0.0.0.0:4242")]
     bind: String,
+
+    /// Send remote view a moving test card instead of the screen.
+    #[arg(long, global = true, hide = true)]
+    view_test_pattern: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -118,7 +127,12 @@ fn main() {
         }
     };
 
-    if let Err(e) = agent::run(&bind, keys) {
+    let source = if cli.view_test_pattern {
+        view::Source::TestPattern
+    } else {
+        view::Source::Screen
+    };
+    if let Err(e) = agent::run(&bind, keys, source) {
         eprintln!("sola-kvm-mac failed: {e}");
         std::process::exit(1);
     }

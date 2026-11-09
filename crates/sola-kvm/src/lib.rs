@@ -16,6 +16,7 @@ pub mod protocol;
 pub mod run;
 pub mod server;
 pub mod udp;
+pub mod view_wire;
 
 pub use config::Config;
 pub use layout::{Align, Layout, Side};

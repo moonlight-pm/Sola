@@ -119,6 +119,7 @@ pub const PACKAGES: &[Package] = &[
             "sola-shell",
             "sola-session",
             "sola-kvm",
+            "sola-kvm-view",
             "sola-lock",
             "solactl",
             // Sola's opener under the name every program calls (D14), and

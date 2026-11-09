@@ -93,6 +93,17 @@ enum Command {
         /// Forget the peer's key: unpaired, and sola-kvm will not start.
         #[arg(long, conflicts_with = "peer")]
         forget: bool,
+        /// Pair to view this host's screen (`sola-kvm view <host>`), beside
+        /// whatever the input peer is. Needs the host named.
+        #[arg(long, requires = "peer", conflicts_with_all = ["accept", "public", "forget"])]
+        view: bool,
+    },
+
+    /// Show another machine's screen in a window here, driven from this
+    /// keyboard and pointer. Pair it first (`pair <host> --view`).
+    View {
+        /// The host, as `pair` was told it, with `:<kvm port>` if not 4242.
+        host: String,
     },
 
     /// Send a short test sequence to the configured peer (or --to).
@@ -128,8 +139,23 @@ fn main() {
             accept,
             public,
             forget,
-        }) => cmd_pair(&config_path, peer, &remote_bin, accept, public, forget),
+            view,
+        }) => cmd_pair(&config_path, peer, &remote_bin, accept, public, forget, view),
+        Some(Command::View { host }) => cmd_view(&host),
     }
+}
+
+/// The window is its own program, so this daemon stays free of the GPU.
+fn cmd_view(host: &str) {
+    use std::os::unix::process::CommandExt;
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|me| Some(me.parent()?.join("sola-kvm-view")))
+        .filter(|path| path.exists());
+    let program = beside.unwrap_or_else(|| PathBuf::from("sola-kvm-view"));
+    let err = std::process::Command::new(&program).arg(host).exec();
+    error!(program = %program.display(), "could not start the viewer: {err}");
+    std::process::exit(1);
 }
 
 /// The pairing. Unpaired, or keys that cannot be read, stop the process:
@@ -162,6 +188,7 @@ fn cmd_pair(
     accept: bool,
     public: bool,
     forget: bool,
+    view: bool,
 ) {
     let dir = link::dir();
     let fail = |msg: String| -> ! {
@@ -227,7 +254,12 @@ fn cmd_pair(
     let Some(theirs) = answer.lines().rev().find_map(link::parse_hex) else {
         fail(format!("{host} answered with no public key; nothing changed here"));
     };
-    if let Err(e) = link::save_peer(&dir, &theirs) {
+    let saved = if view {
+        link::save_view_peer(&dir, &host, &theirs)
+    } else {
+        link::save_peer(&dir, &theirs)
+    };
+    if let Err(e) = saved {
         fail(format!(
             "{host} keeps this machine's key, but keeping its key here failed ({}: {e}); run pair again",
             dir.display()
@@ -235,9 +267,10 @@ fn cmd_pair(
     }
     println!(
         "Paired with {host}.\n  this machine: {}\n  {host}: {}\n\
-         Restart sola-kvm on both machines (it reads the keys when it starts).",
+         Restart sola-kvm on {} (it reads the keys when it starts).",
         link::hex(&own),
-        link::hex(&theirs)
+        link::hex(&theirs),
+        if view { host.as_str() } else { "both machines" }
     );
 }
 

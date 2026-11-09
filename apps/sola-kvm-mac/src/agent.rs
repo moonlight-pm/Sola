@@ -50,7 +50,7 @@ struct StampedDiscrete {
 }
 
 /// Takes input and clipboard only from the paired server (`keys`).
-pub fn run(bind: &str, keys: Keys) -> Result<(), AgentError> {
+pub fn run(bind: &str, keys: Keys, view_source: crate::view::Source) -> Result<(), AgentError> {
     let sock = UdpSocket::bind(bind).map_err(AgentError::Io)?;
     let local = sock.local_addr().ok();
     info!(?local, "sola-kvm-mac listening (UDP)");
@@ -71,6 +71,10 @@ pub fn run(bind: &str, keys: Keys) -> Result<(), AgentError> {
             None
         }
     };
+
+    if let Err(e) = crate::view::spawn(bind, keys.clone(), view_source) {
+        warn!(%e, "remote view listen failed — no remote view");
+    }
 
     let motion = Arc::new(MotionAtomics::new());
     let (discrete_tx, discrete_rx) = mpsc::channel::<StampedDiscrete>();

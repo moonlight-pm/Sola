@@ -105,6 +105,7 @@ crates/
   sola-mail/           # Kit-native mail client
   sola-calendar/       # Kit-native calendar (local, Google, iCloud)
   sola-kvm/            # KVM / input bridge
+  sola-kvm-view/       # KVM remote view: a host's screen in a window
   sola-lock/           # Lock screen (ext-session-lock-v1; Oath's login service)
   sola-editor/         # Text editor (Emacs keys; `edit <file>…` opens files in it)
   sola-preview/        # Simple image viewer (argv)

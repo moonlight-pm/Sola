@@ -8596,6 +8596,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-kvm-view"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "iced",
+ "libc",
+ "libloading 0.8.9",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "sola-kvm",
+ "tracing",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wgpu",
+]
+
+[[package]]
 name = "sola-lock"
 version = "0.1.0"
 dependencies = [

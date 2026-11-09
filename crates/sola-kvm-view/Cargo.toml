@@ -1,0 +1,27 @@
+[package]
+name = "sola-kvm-view"
+version.workspace = true
+edition.workspace = true
+description = "Remote view: another machine's screen in a window, driven from this keyboard and pointer"
+
+[[bin]]
+name = "sola-kvm-view"
+path = "src/main.rs"
+
+[dependencies]
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+sola-kvm = { path = "../sola-kvm" }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+# Same wgpu as iced 0.14.
+wgpu = "27"
+bytemuck = { version = "1", features = ["derive"] }
+# NVDEC and CUDA come with the NVIDIA driver, so they are loaded at run time.
+libloading = "0.8"
+libc = "0.2"
+tracing = "0.1"
+# The shortcuts inhibitor, on the window's own surface.
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
