@@ -213,7 +213,7 @@ pub async fn insert_event(
         .as_deref()
         .ok_or_else(|| anyhow!("missing Google calendar id"))?;
     let url = format!("{API}/calendars/{}/events", urlencoding::encode(remote));
-    let body = event_to_api(event);
+    let body = insert_body(event)?;
     let created: ApiEvent = authed_json(http, token, reqwest::Method::POST, &url, &body).await?;
     api_to_event(created, calendar).ok_or_else(|| anyhow!("Google returned an empty event"))
 }
@@ -344,6 +344,24 @@ fn event_to_api(event: &CalEvent) -> ApiEvent {
     }
 }
 
+/// What a create sends. Google picks the id, and answered a create that
+/// carried an empty `id` and nulls with a bare 400, so only what is set goes.
+fn insert_body(event: &CalEvent) -> Result<serde_json::Value> {
+    let mut body = serde_json::to_value(event_to_api(event))?;
+    if let serde_json::Value::Object(fields) = &mut body {
+        fields.remove("id");
+    }
+    strip_nulls(&mut body);
+    Ok(body)
+}
+
+fn strip_nulls(value: &mut serde_json::Value) {
+    if let serde_json::Value::Object(fields) = value {
+        fields.retain(|_, v| !v.is_null());
+        fields.values_mut().for_each(strip_nulls);
+    }
+}
+
 fn api_to_event(item: ApiEvent, calendar: &Calendar) -> Option<CalEvent> {
     let start_w = item.start?;
     let end_w = item.end.clone().unwrap_or_else(|| start_w.clone());
@@ -438,5 +456,24 @@ mod tests {
         assert!(all_day);
         assert_eq!(sd.unwrap().to_string(), "2026-09-08");
         assert_eq!(ed.unwrap().to_string(), "2026-09-09");
+    }
+
+    #[test]
+    fn a_create_sends_no_id_and_no_nulls() {
+        let event: CalEvent = serde_json::from_value(serde_json::json!({
+            "id": "local-1",
+            "calendar_id": "g-1",
+            "title": "Lunch",
+            "all_day": false,
+            "start": "2026-11-22T16:00:00Z",
+            "end": "2026-11-22T17:00:00Z",
+        }))
+        .unwrap();
+        let body = insert_body(&event).unwrap();
+        assert!(body.get("id").is_none());
+        assert!(body.get("status").is_none());
+        assert_eq!(body["summary"], "Lunch");
+        assert!(body["start"].get("date").is_none());
+        assert!(body["start"]["dateTime"].is_string());
     }
 }
