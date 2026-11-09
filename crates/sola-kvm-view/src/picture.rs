@@ -34,6 +34,17 @@ impl Picture {
     }
 }
 
+/// A wheel turn in detents for the Mac agent. Winit's signs, sent as they
+/// are, scrolled the Mac backwards on both axes, so both are negated. The
+/// agent's own signs are left as they are for the input path. A Linux host
+/// will need checking: its injector reads the wire's signs differently.
+fn wheel_detents(delta: mouse::ScrollDelta) -> (f32, f32) {
+    match delta {
+        mouse::ScrollDelta::Lines { x, y } => (-x, -y),
+        mouse::ScrollDelta::Pixels { x, y } => (-x / PIXELS_PER_DETENT, -y / PIXELS_PER_DETENT),
+    }
+}
+
 fn button_index(button: mouse::Button) -> Option<u8> {
     match button {
         mouse::Button::Left => Some(0),
@@ -68,10 +79,7 @@ impl shader::Program<Msg> for Picture {
             mouse::Event::ButtonPressed(b) => Packet::Button { button: button_index(b)?, pressed: 1 },
             mouse::Event::ButtonReleased(b) => Packet::Button { button: button_index(b)?, pressed: 0 },
             mouse::Event::WheelScrolled { delta } => {
-                let (dx, dy) = match delta {
-                    mouse::ScrollDelta::Lines { x, y } => (x, y),
-                    mouse::ScrollDelta::Pixels { x, y } => (x / PIXELS_PER_DETENT, y / PIXELS_PER_DETENT),
-                };
+                let (dx, dy) = wheel_detents(delta);
                 Packet::Scroll { dx, dy }
             }
             _ => return None,
@@ -368,4 +376,17 @@ fn write_plane(queue: &wgpu::Queue, texture: &wgpu::Texture, data: &[u8], size: 
             depth_or_array_layers: 1,
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wheel_is_negated_on_both_axes() {
+        let lines = mouse::ScrollDelta::Lines { x: 1.0, y: 2.0 };
+        assert_eq!(wheel_detents(lines), (-1.0, -2.0));
+        let pixels = mouse::ScrollDelta::Pixels { x: PIXELS_PER_DETENT, y: -PIXELS_PER_DETENT };
+        assert_eq!(wheel_detents(pixels), (-1.0, 1.0));
+    }
 }
