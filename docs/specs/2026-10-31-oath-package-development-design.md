@@ -119,7 +119,8 @@ from master or `next`, with the guard; a desk restart is asked for.
   `oath` takes it), the guard, only changed packages pinned, publish from
   master only, `cargo make run <app>`.
 - The split (the Oath session's plan, 2026-10-31): the core **keeps the
-  name `pkg:sola`** (bus, call, river, shell, session, kvm, lock, solactl,
+  name `pkg:sola`** (bus, call, river, shell, session, kvm (moved to its own
+  `pkg:sola-kvm` on 2026-11-10), lock, solactl,
   the Oath catalog app, and `share/`: icons, cursors — `SOLA_SHARE_DIR` and
   `XCURSOR_PATH` name `/oath/store/pkg/sola/share`, and an update can
   neither rename nor remove a package); a `pkg:sola-<app>` per app
