@@ -7,7 +7,7 @@ injects it: a Linux peer runs `sola-kvm listen`, a Mac peer runs
 `sola-kvm-mac`. The design is in the
 [KVM spec](../specs/2026-07-27-sola-kvm-design.md).
 
-`sola-kvm` ships on Oath in `pkg:sola`. The Mac agent, `sola-kvm-mac`, is
+`sola-kvm` and Remote Desktop ship on Oath in `pkg:sola-kvm`. The Mac agent, `sola-kvm-mac`, is
 built and installed on the Mac from
 [`apps/sola-kvm-mac`](../../apps/sola-kvm-mac/).
 

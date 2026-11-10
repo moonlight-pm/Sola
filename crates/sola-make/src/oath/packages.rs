@@ -4,7 +4,7 @@
 //! runs their programs as `svc:sola-*`.
 //!
 //! `pkg:sola` is the desk core: the programs whose restart takes the
-//! session down (bus, call, river, shell, session, kvm, lock), `solactl`,
+//! session down (bus, call, river, shell, session, lock), `solactl`,
 //! and `share/` (icons, cursors — `SOLA_SHARE_DIR`
 //! and `XCURSOR_PATH` name `/oath/store/pkg/sola/share`). Each app is its
 //! own `pkg:sola-<app>`, so an overlay that touches only an app moves only
@@ -118,8 +118,6 @@ pub const PACKAGES: &[Package] = &[
             "sola-river",
             "sola-shell",
             "sola-session",
-            "sola-kvm",
-            "sola-kvm-view",
             "sola-lock",
             "solactl",
             // Sola's opener under the name every program calls (D14), and
@@ -130,7 +128,7 @@ pub const PACKAGES: &[Package] = &[
         build: &["rust", "pkgconf", "libxkbcommon"],
         needs: &[
             "tmux",
-            // wl-copy / wl-paste: the KVM's clipboard.
+            // wl-copy / wl-paste: the kit's clipboard.
             "wl-clipboard",
             "pipewire",
             "wireplumber",
@@ -158,6 +156,10 @@ pub const PACKAGES: &[Package] = &[
     // Vault and its daemon (`svc:sola-vault` runs `sola-vaultd`): moving
     // it restarts the vault only.
     app("sola-vault", &["sola-vault", "sola-vaultd"], &[]),
+    // KVM and Remote Desktop, its window (`svc:sola-kvm` runs `sola-kvm`):
+    // moving it restarts input sharing only. wl-copy / wl-paste: their
+    // clipboard.
+    app("sola-kvm", &["sola-kvm", "sola-kvm-view"], &["wl-clipboard"]),
     Package {
         name: "sola-browser",
         bins: &["sola-browser"],
@@ -209,6 +211,7 @@ mod tests {
         assert_eq!(core.name, "sola");
         assert!(core.share && core.bins.contains(&"sola-river"));
         assert!(!core.bins.contains(&"sola-mail"), "apps are out of the core");
+        assert!(!core.bins.contains(&"sola-kvm"), "KVM restarts on its own");
     }
 
     #[test]
