@@ -143,11 +143,10 @@ impl<E: Engine> App<E> {
         self.persist_session();
     }
 
-    /// Write each profile's session (its pages) when it changed. A profile
-    /// whose last page closed this run is saved empty.
-    pub fn persist_session(&mut self) {
-        // Merge so a mid-navigation engine `about:blank` does not persist
-        // over the URL we just committed.
+    /// Every page as it is now: the engine's live view merged over chrome's,
+    /// so a mid-navigation `about:blank` does not stand for the URL just
+    /// committed.
+    pub(super) fn page_snapshot(&self) -> Vec<TabInfo> {
         let live: Vec<TabInfo> = self
             .tabs_handle
             .lock()
@@ -156,11 +155,17 @@ impl<E: Engine> App<E> {
             .filter(|t| !self.retired_tabs.contains(&t.id))
             .cloned()
             .collect();
-        let tabs = if live.is_empty() {
+        if live.is_empty() {
             self.cached_tabs.clone()
         } else {
             super::merge_tab_snapshot(&self.cached_tabs, &live, &self.closed_tabs)
-        };
+        }
+    }
+
+    /// Write each profile's session (its pages) when it changed. A profile
+    /// whose last page closed this run is saved empty.
+    pub fn persist_session(&mut self) {
+        let tabs = self.page_snapshot();
         let mut by_profile: Vec<(String, Vec<TabInfo>)> = Vec::new();
         for t in &tabs {
             self.page_id(t.id);
