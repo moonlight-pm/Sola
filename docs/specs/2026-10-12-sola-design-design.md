@@ -39,7 +39,7 @@ project's git, and openable in any browser.
 | Crate / binary | `sola-design`; `app_id` `sola-design`; window title **Design**. |
 | UI | Iced + sola-kit. Project rail on the left (kit sidebar); canvas on the right. Rail rows drag: canvases within their project, project headers as blocks (order saved in `projects.json`). |
 | Document | **Files are the document.** No app-owned node model, no `write_html`-style node ops. |
-| Projects | Own list at `~/.config/sola/design/projects.json`. **Separate** from Workspaces (may merge later). Add project = pick a folder. |
+| Projects | **Amended 2026-11-10 (Joshua: "design doesn't 'create' design folders .. like projects, it will scan the Projects/<...>/design folders"):** a project is a folder of `~/Projects` with a canvas in its `design/`, found by scanning; Design never adds, makes or drops one — agents make canvases. A new window is a navigator listing those projects with their canvases, as Projects' is. `projects.json` keeps only the open windows and each project's chip order and shown canvas. (Was: an own hand-added list, separate from Workspaces.) |
 | Root only | Canvases are read from `<project root>/design/` only. Worktrees are not scanned (v1). |
 | Rail | Sections = projects. Items = canvases: each directory `design/<canvas>/` that holds a `canvas.toml`. `+` on a project creates an empty canvas (name only). |
 | Engine | CEF via `sola-browser` (`default-features = false`) + `profiles::bind_external("sola-design", …)`. One `--engine` helper. **One OSR browser per artboard** (“board” tab). CPU OSR stays; do **not** enable `accelerated_osr`. Design's helper runs with `--disable-gpu-compositing` (2026-10-14): with CPU frames, GPU compositing read every frame back whole. |
@@ -115,10 +115,9 @@ resolved by `solactl` against the caller's cwd.
 | Verb | Does |
 |------|------|
 | `project.list` | Projects and their canvases (fresh scan). |
-| `project.add --path` | Register a project folder. |
-| `project.remove --path` | Forget a project (its `root`): its canvases leave the rail and close, agents' too. Files stay. |
-| `canvas.new NAME [--path] [--raise]` | Make `<project>/design/<slug>/canvas.toml` (project = `--path`, default the caller's cwd), register the project, make it live off screen (`--raise` shows it). Existing → open (`created: false`). |
-| `open --path [--raise]` | Make the canvas holding that path (dir, toml, or any file in it) live off the human's screen; registers the project if needed. `--raise` shows it and raises the window. Refused (with the reason) when its boards do not fit. |
+| `window.navigate` | A navigator window (the launcher's Design row). 2026-11-10; `project.add` / `project.remove` went then. |
+| `canvas.new NAME [--path] [--raise]` | Make `<project>/design/<slug>/canvas.toml` (project = `--path`, default the caller's cwd), make it live off screen (`--raise` shows it). Existing → open (`created: false`). |
+| `open --path [--raise]` | Make the canvas holding that path (dir, toml, or any file in it) live off the human's screen. `--raise` shows it and raises (or opens) its project's window. Refused (with the reason) when its boards do not fit. |
 | `canvas.close --canvas` | Close a live canvas an agent is done with (`--canvas` required); its boards' memory comes back, files stay, the next call reopens it. The canvas on the human's screen stays (error). |
 | `status` | Canvas, artboards (size, scale, painted, loading, discarded), zoom, mode, selection, `memory` (free / total / kept free MiB, Design's board estimate, open / discarded counts). |
 | `selection` | The human's pick: project, canvas, artboard, selector, tag, text, rect, trimmed `outerHTML` — or `null`. |

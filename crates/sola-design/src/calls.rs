@@ -26,25 +26,19 @@ pub fn methods() -> Vec<MethodSpec> {
         )
     };
     vec![
-        method("project.list", "Projects and their canvases", &[]),
         method(
-            "project.add",
-            "Register a project folder (canvases live in its design/)",
-            &[req("path", Some('p'), ArgType::Path, "Project folder")],
+            "project.list",
+            "The folders of ~/Projects with canvases in their design/ (and any other an agent opened a canvas in), with their canvases",
+            &[],
         ),
         method(
-            "project.remove",
-            "Forget a project: its canvases leave the rail and close (files stay on disk)",
-            &[req(
-                "path",
-                Some('p'),
-                ArgType::Path,
-                "Project folder (its `root` in project.list)",
-            )],
+            "window.navigate",
+            "Open a window to pick a project in, or bring one up (the launcher's Design row)",
+            &[],
         ),
         method(
             "open",
-            "Make a canvas live for you, off the human's screen (registers its project if needed); --raise shows it to them",
+            "Make a canvas live for you, off the human's screen; --raise shows it to them",
             &[
                 req(
                     "path",
@@ -217,8 +211,7 @@ mod tests {
         let names: Vec<&str> = methods.iter().map(|m| m.name.as_str()).collect();
         for need in [
             "project.list",
-            "project.add",
-            "project.remove",
+            "window.navigate",
             "open",
             "canvas.new",
             "canvas.close",
@@ -256,5 +249,7 @@ mod tests {
         assert!(c.required && matches!(c.ty, ArgType::Path));
         // No raw eval on this plane (freeze: not an agent API).
         assert!(!names.iter().any(|n| n.contains("eval")));
+        // Projects are folders Design finds, never ones it is told of.
+        assert!(!names.iter().any(|n| matches!(*n, "project.add" | "project.remove")));
     }
 }

@@ -60,8 +60,6 @@ pub struct Overlay<'a> {
     pub focus: Option<u64>,
     /// Engine cursor (`CursorKind` as u32) over a page.
     pub cursor: u32,
-    /// Off while a dialog is open: no input reaches the plane.
-    pub live: bool,
     /// What agents are touching (see [`crate::glow`]).
     pub glows: Vec<glow::Lit>,
     /// The canvas's annotations (see [`crate::scene`]).
@@ -318,12 +316,9 @@ impl canvas::Program<Event> for Overlay<'_> {
                 st.bounds = Some(bounds);
                 Some(Action::publish(Event::Bounds(bounds)))
             }
-            iced::Event::Mouse(m) if self.live => self.mouse(st, *m, bounds, cursor),
+            iced::Event::Mouse(m) => self.mouse(st, *m, bounds, cursor),
             iced::Event::Keyboard(k) => {
                 track_modifiers(k);
-                if !self.live {
-                    return None;
-                }
                 if st.composing {
                     if let keyboard::Event::KeyPressed { key, .. } = k {
                         // Escape cancels the composition; characters are
@@ -343,7 +338,7 @@ impl canvas::Program<Event> for Overlay<'_> {
                 }
                 self.keyboard(k)
             }
-            iced::Event::InputMethod(ime) if self.live => {
+            iced::Event::InputMethod(ime) => {
                 use iced::advanced::input_method::Event as Ime;
                 let tab = self.focus?;
                 let ev = match ime {

@@ -1,5 +1,6 @@
 //! sola-design app: a window per project, its canvases along the top
-//! ([`crate::topbar`]), and the plane.
+//! ([`crate::topbar`]), and the plane; a navigator window picks the
+//! project ([`crate::navigator`]).
 //!
 //! The plane stacks the artboard textures (wgpu shader), the overlay canvas
 //! (frames, titles, pick outline, all input), and a status pill (zoom, pick).
@@ -42,13 +43,13 @@ use crate::calls;
 use crate::camera::{self, Camera};
 use crate::canvas;
 use crate::detail::{self, Details};
-use crate::dialogs::{self, AddDraft, CanvasDraft};
 use crate::frames::{self, BoardFrames};
 use crate::glow::Glows;
 use crate::instance;
 use crate::loads::Loads;
 use crate::memory::Ledger;
 use crate::menu;
+use crate::navigator::{self, Navigator};
 use crate::overlay::{self, Overlay};
 use crate::plane::{self, Plane};
 use crate::projects::{self, CanvasRef, Catalog};
@@ -60,7 +61,7 @@ use crate::tour::{Nav, Notes, Tour, Tween};
 use crate::watch;
 use crate::windows::{self, DesignWindows};
 
-/// The no-project window's title.
+/// A navigator's title.
 const WINDOW_TITLE: &str = "Design";
 /// Helper view size before any board sets its own.
 const SPAWN_W: u32 = 1280;
@@ -136,17 +137,22 @@ pub enum Msg {
     ChipDrop,
     /// The wheel over a project's strip.
     BarScroll(String, iced::mouse::ScrollDelta),
-    Canvases(HashMap<String, Vec<canvas::Entry>>),
+    /// What a look at `~/Projects` and the known projects found.
+    Canvases(projects::Scan),
     CanvasChanged(PathBuf, watch::Change),
     Requery,
-    OpenAdd,
-    AddPath(String),
-    AddProject,
-    OpenNewCanvas(String),
-    CanvasName(String),
-    CreateCanvas,
-    DismissDialog,
+    /// A navigator window's field, rows and keys.
+    Nav(window::Id, NavMsg),
     Ignore,
+}
+
+#[derive(Debug, Clone)]
+pub enum NavMsg {
+    Query(String),
+    /// Row `i` picked (Enter, or a click).
+    Pick(usize),
+    /// Esc closes; the arrows move down the rows.
+    Key(iced::keyboard::key::Named),
 }
 
 pub fn run() -> iced::Result {
@@ -300,8 +306,8 @@ struct App {
     /// (canvas keys).
     hover_chip: Option<String>,
     chip_drag: Option<String>,
-    add: AddDraft,
-    canvas_draft: CanvasDraft,
+    /// Navigator windows' state ([`navigator`]).
+    navigators: HashMap<window::Id, Navigator>,
     theme: Theme,
     float: sola_kit::FloatState,
     /// Tasks a call or helper started (a window to open), run after the
@@ -311,7 +317,7 @@ struct App {
 
 impl App {
     fn new(engine: CefEngine, serve: Option<Server>, share: Option<Share>) -> (Self, Task<Msg>) {
-        let catalog = projects::load_from(&projects::catalog_path());
+        let catalog = Catalog::new(projects::load_from(&projects::catalog_path()));
         let mut app = Self {
             engine,
             serve,
@@ -352,15 +358,13 @@ impl App {
             loads: Loads::default(),
             hover_chip: None,
             chip_drag: None,
-            add: AddDraft::default(),
-            canvas_draft: CanvasDraft::default(),
+            navigators: HashMap::new(),
             theme: default_theme(),
             float: sola_kit::FloatState::new(APP_ID),
             later: Vec::new(),
         };
         app.rescan();
-        app.serve_projects();
-        let open = app.open_all_windows();
+        let open = app.open_saved_windows();
         (app, open)
     }
 
@@ -383,18 +387,13 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Msg> {
-        let projects: Vec<(String, PathBuf)> = self
-            .catalog
-            .projects
-            .iter()
-            .map(|p| (p.id.clone(), p.root.clone()))
-            .collect();
+        let known: Vec<PathBuf> = self.catalog.projects.iter().map(|p| p.root.clone()).collect();
         let mut subs = vec![
             frames::subscription(self.engine.frames(), self.frames.clone(), Msg::Frame),
             Subscription::run(poll_stream),
             bus_subscription().map(Msg::Bus),
             sola_kit::call_subscription().map(Msg::Call),
-            watch::canvases(projects, Msg::Canvases),
+            watch::canvases(projects::projects_dir(), known, Msg::Canvases),
         ];
         for l in &self.live {
             subs.push(watch::subscription(
@@ -431,6 +430,18 @@ impl App {
             ) => Some(Msg::Window(id, e)),
             _ => None,
         }));
+        if !self.navigators.is_empty() {
+            subs.push(iced::event::listen_with(|event, _, id| {
+                use iced::keyboard::{Event, Key, key::Named};
+                match event {
+                    iced::Event::Keyboard(Event::KeyPressed {
+                        key: Key::Named(named @ (Named::Escape | Named::ArrowUp | Named::ArrowDown)),
+                        ..
+                    }) => Some(Msg::Nav(id, NavMsg::Key(named))),
+                    _ => None,
+                }
+            }));
+        }
         if self.chip_drag.is_some() {
             subs.push(iced::event::listen_with(|event, _, _| match event {
                 iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
@@ -558,14 +569,8 @@ impl App {
                     iced::widget::scrollable::AbsoluteOffset { x: -(dx + dy), y: 0.0 },
                 );
             }
-            Msg::Canvases(mut found) => {
-                for p in &self.catalog.projects {
-                    if let Some(list) = found.get_mut(&p.id) {
-                        p.order_canvases(list);
-                    }
-                }
-                self.canvases = found;
-                self.share_canvases();
+            Msg::Canvases(found) => {
+                self.apply_scan(found);
                 self.wake_windows();
             }
             Msg::CanvasChanged(dir, change) => {
@@ -575,16 +580,7 @@ impl App {
                 }
             }
             Msg::Requery => self.requery(),
-            Msg::OpenAdd => return self.open_add(),
-            Msg::AddPath(s) => self.add.path = s,
-            Msg::AddProject => return self.add_project(),
-            Msg::OpenNewCanvas(project) => return self.open_new_canvas(project),
-            Msg::CanvasName(s) => self.canvas_draft.name = s,
-            Msg::CreateCanvas => self.create_canvas(),
-            Msg::DismissDialog => {
-                self.add = AddDraft::default();
-                self.canvas_draft = CanvasDraft::default();
-            }
+            Msg::Nav(window, m) => return self.on_nav(window, m),
             Msg::Ignore => {}
         }
         Task::none()
@@ -621,39 +617,13 @@ impl App {
         Task::none()
     }
 
-    /// The active window's project (not the no-project window).
-    fn active_project(&self) -> Option<String> {
-        self.windows
-            .active
-            .and_then(|w| self.windows.project_of(w))
-            .filter(|p| !p.is_empty())
-            .map(str::to_string)
-    }
-
     fn on_menu(&mut self, action: &str) -> Task<Msg> {
         match action {
-            menu::ADD_PROJECT => return self.open_add(),
-            menu::NEW_CANVAS => {
-                let project = self
-                    .active_project()
-                    .or_else(|| self.catalog.projects.first().map(|p| p.id.clone()));
-                if let Some(project) = project {
-                    return self.open_new_canvas(project);
-                }
-            }
-            menu::DROP_PROJECT => {
-                if let Some(project) = self.active_project() {
-                    return self.drop_project(&project);
-                }
-            }
+            menu::OPEN_PROJECT => return self.navigate(),
             menu::CLOSE_WINDOW => {
                 if let Some(window) = self.windows.active {
                     return self.close_window(window);
                 }
-            }
-            open if open.starts_with(menu::OPEN_PREFIX) => {
-                let project = open[menu::OPEN_PREFIX.len()..].to_string();
-                return self.open_window(&project, false);
             }
             menu::FIT => {
                 self.take_camera();
@@ -681,30 +651,37 @@ impl App {
 
     // ── windows ───────────────────────────────────────────────────
 
-    /// Open a window for every project (the one last shown in front), or
-    /// the no-project window when there are none.
-    fn open_all_windows(&mut self) -> Task<Msg> {
-        let ids: Vec<String> = self.catalog.projects.iter().map(|p| p.id.clone()).collect();
-        if ids.is_empty() {
-            return self.open_window(windows::EMPTY, false);
+    /// The windows open when Design last ran (the one last in front, in
+    /// front), or a navigator when there were none. A project whose
+    /// folder is gone is let go.
+    fn open_saved_windows(&mut self) -> Task<Msg> {
+        let (saved, front) = (self.catalog.saved.open.clone(), self.catalog.saved.front.clone());
+        let roots: Vec<PathBuf> = saved.iter().filter(|r| r.is_dir()).cloned().collect();
+        if roots.len() != saved.len() {
+            self.catalog.saved.open = roots.clone();
+            self.persist();
         }
-        let front = self
-            .catalog
-            .selected
-            .as_ref()
-            .map(|s| s.project.clone())
-            .filter(|p| ids.contains(p))
-            .unwrap_or_else(|| ids[0].clone());
+        if roots.is_empty() {
+            return self.open_navigator();
+        }
+        let ids: Vec<String> = roots.iter().map(|r| self.catalog.know(r)).collect();
+        // Their canvases, for the ones outside `~/Projects`.
+        self.rescan();
+        self.serve_projects();
+        let front = front
+            .and_then(|f| roots.iter().position(|r| *r == f))
+            .unwrap_or(0);
         let tasks: Vec<Task<Msg>> = ids
             .iter()
-            .map(|id| self.open_window(id, *id != front))
+            .enumerate()
+            .map(|(i, id)| self.open_window(id, i != front))
             .collect();
         Task::batch(tasks)
     }
 
     /// Open project `project`'s window, or bring it up when it is open. A
-    /// window opened in front becomes the active one. The no-project
-    /// window goes once a project has one.
+    /// window opened in front becomes the active one. It comes back at the
+    /// next launch until it is closed.
     pub(super) fn open_window(&mut self, project: &str, background: bool) -> Task<Msg> {
         if let Some(window) = self.windows.window_of(project) {
             if !background {
@@ -713,25 +690,47 @@ impl App {
             }
             return Task::none();
         }
-        let mut tasks = Vec::new();
-        if !project.is_empty() {
-            if let Some(empty) = self.windows.window_of(windows::EMPTY) {
-                self.windows.forget(empty);
-                tasks.push(window::close(empty));
-            }
-        }
         let (window, open) = self.windows.open(APP_ID, project, background);
-        tasks.push(open.then(|id| window::scale_factor(id).map(move |f| Msg::Scale(id, f))));
         if !background || self.windows.active.is_none() {
             self.activate(window);
         }
+        if self.catalog.set_open(project, true) {
+            self.persist();
+        }
         self.publish_menu();
-        Task::batch(tasks)
+        open.then(|id| window::scale_factor(id).map(move |f| Msg::Scale(id, f)))
     }
 
-    /// Close a window. Its project stays (Project → Open brings it back);
-    /// its canvas leaves the screen. The last window closing quits.
+    /// The launcher's Design row and Project → Open Project…: bring up a
+    /// navigator, or open one.
+    pub(super) fn navigate(&mut self) -> Task<Msg> {
+        let Some(window) = self.windows.navigators().next() else {
+            return self.open_navigator();
+        };
+        self.activate(window);
+        self.windows.show(window);
+        focus_nav_field()
+    }
+
+    /// Open a navigator window in front.
+    fn open_navigator(&mut self) -> Task<Msg> {
+        let (window, open) = self.windows.open_navigator(APP_ID);
+        self.navigators.insert(window, Navigator::default());
+        self.activate(window);
+        self.publish_menu();
+        open.then(|_| focus_nav_field())
+    }
+
+    /// Close a window (the files stay; a project's no longer comes back at
+    /// the next launch). Its canvas leaves the screen. The last window
+    /// closing quits.
     fn close_window(&mut self, window: window::Id) -> Task<Msg> {
+        if let Some(project) = self.windows.project_of(window).map(str::to_string) {
+            if self.catalog.set_open(&project, false) {
+                self.persist();
+            }
+        }
+        self.navigators.remove(&window);
         self.forget_window(window);
         if self.windows.is_empty() {
             return Task::batch([window::close(window), iced::exit()]);
@@ -767,8 +766,7 @@ impl App {
                     self.focused = true;
                     // Its project's window opens in front next time.
                     if let Some(at) = self.canvas_of(window) {
-                        if self.catalog.selected.as_ref() != Some(&at) {
-                            self.catalog.select(&at);
+                        if self.catalog.select(&at) {
                             self.persist();
                         }
                     }
@@ -784,6 +782,7 @@ impl App {
             window::Event::CloseRequested => return self.close_window(window),
             window::Event::Closed => {
                 if self.windows.get(window).is_some() {
+                    self.navigators.remove(&window);
                     self.forget_window(window);
                 }
                 if self.windows.is_empty() {
@@ -843,16 +842,8 @@ impl App {
         }
     }
 
-    /// The app menu, with Project → Open for each project without a window.
     fn publish_menu(&self) {
-        let closed: Vec<(String, String)> = self
-            .catalog
-            .projects
-            .iter()
-            .filter(|p| !self.windows.has(&p.id))
-            .map(|p| (p.id.clone(), p.name.clone()))
-            .collect();
-        sola_kit::menu::publish(menu::app_menu(&closed));
+        sola_kit::menu::publish(menu::app_menu());
     }
 
     /// Each window's row in the shell's bar rings while an agent works in
@@ -1234,17 +1225,32 @@ impl App {
         }
     }
 
+    /// Look at `~/Projects` and the known projects now.
     fn rescan(&mut self) {
-        self.canvases = self
-            .catalog
-            .projects
-            .iter()
-            .map(|p| (p.id.clone(), p.canvases()))
-            .collect();
+        let known: Vec<PathBuf> = self.catalog.projects.iter().map(|p| p.root.clone()).collect();
+        self.apply_scan(projects::scan(&projects::projects_dir(), &known));
+    }
+
+    /// What a scan found: the navigators' list, and each project's
+    /// canvases in its chip order. A project seen for the first time is
+    /// served from now on.
+    fn apply_scan(&mut self, found: projects::Scan) {
+        let known = self.catalog.projects.len();
+        self.catalog.set_listed(found.listed.iter().map(|(root, _)| root));
+        let mut canvases = HashMap::new();
+        for (root, mut list) in found.listed.into_iter().chain(found.other) {
+            let id = self.catalog.know(&root);
+            self.catalog.order_canvases(&id, &mut list);
+            canvases.insert(id, list);
+        }
+        self.canvases = canvases;
+        if self.catalog.projects.len() != known {
+            self.serve_projects();
+        }
         self.share_canvases();
     }
 
-    /// Every canvas the rail lists has a share link.
+    /// Every canvas of every known project has a share link.
     fn share_canvases(&self) {
         let Some(share) = &self.share else {
             return;
@@ -1284,13 +1290,12 @@ impl App {
     }
 
     fn persist(&self) {
-        if let Err(e) = projects::save_to(&projects::catalog_path(), &self.catalog) {
+        if let Err(e) = projects::save_to(&projects::catalog_path(), &self.catalog.saved) {
             tracing::warn!(error = %e, "save design projects");
         }
-        self.serve_projects();
     }
 
-    /// The origin serves exactly the projects in the list.
+    /// The origin serves exactly the known projects.
     fn serve_projects(&self) {
         if let Some(server) = &self.serve {
             server.set_projects(
@@ -1302,97 +1307,62 @@ impl App {
         }
     }
 
-    fn dialog_open(&self) -> bool {
-        self.add.open || self.canvas_draft.project.is_some()
+    // ── navigators ────────────────────────────────────────────────
+
+    /// The navigators' list: the folders of `~/Projects` with canvases.
+    fn listed(&self) -> Vec<navigator::Listed<'_>> {
+        self.catalog
+            .listed
+            .iter()
+            .filter_map(|id| {
+                let p = self.catalog.project(id)?;
+                Some(navigator::Listed {
+                    id: &p.id,
+                    name: &p.name,
+                    canvases: self.canvases.get(id).map_or(&[], Vec::as_slice),
+                })
+            })
+            .collect()
     }
 
-    /// The window an open dialog shows in: New Canvas in its project's
-    /// window, Add Project in the active one.
-    fn dialog_window(&self) -> Option<window::Id> {
-        if let Some(project) = &self.canvas_draft.project {
-            return self.windows.window_of(project);
-        }
-        self.add.open.then_some(self.windows.active).flatten()
-    }
-
-    fn open_add(&mut self) -> Task<Msg> {
-        self.canvas_draft = CanvasDraft::default();
-        self.add = AddDraft {
-            open: true,
-            ..AddDraft::default()
+    fn on_nav(&mut self, window: window::Id, m: NavMsg) -> Task<Msg> {
+        use iced::keyboard::key::Named;
+        let Some(nav) = self.navigators.get(&window) else {
+            return Task::none();
         };
-        iced::widget::operation::focus::<Msg>(iced::widget::Id::new(dialogs::ADD_INPUT_ID))
-    }
-
-    /// Add the folder in the dialog; its window opens in front.
-    fn add_project(&mut self) -> Task<Msg> {
-        match self.catalog.add(&self.add.path) {
-            Ok(id) => {
-                tracing::info!(project = %id, "added design project");
-                self.add = AddDraft::default();
-                self.persist();
-                self.rescan();
-                return self.open_window(&id, false);
-            }
-            Err(e) => self.add.error = Some(e),
+        let listed = self.listed();
+        let (len, pick) = match &m {
+            NavMsg::Pick(i) => (0, nav.pick(&listed, *i)),
+            _ => (nav.rows(&listed).len(), navigator::Pick::Nothing),
+        };
+        if let navigator::Pick::Open { project, canvas } = pick {
+            return self.nav_open(window, project, canvas);
+        }
+        let Some(nav) = self.navigators.get_mut(&window) else {
+            return Task::none();
+        };
+        match m {
+            NavMsg::Query(q) => nav.set_query(q),
+            NavMsg::Key(Named::ArrowUp) => nav.step(-1, len),
+            NavMsg::Key(Named::ArrowDown) => nav.step(1, len),
+            NavMsg::Key(Named::Escape) => return self.close_window(window),
+            NavMsg::Key(_) | NavMsg::Pick(_) => {}
         }
         Task::none()
     }
 
-    fn open_new_canvas(&mut self, project: String) -> Task<Msg> {
-        self.add = AddDraft::default();
-        self.canvas_draft = CanvasDraft {
-            project: Some(project),
-            ..CanvasDraft::default()
-        };
-        iced::widget::operation::focus::<Msg>(iced::widget::Id::new(dialogs::CANVAS_INPUT_ID))
-    }
-
-    fn create_canvas(&mut self) {
-        let Some(project) = self.canvas_draft.project.clone() else {
-            return;
-        };
-        let Some(root) = self.catalog.project(&project).map(|p| p.root.clone()) else {
-            return;
-        };
-        match canvas::create(&root, &self.canvas_draft.name) {
-            Ok(name) => {
-                self.canvas_draft = CanvasDraft::default();
-                self.rescan();
-                self.show_canvas(CanvasRef {
-                    project,
-                    canvas: name,
-                });
-            }
-            Err(e) => self.canvas_draft.error = Some(e),
+    /// A navigator's pick: its project's window (on `canvas`, if one was
+    /// picked) opens or comes up, and the navigator closes.
+    fn nav_open(&mut self, window: window::Id, project: String, canvas: Option<String>) -> Task<Msg> {
+        tracing::info!(%project, ?canvas, "design navigator pick");
+        if let Some(canvas) = canvas {
+            self.show_canvas(CanvasRef {
+                project: project.clone(),
+                canvas,
+            });
         }
-    }
-
-    /// Unregister a project (its files stay): its window and canvases
-    /// close. With no project left, the no-project window opens.
-    fn drop_project(&mut self, project: &str) -> Task<Msg> {
-        let mut tasks = Vec::new();
-        if let Some(window) = self.windows.window_of(project) {
-            self.forget_window(window);
-            tasks.push(window::close(window));
-        }
-        let keys: Vec<String> = self
-            .live
-            .iter()
-            .filter(|l| l.at.project == project)
-            .map(|l| l.at.key())
-            .collect();
-        for key in keys {
-            self.close_live(&key);
-        }
-        self.catalog.drop_project(project);
-        self.persist();
-        self.rescan();
-        if self.windows.is_empty() {
-            tasks.push(self.open_window(windows::EMPTY, false));
-        }
-        self.publish_menu();
-        Task::batch(tasks)
+        let open = self.open_window(&project, false);
+        Task::batch([open, self.close_window(window)])
     }
 
     // ── view ──────────────────────────────────────────────────────
@@ -1401,9 +1371,15 @@ impl App {
     /// one it shows. Every message from it activates it first.
     fn view(&self, window: window::Id) -> Element<'_, Msg> {
         let plane_bg = self.theme.extended_palette().background.base.color;
-        let project = self.windows.project_of(window).unwrap_or(windows::EMPTY);
-        let body: Element<'_, Msg> = if project.is_empty() {
-            dialogs::no_project()
+        let project = self.windows.project_of(window).unwrap_or(windows::NAVIGATOR);
+        let body: Element<'_, Msg> = if let Some(nav) = self.navigators.get(&window) {
+            let open = self
+                .windows
+                .iter()
+                .filter(|(_, w)| w.project != windows::NAVIGATOR)
+                .map(|(w, win)| (win.project.clone(), self.canvas_of(w).map(|at| at.canvas)))
+                .collect();
+            navigator::view(nav, window, &self.listed(), &open)
         } else {
             let at = self.canvas_of(window);
             let bar = topbar::view(topbar::Bar {
@@ -1420,13 +1396,6 @@ impl App {
                 self.plane_view(window, at, plane_bg),
             ]
             .into()
-        };
-        let dialog = (self.dialog_window() == Some(window))
-            .then(|| dialogs::dialog(&self.add, &self.canvas_draft, &self.catalog.projects))
-            .flatten();
-        let body: Element<'_, Msg> = match dialog {
-            Some(dialog) => stack![body, dialog].into(),
-            None => body,
         };
         sola_kit::window_frame(
             self.chrome(window),
@@ -1475,7 +1444,7 @@ impl App {
         let plane = self.windows.get(window).and_then(|w| w.plane);
         let open = key.as_deref().and_then(|k| Some((self.live(k)?, self.view_of(k, plane)?)));
         let body: Element<'_, Msg> = match (at, open) {
-            (None, _) => hint("No canvases yet. + makes one (⌘⇧N)."),
+            (None, _) => hint("No canvases in its design/ folder."),
             (Some(_), None) => hint("Opening…"),
             (Some(_), Some((open, view))) => {
                 // Every live board keeps its texture fresh (one shader
@@ -1529,7 +1498,6 @@ impl App {
                     selection: view.selection.map(|s| (s.tab, s.picked.rect)),
                     focus: if view.active { self.focus } else { None },
                     cursor: self.engine.cursor_handle().load(Ordering::Relaxed),
-                    live: !self.dialog_open(),
                     glows: self.glows.lit(Instant::now()),
                 };
                 let overlay: Element<'_, overlay::Event> = iced_canvas(overlay)
@@ -1571,9 +1539,6 @@ impl App {
     /// has the keyboard: the page's caret, or near the board's corner
     /// until the page reports one.
     fn ime_caret(&self) -> Option<iced::Rectangle> {
-        if self.dialog_open() {
-            return None;
-        }
         let board = self.shown_boards().iter().find(|b| Some(b.tab.0) == self.focus)?;
         let caret = *self.engine.ime_handle().lock().unwrap();
         let s = board.scale as f32;
@@ -1743,4 +1708,8 @@ pub(super) fn pill_style(theme: &Theme) -> container::Style {
         },
         ..container::Style::default()
     }
+}
+
+fn focus_nav_field() -> Task<Msg> {
+    iced::widget::operation::focus::<Msg>(iced::widget::Id::new(navigator::FIELD_ID))
 }

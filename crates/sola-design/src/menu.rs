@@ -6,12 +6,8 @@ use sola_core::{KeyChord, KeyCode};
 
 use crate::APP_ID;
 
-pub const ADD_PROJECT: &str = "add-project";
-pub const NEW_CANVAS: &str = "new-canvas";
-pub const DROP_PROJECT: &str = "drop-project";
+pub const OPEN_PROJECT: &str = "open-project";
 pub const CLOSE_WINDOW: &str = "close-window";
-/// Menu action id prefix for Project → Open: `open-project:<project id>`.
-pub const OPEN_PREFIX: &str = "open-project:";
 pub const FIT: &str = "fit";
 pub const ACTUAL_SIZE: &str = "actual-size";
 pub const ZOOM_IN: &str = "zoom-in";
@@ -20,27 +16,15 @@ pub const RELOAD: &str = "reload";
 pub const SHARE_COPY: &str = "share-copy";
 pub const SHARE_ROTATE: &str = "share-rotate";
 
-/// The app menu. `closed` lists `(id, name)` of each project without a
-/// window, under Project → Open.
-pub fn app_menu(closed: &[(String, String)]) -> AppMenuPayload {
-    let mut project = vec![
-        action(ADD_PROJECT, "Add Project…", Some(KeyCode::N.meta())),
-        action(NEW_CANVAS, "New Canvas…", Some(KeyCode::N.meta_shift())),
-        MenuItem::Divider,
-        action(DROP_PROJECT, "Drop Project", None),
-    ];
-    if !closed.is_empty() {
-        project.push(MenuItem::Divider);
-        for (id, name) in closed {
-            project.push(action(&format!("{OPEN_PREFIX}{id}"), &format!("Open {name}"), None));
-        }
-    }
+/// The app menu. Design opens projects; it makes and drops none (agents
+/// make them), so Project → Open Project… is all the Project menu has.
+pub fn app_menu() -> AppMenuPayload {
     AppMenuPayload {
         app_id: APP_ID.into(),
         menus: vec![
             MenuDefinition {
                 label: "Design".into(),
-                // Only the window: the project stays (Open).
+                // Only the window: Open Project… brings it back.
                 items: vec![
                     action(CLOSE_WINDOW, "Close Window", Some(sola_kit::menu::CLOSE_WINDOW_KEY)),
                     sola_kit::menu::quit_menu_item("Quit Design"),
@@ -48,7 +32,7 @@ pub fn app_menu(closed: &[(String, String)]) -> AppMenuPayload {
             },
             MenuDefinition {
                 label: "Project".into(),
-                items: project,
+                items: vec![action(OPEN_PROJECT, "Open Project…", Some(KeyCode::O.meta()))],
             },
             MenuDefinition {
                 label: "Share".into(),

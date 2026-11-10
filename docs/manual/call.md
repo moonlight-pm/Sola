@@ -224,7 +224,7 @@ right rail is the live catalog.
 | `bots` | `sola-botsd` | While `sola-botsd` runs | `list`, `poll`, `new`, `setup`, `send`, `transcript`, `rm`, `cancel` |
 | `projects` | `sola-projects` | While **Projects** runs; it quits when its last project window closes | `ps`, `project.list`, `window.navigate`, `project.open`, `project.close`, `session.list`, `session.new`, `session.end`, `session.select`, `session.set`, `session.exec`, `pane.list`, `pane.send`, `pane.read`, `pane.wait`, `whoami` |
 | `browser` | `sola-browser` | While the **Browser** runs | `tabs`, `tab.open`, `tab.close`, `tab.focus`, `goto`, `back`, `forward`, `reload`, `stop`, `find.page`, `snapshot`, `find`, `click`, `hover`, `key`, `scroll`, `type`, `fill`, `get`, `links`, `select`, `wait`, `screenshot` |
-| `design` | `sola-design` | While **Design** runs | `project.list`, `project.add`, `project.remove`, `open`, `canvas.new`, `canvas.close`, `status`, `share`, `share.rotate`, `selection`, `view`, `wait`, `reload`, `screenshot`, `pdf`, `inspect` |
+| `design` | `sola-design` | While **Design** runs | `project.list`, `window.navigate`, `open`, `canvas.new`, `canvas.close`, `status`, `share`, `share.rotate`, `selection`, `view`, `wait`, `reload`, `screenshot`, `pdf`, `inspect` |
 | `vault` | `sola-vaultd` | While the vault service runs | `status`, `lock`, `sync`, `open`; none returns an item or a value ([Vault](sola-vault.md#nothing-secret-leaves-the-socket)) |
 
 The compositor and desk owners belong to services PID 1 keeps running,

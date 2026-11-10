@@ -211,12 +211,12 @@ impl App {
     }
 
     /// The canvas project window `window` shows: its project's selected
-    /// canvas while it is on disk, else the first. `None` for the
-    /// no-project window or a project without canvases.
+    /// canvas while it is on disk, else the first. `None` for a navigator
+    /// or a project without canvases.
     pub(super) fn canvas_of(&self, window: window::Id) -> Option<CanvasRef> {
         let project = self.windows.project_of(window)?;
         let list = self.canvases.get(project)?;
-        let selected = self.catalog.project(project)?.selected.as_deref();
+        let selected = self.catalog.selected(project);
         let name = selected
             .filter(|s| list.iter().any(|c| c.name == *s))
             .or_else(|| list.first().map(|c| c.name.as_str()))?;
@@ -257,8 +257,7 @@ impl App {
     pub(super) fn show_canvas(&mut self, at: CanvasRef) {
         let window = self.windows.window_of(&at.project);
         let before = window.and_then(|w| self.canvas_of(w)).map(|c| c.key());
-        if self.catalog.selected.as_ref() != Some(&at) || before.as_deref() != Some(&at.key()) {
-            self.catalog.select(&at);
+        if self.catalog.select(&at) {
             self.persist();
         }
         if let Some(old) = before.filter(|old| *old != at.key()) {

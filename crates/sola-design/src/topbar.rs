@@ -1,19 +1,17 @@
 //! A project window's canvases, along its top (Next), in their saved
 //! order. A chip's label is the canvas's folder name; a ring marks a canvas
 //! an agent is working in. A click shows it, a drag onto another chip takes
-//! that place, `+` opens New Canvas. The wheel scrolls the strip when the
-//! chips pass the width.
+//! that place. The wheel scrolls the strip when the chips pass the width.
+//! There is no New Canvas: agents make canvases, and they show up here.
 
 use std::collections::HashSet;
-use std::sync::OnceLock;
 
 use iced::widget::scrollable::{Direction, Scrollbar};
-use iced::widget::{container, mouse_area, row, scrollable, svg, text};
+use iced::widget::{container, mouse_area, row, scrollable, text};
 use iced::{Alignment, Background, Element, Length, Padding, Theme};
-use sola_kit::components::icon::icon_handle;
 use sola_kit::components::sidebar::item_style;
 use sola_kit::components::style::{chrome_surface, SPACE_SM, SPACE_XS};
-use sola_kit::components::{SidebarIndicator, status_mark, toolbar_icon_tip};
+use sola_kit::components::{SidebarIndicator, status_mark};
 use sola_kit::fonts;
 
 use crate::app::Msg;
@@ -66,16 +64,7 @@ pub fn view<'a>(bar: Bar<'a>) -> Element<'a, Msg> {
             Scrollbar::new().width(0).scroller_width(0),
         ))
         .width(Length::Fill);
-    let add = toolbar_icon_tip(
-        plus_icon(),
-        "New canvas",
-        Some(Msg::OpenNewCanvas(bar.project.to_string())),
-    );
-    container(
-        row![strip, add]
-            .spacing(SPACE_SM)
-            .align_y(Alignment::Center),
-    )
+    container(strip)
     .padding(Padding::from([0, 6]))
     .height(Length::Fixed(HEIGHT))
     .width(Length::Fill)
@@ -136,9 +125,4 @@ fn chip<'a>(
         .on_enter(Msg::HoverIn(key.clone()))
         .on_exit(Msg::HoverOut(key))
         .into()
-}
-
-fn plus_icon() -> svg::Handle {
-    static H: OnceLock<svg::Handle> = OnceLock::new();
-    H.get_or_init(|| icon_handle("lucide/plus")).clone()
 }

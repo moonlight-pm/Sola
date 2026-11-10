@@ -10,10 +10,11 @@
 //! [`newest_input`] is the same set as file times, so `wait` can tell that
 //! the boards are older than the files before the watcher has acted.
 //!
-//! [`canvases`] rescans every project's `design/` for the rail and only
-//! messages iced when the list changed (agents create canvases too).
+//! [`canvases`] rescans `~/Projects` and every known project's `design/`
+//! ([`crate::projects::scan`]) and only messages iced when what it found
+//! changed (agents make projects and canvases).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -25,15 +26,15 @@ use iced_futures::subscription::{self, EventStream, Recipe};
 use notify::event::{AccessKind, AccessMode};
 use notify::{EventKind, RecursiveMode, Watcher};
 
-use crate::canvas::{self, CANVAS_FILE};
+use crate::canvas::CANVAS_FILE;
+use crate::projects::{self, Scan};
 
 const DEBOUNCE: Duration = Duration::from_millis(120);
 /// How often an idle watcher checks that iced still wants it.
 const IDLE_CHECK: Duration = Duration::from_secs(1);
-/// Rail rescan period. A read_dir per project; no message unless changed.
+/// Rescan period. A read_dir per folder of `~/Projects` and per known
+/// project; no message unless changed.
 const SCAN_EVERY: Duration = Duration::from_secs(2);
-
-pub type Canvases = HashMap<String, Vec<canvas::Entry>>;
 
 /// What one debounced burst touched. Both can be set (an agent rewrote
 /// `canvas.toml` and the CSS together).
@@ -200,20 +201,20 @@ pub fn newest_input(canvas: &Path, linked: &[PathBuf]) -> Option<SystemTime> {
     newest
 }
 
-/// Canvas lists for `(project id, root)` pairs; first scan always reports.
+/// What [`projects::scan`] finds in `dir` (`~/Projects`) and the `known`
+/// roots; the first scan always reports.
 pub fn canvases<M: Send + 'static>(
-    projects: Vec<(String, PathBuf)>,
-    on_change: fn(Canvases) -> M,
+    dir: PathBuf,
+    known: Vec<PathBuf>,
+    on_change: fn(Scan) -> M,
 ) -> Subscription<M> {
-    subscription::from_recipe(ScanRecipe {
-        projects,
-        on_change,
-    })
+    subscription::from_recipe(ScanRecipe { dir, known, on_change })
 }
 
 struct ScanRecipe<M> {
-    projects: Vec<(String, PathBuf)>,
-    on_change: fn(Canvases) -> M,
+    dir: PathBuf,
+    known: Vec<PathBuf>,
+    on_change: fn(Scan) -> M,
 }
 
 impl<M: Send + 'static> Recipe for ScanRecipe<M> {
@@ -221,25 +222,20 @@ impl<M: Send + 'static> Recipe for ScanRecipe<M> {
 
     fn hash(&self, state: &mut subscription::Hasher) {
         "design-scan".hash(state);
-        self.projects.hash(state);
+        self.dir.hash(state);
+        self.known.hash(state);
     }
 
     fn stream(self: Box<Self>, _input: EventStream) -> iced_futures::BoxStream<M> {
-        let Self {
-            projects,
-            on_change,
-        } = *self;
+        let Self { dir, known, on_change } = *self;
         stream::channel(4, async move |mut output| {
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Canvases>();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Scan>();
             std::thread::Builder::new()
                 .name("design-scan".into())
                 .spawn(move || {
-                    let mut last: Option<Canvases> = None;
+                    let mut last: Option<Scan> = None;
                     while !tx.is_closed() {
-                        let now: Canvases = projects
-                            .iter()
-                            .map(|(id, root)| (id.clone(), canvas::scan(root)))
-                            .collect();
+                        let now = projects::scan(&dir, &known);
                         if last.as_ref() != Some(&now) {
                             if tx.send(now.clone()).is_err() {
                                 return;

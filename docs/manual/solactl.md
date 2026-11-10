@@ -914,11 +914,10 @@ or `sola-call` is down; it does not launch a window.
 
 ```text
 solactl design                               # list methods
-solactl design project.list                  # projects + canvases
-solactl design project.add --path ~/Workspace/Thoxa
-solactl design project.remove --path ~/Workspace/Thoxa  # forget it: canvases leave the rail and close; files stay
+solactl design project.list                  # ~/Projects folders with canvases (+ any other you opened one in)
+solactl design window.navigate               # a window to pick a project in (the launcher's Design row)
 solactl design canvas.new onboarding         # design/onboarding/ in your cwd's project
-solactl design canvas.new "Settings v2" --path ~/Workspace/Thoxa --raise
+solactl design canvas.new "Settings v2" --path ~/Projects/Thoxa --raise
 solactl design open design/onboarding        # relative to your cwd
 solactl design open design/onboarding/canvas.toml --raise
 solactl design canvas.close --canvas design/onboarding  # done with it: its boards' memory comes back; files stay
@@ -940,7 +939,7 @@ solactl design inspect --artboard light --selector section --all   # every match
 
 | Short | Long | Methods |
 |---|---|---|
-| `-p` | `--path` | `project.add`, `project.remove`, `open`, `canvas.new` |
+| `-p` | `--path` | `open`, `canvas.new` |
 | `-n` | `--name` | `canvas.new` |
 | `-r` | `--raise` | `open`, `canvas.new` |
 | `-c` | `--canvas` | `canvas.close` and every page call |
@@ -951,8 +950,8 @@ solactl design inspect --artboard light --selector section --all   # every match
 | `-o` | `--out` | `screenshot`, `pdf` |
 | `-A` | `--all` | `inspect` |
 
-Required arguments: `--path` on `project.add`, `project.remove`, and
-`open`; `canvas.new --name`; `canvas.close --canvas`. Deadlines: `wait`
+Required arguments: `open --path`; `canvas.new --name`; `canvas.close
+--canvas`. Deadlines: `wait`
 and `reload` 32 s, or their `--timeout` (default 15) plus 2 s;
 `screenshot`, `pdf`, and `inspect` 15 s; the rest 8 s.
 
@@ -974,16 +973,23 @@ in, and `auto` heights are measured.
 
 ### Opening a canvas
 
+Design keeps no list of projects: a project is a folder of `~/Projects`
+with a canvas in its `design/`, and Design finds it (within a couple of
+seconds). Agents make canvases; Design only opens them.
+
 `canvas.new NAME` makes `<project>/design/<slug>/canvas.toml` (project =
-`--path`, default your current directory), registers the project if
-needed, and opens the canvas. It appears under the project in the rail. An
+`--path`, default your current directory) and opens the canvas. An
 existing canvas of that name is opened instead (`created: false`).
 
 `open` takes the canvas directory, its `canvas.toml`, or any file inside
-it, and registers the project if Design does not know it yet.
+it. A canvas outside `~/Projects/<project>/design/` (in a worktree, say)
+opens too; its project is not in the human's list, and its window opens
+only with `--raise`.
 
-`open` and `canvas.new` make a canvas live **off the human's screen**; it
-shows in their rail. `--raise` puts it on their screen.
+`open` and `canvas.new` make a canvas live **off the human's screen**: no
+window opens. If its project has a window, its chip shows there, ringed
+while you work. `--raise` puts it on their screen, opening the project's
+window if need be.
 
 ### Targeting a canvas and an artboard
 

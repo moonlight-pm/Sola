@@ -1,8 +1,8 @@
 //! A window per project (Next): each project is its own window, a tab in
-//! the shell's tab bar, with its canvases along the top. Closing a window
-//! only closes the window; the project stays, and Project → Open brings it
-//! back. The window last focused or touched is the *active* one: its
-//! canvas takes input, keys and menu actions.
+//! the shell's tab bar, with its canvases along the top; a navigator
+//! window ([`crate::navigator`]) picks the project. Closing a window only
+//! closes the window; the files stay. The window last focused or touched
+//! is the *active* one: its canvas takes input, keys and menu actions.
 
 use std::collections::HashMap;
 
@@ -10,12 +10,12 @@ use iced::{Size, Task, window};
 use sola_bus::topics::Activity;
 use sola_kit::tabs::TabWindows;
 
-/// The project of the window shown while there is no project yet.
-pub const EMPTY: &str = "";
+/// The project of a navigator window: none yet.
+pub const NAVIGATOR: &str = "";
 
 /// One open window.
 pub struct Win {
-    /// Its project's id ([`EMPTY`] for the no-project window).
+    /// Its project's id ([`NAVIGATOR`] for a navigator).
     pub project: String,
     /// Its plane's size, once laid out.
     pub plane: Option<Size>,
@@ -26,6 +26,8 @@ pub struct Win {
 pub struct DesignWindows {
     tabs: TabWindows,
     wins: HashMap<window::Id, Win>,
+    /// Navigators opened, for their tab keys.
+    navigators_opened: u32,
     /// The window keys, menu actions and agents' default go to.
     pub active: Option<window::Id>,
 }
@@ -35,19 +37,36 @@ impl DesignWindows {
         Self {
             tabs: TabWindows::new(app_id),
             wins: HashMap::new(),
+            navigators_opened: 0,
             active: None,
         }
     }
 
-    /// Open project `project`'s window ([`EMPTY`] for the no-project
-    /// window). A `background` window joins its zone behind, unfocused.
+    /// Open project `project`'s window. A `background` window joins its
+    /// zone behind, unfocused.
     pub fn open(
         &mut self,
         app_id: &'static str,
         project: &str,
         background: bool,
     ) -> (window::Id, Task<window::Id>) {
-        let key = if project.is_empty() { "new" } else { project };
+        self.open_tab(app_id, project, project, background)
+    }
+
+    /// Open a navigator window, in front.
+    pub fn open_navigator(&mut self, app_id: &'static str) -> (window::Id, Task<window::Id>) {
+        self.navigators_opened += 1;
+        let key = format!("navigator-{}", self.navigators_opened);
+        self.open_tab(app_id, &key, NAVIGATOR, false)
+    }
+
+    fn open_tab(
+        &mut self,
+        app_id: &'static str,
+        key: &str,
+        project: &str,
+        background: bool,
+    ) -> (window::Id, Task<window::Id>) {
         let mut settings = sola_kit::app::window_settings_transparent(app_id);
         settings.size = Size::new(1280.0, 820.0);
         let (window, task) = self.tabs.open(key, settings, background);
@@ -59,7 +78,7 @@ impl DesignWindows {
                 scale: 1.0,
             },
         );
-        tracing::info!(%project, background, "design window");
+        tracing::info!(%key, background, "design window");
         (window, task)
     }
 
@@ -92,8 +111,12 @@ impl DesignWindows {
             .map(|(id, _)| *id)
     }
 
-    pub fn has(&self, project: &str) -> bool {
-        self.window_of(project).is_some()
+    /// The navigator windows.
+    pub fn navigators(&self) -> impl Iterator<Item = window::Id> + '_ {
+        self.wins
+            .iter()
+            .filter(|(_, w)| w.project == NAVIGATOR)
+            .map(|(id, _)| *id)
     }
 
     /// Every open window.

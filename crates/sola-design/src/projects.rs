@@ -1,20 +1,40 @@
-//! Design's own project list: `~/.config/sola/design/projects.json`.
+//! The projects Design knows, and what it keeps of them.
 //!
-//! Separate from the Projects app's catalog by decision (2026-10-12). A
-//! project is a folder; its canvases live under `<root>/design/`.
+//! A project is a folder of `~/Projects` with canvases in its `design/`
+//! (Joshua, 2026-11-10: "design doesn't 'create' design folders .. like
+//! projects, it will scan the Projects/<...>/design folders which can be
+//! opened for viewing... only agents will create those folders"). Design
+//! finds them by scanning ([`scan`]) and opens a window on one; it never
+//! makes, registers or drops one. A canvas an agent opens elsewhere (a
+//! worktree) makes its folder a project too, while Design runs.
+//!
+//! `~/.config/sola/design/projects.json` keeps which projects have a
+//! window (they come back at the next launch), the one last in front, and
+//! each project's chip order and shown canvas ([`Saved`]).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-const VERSION: u32 = 1;
+use crate::canvas::{self, Entry};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+const VERSION: u32 = 2;
+
+/// A project Design knows. Its id holds while Design runs and, for a
+/// folder of `~/Projects`, across runs (`proj-<slug of its name>`): share
+/// links and board hosts are keyed by it.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Project {
     pub id: String,
     pub name: String,
     pub root: PathBuf,
-    /// Canvas dir names in tab order (dragged). Canvases not listed
+}
+
+/// What Design keeps of one project.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Kept {
+    /// Canvas dir names in chip order (dragged). Canvases not listed
     /// follow, by name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub canvas_order: Vec<String>,
@@ -23,23 +43,33 @@ pub struct Project {
     pub selected: Option<String>,
 }
 
-impl Project {
-    /// This project's canvases on disk, in tab order.
-    pub fn canvases(&self) -> Vec<crate::canvas::Entry> {
-        let mut found = crate::canvas::scan(&self.root);
-        self.order_canvases(&mut found);
-        found
-    }
+/// `projects.json`, by project root.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Saved {
+    #[serde(default = "version")]
+    pub version: u32,
+    /// The projects with a window, in the order they opened.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub open: Vec<PathBuf>,
+    /// The project whose window was last in front.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub front: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub kept: BTreeMap<PathBuf, Kept>,
+}
 
-    /// Put `entries` (a scan, by name) in tab order.
-    pub fn order_canvases(&self, entries: &mut [crate::canvas::Entry]) {
-        let rank = |name: &str| {
-            self.canvas_order
-                .iter()
-                .position(|n| n == name)
-                .unwrap_or(usize::MAX)
-        };
-        entries.sort_by_key(|e| rank(&e.name));
+fn version() -> u32 {
+    VERSION
+}
+
+impl Default for Saved {
+    fn default() -> Self {
+        Self {
+            version: VERSION,
+            open: Vec::new(),
+            front: None,
+            kept: BTreeMap::new(),
+        }
     }
 }
 
@@ -65,51 +95,38 @@ impl CanvasRef {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The projects known while Design runs, and what is kept of them.
+#[derive(Debug, Default)]
 pub struct Catalog {
-    #[serde(default = "version")]
-    pub version: u32,
-    #[serde(default)]
+    /// Every project seen since Design started; none is forgotten.
     pub projects: Vec<Project>,
-    /// The canvas last shown: its project's window opens in front.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub selected: Option<CanvasRef>,
-}
-
-fn version() -> u32 {
-    VERSION
-}
-
-impl Default for Catalog {
-    fn default() -> Self {
-        Self {
-            version: VERSION,
-            projects: Vec::new(),
-            selected: None,
-        }
-    }
+    /// The folders of `~/Projects` with canvases, by name (ids): what a
+    /// navigator lists.
+    pub listed: Vec<String>,
+    pub saved: Saved,
 }
 
 impl Catalog {
+    pub fn new(saved: Saved) -> Self {
+        Self {
+            saved,
+            ..Self::default()
+        }
+    }
+
     pub fn project(&self, id: &str) -> Option<&Project> {
         self.projects.iter().find(|p| p.id == id)
     }
 
-    /// Add the folder at `raw` (`~` expands). Returns the new project id.
-    pub fn add(&mut self, raw: &str) -> Result<String, String> {
-        let raw = raw.trim();
-        if raw.is_empty() {
-            return Err("Enter a folder.".into());
-        }
-        let path = expand_home(raw);
-        let root = path
-            .canonicalize()
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        if !root.is_dir() {
-            return Err(format!("{} is not a folder.", root.display()));
-        }
-        if self.projects.iter().any(|p| p.root == root) {
-            return Err("That folder is already in the list.".into());
+    /// The project at `root` exactly (not one above it).
+    pub fn at_root(&self, root: &Path) -> Option<&Project> {
+        self.projects.iter().find(|p| p.root == root)
+    }
+
+    /// The id of the project at `root` (canonical), known from now on.
+    pub fn know(&mut self, root: &Path) -> String {
+        if let Some(p) = self.at_root(root) {
+            return p.id.clone();
         }
         let name = root
             .file_name()
@@ -119,38 +136,65 @@ impl Catalog {
         self.projects.push(Project {
             id: id.clone(),
             name,
-            root,
-            canvas_order: Vec::new(),
-            selected: None,
+            root: root.to_path_buf(),
         });
-        Ok(id)
+        id
+    }
+
+    /// What a scan found in `~/Projects` (roots, by name) is the list.
+    pub fn set_listed<'a>(&mut self, roots: impl IntoIterator<Item = &'a PathBuf>) {
+        self.listed = roots.into_iter().map(|r| self.know(r)).collect();
+    }
+
+    fn kept(&self, id: &str) -> Option<&Kept> {
+        self.saved.kept.get(&self.project(id)?.root)
+    }
+
+    /// The canvas project `id`'s window shows, as kept.
+    pub fn selected(&self, id: &str) -> Option<&str> {
+        self.kept(id)?.selected.as_deref()
+    }
+
+    /// Put `entries` (a scan, by name) in project `id`'s chip order.
+    pub fn order_canvases(&self, id: &str, entries: &mut [Entry]) {
+        let order = self.kept(id).map_or(&[][..], |k| k.canvas_order.as_slice());
+        let rank = |name: &str| order.iter().position(|n| n == name).unwrap_or(usize::MAX);
+        entries.sort_by_key(|e| rank(&e.name));
     }
 
     /// `at` is shown: its project's window shows it from now on, and that
-    /// window opens in front next time.
-    pub fn select(&mut self, at: &CanvasRef) {
-        if let Some(p) = self.projects.iter_mut().find(|p| p.id == at.project) {
-            p.selected = Some(at.canvas.clone());
-        }
-        self.selected = Some(at.clone());
+    /// window opens in front next time. True when that changed.
+    pub fn select(&mut self, at: &CanvasRef) -> bool {
+        let Some(root) = self.project(&at.project).map(|p| p.root.clone()) else {
+            return false;
+        };
+        let kept = self.saved.kept.entry(root.clone()).or_default();
+        let changed =
+            kept.selected.as_deref() != Some(at.canvas.as_str()) || self.saved.front.as_ref() != Some(&root);
+        kept.selected = Some(at.canvas.clone());
+        self.saved.front = Some(root);
+        changed
     }
 
-    /// The project registered at `root` exactly (not one above it).
-    pub fn at_root(&self, root: &Path) -> Option<&Project> {
-        self.projects.iter().find(|p| p.root == root)
-    }
-
-    /// Unregister a project. Files on disk are untouched.
-    pub fn drop_project(&mut self, id: &str) {
-        self.projects.retain(|p| p.id != id);
-        if self.selected.as_ref().is_some_and(|s| s.project == id) {
-            self.selected = None;
+    /// Project `id` has a window (or no longer has). True when that changed.
+    pub fn set_open(&mut self, id: &str, open: bool) -> bool {
+        let Some(root) = self.project(id).map(|p| p.root.clone()) else {
+            return false;
+        };
+        let at = self.saved.open.iter().position(|r| *r == root);
+        match (open, at) {
+            (true, None) => self.saved.open.push(root),
+            (false, Some(i)) => {
+                self.saved.open.remove(i);
+            }
+            _ => return false,
         }
+        true
     }
 
     /// Move canvas `name` in front of `before` (`None` = last) within
-    /// `project`. `listed` is the project's canvases in tab order now; it
-    /// becomes the saved order (so deleted canvases fall out of it).
+    /// `project`. `listed` is the project's canvases in chip order now; it
+    /// becomes the kept order (so deleted canvases fall out of it).
     pub fn move_canvas_before(
         &mut self,
         project: &str,
@@ -158,10 +202,9 @@ impl Catalog {
         before: Option<&str>,
         listed: &[String],
     ) -> Result<(), String> {
-        let p = self
-            .projects
-            .iter_mut()
-            .find(|p| p.id == project)
+        let root = self
+            .project(project)
+            .map(|p| p.root.clone())
             .ok_or_else(|| format!("unknown project '{project}'"))?;
         let known = |n: &str| listed.iter().any(|l| l == n);
         if !known(name) {
@@ -178,7 +221,7 @@ impl Catalog {
             .and_then(|b| order.iter().position(|n| n == b))
             .unwrap_or(order.len());
         order.insert(at, name.to_string());
-        p.canvas_order = order;
+        self.saved.kept.entry(root).or_default().canvas_order = order;
         Ok(())
     }
 
@@ -194,7 +237,48 @@ impl Catalog {
     }
 }
 
-/// Where `from` goes when dropped on `onto` in `order`: it takes `onto`'s
+/// One look at the disk: each folder of `~/Projects` with canvases (by
+/// name), then each other root asked about, with its canvases (maybe none).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Scan {
+    pub listed: Vec<(PathBuf, Vec<Entry>)>,
+    pub other: Vec<(PathBuf, Vec<Entry>)>,
+}
+
+/// Scan `dir` (`~/Projects`) and the `known` roots outside its list.
+pub fn scan(dir: &Path, known: &[PathBuf]) -> Scan {
+    let mut listed: Vec<(String, PathBuf, Vec<Entry>)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_str()?.to_string();
+            if name.starts_with('.') {
+                return None;
+            }
+            let root = e.path().canonicalize().ok()?;
+            let canvases = canvas::scan(&root);
+            (!canvases.is_empty()).then_some((name, root, canvases))
+        })
+        .collect();
+    listed.sort_by_key(|(name, ..)| name.to_lowercase());
+    let listed: Vec<(PathBuf, Vec<Entry>)> = listed.into_iter().map(|(_, r, c)| (r, c)).collect();
+    let other = known
+        .iter()
+        .filter(|r| listed.iter().all(|(l, _)| l != *r))
+        .map(|r| (r.clone(), canvas::scan(r)))
+        .collect();
+    Scan { listed, other }
+}
+
+/// `~/Projects`.
+pub fn projects_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map_or_else(|| PathBuf::from("/"), PathBuf::from)
+        .join("Projects")
+}
+
+/// Where a chip dropped on `onto` in `order` goes: it takes `onto`'s
 /// place. `Some(before)` (`None`: last); `None` when nothing moves.
 pub fn drop_place(order: &[String], from: &str, onto: &str) -> Option<Option<String>> {
     let i = order.iter().position(|n| n == from)?;
@@ -210,29 +294,82 @@ pub fn catalog_path() -> PathBuf {
     crate::profile::data_dir().join("projects.json")
 }
 
-/// Missing file → empty list. A corrupt file is logged and treated as empty
-/// (it is not overwritten until the next real change).
-pub fn load_from(path: &Path) -> Catalog {
+/// The list before 2026-11-10: projects added by hand, every one with a
+/// window.
+#[derive(Deserialize)]
+struct V1 {
+    #[serde(default)]
+    projects: Vec<V1Project>,
+    #[serde(default)]
+    selected: Option<CanvasRef>,
+}
+
+#[derive(Deserialize)]
+struct V1Project {
+    id: String,
+    root: PathBuf,
+    #[serde(default)]
+    canvas_order: Vec<String>,
+    #[serde(default)]
+    selected: Option<String>,
+}
+
+impl From<V1> for Saved {
+    /// Each project kept its window; nothing else of the list stays.
+    fn from(v1: V1) -> Self {
+        let front = v1
+            .selected
+            .and_then(|s| v1.projects.iter().find(|p| p.id == s.project))
+            .map(|p| p.root.clone());
+        let mut saved = Saved {
+            front,
+            ..Saved::default()
+        };
+        for p in v1.projects {
+            saved.open.push(p.root.clone());
+            let kept = Kept {
+                canvas_order: p.canvas_order,
+                selected: p.selected,
+            };
+            if kept != Kept::default() {
+                saved.kept.insert(p.root, kept);
+            }
+        }
+        saved
+    }
+}
+
+/// Missing file → nothing kept. A corrupt file is logged and treated as
+/// empty (it is not overwritten until the next real change).
+pub fn load_from(path: &Path) -> Saved {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Catalog::default(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Saved::default(),
         Err(e) => {
             tracing::warn!(path = %path.display(), error = %e, "read design projects");
-            return Catalog::default();
+            return Saved::default();
         }
     };
-    serde_json::from_str(&text).unwrap_or_else(|e| {
+    parse(&text).unwrap_or_else(|e| {
         tracing::warn!(path = %path.display(), error = %e, "parse design projects");
-        Catalog::default()
+        Saved::default()
     })
 }
 
+fn parse(text: &str) -> Result<Saved, serde_json::Error> {
+    let value: serde_json::Value = serde_json::from_str(text)?;
+    if value.get("version").and_then(serde_json::Value::as_u64) == Some(1) {
+        return serde_json::from_value::<V1>(value).map(Saved::from);
+    }
+    serde_json::from_value(value)
+}
+
 /// Write via a temp file + rename so a crash never leaves half a list.
-pub fn save_to(path: &Path, catalog: &Catalog) -> Result<(), String> {
+pub fn save_to(path: &Path, saved: &Saved) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     }
-    let json = serde_json::to_string_pretty(catalog).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(saved).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).map_err(|e| format!("write {}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, path).map_err(|e| format!("rename {}: {e}", path.display()))
@@ -281,7 +418,20 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        dir
+        dir.canonicalize().unwrap()
+    }
+
+    fn canvas_in(root: &Path, name: &str) {
+        let dir = canvas::canvas_dir(root, name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(canvas::CANVAS_FILE), "").unwrap();
+    }
+
+    fn at(p: &str, c: &str) -> CanvasRef {
+        CanvasRef {
+            project: p.into(),
+            canvas: c.into(),
+        }
     }
 
     #[test]
@@ -293,76 +443,84 @@ mod tests {
 
     #[test]
     fn canvas_ref_key_round_trips() {
-        let r = CanvasRef {
-            project: "proj-sola".into(),
-            canvas: "settings".into(),
-        };
+        let r = at("proj-sola", "settings");
         assert_eq!(CanvasRef::from_key(&r.key()), Some(r));
         assert_eq!(CanvasRef::from_key("nope"), None);
     }
 
     #[test]
-    fn add_rejects_duplicates_and_dedupes_ids() {
-        let root = temp_dir("add");
-        let a = root.join("Sola");
-        let b = root.join("other").join("Sola");
-        std::fs::create_dir_all(&a).unwrap();
-        std::fs::create_dir_all(&b).unwrap();
-        let mut cat = Catalog::default();
-        assert_eq!(cat.add(a.to_str().unwrap()).unwrap(), "proj-sola");
-        assert!(cat.add(a.to_str().unwrap()).is_err());
-        assert_eq!(cat.add(b.to_str().unwrap()).unwrap(), "proj-sola-2");
-        assert_eq!(cat.projects[1].name, "Sola");
-        assert!(cat.add(root.join("missing").to_str().unwrap()).is_err());
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn save_load_round_trip_and_drop_clears_selection() {
-        let root = temp_dir("save");
-        let proj = root.join("Thoxa");
-        std::fs::create_dir_all(&proj).unwrap();
-        let mut cat = Catalog::default();
-        let id = cat.add(proj.to_str().unwrap()).unwrap();
-        cat.selected = Some(CanvasRef {
-            project: id.clone(),
-            canvas: "home".into(),
-        });
-        let path = root.join("projects.json");
-        save_to(&path, &cat).unwrap();
-        assert_eq!(load_from(&path), cat);
-        cat.drop_project(&id);
-        assert!(cat.projects.is_empty());
-        assert!(cat.selected.is_none());
-        assert_eq!(load_from(&root.join("absent.json")), Catalog::default());
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    fn project(id: &str) -> Project {
-        Project {
-            id: id.into(),
-            name: id.into(),
-            root: PathBuf::from(format!("/{id}")),
-            canvas_order: Vec::new(),
-            selected: None,
+    fn a_scan_lists_the_folders_with_canvases_by_name_then_the_others() {
+        let dir = temp_dir("scan");
+        for name in ["wow", "Sola", "Hub", ".hidden"] {
+            std::fs::create_dir_all(dir.join(name)).unwrap();
         }
+        canvas_in(&dir.join("wow"), "halo");
+        canvas_in(&dir.join("Sola"), "foundation");
+        canvas_in(&dir.join(".hidden"), "x");
+        // A design/ folder with no canvas.toml is not a design.
+        std::fs::create_dir_all(dir.join("Hub/design/notes")).unwrap();
+        let tree = temp_dir("scan-tree");
+        canvas_in(&tree, "draft");
+        let known = [dir.join("Sola"), tree.clone(), dir.join("Hub")];
+        let found = scan(&dir, &known);
+        let roots: Vec<&PathBuf> = found.listed.iter().map(|(r, _)| r).collect();
+        assert_eq!(roots, [&dir.join("Sola"), &dir.join("wow")]);
+        assert_eq!(found.listed[0].1[0].name, "foundation");
+        let other: Vec<(&PathBuf, usize)> = found.other.iter().map(|(r, c)| (r, c.len())).collect();
+        assert_eq!(other, [(&tree, 1), (&dir.join("Hub"), 0)]);
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(tree);
     }
 
     #[test]
-    fn select_remembers_each_projects_canvas() {
-        let mut cat = Catalog {
-            projects: vec![project("a"), project("b")],
-            ..Catalog::default()
-        };
-        let at = |p: &str, c: &str| CanvasRef {
-            project: p.into(),
-            canvas: c.into(),
-        };
-        cat.select(&at("a", "home"));
-        cat.select(&at("b", "settings"));
-        assert_eq!(cat.projects[0].selected.as_deref(), Some("home"));
-        assert_eq!(cat.projects[1].selected.as_deref(), Some("settings"));
-        assert_eq!(cat.selected, Some(at("b", "settings")));
+    fn ids_come_from_the_folder_name_and_stay() {
+        let mut cat = Catalog::default();
+        let sola = PathBuf::from("/home/j/Projects/Sola");
+        let tree = PathBuf::from("/home/j/Projects/Sola/.worktrees/sola");
+        cat.set_listed([&sola]);
+        assert_eq!(cat.listed, ["proj-sola"]);
+        assert_eq!(cat.know(&tree), "proj-sola-2");
+        // Gone from the list, still known by the same id.
+        cat.set_listed([]);
+        assert!(cat.listed.is_empty());
+        assert_eq!(cat.know(&sola), "proj-sola");
+        assert_eq!(cat.project("proj-sola-2").unwrap().name, "sola");
+    }
+
+    #[test]
+    fn select_and_open_are_kept_by_root_and_saved() {
+        let dir = temp_dir("save");
+        let mut cat = Catalog::default();
+        let a = cat.know(Path::new("/p/a"));
+        let b = cat.know(Path::new("/p/b"));
+        assert!(cat.select(&at(&a, "home")));
+        assert!(!cat.select(&at(&a, "home")), "nothing changed");
+        assert!(cat.select(&at(&b, "settings")));
+        assert_eq!(cat.selected(&a), Some("home"));
+        assert_eq!(cat.saved.front, Some(PathBuf::from("/p/b")));
+        assert!(cat.set_open(&b, true) && cat.set_open(&a, true));
+        assert!(!cat.set_open(&a, true));
+        assert!(cat.set_open(&b, false));
+        assert_eq!(cat.saved.open, [PathBuf::from("/p/a")]);
+        let path = dir.join("projects.json");
+        save_to(&path, &cat.saved).unwrap();
+        assert_eq!(load_from(&path), cat.saved);
+        assert_eq!(load_from(&dir.join("absent.json")), Saved::default());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_hand_made_list_becomes_open_windows() {
+        let v1 = r#"{"version":1,"projects":[
+            {"id":"proj-sola","name":"Sola","root":"/p/Sola","selected":"foundation"},
+            {"id":"proj-exit","name":"Exit","root":"/p/Exit","canvas_order":["b","a"],"collapsed":true}
+        ],"selected":{"project":"proj-exit","canvas":"a"}}"#;
+        let saved = parse(v1).unwrap();
+        assert_eq!(saved.version, VERSION);
+        assert_eq!(saved.open, [PathBuf::from("/p/Sola"), PathBuf::from("/p/Exit")]);
+        assert_eq!(saved.front, Some(PathBuf::from("/p/Exit")));
+        assert_eq!(saved.kept[Path::new("/p/Sola")].selected.as_deref(), Some("foundation"));
+        assert_eq!(saved.kept[Path::new("/p/Exit")].canvas_order, ["b", "a"]);
     }
 
     #[test]
@@ -376,32 +534,21 @@ mod tests {
     }
 
     #[test]
-    fn a_catalog_with_collapsed_projects_still_loads() {
-        let json = r#"{"version":1,"projects":[{"id":"a","name":"A","root":"/a","collapsed":true}]}"#;
-        let cat: Catalog = serde_json::from_str(json).unwrap();
-        assert_eq!(cat.projects[0].selected, None);
-    }
-
-    #[test]
     fn canvas_order_saves_and_sorts_new_canvases_last() {
-        use crate::canvas::Entry;
         let entry = |n: &str| Entry { name: n.into() };
         let listed: Vec<String> = ["home", "onboarding", "settings"].map(String::from).into();
-        let mut cat = Catalog {
-            projects: vec![project("a")],
-            ..Catalog::default()
-        };
-        let order = |cat: &Catalog| cat.projects[0].canvas_order.clone();
-        let moved = cat.move_canvas_before("a", "settings", Some("home"), &listed);
+        let mut cat = Catalog::default();
+        let a = cat.know(Path::new("/p/a"));
+        let moved = cat.move_canvas_before(&a, "settings", Some("home"), &listed);
         assert_eq!(moved, Ok(()));
-        assert_eq!(order(&cat), ["settings", "home", "onboarding"]);
-        assert!(cat.move_canvas_before("a", "gone", None, &listed).is_err());
-        let unknown_before = cat.move_canvas_before("a", "home", Some("gone"), &listed);
+        assert_eq!(cat.saved.kept[Path::new("/p/a")].canvas_order, ["settings", "home", "onboarding"]);
+        assert!(cat.move_canvas_before(&a, "gone", None, &listed).is_err());
+        let unknown_before = cat.move_canvas_before(&a, "home", Some("gone"), &listed);
         assert!(unknown_before.is_err());
 
         // A scan (by name) with a new canvas and one deleted.
         let mut scan: Vec<Entry> = ["about", "home", "settings", "zebra"].map(entry).into();
-        cat.projects[0].order_canvases(&mut scan);
+        cat.order_canvases(&a, &mut scan);
         let names: Vec<&str> = scan.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["settings", "home", "about", "zebra"]);
     }

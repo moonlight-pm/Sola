@@ -86,8 +86,11 @@ impl App {
         let p = inc.params.clone();
         let out = match method.as_str() {
             "project.list" => Ok(self.projects_json()),
-            "project.add" => self.call_project_add(&p),
-            "project.remove" => self.call_project_remove(&p),
+            "window.navigate" => {
+                let navigate = self.navigate();
+                self.later.push(navigate);
+                Ok(json!({"window": "navigator"}))
+            }
             "open" => self.call_open(&p),
             "canvas.new" => self.call_canvas_new(&p),
             "canvas.close" => self.call_canvas_close(&p),
@@ -221,15 +224,17 @@ impl App {
 
     // ── read-only views ───────────────────────────────────────────
 
+    /// Every project with canvases: the folders of `~/Projects` a
+    /// navigator lists, then any other an agent opened a canvas in.
     fn projects_json(&self) -> Value {
         let projects: Vec<Value> = self
             .catalog
             .projects
             .iter()
-            .map(|p| {
-                let canvases: Vec<Value> = p
-                    .canvases()
-                    .into_iter()
+            .filter_map(|p| Some((p, self.canvases.get(&p.id).filter(|c| !c.is_empty())?)))
+            .map(|(p, canvases)| {
+                let canvases: Vec<Value> = canvases
+                    .iter()
                     .map(|c| {
                         json!({
                             "name": c.name,
@@ -323,35 +328,6 @@ impl App {
 
     // ── changes ───────────────────────────────────────────────────
 
-    /// Register a project; its window opens behind.
-    fn call_project_add(&mut self, p: &Value) -> Result<Value, String> {
-        let id = self.catalog.add(str_param(p, "path")?)?;
-        self.persist();
-        self.rescan();
-        let open = self.open_window(&id, true);
-        self.later.push(open);
-        let project = self.catalog.project(&id).expect("just added");
-        Ok(json!({"id": project.id, "name": project.name, "root": project.root}))
-    }
-
-    /// Forget the project at `path`. Its live canvases close, agents'
-    /// too; files stay on disk.
-    fn call_project_remove(&mut self, p: &Value) -> Result<Value, String> {
-        let raw = projects::expand_home(str_param(p, "path")?);
-        // A folder that is gone can still be forgotten.
-        let root = raw.canonicalize().unwrap_or(raw);
-        let project = self.catalog.at_root(&root).cloned().ok_or_else(|| {
-            format!(
-                "{} is not a Design project (project.list shows their roots)",
-                root.display()
-            )
-        })?;
-        tracing::info!(project = %project.id, "call removed design project");
-        let drop = self.drop_project(&project.id);
-        self.later.push(drop);
-        Ok(json!({"id": project.id, "name": project.name, "root": project.root}))
-    }
-
     fn call_open(&mut self, p: &Value) -> Result<Value, String> {
         let raw = projects::expand_home(str_param(p, "path")?);
         let path = raw
@@ -363,8 +339,8 @@ impl App {
                 path.display()
             )
         })?;
-        let (project, added) = self.ensure_project(&root)?;
-        self.show(p, project, name, added, None)
+        let project = self.ensure_project(&root);
+        self.show(p, project, name, None)
     }
 
     /// `<project>/design/<slug(name)>/canvas.toml`, then open it. An existing
@@ -388,23 +364,21 @@ impl App {
         } else {
             canvas::create(&root, name)?
         };
-        let (project, added) = self.ensure_project(&root)?;
-        self.show(p, project, name, added, Some(!exists))
+        let project = self.ensure_project(&root);
+        self.show(p, project, name, Some(!exists))
     }
 
-    /// Project id for `root`, registering it if Design does not know it
-    /// (its window opens behind).
-    fn ensure_project(&mut self, root: &std::path::Path) -> Result<(String, bool), String> {
+    /// The project at `root`: one outside `~/Projects` (a worktree) is
+    /// known from now on, with no window until `--raise`.
+    fn ensure_project(&mut self, root: &std::path::Path) -> String {
         if let Some(p) = self.catalog.at_root(root) {
-            return Ok((p.id.clone(), false));
+            return p.id.clone();
         }
-        let id = self.catalog.add(&root.to_string_lossy())?;
-        tracing::info!(project = %id, root = %root.display(), "call registered design project");
-        self.persist();
+        let id = self.catalog.know(root);
+        tracing::info!(project = %id, root = %root.display(), "design project from a call");
+        self.serve_projects();
         self.rescan();
-        let open = self.open_window(&id, true);
-        self.later.push(open);
-        Ok((id, true))
+        id
     }
 
     /// Make `canvas` of `project` live in the background — the human's
@@ -416,7 +390,6 @@ impl App {
         p: &Value,
         project: String,
         canvas: String,
-        added: bool,
         created: Option<bool>,
     ) -> Result<Value, String> {
         self.rescan();
@@ -432,7 +405,6 @@ impl App {
             }
         }
         let mut v = self.status_json(&key);
-        v["project_added"] = json!(added);
         if let Some(created) = created {
             v["created"] = json!(created);
         }
@@ -453,11 +425,9 @@ impl App {
                 path.display()
             )
         })?;
-        let project = self
-            .catalog
-            .at_root(&root)
-            .map(|p| p.id.clone())
-            .ok_or_else(|| format!("{} is not a Design project", root.display()))?;
+        let Some(project) = self.catalog.at_root(&root).map(|p| p.id.clone()) else {
+            return Ok(json!({"closed": false, "reason": "not open"}));
+        };
         let key = CanvasRef { project, canvas }.key();
         let Some(live) = self.live(&key) else {
             return Ok(json!({"closed": false, "reason": "not open"}));
@@ -573,10 +543,7 @@ impl App {
                 path.display()
             )
         })?;
-        let (project, added) = self.ensure_project(&root)?;
-        if added {
-            self.rescan();
-        }
+        let project = self.ensure_project(&root);
         let key = self.ensure_live_for_agent(&CanvasRef {
             project,
             canvas: name,

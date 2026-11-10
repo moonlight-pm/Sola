@@ -4,6 +4,8 @@
 //! the project to open"): Projects opens a window to pick a project in
 //! (`window.navigate`, its navigator). Not running: start it, and ask until
 //! it answers — with nothing to bring back, it waits for this call.
+//! Design's row does the same since 2026-11-10
+//! ([`crate::launcher::projects::navigating`]).
 //!
 //! Until 2026-10-31 the launcher listed `~/Projects` itself (the chooser);
 //! that list is the navigator's now.
@@ -14,12 +16,12 @@ use sola_bus::topics::{LaunchAppPayload, Topic};
 use sola_core::window_label::WindowLabel;
 
 use super::{Msg, Shell, with_bus};
-use crate::launcher::projects::{APP_ID, CALL_OWNER};
+use crate::launcher::projects::APP_ID;
 
-/// `window.navigate` answers at once once Projects is up.
+/// `window.navigate` answers at once once the app is up.
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long a Projects just started waits for a call (its
-/// `IDLE_QUIT_AFTER`), so how long to keep asking it.
+/// `IDLE_QUIT_AFTER`), so how long to keep asking an app just started.
 const START_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long an error stays up.
 const TOAST_SECS: u64 = 5;
@@ -50,33 +52,34 @@ impl Shell {
             .collect()
     }
 
-    pub(crate) fn projects_running(&self) -> bool {
+    fn app_running(&self, app_id: &str) -> bool {
         self.known_windows
             .iter()
-            .any(|w| w.app_id.eq_ignore_ascii_case(APP_ID))
+            .any(|w| w.app_id.eq_ignore_ascii_case(app_id))
     }
 
-    /// Close the launcher; Projects opens a window to pick a project in.
-    pub(crate) fn open_projects_window(&mut self) -> iced::Task<Msg> {
+    /// Close the launcher; app `app_id` (call owner `owner`) opens a window
+    /// to pick in.
+    pub(crate) fn open_navigator_window(&mut self, app_id: &str, owner: &'static str) -> iced::Task<Msg> {
         let close = iced::Task::done(Msg::CloseLauncher);
-        if self.projects_running() {
-            if self.is_app_hidden(APP_ID) {
-                self.unhide_app(APP_ID);
-            }
-            return iced::Task::batch([close, ask_navigate(Duration::ZERO)]);
-        }
-        let Some(app) = self.applications.get(APP_ID) else {
+        let Some(app) = self.applications.get(app_id) else {
             return close;
         };
         let (command, label) = (app.command.clone(), app.label.clone());
+        if self.app_running(app_id) {
+            if self.is_app_hidden(app_id) {
+                self.unhide_app(app_id);
+            }
+            return iced::Task::batch([close, ask_navigate(label, owner, Duration::ZERO)]);
+        }
         with_bus(|bus| {
             let _ = bus.emit(Topic::LaunchApp(LaunchAppPayload {
-                app_id: APP_ID.to_string(),
+                app_id: app_id.to_string(),
                 command,
             }));
         });
-        let opening = self.begin_opening(APP_ID, &label);
-        iced::Task::batch([close, opening, ask_navigate(START_TIMEOUT)])
+        let opening = self.begin_opening(app_id, &label);
+        iced::Task::batch([close, opening, ask_navigate(label, owner, START_TIMEOUT)])
     }
 
     /// Escape: the Browser field back to the apps, else close.
@@ -101,14 +104,14 @@ impl Shell {
     }
 }
 
-/// `window.navigate`, asked again while Projects is not up yet, for as
-/// long as `starting` allows.
-fn ask_navigate(starting: Duration) -> iced::Task<Msg> {
+/// `window.navigate` of `owner` (the app `label`), asked again while it is
+/// not up yet, for as long as `starting` allows.
+fn ask_navigate(label: String, owner: &'static str, starting: Duration) -> iced::Task<Msg> {
     iced::Task::perform(
         async move {
             let deadline = std::time::Instant::now() + starting;
             loop {
-                match call("window.navigate", CALL_TIMEOUT).await {
+                match call(owner, "window.navigate", CALL_TIMEOUT).await {
                     Err(e) if e.contains("is not running") && std::time::Instant::now() < deadline => {
                         tokio::time::sleep(Duration::from_millis(300)).await
                     }
@@ -116,15 +119,15 @@ fn ask_navigate(starting: Duration) -> iced::Task<Msg> {
                 }
             }
         },
-        Msg::ProjectsWindow,
+        move |done| Msg::NavigatorWindow(label.clone(), done),
     )
 }
 
-/// A call to Projects off the iced thread.
-async fn call(method: &'static str, timeout: Duration) -> Result<serde_json::Value, String> {
+/// A call to `owner` off the iced thread.
+async fn call(owner: &'static str, method: &'static str, timeout: Duration) -> Result<serde_json::Value, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
-        let r = sola_call::invoke(CALL_OWNER, method, serde_json::json!({}), timeout)
+        let r = sola_call::invoke(owner, method, serde_json::json!({}), timeout)
             .map_err(|e| e.to_string());
         let _ = tx.send(r);
     });

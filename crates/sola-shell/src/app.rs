@@ -166,8 +166,9 @@ pub enum Msg {
     LauncherEscape,
     /// A row of the Browser field clicked.
     LauncherPick(usize),
-    /// Projects answered `window.navigate` (the launcher's Projects row).
-    ProjectsWindow(Result<(), String>),
+    /// An app answered `window.navigate` (the launcher's Projects or
+    /// Design row): its label, and how it went.
+    NavigatorWindow(String, Result<(), String>),
     /// Super+K / flower menu: show the keyboard-shortcuts overlay.
     OpenShortcuts,
     /// Dismiss the shortcuts overlay and restore prior focus.
@@ -1393,10 +1394,12 @@ impl Shell {
     /// A running app comes forward instead of starting again (Browser and
     /// Terminal open a new window); a composition-hidden one is unhidden.
     fn launch_from_launcher(&mut self, app_id: Option<&str>) -> iced::Task<Msg> {
-        // Projects opens a window to pick a project in, not another
-        // Projects.
-        if app_id == Some(crate::launcher::projects::APP_ID) {
-            return self.open_projects_window();
+        // Projects and Design open a window to pick a project in, not
+        // another of themselves.
+        if let Some(id) = app_id {
+            if let Some(owner) = crate::launcher::projects::navigating(id) {
+                return self.open_navigator_window(id, owner);
+            }
         }
         // Browser asks where to, not for a blank page.
         if app_id == Some(crate::launcher::web::APP_ID) {
@@ -2835,10 +2838,10 @@ impl Shell {
                     false => iced::Task::none(),
                 }
             }
-            Msg::ProjectsWindow(Ok(())) => iced::Task::none(),
-            Msg::ProjectsWindow(Err(e)) => {
-                tracing::warn!(error = %e, "launcher: Projects' window.navigate");
-                self.projects_toast(format!("Projects: {e}"))
+            Msg::NavigatorWindow(_, Ok(())) => iced::Task::none(),
+            Msg::NavigatorWindow(label, Err(e)) => {
+                tracing::warn!(app = %label, error = %e, "launcher: window.navigate");
+                self.projects_toast(format!("{label}: {e}"))
             }
             Msg::RaiseMail => {
                 self.activate_mail();

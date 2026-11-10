@@ -405,7 +405,8 @@ translucent. Spec:
 caption, checkbox/toggle styles), `file_picker` (the one Open / Save /
 Choose Folder panel for every app, as macOS has one — fold
 `FilePicker::keys()` into the subscription while it is up), `icon`,
-`popover`, `prose` (letter
+`navigator` (the look of a window to pick a project in: Projects',
+Design's), `popover`, `prose` (letter
 reading: paragraphs, quotes, inline links; `prose_letter` adds rules and
 pictures), `readable`, `scroll` (the kit scrollbar — use
 `scroll::scrollable`, not iced's bare `scrollable`), `sidebar`, `split`,
