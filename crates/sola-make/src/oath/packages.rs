@@ -128,8 +128,6 @@ pub const PACKAGES: &[Package] = &[
         build: &["rust", "pkgconf", "libxkbcommon"],
         needs: &[
             "tmux",
-            // wl-copy / wl-paste: the kit's clipboard.
-            "wl-clipboard",
             "pipewire",
             "wireplumber",
         ],
