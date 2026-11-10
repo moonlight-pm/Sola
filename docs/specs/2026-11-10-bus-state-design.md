@@ -1,6 +1,6 @@
 # Bus state: what the bus keeps, for whom, and for how long
 
-**Status:** decided 2026-11-10, building on branch `bus-state`.
+**Status:** decided 2026-11-10; built on branch `bus-state`, not merged.
 
 **Decided by Joshua (2026-11-10):** after a review of the bus ("Sticky
 messages are suppose to be 'general' information every app should need --

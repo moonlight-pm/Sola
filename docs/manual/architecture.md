@@ -133,11 +133,15 @@ itself.
 
 | Path | What |
 |---|---|
-| `~/.config/sola/state.yaml` | Persistent bus topics without a file of their own, one section each: the open-application set, the application catalog, floating window geometry, terminal tabs, the background picture, appearance, and the mail, calendar, terminal, and monitor settings |
-| `~/.config/sola/shell/tabs.yaml` | The bar's layout: the workspaces, which one shows, and each window's workspace, zone, and place |
+| `~/.config/sola/state.yaml` | Persistent bus topics without a file of their own, one section each: the application catalog, the background picture, appearance, and the mail, calendar, terminal, and monitor settings |
+| `~/.local/state/sola/shell/tabs.json` | The bar's layout: the workspaces, which one shows, and each window's workspace, zone, and place |
+| `~/.local/state/sola/shell/floats.json` | Each floating app's rectangle |
+| `$XDG_RUNTIME_DIR/sola/shell/hidden.json` | The apps hidden with Super+H; gone at reboot |
+| `~/.local/state/sola/session/apps.json` | The open-application set |
+| `~/.local/state/sola/terminal/sessions.json` | Terminal's saved tabs |
 | `~/.config/sola/theme/current.yaml` | The current theme |
 | `~/.config/sola/theme/presets/<name>.yaml` | Saved themes |
-| `~/.config/sola/paint.yaml` | Paint's open images |
+| `~/.local/state/sola/paint/session.json` | Paint's open images |
 | `~/.config/sola/calendar/agenda.yaml` | Calendar's coming days, for the clock's panel |
 | `~/.config/sola/background/` | Sola's copy of the background picture |
 | `~/.config/sola/<app>/`, `~/.local/share/sola/<app>/`, `~/.local/state/sola/<app>/`, `~/.cache/sola/<app>/` | Application files; each application's notes list its own ([Applications](applications.md)) |
@@ -238,7 +242,7 @@ window, it:
    An application with a window per tab opens each through the kit's
    `TabWindows`, which first announces the tab on the bus (`Tab`, keyed
    `<app_id>/<tab id>`). The shell pairs the announcement with the new
-   window, answers with `TabWindow` (the window's id and whether it is on
+   window, answers with `WindowPlace` (the window's key and whether it is on
    screen), and lists it in the bar.
 
 When the bus goes away, the kit reconnects every 250 ms, subscribes again,

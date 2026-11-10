@@ -280,15 +280,15 @@ Restore has three parts, each kept by a different process:
 
 | Part | Kept by | Saved in |
 |---|---|---|
-| Which applications run | `sola-session` | `SessionApps` in `~/.config/sola/state.yaml` |
+| Which applications run | `sola-session` | `~/.local/state/sola/session/apps.json` |
 | What each application has open: its tabs, a window each | The application | Its own files (below) |
-| Where each window goes: its workspace, zone, and place in the bar, which tab each zone shows, the workspaces themselves, and which one shows | The shell | `TabLayout` in `~/.config/sola/shell/tabs.yaml` |
+| Where each window goes: its workspace, zone, and place in the bar, which tab each zone shows, the workspaces themselves, and which one shows | The shell | `~/.local/state/sola/shell/tabs.json` |
 
 ### Applications
 
-`sola-session` publishes the applications it is running as `SessionApps`,
-a persistent, sorted list of `{app_id, command}` with one entry per app id.
-It publishes the list again after every launch, close, and exit. An
+`sola-session` keeps the applications it is running as a sorted list of `{app_id, command}`
+with one entry per app id, in `~/.local/state/sola/session/apps.json`.
+It saves the list again after every launch, close, and exit. An
 application you close, or one that quits or crashes, leaves the list.
 
 An application that exits because its compositor went (rivulet restarted
@@ -300,8 +300,8 @@ socket: the one the application was launched on no longer answers, or a
 new one has taken its place. The log says `app went with its display` and
 `the display is back: starting it again`.
 
-When it starts, `sola-session` spends 750 ms collecting the stored
-`SessionApps` and the current `Windows`. Then it launches every listed
+When it starts, `sola-session` spends 750 ms collecting the current
+`Windows`; the stored list it reads from its file at once. Then it launches every listed
 application that has no window with that app id and is not already
 tracked, once, with its stored command. A stored entry for an application
 that has since been renamed launches under the new name (`sola-workspaces`
@@ -321,9 +321,9 @@ Each application reopens what it had open by itself, a window per tab:
 
 | Application | Reopens | From |
 |---|---|---|
-| Terminal | Every saved tab, its panes attached to their tmux sessions again; sessions the tmux server lost (after a reboot) are made again with new shells | `TerminalSession` entries in `~/.config/sola/state.yaml` |
+| Terminal | Every saved tab, its panes attached to their tmux sessions again; sessions the tmux server lost (after a reboot) are made again with new shells | `~/.local/state/sola/terminal/sessions.json` |
 | Browser | Every page of the active profile and of each workspace's profile; a web app's pages open as that app | `session.json` in each profile's folder under `~/.local/share/sola/browser/profiles/` |
-| Paint | Every saved image that still exists | `~/.config/sola/paint.yaml` |
+| Paint | Every saved image that still exists | `~/.local/state/sola/paint/session.json` |
 | Projects | Every open project, with its selected tab attached | `~/.config/sola/projects/catalog.json` |
 | Design | A window for each project in its list | `~/.config/sola/design/projects.json` |
 
@@ -336,7 +336,7 @@ A window an application opens as a tab is announced first, with a key
 that stays the same across restarts: `<app_id>/<tab id>`. The window names
 its tab too: a kit app gives it the Wayland app id `<app_id>#<token>` (the
 key's token, `sola_bus::topics::tab_token`); `sola-river` publishes the app
-id without it and the token as `WindowTab`, and the shell pairs each window
+id without it and the token in the window's `WindowFacts`, and the shell pairs each window
 with the tab it names — whatever came first, and in whatever order the
 windows were made. A window with no token (an app from before) pairs by
 the order its process announced its tabs. Keys:
@@ -345,7 +345,7 @@ the order its process announced its tabs. Keys:
 `sola-design/<project id>`). A window that is not an announced tab goes by
 its app id.
 
-The shell saves the bar as `TabLayout` whenever it changes. When the shell
+The shell saves the bar whenever it changes. When the shell
 starts, it takes the saved layout once, and it places the windows already
 up (applications kept through its restart) only after the bus has
 replayed everything it holds (`Replayed`): the zone grid and the saved
@@ -511,7 +511,6 @@ is not set on the desk; programs that read it fall back to `xdg-open` or
 | `LaunchApp` | Read | `{app_id, command}` |
 | `CloseApp` | Read (also by `sola-river` and kit applications) | An app id |
 | `Shutdown` | Read | None |
-| `SessionApps` | Read at start; published | List of `{app_id, command}`, persistent |
 | `Windows` | Read at start | See [Compositor](compositor.md) |
 | `LaunchResult` | Published | `{app_id, command, ok, error}` |
 | `UserAppExited` | Published | `{app_id, command, code, signal}` |
@@ -528,9 +527,9 @@ Call methods, owner `desk` (also the MCP tools `desk_launch` and
 
 | What restarts | What happens |
 |---|---|
-| `sola-session` | Open applications keep running, but the new `sola-session` did not start them: no `UserAppExited`, and `solactl desk close` does not find them. The listed ones with windows stay in `SessionApps` while they have windows (3 s grace). Super+Q still closes their windows. Restore launches only listed applications that have no window. A listed one that isn't Sola's is watched as before: once its windows are gone for 5 s, it quits whole. An apply that moves `pkg:sola` restarts `sola-session` the same way: `svc:sola-session` keeps its children (`keep_children`), so the applications, and a game under Steam, keep running on the program they started with. Without it, PID 1 stops them with the service and the new one opens them again. An application of Sola's whose own package moved is stopped and started again on the new program, alone (its running program against the one its command names: checked as the session manager starts, and when an apply says it moved packages, `PackagesMoved`); one that isn't Sola's never is. |
+| `sola-session` | Open applications keep running, but the new `sola-session` did not start them: no `UserAppExited`, and `solactl desk close` does not find them. The listed ones with windows stay in the saved list while they have windows (3 s grace). Super+Q still closes their windows. Restore launches only listed applications that have no window. A listed one that isn't Sola's is watched as before: once its windows are gone for 5 s, it quits whole. An apply that moves `pkg:sola` restarts `sola-session` the same way: `svc:sola-session` keeps its children (`keep_children`), so the applications, and a game under Steam, keep running on the program they started with. Without it, PID 1 stops them with the service and the new one opens them again. An application of Sola's whose own package moved is stopped and started again on the new program, alone (its running program against the one its command names: checked as the session manager starts, and when an apply says it moved packages, `PackagesMoved`); one that isn't Sola's never is. |
 | `sola-bus` | `sola-session` reconnects and subscribes again. A `LaunchApp` sent while the bus was down is lost. |
-| The compositor | The applications lose their display and exit; they stay in `SessionApps` and start again on the new compositor. See [Architecture](architecture.md#when-a-part-stops). |
+| The compositor | The applications lose their display and exit; they stay in the saved list and start again on the new compositor. See [Architecture](architecture.md#when-a-part-stops). |
 
 ## Logs
 

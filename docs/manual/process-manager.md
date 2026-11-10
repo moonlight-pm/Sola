@@ -255,7 +255,8 @@ message; `RUST_LOG=debug` logs everything and is very large.
 | `/oath/store/pkg/sola/share/cursors/` | The McMojave cursor theme |
 | `/run/user/1/sola-bus`, `/run/user/1/sola-call` | The bus and call sockets |
 | `/run/user/1/wayland-N` | Rivulet's socket |
-| `~/.config/sola/state.yaml` | The bus's saved state, including `SessionApps`, the open-application set the session manager reopens |
+| `~/.local/state/sola/session/apps.json` | The open-application set the session manager reopens |
+| `~/.config/sola/state.yaml` | The bus's saved state |
 | `~/.config/sola/tmux.conf` | The configuration both tmux services load |
 | `~/.config/sola-kvm/config.toml` | `sola-kvm` settings |
 | `~/.local/state/sola/` | Sola's logs |
