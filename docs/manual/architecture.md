@@ -180,9 +180,9 @@ for what it needs.
    until it connects.
 4. `sola-shell` starts like any kit application (below), maps the top row
    and the bar, and takes the saved layout when the bus replays it.
-5. `sola-session` tries the bus every second until it connects, collects
-   the saved open-application set and the current window list for 750 ms,
-   then launches every saved application that has no window.
+5. `sola-session` tries the bus every second until it connects, reads
+   the saved open-application set, waits for `sola-river`'s first window
+   list, then launches every saved application that has no window.
 6. Each application reopens its own tabs, and the shell puts each window
    back in its saved workspace, zone, and place
    ([Session manager](session.md#restoring-the-last-session)).

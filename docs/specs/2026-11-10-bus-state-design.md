@@ -147,11 +147,30 @@ so no layout, session or float place is lost.
 
 ## Compatibility and rollout
 
-Payload types change and kinds are added and removed, so the bus and every
-Sola app must come from one build: installing this applies every Sola
-package at once (the desk restarts, and every Sola app). An older app asks
-for kinds by name; ones it asks for that are gone give it nothing. An older
-bus treats `$supervised` and `$settled` as unknown topics and drops them.
+Kinds are added and removed (no kind both builds have changes shape), so
+the bus and every Sola app must come from one build: installing this
+applies every Sola package at once (the desk restarts, and every Sola app).
+
+- The desk's own processes never meet the other build: Oath stops every
+  old one, then starts the new ones, the bus first (the `pkg:sola` apply
+  of 2026-11-10 18:23 shows it). A new client that did reach an old bus
+  sends its records again when it reconnects; an old bus drops `$supervised`
+  and `$settled` as unknown topics.
+- Apps outlive the desk's restart, so for a moment they run old programs
+  on the new bus. An older app asks for kinds by name; ones that are gone
+  give it nothing, and what it sends on a removed kind is dropped. Its
+  saved state stays in `state.yaml` as of the apply (the bus rewrites only
+  the sections it knows), and the new app reads it there.
+- `sola-session` restarts each app whose package moved once `sola-river`'s
+  first window list says which run. It used to wait 750 ms instead: a
+  `sola-river` later than that left every app on its old program and
+  opened second copies of the saved ones. An app the session neither
+  started nor adopted (Editor on novus, 2026-11-10) stays on its old
+  program: its window's place stops updating and what it saves on a
+  removed kind is lost. Reopen it after the apply.
+- Merge before applying: the apply guard then refuses a later one-package
+  apply from a tree without this, which would put an older app on the new
+  desk.
 
 ## Expected result
 

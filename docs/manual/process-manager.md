@@ -64,7 +64,7 @@ Each Sola process waits for what it needs:
 | `sola-bus`, `sola-call` | Nothing. Each deletes a leftover socket file and binds its socket, `/run/user/1/sola-bus` or `/run/user/1/sola-call`. |
 | `sola-river` | Rivulet's socket: it tries each `wayland-N` in `/run/user/1` every 500 ms for up to 15 seconds, then waits up to 5 seconds more for the socket file. Without one it exits with status 1, and PID 1 starts it again. Then the bus, retrying. |
 | `sola-shell`, and every application | The same socket for up to 20 seconds, then up to 10 seconds for the socket file, then connects anyway. The bus, retrying every 250 ms. |
-| `sola-session` | The bus, retrying every second. It then collects saved state for 750 ms before it reopens the applications that were open. |
+| `sola-session` | The bus, retrying every second. It then waits for `sola-river`'s window list before it reopens the applications that were open. |
 | `sola-kvm` | Rivulet's socket, for up to 30 seconds. Reads `~/.config/sola-kvm/config.toml`, or uses defaults when it is missing. |
 
 Nothing writes `$XDG_RUNTIME_DIR/sola-wayland` or `sola-display` on Oath;

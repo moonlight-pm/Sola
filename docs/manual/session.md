@@ -300,8 +300,11 @@ socket: the one the application was launched on no longer answers, or a
 new one has taken its place. The log says `app went with its display` and
 `the display is back: starting it again`.
 
-When it starts, `sola-session` spends 750 ms collecting the current
-`Windows`; the stored list it reads from its file at once. Then it launches every listed
+When it starts, `sola-session` reads the stored list from its file, then
+waits for `sola-river`'s first window list (`Windows`), which says what
+is already running: there is no timer, so a late `sola-river` delays the
+restore instead of spoiling it. Meanwhile a launch or a close works as
+usual, and the stored list stays in the file. Then it launches every listed
 application that has no window with that app id and is not already
 tracked, once, with its stored command. A stored entry for an application
 that has since been renamed launches under the new name (`sola-workspaces`
