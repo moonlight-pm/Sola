@@ -212,7 +212,7 @@ pub fn row_of<'a>(e: &'a Ecosystem, p: &'a Package, ink: &Ink, selected: bool, c
     let newest: Element<'a, Msg> = match (&e.check, &p.newest) {
         (Some(c), _) if c.error.is_some() => mono("–", SMALL, ink.fg4).into(),
         (Some(_), Some(m)) if p.present && p.moves() => mono(short(&m.to_hash).to_string(), SMALL, ink.accent).into(),
-        (Some(_), _) if p.present && p.in_release() => mono("·", SMALL, ink.fg4).into(),
+        (Some(_), _) if p.present && p.published() => mono("·", SMALL, ink.fg4).into(),
         _ => mono("–", SMALL, ink.fg4).into(),
     };
     let upstream: Element<'a, Msg> = match &p.upstream {

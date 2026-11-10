@@ -13,6 +13,7 @@ use super::mark::{self, Kind};
 use super::words::{self, Tone, short, size};
 use super::{BODY, CAPTION, HEADING, PAGE, PROSE, SMALL, Section, display, medium, mono, ui};
 use crate::Msg;
+use crate::add::{Outcome, Preview};
 use crate::audit::{Security, Upstream, rank};
 use crate::git::Pushed;
 use crate::model::{Ecosystem, Package};
@@ -47,6 +48,16 @@ fn pill<'a>(m: Element<'a, Msg>, label: &'a str, tone: BadgeTone, ink: &Ink) -> 
 /// Advisories shown before "Show all".
 const HITS: usize = 10;
 
+/// Adding packages: the one running, what came of the last, and what
+/// each would make.
+#[derive(Clone, Copy)]
+pub struct Adding<'a> {
+    pub now: Option<&'a str>,
+    pub last: Option<&'a Outcome>,
+    pub previews: &'a std::collections::BTreeMap<String, Preview>,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn view<'a>(
     e: &'a Ecosystem,
     p: &'a Package,
@@ -54,6 +65,7 @@ pub fn view<'a>(
     open: &BTreeSet<Section>,
     width: f32,
     all_hits: bool,
+    adding: Adding<'a>,
 ) -> Element<'a, Msg> {
     let mut badges = row![standing_badge(p.standing, &ink)].spacing(6);
     if p.advised() {
@@ -78,6 +90,14 @@ pub fn view<'a>(
     }
     let (tone, said) = words::verdict(e, p);
     let mut page = column![top, verdict(tone, said, &ink)].spacing(18);
+    let recipe = p.listed.as_ref().is_some_and(|l| l.recipe);
+    if p.standing == Standing::OriginOnly && !recipe {
+        page = page.push(add(p, adding.now, adding.previews.get(&p.name), &ink));
+    }
+    if let Some(o) = adding.last.filter(|o| o.name == p.name || o.result.as_ref().is_ok_and(|a| a.made.iter().any(|m| m.name == p.name)))
+    {
+        page = page.push(outcome(o, &ink));
+    }
 
     let (below, above) = e.reach(&p.name);
     page = page.push(section(Section::Where, "Where it stands", String::new(), open, &ink, || places(e, p, &ink), None));
@@ -147,6 +167,68 @@ pub fn view<'a>(
     .height(Length::Fill)
     .style(move |_| container::Style { background: Some(bg.into()), ..Default::default() })
     .into()
+}
+
+/// Add, and what it does, for a package on the origin only.
+fn add<'a>(p: &'a Package, now: Option<&'a str>, preview: Option<&Preview>, ink: &Ink) -> Element<'a, Msg> {
+    use sola_kit::components::button as kit;
+    let mut b = kit::labeled(if now == Some(p.name.as_str()) { "Adding…" } else { "Add" }, kit::primary);
+    if now.is_none() {
+        b = b.on_press(Msg::Add(p.name.clone()));
+    }
+    row![b, note(add_words(p, preview), ink)].spacing(12).align_y(Alignment::Center).into()
+}
+
+/// What Add does, as far as Oath's preview says.
+fn add_words(p: &Package, preview: Option<&Preview>) -> String {
+    let Some(pv) = preview else {
+        return "Takes its newest signed head, with what it needs that this machine lacks, and applies them. Nothing here moves."
+            .into();
+    };
+    let mut s = "Takes its newest signed head".to_string();
+    if let Some(m) = pv.made.iter().find(|m| m.name == p.name) {
+        let v = if m.version.is_empty() { String::new() } else { format!("{} ", m.version) };
+        s.push_str(&format!(" ({v}{}, signed by {})", short(&m.hash), m.signer));
+    }
+    match pv.needs.as_slice() {
+        [] => s.push_str(" and applies it"),
+        needs => s.push_str(&format!(", with {}, which this machine lacks, and applies them", needs.join(", "))),
+    }
+    match pv.size {
+        Some(0) => s.push_str(": every pack is in the store already"),
+        Some(n) => s.push_str(&format!(": {} to fetch", size(n))),
+        None => {}
+    }
+    s.push_str(". Nothing here moves.");
+    s
+}
+
+/// What the last Add did, in Oath's terms.
+fn outcome<'a>(o: &'a Outcome, ink: &Ink) -> Element<'a, Msg> {
+    let said = match &o.result {
+        // A refused apply may still leave part of it made: what Oath now
+        // has is in the sheet above, read again after any apply.
+        Err(why) => return verdict(Tone::Warn, format!("Adding {} stopped: {why}", o.name), ink),
+        Ok(a) if a.made.is_empty() => format!("{} was already here; nothing was added.", o.name),
+        Ok(a) => {
+            let one = |m: &crate::add::Made| {
+                let v = if m.version.is_empty() { String::new() } else { format!(" {}", m.version) };
+                format!("{}{v} ({}, signed by {})", m.name, short(&m.hash), m.signer)
+            };
+            let mut s = match a.generation {
+                Some(g) => format!("Added in generation {g}: "),
+                None => "Added: ".into(),
+            };
+            s.push_str(&a.made.iter().map(one).collect::<Vec<_>>().join(", "));
+            s.push('.');
+            let repointed: Vec<&str> = a.made.iter().flat_map(|m| m.repointed.iter().map(String::as_str)).collect();
+            if !repointed.is_empty() {
+                s.push_str(&format!(" It runs with this machine's {}.", repointed.join(", ")));
+            }
+            s
+        }
+    };
+    note(said, ink)
 }
 
 fn words_n(n: usize, one: &str, many: &str) -> String {
@@ -268,6 +350,20 @@ fn places<'a>(e: &'a Ecosystem, p: &'a Package, ink: &Ink) -> Element<'a, Msg> {
         String::new()
     };
     col = col.push(place(name("Release".into(), rel_id), rel_val, rel_from, ink));
+    if p.here {
+        let by = |h: &crate::heads::Head| format!("{}, {}", h.signer, when::ago(&h.published));
+        let (head_val, head_from): (Element<'a, Msg>, String) = match &p.head {
+            None => (quiet("none taken", ink), String::new()),
+            Some(h) if p.at_head && h.hash == p.hash => (quiet("same as here", ink), by(h)),
+            // A check found it; Oath's record is from the last update.
+            Some(_) if p.at_head => (
+                quiet("same as here", ink),
+                e.check.as_ref().map(|c| format!("checked {}", when::ago(&c.at))).unwrap_or_default(),
+            ),
+            Some(h) => (mono(short(&h.hash).to_string(), SMALL, ink.fg2).into(), by(h)),
+        };
+        col = col.push(place(name("Head".into(), String::new()), head_val, head_from, ink));
+    }
     let (newest_name, newest_val): (String, Element<'a, Msg>) = match &e.check {
         None => (String::new(), quiet("not checked", ink)),
         Some(c) if c.error.is_some() => (String::new(), quiet("the check could not say", ink)),
@@ -275,7 +371,7 @@ fn places<'a>(e: &'a Ecosystem, p: &'a Package, ink: &Ink) -> Element<'a, Msg> {
             let id = c.newest.clone().unwrap_or_default();
             let v = match &p.newest {
                 Some(m) if p.moves() => mono(short(&m.to_hash).to_string(), SMALL, ink.accent).into(),
-                _ if p.in_release() => quiet("same as here", ink),
+                _ if p.published() => quiet("same as here", ink),
                 _ => quiet("not in it", ink),
             };
             (id, v)

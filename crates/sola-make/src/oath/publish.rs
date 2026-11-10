@@ -161,9 +161,11 @@ pub fn publish(local: bool, force: bool) -> Result<(), String> {
 
 /// `oath publish --confirm` each package's pin as its head, ordered by the
 /// time its source commit was made. One whose head is that hash already
-/// stays as it is.
+/// stays as it is. Then, when Oath asks, record the heads this machine
+/// runs as the ones it took (Oath 0995609), once for them all.
 fn heads(products: &BTreeMap<&str, String>) -> Result<(), String> {
     let mut published = Vec::new();
+    let mut record = false;
     for pkg in PACKAGES {
         let id = pkg.id();
         let hash = &products[pkg.name];
@@ -174,14 +176,22 @@ fn heads(products: &BTreeMap<&str, String>) -> Result<(), String> {
             .or_else(|| commit_time("HEAD"))
             .ok_or("git: no commit time for HEAD")?;
         match catalog::publish_head(&id, &committed) {
-            Ok(true) => {
-                println!("[publish] {id} {}: its head now", super::short(hash));
-                published.push(id);
+            Ok(p) => {
+                record |= p.record;
+                if p.new {
+                    println!("[publish] {id} {}: its head now", super::short(hash));
+                    published.push(id);
+                } else {
+                    println!("[publish] {id} {}: its head already", super::short(hash));
+                }
             }
-            Ok(false) => println!("[publish] {id} {}: its head already", super::short(hash)),
             Err(e) if published.is_empty() => return Err(e),
             Err(e) => return Err(format!("{e}\n(heads published before it: {})", published.join(" "))),
         }
+    }
+    if record {
+        let said = catalog::record_heads()?;
+        println!("[publish] heads this machine runs recorded as taken: {said}");
     }
     Ok(())
 }
