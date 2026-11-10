@@ -199,6 +199,7 @@ exits cleanly stays down; that is how **Exit Sola** ends the session.
 | `sola-shell` | The top row, the bar, and the overlays go until the new shell maps them; windows stay. The new shell takes the saved layout and pairs the open windows with their tabs again. |
 | `sola-session` | The new one launches saved applications that have no window. It did not start the ones still running: their exits are not reported and `solactl desk close` does not find them, but they stay in the saved set while they have windows. |
 | An application | `sola-session` publishes its exit (`UserAppExited`) and drops it from the saved set. Nothing restarts it. Its windows' places in the bar wait 30 seconds, so a copy started again within that time gets them back. |
+| An application's GPU device | The driver lost it (a reset, an NVIDIA Xid). The application starts again in place with a fresh device, as it does when its binary changes: its window closes and opens again, and `sola-session` sees no exit. A second loss within a minute ends it instead (then as above). |
 | The compositor | Every Wayland client loses its connection. `sola-river` and the shell exit with an error, PID 1 starts them again, and they wait for a live Wayland socket. The applications exit with it; `sola-session` keeps them in the saved set and starts them again once the new compositor has answered for 2 seconds. |
 
 ### Ending the session

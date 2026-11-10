@@ -91,6 +91,12 @@ pub fn watch_own_binary() {
 /// Trims the `" (deleted)"` suffix Linux appends to `/proc/self/exe`
 /// after the file has been replaced.
 pub fn exec_self() -> ! {
+    exec_self_with(None)
+}
+
+/// [`exec_self`], with `var` set in the new process's environment. It is
+/// handed to `execve`, not set with `set_var`, which races other threads.
+pub fn exec_self_with(var: Option<(&str, &str)>) -> ! {
     let mut exe = std::env::current_exe().expect("cannot resolve binary for restart");
 
     // On Linux, /proc/self/exe gets " (deleted)" when the binary is replaced.
@@ -106,9 +112,16 @@ pub fn exec_self() -> ! {
         .map(|a| CString::new(a).expect("arg contains null byte"))
         .collect();
 
+    let env: Vec<CString> = std::env::vars_os()
+        .filter(|(name, _)| var.is_none_or(|(set, _)| name != set))
+        .map(|(name, value)| [name.as_encoded_bytes(), b"=", value.as_encoded_bytes()].concat())
+        .chain(var.map(|(name, value)| format!("{name}={value}").into_bytes()))
+        .map(|pair| CString::new(pair).expect("environment contains null byte"))
+        .collect();
+
     tracing::info!(path = %exe.display(), "execv (self-restart)");
 
-    match nix::unistd::execv(&exe_cstr, &args) {
+    match nix::unistd::execve(&exe_cstr, &args, &env) {
         Ok(infallible) => match infallible {},
         Err(err) => panic!("execv failed: {err}"),
     }
@@ -284,5 +297,37 @@ mod tests {
             "an unwatched file must not trigger a restart"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The test runs itself as a child, which `exec_self_with`s; the copy
+    /// it becomes checks that it got the variable and kept the rest.
+    #[test]
+    fn exec_self_with_sets_the_variable_and_keeps_the_environment() {
+        const CHILD: &str = "SOLA_TEST_EXEC_CHILD";
+        const SET: &str = "SOLA_TEST_EXEC_SET";
+        // The pid outlives the exec, so the copy knows itself by this
+        // marker whatever environment it got, and fails rather than
+        // running the test again.
+        let marker = std::env::temp_dir().join(format!("sola-exec-test-{}", std::process::id()));
+        if fs::remove_file(&marker).is_ok() {
+            assert_eq!(std::env::var(SET).as_deref(), Ok("yes"), "exec'd without the variable");
+            assert_eq!(std::env::var(CHILD).as_deref(), Ok("1"), "exec'd without the environment");
+            println!("exec'd with the variable");
+            return;
+        }
+        if std::env::var_os(CHILD).is_some() {
+            fs::write(&marker, "").unwrap();
+            exec_self_with(Some((SET, "yes")));
+        }
+        let out = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "watcher::tests::exec_self_with_sets_the_variable_and_keeps_the_environment"])
+            .args(["--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .env_remove(SET)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+        assert!(stdout.contains("exec'd with the variable"), "{stdout}");
     }
 }

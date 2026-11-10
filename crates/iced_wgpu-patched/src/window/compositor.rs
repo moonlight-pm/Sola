@@ -7,6 +7,19 @@ use crate::graphics::{self, Shell, Viewport};
 use crate::settings::{self, Settings};
 use crate::{Engine, Renderer};
 
+use std::sync::OnceLock;
+
+/// Sola: what a process does when the driver loses its device (a reset, an
+/// Xid, the card off the bus). Without one, a window recreates its surface
+/// on the dead device and redraws again, a thread at 100% for good.
+static DEVICE_LOST: OnceLock<fn(&str)> = OnceLock::new();
+
+/// Sola: set what happens when the device is lost; the first call wins. The
+/// hook runs on whichever thread found the loss, with the message wgpu gave.
+pub fn on_device_lost(hook: fn(&str)) {
+    let _ = DEVICE_LOST.set(hook);
+}
+
 /// A window graphics backend for iced powered by `wgpu`.
 pub struct Compositor {
     instance: wgpu::Instance,
@@ -177,6 +190,16 @@ impl Compositor {
 
             match result {
                 Ok((device, queue)) => {
+                    device.set_device_lost_callback(|reason, message| {
+                        if reason == wgpu::DeviceLostReason::Destroyed {
+                            return;
+                        }
+                        log::error!("wgpu device lost: {message}");
+                        if let Some(hook) = DEVICE_LOST.get() {
+                            hook(&message);
+                        }
+                    });
+
                     let engine = Engine::new(
                         &adapter,
                         device,

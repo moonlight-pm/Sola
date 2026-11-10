@@ -128,6 +128,7 @@ exiting ends the session. Kit apps reconnect to the bus and tolerate
 | Grok sessions | `~/.grok/sessions/` (Projects compaction `×N` + reboot resume; not an ACP leader socket) |
 | Codex sessions | `~/.codex/sessions/YYYY/MM/DD/rollout-*-{id}.jsonl` (Projects compaction `×N`; `CODEX_HOME` override) |
 | Self-update of apps | Binary watch → re-exec when `/opt/sola/bin/<name>` changes (`SOLA_NO_SELF_WATCH=1` skips) |
+| Lost GPU device | iced_wgpu's device-lost hook (`on_device_lost`, ours) → `app::startup`'s handler re-execs for a fresh device; `SOLA_GPU_LOST_AT` makes a second loss within a minute quit |
 
 ### Communication layers
 

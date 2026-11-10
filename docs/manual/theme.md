@@ -20,7 +20,7 @@ own `iced::application` or `iced::daemon` from the kit's parts.
 
 | Part | What it gives an application |
 |---|---|
-| `app::startup` | The standard boot: logging, the Wayland socket, the system fonts, and a watch that restarts the application in place when its own binary changes (skipped when `SOLA_NO_SELF_WATCH=1`) |
+| `app::startup` | The standard boot: logging, the Wayland socket, the system fonts, and a watch that restarts the application in place when its own binary changes (skipped when `SOLA_NO_SELF_WATCH=1`). It restarts in place too when the driver loses the application's GPU device; a second loss within a minute quits it |
 | `BusSetup`, `app::bus_subscription`, `app::bus` | The bus connection ([The bus](bus.md#using-the-bus-from-rust)) |
 | `CallSetup`, `call_subscription` | Call-plane methods ([Call plane](call.md)) |
 | `theme` | The palette, the shell style, and conversion from the bus theme |

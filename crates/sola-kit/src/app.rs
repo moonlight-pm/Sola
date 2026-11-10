@@ -321,6 +321,9 @@ pub fn window_settings_transparent(app_id: &str) -> iced::window::Settings {
 ///    process manager sets this when launching apps it already
 ///    supervises directly, to avoid a double restart). Mirrors the
 ///    historical `sola-app` behavior (now under `apocrypha/`).
+/// 7. [`restart_on_device_lost`] as iced_wgpu's device-lost hook — the
+///    same re-exec when the driver loses the GPU device, instead of a
+///    window redrawing on a dead device at 100% CPU.
 ///
 /// Returns the resolved Wayland socket name so the caller can log it.
 /// Apps that need different log init or a different Wayland timeout
@@ -343,7 +346,32 @@ pub fn startup(app_id: &str) -> String {
     } else {
         tracing::debug!("SOLA_NO_SELF_WATCH set, skipping self-watch");
     }
+    iced_wgpu::window::compositor::on_device_lost(restart_on_device_lost);
     socket
+}
+
+/// When (Unix seconds) this process last restarted for a lost device.
+const GPU_LOST_AT: &str = "SOLA_GPU_LOST_AT";
+
+/// The driver lost this process's GPU device (a reset, an Xid, the card
+/// off the bus): start again in place for a fresh one, as a new binary
+/// does. A second loss within a minute of the last quits instead, so a
+/// card that keeps failing does not restart the app in a loop.
+fn restart_on_device_lost(message: &str) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let last = std::env::var(GPU_LOST_AT).ok().and_then(|v| v.parse().ok());
+    if lost_again_soon(last, now) {
+        tracing::error!(%message, "gpu device lost again within a minute, quitting");
+        std::process::exit(1);
+    }
+    tracing::error!(%message, "gpu device lost, restarting for a fresh one");
+    sola_core::watcher::exec_self_with(Some((GPU_LOST_AT, &now.to_string())));
+}
+
+fn lost_again_soon(last: Option<u64>, now: u64) -> bool {
+    last.is_some_and(|at| now.saturating_sub(at) < 60)
 }
 
 /// Iced subscription that drains the kit's bus client into a stream of
@@ -665,5 +693,16 @@ mod tests {
             &mut theme
         ));
         assert!(matches!(theme, iced::Theme::Light));
+    }
+
+    #[test]
+    fn a_first_device_loss_restarts() {
+        assert!(!lost_again_soon(None, 1_000));
+    }
+
+    #[test]
+    fn a_loss_within_a_minute_of_the_last_quits() {
+        assert!(lost_again_soon(Some(1_000), 1_059));
+        assert!(!lost_again_soon(Some(1_000), 1_060));
     }
 }
