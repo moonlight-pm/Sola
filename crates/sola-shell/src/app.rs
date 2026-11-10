@@ -763,8 +763,18 @@ impl Shell {
             .iter_mut()
             .find(|m| m.label == sola_kit::menu::WINDOW_MENU_LABEL)
         {
-            crate::menu::state::fill_window_menu(menu, self.tabs.zone_layout(), &self.keys);
             let pinned = self.focused_window_id.is_some_and(|w| self.tabs.is_pinned(w));
+            let workspaces = sola_bus::topics::Workspaces {
+                workspaces: self.tabs.workspaces(),
+                showing: self.tabs.showing_id().to_string(),
+            };
+            crate::menu::state::fill_window_menu(
+                menu,
+                self.tabs.zone_layout(),
+                &workspaces,
+                pinned,
+                &self.keys,
+            );
             sola_kit::menu::check_pin(menu, pinned);
         }
         payload
@@ -916,6 +926,10 @@ impl Shell {
                 iced::Task::none()
             }
             sola_kit::WindowAction::Zone(zone) => self.snap_focused_zone(zone),
+            sola_kit::WindowAction::SendToWorkspace(index) => {
+                self.send_focused_to_workspace(index);
+                iced::Task::none()
+            }
         }
     }
 

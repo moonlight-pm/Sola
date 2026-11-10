@@ -84,22 +84,27 @@ pub fn effective_app_menu(cache: &MenuCache, app_id: &str, label: &str) -> AppMe
     sola_kit::menu::ensure_window_menu(base)
 }
 
-/// Give a Window menu the layout's grid zones (`sola_kit::menu::
-/// fill_window_menu`) and every item its key now (`crate::bindings`).
+/// Give a Window menu the layout's grid zones and a Send to item per
+/// workspace (`sola_kit::menu`), and every item its key now
+/// (`crate::bindings`).
 pub fn fill_window_menu(
     menu: &mut MenuDefinition,
     layout: &sola_bus::topics::ZoneLayout,
+    workspaces: &sola_bus::topics::Workspaces,
+    pinned: bool,
     keys: &crate::bindings::Bindings,
 ) {
     use crate::bindings::Act;
     use sola_kit::menu::{WindowAction, parse_window_action};
     sola_kit::menu::fill_window_menu(menu, layout);
+    sola_kit::menu::fill_workspaces(menu, workspaces, pinned);
     for item in &mut menu.items {
         if let MenuItem::Action { id, shortcut, .. } = item {
             let act = match parse_window_action(id) {
                 Some(WindowAction::Hide) => Act::Hide,
                 Some(WindowAction::Cycle) => Act::NextTab,
                 Some(WindowAction::Zone(z)) => Act::Zone(z),
+                Some(WindowAction::SendToWorkspace(i)) => Act::SendToWorkspace(i),
                 Some(WindowAction::Pin) | None => continue,
             };
             *shortcut = keys.key(act);

@@ -189,6 +189,7 @@ fn system_id(item: &str) -> Option<String> {
         WindowAction::Zone(sola_bus::topics::Zone::Cinema) => "zone.cinema".into(),
         WindowAction::Zone(sola_bus::topics::Zone::Float) => "zone.float".into(),
         WindowAction::Zone(sola_bus::topics::Zone::Grid(id)) => format!("zone.{id}"),
+        WindowAction::SendToWorkspace(index) => format!("workspace.send.{}", index + 1),
     })
 }
 

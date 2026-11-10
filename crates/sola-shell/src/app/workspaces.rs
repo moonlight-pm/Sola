@@ -309,6 +309,9 @@ impl Shell {
         match remembered.or_else(|| self.mru_window_on_showing(None)) {
             Some(wid) => self.raise_window_from_click(wid),
             None => {
+                // Nothing here to focus: a window on another workspace must
+                // not keep the keyboard out of sight.
+                self.emit_focus(sola_bus::topics::FocusTarget::NO_WINDOW, self.focused_window_id);
                 self.focused_app_id = None;
                 self.focused_window_id = None;
                 self.emit_registered_chords();

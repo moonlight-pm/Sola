@@ -16,7 +16,7 @@ Drive compositor window actions from the mouse, and give one system chord that l
 | Rule | Choice |
 |------|--------|
 | Window menu | Kit helper [`window_menu`](../../crates/sola-kit/src/menu.rs). Apps **may** include / replace it (`BusSetup::window_menu` or a custom `"Window"` definition). The shell **injects** the default when the focused app omits it, so XWayland and other external windows still get a mouse path. |
-| Actions | Hide, Cycle Windows, Float, every `Zone`. Shell handles `window.*` ids; unknown ids still go to the app as `MenuAction`. |
+| Actions | Hide, Cycle Windows, Float, every `Zone`, Send to each workspace. Shell handles `window.*` ids; unknown ids still go to the app as `MenuAction`. |
 | Super+K | Shell overlay. Searchable list of built-in shell/window/capture chords plus the focused app’s published menu shortcuts (window ids not duplicated). Click or Enter runs the action. Flower menu **Keyboard Shortcuts**. Escape / Super+K again / backdrop dismisses. |
 | Paint Crop | Super+K is the system cheatsheet. Paint Crop is **Super+Shift+K**. |
 

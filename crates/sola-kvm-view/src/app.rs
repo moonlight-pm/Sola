@@ -34,7 +34,8 @@ enum Status {
 }
 
 pub struct App {
-    host: String,
+    /// `None`: no machine to show, and the status says why.
+    host: Option<String>,
     port: u16,
     status: Status,
     display: Option<Display>,
@@ -71,12 +72,16 @@ pub enum Msg {
 }
 
 impl App {
-    pub fn boot(host: String, port: u16) -> (Self, Task<Msg>) {
+    pub fn boot(target: Result<(String, u16), String>) -> (Self, Task<Msg>) {
+        let (host, port, status) = match target {
+            Ok((host, port)) => (Some(host), port, Status::Connecting),
+            Err(why) => (None, 0, Status::Refused(why)),
+        };
         (
             Self {
                 host,
                 port,
-                status: Status::Connecting,
+                status,
                 display: None,
                 pictures: Arc::default(),
                 outgoing: None,
@@ -92,7 +97,11 @@ impl App {
     }
 
     pub fn title(&self) -> String {
-        self.host.clone()
+        self.name().to_string()
+    }
+
+    fn name(&self) -> &str {
+        self.host.as_deref().unwrap_or("Remote Desktop")
     }
 
     pub fn theme(&self) -> Theme {
@@ -100,14 +109,16 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
-        let link = Subscription::run_with(
-            Link {
-                host: self.host.clone(),
-                port: self.port,
-                pictures: Arc::clone(&self.pictures),
-            },
-            run_link,
-        );
+        let link = self.host.clone().map_or_else(Subscription::none, |host| {
+            Subscription::run_with(
+                Link {
+                    host,
+                    port: self.port,
+                    pictures: Arc::clone(&self.pictures),
+                },
+                run_link,
+            )
+        });
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
             link.map(Msg::Net),
@@ -211,8 +222,10 @@ impl App {
         }
         if pressed {
             self.held.insert(code);
-        } else {
-            self.held.remove(&code);
+        } else if !self.held.remove(&code) {
+            // Pressed elsewhere and let go here: the other machine never
+            // heard it go down.
+            return Task::none();
         }
         let state = match (pressed, repeat) {
             (false, _) => 0,
@@ -255,8 +268,8 @@ impl App {
     pub fn view(&self) -> Element<'_, Msg> {
         let note = match &self.status {
             Status::Showing => None,
-            Status::Connecting => Some(format!("Connecting to {}…", self.host)),
-            Status::Lost(why) => Some(format!("Lost {}: {why}. Connecting again…", self.host)),
+            Status::Connecting => Some(format!("Connecting to {}…", self.name())),
+            Status::Lost(why) => Some(format!("Lost {}: {why}. Connecting again…", self.name())),
             Status::Refused(why) => Some(why.clone()),
         };
         let body: Element<'_, Msg> = match note {
@@ -276,7 +289,7 @@ impl App {
             .style(|_| container::background(Color::BLACK));
         sola_kit::window_frame(
             self.float.chrome_any(),
-            &self.host,
+            self.name(),
             Msg::TitleDrag,
             Msg::TitleClose,
             Msg::TitleResize,

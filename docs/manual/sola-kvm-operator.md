@@ -290,6 +290,9 @@ capture the screen directly; choose Allow.
 sola-kvm view <mac-host>
 ```
 
+Or open **Remote Desktop** from the launcher: with one machine paired it
+opens that one, and with none or several it says what to do.
+
 While the window has the keyboard, every key goes to the Mac, and Super acts
 as Cmd. **Ctrl+Alt+Esc** gives the keyboard and pointer back to Sola, and a
 click on the picture takes them again. Clicking another window also gives
@@ -300,7 +303,8 @@ when a viewer connects. Only the paired machine's key gets in, and the traffic
 is encrypted. If the connection drops, the window connects again by itself.
 
 It shows the Mac's main display, one viewer at a time, with no sound and no
-shared clipboard.
+shared clipboard. To move its window to another workspace while it has the
+keyboard, use the titlebar's **Window** menu.
 
 ## How it works
 

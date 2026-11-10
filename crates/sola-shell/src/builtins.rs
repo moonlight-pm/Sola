@@ -126,6 +126,13 @@ pub fn builtin_apps() -> Vec<Application> {
             icon: "lucide/frame".into(),
             ..Default::default()
         },
+        Application {
+            app_id: "sola-kvm-view".into(),
+            label: "Remote Desktop".into(),
+            command: kit_command("sola-kvm-view"),
+            icon: "lucide/screen-share".into(),
+            ..Default::default()
+        },
     ];
     // The catalog app manages the machine itself, so only where there
     // is an Oath catalog to manage.

@@ -92,7 +92,7 @@ pub fn spawn(bind: &str, keys: Keys, source: Source) -> io::Result<()> {
                 .spawn(move || {
                     let result = match stream {
                         Stream::Video => video(tcp, conn, shared, source),
-                        Stream::Input => input(tcp, conn, shared),
+                        Stream::Input => input(tcp, conn, shared, source),
                     };
                     match result {
                         Ok(()) => info!(?stream, "remote view: stream ended"),
@@ -156,19 +156,23 @@ fn watch_for_close(tcp: &TcpStream, tx: Sender<Msg>) -> io::Result<()> {
     Ok(())
 }
 
-fn input(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>) -> io::Result<()> {
+fn input(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source) -> io::Result<()> {
     Shared::take_over(&shared.input, &tcp)?;
     let mut injector = CgInjector::new();
     let result = (|| loop {
         match Up::decode(&conn.read_frame(&mut tcp, INPUT_FRAME.min(MAX_FRAME))?)? {
             Up::Keyframe => shared.force_key.store(true, Ordering::Relaxed),
             Up::Event(bytes) => match protocol::decode(&bytes) {
+                // The test card drives nothing: this Mac's pointer is someone's.
+                Ok((_, packet)) if source == Source::TestPattern => info!(?packet, "test card: input"),
                 Ok((_, packet)) => injector.handle(&packet),
                 Err(e) => warn!(?e, "remote view: a bad input packet"),
             },
         }
     })();
     // Whoever sits down next finds nothing held.
-    injector.handle(&Packet::Leave);
+    if source != Source::TestPattern {
+        injector.handle(&Packet::Leave);
+    }
     result
 }

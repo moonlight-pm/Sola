@@ -139,10 +139,16 @@ pub struct FrameUpdate {
     pub fullscreen: bool,
 }
 
-/// Which surface receives keyboard focus.
+/// Which surface receives keyboard focus; [`FocusTarget::NO_WINDOW`] for
+/// none.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FocusTarget {
     pub window_id: u32,
+}
+
+impl FocusTarget {
+    /// No window has the keyboard (window ids start at 1).
+    pub const NO_WINDOW: u32 = 0;
 }
 
 /// Output resolution, emitted by compositor on startup and hotplug.

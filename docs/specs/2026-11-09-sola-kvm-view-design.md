@@ -64,5 +64,4 @@ released on the host.
 ## Not in this slice
 
 NVIDIA decoders only; the main display only; one viewer at a time; no audio; no
-clipboard in view mode; the window does not resize the host's screen; no
-launcher entry.
+clipboard in view mode; the window does not resize the host's screen.
