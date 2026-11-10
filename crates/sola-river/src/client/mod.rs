@@ -71,8 +71,11 @@ pub struct AppData {
     /// The bus has been told this process has sent its window state
     /// (`BusClient::settled`), once, after its first render sequence.
     pub bus_settled: bool,
-    /// Windows whose tab the shell has been told (`Topic::WindowTab`).
+    /// Windows whose tab is in their facts.
     pub tabs_told: std::collections::HashSet<u32>,
+    /// What the shell has been told of each window (`Topic::WindowFacts`);
+    /// a window is not here until it has something to say.
+    pub facts: HashMap<u32, sola_bus::topics::WindowFacts>,
     pub pending: PendingUpdate,
     pub chords: ChordRegistry,
     pub bus: BusClient,
@@ -157,13 +160,13 @@ pub struct AppData {
     /// dying window — so we must clear focus ourselves when this window
     /// receives a `closed` event.
     pub focused_window: Option<u32>,
-    /// Windows the shell has marked floating (`Topic::WindowFloating`). Gates
+    /// Windows the shell has placed floating (`Topic::WindowPlace`). Gates
     /// CSD move/resize. Dropped when the window closes.
     pub floating: std::collections::HashSet<u32>,
-    /// How the shell shows each window (`Topic::WindowChrome`): tiled hints
-    /// and the hairline rim for windows whose app draws no frame. Dropped
-    /// when the window closes.
-    pub chrome: std::collections::HashMap<u32, sola_bus::topics::WindowChrome>,
+    /// How the shell shows each window (`Topic::WindowPlace`): tiled hints,
+    /// Cinema and the hairline rim for windows whose app draws no frame.
+    /// Dropped when the window closes.
+    pub chrome: std::collections::HashMap<u32, sola_bus::topics::WindowPlace>,
     /// The `set_tiled` state last sent per window (each send is a configure).
     pub tiled_sent: std::collections::HashMap<u32, bool>,
     /// Window currently under the pointer, tracked from `river_seat_v1`
@@ -259,6 +262,7 @@ impl AppData {
             windows_known: false,
             bus_settled: false,
             tabs_told: std::collections::HashSet::new(),
+            facts: HashMap::new(),
             pending: PendingUpdate::default(),
             chords: ChordRegistry::default(),
             bus,
@@ -395,24 +399,22 @@ pub fn bus_tick(state: &mut AppData) {
                 let ids: Vec<u32> = entries.into_iter().map(|e| e.window_id).collect();
                 state.pending.set_composition(ids);
             }
-            sola_bus::topics::Topic::WindowFloating(wf) => {
-                if wf.floating {
-                    state.floating.insert(wf.window_id);
-                } else {
-                    state.floating.remove(&wf.window_id);
-                }
-                // Kick a manage/render cycle so decoration-below shadows
-                // attach or tear down promptly (not only on the next frame).
-                state.pending.manage_dirty = true;
-            }
-            sola_bus::topics::Topic::WindowChrome(c) => {
-                // A retraction arrives as the same topic, not sticky.
+            sola_bus::topics::Topic::WindowPlace(p) => {
+                // A retraction arrives as the same topic, not sticky: the
+                // window is gone from the shell's view.
                 if msg.sticky {
-                    state.chrome.insert(c.window_id, c);
+                    if p.floating {
+                        state.floating.insert(p.window_id);
+                    } else {
+                        state.floating.remove(&p.window_id);
+                    }
+                    state.chrome.insert(p.window_id, p);
                 } else {
-                    state.chrome.remove(&c.window_id);
+                    state.floating.remove(&p.window_id);
+                    state.chrome.remove(&p.window_id);
                 }
-                // set_tiled is manage-only, borders render-only.
+                // Shadows attach or tear down promptly (not only on the next
+                // frame); set_tiled is manage-only, borders render-only.
                 state.pending.manage_dirty = true;
                 state.pending.render_dirty = true;
             }
@@ -585,7 +587,7 @@ pub fn bus_tick(state: &mut AppData) {
 /// that comes up (or reconnects) never sees `OutputGeometry` and cannot
 /// frame the menubar — river then default-centers the 28px bar mid-screen.
 fn republish_after_bus_reconnect(state: &mut AppData) {
-    use sola_bus::topics::{OutputGeometry, Topic, WindowFloating};
+    use sola_bus::topics::{OutputGeometry, Topic};
 
     if let Some((width, height)) = state.output_size {
         info!(
@@ -602,27 +604,12 @@ fn republish_after_bus_reconnect(state: &mut AppData) {
     // Windows list so shell can look up menubar/launcher/… by title again.
     crate::translator::emit_windows(state);
 
-    // Live geometry for every window we already placed/sized — late
-    // subscribers (and shell float restore) need the sticky map rebuilt.
-    let ids: Vec<u32> = state
-        .registry
-        .as_windows()
-        .iter()
-        .map(|w| w.window_id)
-        .collect();
-    for window_id in ids {
-        crate::translator::emit_geometry(state, window_id);
-    }
-
-    // Re-assert floating bits we still track locally. Shell is the usual
-    // publisher, but after a bus wipe our local set is the authority until
-    // shell re-syncs via WindowFloating on its own restart.
-    let floating: Vec<u32> = state.floating.iter().copied().collect();
-    for window_id in floating {
-        state.bus.emit(Topic::WindowFloating(WindowFloating {
-            window_id,
-            floating: true,
-        }));
+    // Every window's facts (rect, tab, parent): late subscribers (and the
+    // shell's float restore) need the sticky map rebuilt. Floating is the
+    // shell's to say; its client sends its records again itself.
+    let facts: Vec<_> = state.facts.values().cloned().collect();
+    for f in facts {
+        state.bus.emit(Topic::WindowFacts(f));
     }
 }
 

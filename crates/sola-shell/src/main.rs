@@ -14,7 +14,7 @@ pub mod bluetooth;
 mod builtins;
 mod handlers;
 pub mod calendar;
-pub mod chrome;
+pub mod place;
 pub mod components;
 pub mod desk_menu;
 pub mod keys;

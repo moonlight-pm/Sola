@@ -80,7 +80,7 @@ pub fn run() -> iced::Result {
     }
 
     BusSetup::new(APP_ID)
-        .app_kinds(&[TopicKind::TabWindow, TopicKind::CloseTab, TopicKind::OpenImage])
+        .app_kinds(&[TopicKind::WindowPlace, TopicKind::CloseTab, TopicKind::OpenImage])
         .app_menu("Paint", [("quit", "Quit Paint", KeyCode::Q.meta())])
         .app_menu_definition(MenuDefinition {
             label: "File".into(),

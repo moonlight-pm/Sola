@@ -251,9 +251,7 @@ const SESSION_TOPICS: &[TopicKind] = &[
     TopicKind::MenuAction,
     TopicKind::CloseApp,
     TopicKind::Windows,
-    TopicKind::WindowFloating,
-    TopicKind::WindowChrome,
-    TopicKind::TabWindow,
+    TopicKind::WindowPlace,
     TopicKind::CloseTab,
 ];
 
@@ -1131,10 +1129,10 @@ impl App {
     }
 
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
-        self.float.update(m);
+        let framed = self.float.update(m);
         self.tab_windows.update(m);
         // Cinema drops the titlebar: the panes get its rows.
-        if matches!(Topic::parse(m), Some(Topic::WindowChrome(_))) {
+        if framed {
             self.resize_all_panes();
         }
         // The tab bar's stoplight: as the window's own close.

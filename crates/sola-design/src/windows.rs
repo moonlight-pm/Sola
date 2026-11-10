@@ -128,7 +128,7 @@ impl DesignWindows {
         self.wins.is_empty()
     }
 
-    /// Fold a bus message (`TabWindow`: paired ids, shown changes).
+    /// Fold a bus message (`WindowPlace`: paired ids, shown changes).
     /// Returns true when a window's shown state changed.
     pub fn update(&mut self, msg: &sola_bus::Message) -> bool {
         self.tabs.update(msg)

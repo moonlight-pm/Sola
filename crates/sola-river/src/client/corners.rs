@@ -1,5 +1,5 @@
 //! Rounded corners for tiled windows whose app draws no frame (Steam, any
-//! foreign app; `WindowChrome.rim`), as the kit draws its own tiles: the
+//! foreign app; `WindowPlace.rim`), as the kit draws its own tiles: the
 //! corners outside the 12 px radius painted the ground, and the 1 px rim
 //! along the rounded edge, opaque (the theme's base 7% lighter,
 //! `AppData::rim_rest`; focused, its highlight a step lighter,

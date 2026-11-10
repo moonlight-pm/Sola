@@ -34,7 +34,7 @@ impl<E: Engine> App<E> {
             .unwrap_or_else(crate::profiles::showing_profile)
     }
 
-    /// Fold `Workspaces` / `WindowWorkspace`. Pages whose workspace wants
+    /// Fold `Workspaces` / `WindowPlace`. Pages whose workspace wants
     /// another profile reopen under it. The shell says a window's workspace
     /// only once the window is where it belongs: a restarting shell moves
     /// windows for a moment while it pairs them, and says nothing of those.
@@ -43,16 +43,14 @@ impl<E: Engine> App<E> {
             Some(Topic::Workspaces(w)) => {
                 crate::profiles::adopt_workspaces(&w.workspaces, &w.showing);
             }
-            Some(Topic::WindowWorkspace(ww)) => {
-                if msg.sticky {
-                    self.window_ws.insert(ww.window_id, ww.workspace);
-                } else {
-                    self.window_ws.remove(&ww.window_id);
+            Some(Topic::WindowPlace(p)) => match p.workspace {
+                Some(ws) if msg.sticky => {
+                    self.window_ws.insert(p.window_id, ws);
                 }
-            }
-            // A window just paired with its sola-river id may already
-            // have a workspace.
-            Some(Topic::TabWindow(_)) => {}
+                _ => {
+                    self.window_ws.remove(&p.window_id);
+                }
+            },
             _ => return,
         }
         self.rebind_pages();

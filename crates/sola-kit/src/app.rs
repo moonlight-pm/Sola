@@ -106,19 +106,20 @@ fn bus_kinds() -> Option<&'static [TopicKind]> {
 /// [`install`]: BusSetup::install
 /// What an app with a kit window reads through the kit's helpers: its
 /// theme ([`apply_theme_update`]), being asked to quit ([`is_self_quit`]),
-/// and its frame ([`crate::float::FloatState::update`]).
+/// and its frame, read from where the shell put it
+/// ([`crate::float::FloatState::update`]).
 pub const WINDOW_KINDS: &[TopicKind] = &[
     TopicKind::Theme,
     TopicKind::MenuAction,
     TopicKind::CloseApp,
     TopicKind::Windows,
-    TopicKind::WindowFloating,
-    TopicKind::WindowChrome,
+    TopicKind::WindowPlace,
 ];
 
 /// What an app with tab windows reads through [`crate::tabs::TabWindows`]:
-/// each tab's window, and the tab bar asking one to close.
-pub const TAB_KINDS: &[TopicKind] = &[TopicKind::TabWindow, TopicKind::CloseTab];
+/// each tab's window (a `WindowPlace` carrying its tab), and the tab bar
+/// asking one to close.
+pub const TAB_KINDS: &[TopicKind] = &[TopicKind::WindowPlace, TopicKind::CloseTab];
 
 pub struct BusSetup {
     app_id: &'static str,

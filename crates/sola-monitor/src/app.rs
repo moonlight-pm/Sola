@@ -933,7 +933,7 @@ impl App {
 }
 
 /// A record's name in the list: its topic, and its keys for a topic kept
-/// per key (`WindowGeometry · 42`).
+/// per key (`WindowPlace · 42`).
 fn record_id(message: &Message) -> String {
     if message.keys.is_empty() {
         message.topic.clone()

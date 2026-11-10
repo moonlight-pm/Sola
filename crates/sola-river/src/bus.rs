@@ -15,14 +15,12 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     TopicKind::Composition,
     TopicKind::Frame,
     TopicKind::Focus,
-    // Floating state gates CSD move/resize. Sticky, so subscribing
-    // replays the current float bit for every window (also on a
-    // sola-river restart). Without this, `floating` stays empty and
-    // titlebar drag bails at the "not floating" guard.
-    TopicKind::WindowFloating,
-    // Tiled hints and the rim for foreign windows. Sticky: replays on a
-    // sola-river restart.
-    TopicKind::WindowChrome,
+    // Where the shell put each window: floating gates CSD move/resize
+    // (without it `floating` stays empty and a titlebar drag bails at the
+    // "not floating" guard), tiled hints, Cinema and the rim for foreign
+    // windows. Sticky, so subscribing replays every window's record (also
+    // on a sola-river restart).
+    TopicKind::WindowPlace,
     TopicKind::RegisteredChords,
     TopicKind::CloseApp,
     TopicKind::CloseWindow,
@@ -125,7 +123,7 @@ impl BusClient {
     }
 
     /// Retract a sticky topic (keyed by the payload's key fields). Used to drop
-    /// a closed window's `WindowGeometry` so late subscribers can't resurrect it.
+    /// a closed window's `WindowFacts` so late subscribers can't resurrect it.
     pub fn retract(&mut self, topic: Topic) {
         if let Err(e) = self.inner.retract(topic) {
             tracing::warn!(%e, "bus retract failed");

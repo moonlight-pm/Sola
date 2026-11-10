@@ -5,7 +5,7 @@ mod common;
 
 use std::os::unix::net::UnixStream;
 
-use sola_bus::topics::{Topic, TopicKind, WindowGeometry};
+use sola_bus::topics::{Topic, TopicKind, WindowFacts, WindowRect};
 use sola_bus::{BusClient, subscribe, transport};
 
 use common::{GIVE_UP, start_bus, subscribe as subscribe_through, wait_for_socket};
@@ -15,12 +15,16 @@ use common::{GIVE_UP, start_bus, subscribe as subscribe_through, wait_for_socket
 const RECORDS: u32 = 4000;
 
 fn geometry(window_id: u32) -> Topic {
-    Topic::WindowGeometry(WindowGeometry {
+    Topic::WindowFacts(WindowFacts {
         window_id,
-        x: 0,
-        y: 0,
-        width: 800,
-        height: 600,
+        rect: Some(WindowRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        }),
+        tab: None,
+        parent: None,
     })
 }
 
@@ -52,14 +56,14 @@ fn a_replay_larger_than_the_queue_arrives_whole() {
     // Its own Replayed says the bus has taken every record before it.
     subscribe_through(&mut writer, &[TopicKind::Shutdown]);
 
-    let mut reader = raw_subscriber(&socket, &[TopicKind::WindowGeometry]);
+    let mut reader = raw_subscriber(&socket, &[TopicKind::WindowFacts]);
     let mut records = 0;
     loop {
         let message = transport::read_event(&mut reader)
             .unwrap()
             .expect("the bus closed the connection before Replayed");
         match message.topic.as_str() {
-            "WindowGeometry" => records += 1,
+            "WindowFacts" => records += 1,
             "Replayed" => break,
             other => panic!("unexpected {other}"),
         }
@@ -77,7 +81,7 @@ fn a_subscriber_that_falls_behind_is_closed_not_shorted() {
 
     // Subscribed (its empty replay read, so the bus has taken the
     // subscription), and not reading while the records go out.
-    let mut stalled = raw_subscriber(&socket, &[TopicKind::WindowGeometry]);
+    let mut stalled = raw_subscriber(&socket, &[TopicKind::WindowFacts]);
     let first = transport::read_event(&mut stalled).unwrap().unwrap();
     assert_eq!(first.topic, "Replayed");
 
@@ -95,7 +99,7 @@ fn a_subscriber_that_falls_behind_is_closed_not_shorted() {
     let mut records = 0;
     loop {
         match transport::read_event(&mut stalled) {
-            Ok(Some(message)) if message.topic == "WindowGeometry" => records += 1,
+            Ok(Some(message)) if message.topic == "WindowFacts" => records += 1,
             Ok(Some(_)) => {}
             Ok(None) => break,
             Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {

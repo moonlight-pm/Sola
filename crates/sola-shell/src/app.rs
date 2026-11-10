@@ -379,9 +379,12 @@ pub struct Shell {
     /// New tabs waiting for their windows, by key: the tab each was opened
     /// from (`Topic::TabOpener`).
     pub tab_openers: HashMap<String, String>,
-    /// The tab each window names (`Topic::WindowTab`), by window id: its
+    /// The tab each window names (`WindowFacts.tab`), by window id: its
     /// tab's token, which pairing goes by first.
     pub window_tabs: HashMap<u32, String>,
+    /// What sola-river last said of each window (`Topic::WindowFacts`), to
+    /// tell which fact changed.
+    window_facts: HashMap<u32, sola_bus::topics::WindowFacts>,
     /// The bus has replayed what it holds (`Topic::Replayed`): the zone
     /// grid and the bar's saved layout are in, so windows can be placed.
     pub replayed: bool,
@@ -393,16 +396,14 @@ pub struct Shell {
     pub adapt: crate::adapt::Adapt,
     /// The look each background picture keeps (`Appearance.pictures`).
     pub pictures: crate::pictures::Pictures,
-    /// Last on-screen state sent for each tab window (`TabWindow.shown`).
-    tab_shown_sent: HashMap<u32, bool>,
     /// The idle fade is full (`IdleFade.out`): every window is out of
     /// sight, so no tab window counts as on screen.
     pub desk_out: bool,
     /// Lock when the idle fade is complete (`Appearance.lock_idle`).
     pub lock_idle: bool,
     pub tabbar: crate::tabbar::TabBarState,
-    /// Each window's last published `Topic::WindowChrome`.
-    pub window_chrome: crate::chrome::ChromeState,
+    /// Each window's last published `Topic::WindowPlace`.
+    pub places: crate::place::PlaceState,
     /// Workspace focus memory, what was published, a rename in progress.
     pub workspace: workspaces::WorkspaceState,
     /// The shell's own files (tab places, floats, hidden apps); `None` in
@@ -410,7 +411,7 @@ pub struct Shell {
     files: Option<crate::saved_state::ShellFiles>,
     /// Last `TabLayout` saved; skip identical saves.
     last_tab_layout: Option<TabLayout>,
-    /// `WindowParent` that came before its window's `Windows` entry.
+    /// A parent (`WindowFacts.parent`) that came before its window's `Windows` entry.
     pending_parents: HashMap<u32, u32>,
     /// Windows that asked for fullscreen before their `Windows` entry: they
     /// are placed in Cinema.
@@ -593,16 +594,16 @@ impl Shell {
             tab_icons: HashMap::new(),
             tab_openers: HashMap::new(),
             window_tabs: HashMap::new(),
+            window_facts: HashMap::new(),
             replayed: false,
             held_windows: None,
             agents: Default::default(),
             adapt: Default::default(),
             pictures: Default::default(),
-            tab_shown_sent: HashMap::new(),
             desk_out: false,
             lock_idle: false,
             tabbar: crate::tabbar::TabBarState::default(),
-            window_chrome: crate::chrome::ChromeState::default(),
+            places: crate::place::PlaceState::default(),
             workspace: workspaces::WorkspaceState::default(),
             files: None,
             last_tab_layout: None,
@@ -814,7 +815,7 @@ impl Shell {
                 self.save_floats();
             }
         }
-        self.sync_window_floating();
+        self.sync_places();
         self.emit_all_frames();
         self.raise_window_from_click(wid);
     }
@@ -1661,7 +1662,7 @@ impl Shell {
         with_bus(|bus| {
             let _ = bus.emit(Topic::Composition(entries));
         });
-        self.sync_tab_shown();
+        self.sync_places();
     }
 
     /// Briefly flash the flower when a shortcut runs one of the shell's own
@@ -1814,7 +1815,7 @@ impl Shell {
         self.collect_overlay_frames(&mut frames);
         frames.extend(self.tab_frames());
         Self::emit_frames(frames);
-        self.sync_window_chrome();
+        self.sync_places();
     }
 
     /// Every tiled tab's zone rectangle — tabs off screen too, so showing
@@ -3241,16 +3242,16 @@ mod pending_launch_tests {
             tab_icons: HashMap::new(),
             tab_openers: HashMap::new(),
             window_tabs: HashMap::new(),
+            window_facts: HashMap::new(),
             replayed: true,
             held_windows: None,
             agents: Default::default(),
             adapt: Default::default(),
             pictures: Default::default(),
-            tab_shown_sent: HashMap::new(),
             desk_out: false,
             lock_idle: false,
             tabbar: crate::tabbar::TabBarState::default(),
-            window_chrome: crate::chrome::ChromeState::default(),
+            places: crate::place::PlaceState::default(),
             workspace: workspaces::WorkspaceState::default(),
             files: None,
             last_tab_layout: None,
@@ -3578,6 +3579,76 @@ mod hide_tests {
         assert_eq!(shell.workspace.told(5), Some("main"), "the first word is the true one");
     }
 
+    /// One record per window says where the shell put it: its workspace
+    /// once said, its tab once paired; it goes when the window does.
+    #[test]
+    fn a_window_s_place_carries_its_workspace_and_tab_and_goes_with_it() {
+        use sola_bus::topics::{Tab, Topic};
+        const BROWSER: &str = "sola-browser";
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        let send = |shell: &mut Shell, t: Topic| {
+            let mut m = t.to_message();
+            m.sticky = true;
+            let _ = shell.handle_bus(&m);
+        };
+        let pid = std::process::id();
+        let mut page = win(5, BROWSER, "Page");
+        page.pid = Some(pid);
+        send(&mut shell, Topic::Windows(vec![page]));
+        send(
+            &mut shell,
+            Topic::Tab(Tab {
+                key: format!("{BROWSER}/page"),
+                app_id: BROWSER.into(),
+                pid,
+                seq: 1,
+                window_id: None,
+                background: false,
+                icon: None,
+            }),
+        );
+        shell.sync_workspaces();
+        let place = shell.places.sent(5).expect("a record for the window");
+        assert_eq!(place.tab.as_deref(), Some("sola-browser/page"));
+        assert_eq!(place.workspace.as_deref(), Some(shell.tabs.showing_id()));
+        assert!(!place.floating && !place.cinema);
+
+        send(&mut shell, Topic::Windows(Vec::new()));
+        assert!(shell.places.sent(5).is_none(), "gone with its window");
+    }
+
+    /// sola-river's facts of a window, each to its handler: its rectangle,
+    /// the window it belongs to (a dialog), and all of it taken back when
+    /// it closes.
+    #[test]
+    fn window_facts_go_to_their_handlers_and_their_retraction_clears_them() {
+        use sola_bus::topics::{Topic, WindowFacts, WindowRect};
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        let deliver = |shell: &mut Shell, t: Topic, sticky: bool| {
+            let mut m = t.to_message();
+            m.sticky = sticky;
+            let _ = shell.handle_bus(&m);
+        };
+        deliver(
+            &mut shell,
+            Topic::Windows(vec![win(5, "sola-mail", "Mail"), win(6, "sola-mail", "Save")]),
+            true,
+        );
+        let rect = WindowRect { x: 10, y: 20, width: 300, height: 200 };
+        let dialog = WindowFacts {
+            window_id: 6,
+            rect: Some(rect),
+            tab: None,
+            parent: Some(5),
+        };
+        deliver(&mut shell, Topic::WindowFacts(dialog.clone()), true);
+        assert_eq!(shell.zoning.live_geometry.get(&6), Some(&rect));
+        assert_eq!(shell.tabs.parent_of(6), Some(5), "placed as a dialog");
+
+        deliver(&mut shell, Topic::WindowFacts(dialog), false);
+        assert_eq!(shell.tabs.parent_of(6), None, "its parent taken back with the rest");
+    }
+
     /// Window → Pin to All Workspaces, and again. No app hears a pinned window
     /// is on a workspace, so a browser page keeps its profile and stays signed
     /// in; unpinned, it is on the one showing. The row's close stays, there
@@ -3756,16 +3827,16 @@ mod hide_tests {
             tab_icons: HashMap::new(),
             tab_openers: HashMap::new(),
             window_tabs: HashMap::new(),
+            window_facts: HashMap::new(),
             replayed: true,
             held_windows: None,
             agents: Default::default(),
             adapt: Default::default(),
             pictures: Default::default(),
-            tab_shown_sent: HashMap::new(),
             desk_out: false,
             lock_idle: false,
             tabbar: crate::tabbar::TabBarState::default(),
-            window_chrome: crate::chrome::ChromeState::default(),
+            places: crate::place::PlaceState::default(),
             workspace: workspaces::WorkspaceState::default(),
             files: None,
             last_tab_layout: None,
@@ -4209,8 +4280,7 @@ mod hide_tests {
         shell.known_windows[1].pid = Some(42);
         shell.zoning.live_geometry.insert(
             2,
-            sola_bus::topics::WindowGeometry {
-                window_id: 2,
+            sola_bus::topics::WindowRect {
                 x: 260,
                 y: 48,
                 width: 800,

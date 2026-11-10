@@ -19,17 +19,6 @@ pub struct Window {
     pub pid: Option<u32>,
 }
 
-/// The tab a window is (sola-river → shell): the token ([`tab_token`]) a
-/// kit app's tab window names in its Wayland app id (`<app_id>#<token>`,
-/// [`split_app_id`]); sola-river publishes the app id without it. Sticky,
-/// keyed by `window_id`; retracted when the window closes. Its own topic,
-/// so `Windows`' layout stays as every build reads it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WindowTab {
-    pub window_id: u32,
-    pub tab: String,
-}
-
 /// What separates an app id from a tab token in a window's Wayland app id.
 pub const TAB_TOKEN_SEP: char = '#';
 
@@ -149,31 +138,6 @@ pub struct OutputGeometry {
     pub height: i32,
 }
 
-/// A window's live on-screen rectangle, emitted by sola-river whenever the
-/// window's size (`river_window_v1.dimensions`) or position (`node.set_position`)
-/// changes. Carried by the sticky `Topic::WindowGeometry`, keyed by `window_id`,
-/// so a late subscriber (e.g. a per-window titlebar overlay) learns the current
-/// rectangle without waiting for the next move. Retracted when the window closes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WindowGeometry {
-    pub window_id: u32,
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-}
-
-/// Whether a window is currently floating (shell → sola-river). Carried by the
-/// sticky `Topic::WindowFloating`, keyed by `window_id`, so sola-river can gate
-/// interactive move/resize on the window under the pointer without learning the
-/// shell's zone vocabulary. The shell sets `floating: false` when the window
-/// leaves the Float zone; sola-river also drops it when the window closes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WindowFloating {
-    pub window_id: u32,
-    pub floating: bool,
-}
-
 /// A floating app's remembered rectangle, keyed by `app_id`. The shell keeps
 /// them in its own file (`shell/floats.json` under `$XDG_STATE_HOME/sola/`;
 /// the bus carried them as `FloatGeometry` once) so a floating window
@@ -185,33 +149,6 @@ pub struct FloatGeometry {
     pub y: i32,
     pub width: i32,
     pub height: i32,
-}
-
-/// The window a dialog or picker belongs to (sola-river → shell), from
-/// River's `parent` event. Carried by the sticky `Topic::WindowParent`,
-/// keyed by `window_id`; sola-river retracts it when the window closes or
-/// loses its parent. A separate topic rather than a field on [`Window`],
-/// because postcard is positional and every app decodes `Windows`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WindowParent {
-    pub window_id: u32,
-    pub parent: u32,
-}
-
-/// How a window is shown, for whoever draws around it (shell → sola-river
-/// and apps). Carried by the sticky `Topic::WindowChrome`, keyed by
-/// `window_id`; the shell retracts it when the window closes. `tiled`: the
-/// window sits in a zone (River `set_tiled`, so clients drop their
-/// shadows). `cinema`: it covers the whole output (a kit app drops its
-/// frame). `rim`: its app draws no frame of its own (it published no menu:
-/// not a Sola app), so sola-river borders it with a hairline. Separate from
-/// `WindowFloating`, which sola-river and every kit app already decode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WindowChrome {
-    pub window_id: u32,
-    pub tiled: bool,
-    pub cinema: bool,
-    pub rim: bool,
 }
 
 /// What sola-river knows of a window that the shell needs: where it is,
@@ -315,17 +252,6 @@ pub struct TabOpener {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct FocusPinned {
     pub pinned: bool,
-}
-
-/// Which sola-river window a [`Tab`] is (shell → apps). Sticky, keyed by
-/// `key`; retracted when the window closes. Sent again when `shown` changes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TabWindow {
-    pub key: String,
-    pub window_id: u32,
-    /// The window is on screen (its zone shows it, or it floats). An app can
-    /// rest a tab that is not (a browser page stops painting).
-    pub shown: bool,
 }
 
 /// Show a tab's window and focus it (app → shell): a notification click, a
@@ -535,17 +461,6 @@ pub const PINNED_LAYOUT_ID: &str = "common";
 pub struct Workspaces {
     pub workspaces: Vec<Workspace>,
     pub showing: String,
-}
-
-/// The workspace a window is on (shell → apps). Carried by the sticky
-/// `Topic::WindowWorkspace`, keyed by `window_id`; the shell retracts it
-/// when the window closes. Not said of a window that may still move to its
-/// tab's saved place (an app can act on this: the browser reopens a page
-/// under the workspace's profile).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WindowWorkspace {
-    pub window_id: u32,
-    pub workspace: String,
 }
 
 /// What a Projects session needs from you, as an island in the top row
@@ -2137,18 +2052,6 @@ define_topics! {
     #[sticky]
     OutputGeometry(OutputGeometry),
 
-    // A window's live rectangle (sola-river → shell). Sticky and keyed by
-    // window_id so each window has its own retained slot and a late subscriber
-    // learns the current geometry; sola-river retracts it on window close.
-    #[sticky(keys = [window_id])]
-    WindowGeometry(WindowGeometry),
-
-    // Whether a window is floating (shell → sola-river). Sticky and keyed by
-    // window_id so sola-river retains the bit per window and can gate
-    // interactive move/resize at pointer-press time without a bus round-trip.
-    #[sticky(keys = [window_id])]
-    WindowFloating(WindowFloating),
-
     // Mouse events (sola-river → shell)
     MouseEntered(MouseEnteredPayload),
     MouseLeft,
@@ -2225,20 +2128,10 @@ define_topics! {
     #[persistent]
     CalendarConfig(CalendarConfig),
 
-    // A dialog's parent window (sola-river → shell). Sticky, keyed by
-    // window_id; retracted on close. Appended last.
-    #[sticky(keys = [window_id])]
-    WindowParent(WindowParent),
-
     // A window an app opens as a tab (app → shell). Sticky, keyed by key;
     // retracted when the tab closes. Appended last.
     #[sticky(keys = [key])]
     Tab(Tab),
-
-    // Which sola-river window a tab is (shell → apps). Sticky, keyed by
-    // key; retracted when the window closes. Appended last.
-    #[sticky(keys = [key])]
-    TabWindow(TabWindow),
 
     // Show a tab's window and focus it (app → shell). Appended last.
     ShowTab(ShowTab),
@@ -2248,21 +2141,10 @@ define_topics! {
     #[sticky(keys = [key])]
     TabActivity(TabActivity),
 
-    // How a window is shown: tiled, Cinema, compositor rim (shell →
-    // sola-river, apps). Sticky, keyed by window_id; retracted on close.
-    // Appended last.
-    #[sticky(keys = [window_id])]
-    WindowChrome(WindowChrome),
-
     // The workspaces and the one showing (shell → apps). Sticky; the
     // shell persists them inside its tab layout. Appended last.
     #[sticky]
     Workspaces(Workspaces),
-
-    // The workspace a window is on (shell → apps). Sticky, keyed by
-    // window_id; retracted on close. Appended last.
-    #[sticky(keys = [window_id])]
-    WindowWorkspace(WindowWorkspace),
 
     // Close one window (by its sola-river id) as its own close would:
     // sola-river sends `river_window_v1.close`, so the app gets a close
@@ -2375,11 +2257,6 @@ define_topics! {
     // from one is on its old program (`cargo make oath apply` → the
     // session manager, which starts such apps again). Appended last.
     PackagesMoved(Vec<String>),
-
-    // The tab a window is (sola-river → shell). Sticky, keyed by
-    // window_id; retracted on close. Appended last.
-    #[sticky(keys = [window_id])]
-    WindowTab(WindowTab),
 
     // How the workspaces show and step (Settings and the shell).
     // Persistent. Appended last.
@@ -2744,23 +2621,6 @@ mod tests {
     }
 
     #[test]
-    fn window_chrome_is_sticky_per_window() {
-        let chrome = WindowChrome {
-            window_id: 42,
-            tiled: true,
-            cinema: false,
-            rim: true,
-        };
-        let msg = Topic::WindowChrome(chrome).to_message();
-        assert!(TopicKind::WindowChrome.behavior().is_sticky());
-        assert_eq!(msg.keys, vec!["42".to_string()]);
-        match Topic::parse(&msg) {
-            Some(Topic::WindowChrome(back)) => assert_eq!(back, chrome),
-            other => panic!("expected WindowChrome, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn unit_topic_roundtrip() {
         let msg = Topic::Shutdown.to_message();
         assert_eq!(msg.topic, "Shutdown");
@@ -2991,24 +2851,6 @@ mod tests {
     fn zone_float_roundtrips_via_yaml() {
         let value = serde_yaml_ng::to_value(Zone::Float).unwrap();
         assert_eq!(serde_yaml_ng::from_value::<Zone>(value).unwrap(), Zone::Float);
-    }
-
-    #[test]
-    fn window_geometry_is_sticky_not_persistent() {
-        use crate::topic::Behavior;
-        assert_eq!(TopicKind::WindowGeometry.behavior(), Behavior::Sticky);
-    }
-
-    #[test]
-    fn window_floating_is_sticky_and_keyed() {
-        use crate::topic::Behavior;
-        assert_eq!(TopicKind::WindowFloating.behavior(), Behavior::Sticky);
-        let wf = WindowFloating {
-            window_id: 7,
-            floating: true,
-        };
-        assert_eq!(wf.window_id, 7);
-        assert!(wf.floating);
     }
 
     #[test]

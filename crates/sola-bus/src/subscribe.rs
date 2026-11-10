@@ -38,7 +38,8 @@ pub const NUMBERED: &[&str] = &[
 pub const REMOVED: &[&str] = &[
     "Zones", "CustomTheme", "TerminalConfig", "MonitorConfig", "BrowserConfig",
     "BrowserHistory", "BrowserTab", "AppHidden", "FloatGeometry", "SessionApps",
-    "TerminalSession", "PaintSession", "TabLayout",
+    "TerminalSession", "PaintSession", "TabLayout", "WindowGeometry", "WindowFloating",
+    "WindowParent", "TabWindow", "WindowChrome", "WindowWorkspace",
 ];
 
 /// The frames that subscribe to `kinds`: the names, then the numbered set
@@ -128,6 +129,12 @@ mod tests {
         assert_eq!(at("TerminalSession"), Some(54));
         assert_eq!(at("PaintSession"), Some(58));
         assert_eq!(at("TabLayout"), Some(60));
+        assert_eq!(at("WindowGeometry"), Some(29));
+        assert_eq!(at("WindowFloating"), Some(30));
+        assert_eq!(at("WindowParent"), Some(34));
+        assert_eq!(at("TabWindow"), Some(36));
+        assert_eq!(at("WindowChrome"), Some(38));
+        assert_eq!(at("WindowWorkspace"), Some(40));
         assert_eq!(NUMBERED.len(), 64);
     }
 

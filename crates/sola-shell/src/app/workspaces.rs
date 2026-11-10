@@ -1,11 +1,11 @@
 //! Desktop workspaces (Next slice 5): showing one, sending a window to
 //! one, the workspace list's actions, each workspace's last focused
 //! window, and what the shell tells apps (`Topic::Workspaces`,
-//! `Topic::WindowWorkspace`). The model is [`crate::stacks`].
+//! each window's `WindowPlace.workspace`). The model is [`crate::stacks`].
 
 use std::collections::HashMap;
 
-use sola_bus::topics::{FocusPinned, Topic, WindowWorkspace, WorkspacePrefs, Workspaces};
+use sola_bus::topics::{FocusPinned, Topic, WorkspacePrefs, Workspaces};
 
 use super::{Shell, with_bus};
 
@@ -28,7 +28,6 @@ pub struct WorkspaceState {
     pub menu_x: f32,
 }
 
-#[cfg(test)]
 impl WorkspaceState {
     /// The workspace apps were last told `window_id` is on.
     pub(crate) fn told(&self, window_id: u32) -> Option<&str> {
@@ -359,7 +358,7 @@ impl Shell {
     }
 
     /// Publish the workspaces (when they or the showing one changed) and
-    /// each window's workspace (when it changed; retracted for windows gone,
+    /// each window's workspace in its place (when it changed; none for windows gone,
     /// and for a pinned one, which is on them all: a browser page keeps the
     /// profile it has).
     pub(crate) fn sync_workspaces(&mut self) {
@@ -388,25 +387,8 @@ impl Shell {
                 next.insert(w.window_id, ws.to_string());
             }
         }
-        let changed: Vec<WindowWorkspace> = next
-            .iter()
-            .filter(|(id, ws)| self.workspace.sent_windows.get(id) != Some(ws))
-            .map(|(id, ws)| WindowWorkspace {
-                window_id: *id,
-                workspace: ws.clone(),
-            })
-            .collect();
-        let gone: Vec<WindowWorkspace> = self
-            .workspace
-            .sent_windows
-            .iter()
-            .filter(|(id, _)| !next.contains_key(id))
-            .map(|(id, ws)| WindowWorkspace {
-                window_id: *id,
-                workspace: ws.clone(),
-            })
-            .collect();
-        if !list_changed && changed.is_empty() && gone.is_empty() {
+        let windows_changed = next != self.workspace.sent_windows;
+        if !list_changed && !windows_changed {
             return;
         }
         self.workspace.sent_windows = next;
@@ -414,17 +396,13 @@ impl Shell {
             self.workspace.sent = Some(list.clone());
             // A name or an island more moves what follows in the top row.
             self.emit_idle_keep(false);
-        }
-        with_bus(|bus| {
-            if list_changed {
+            with_bus(|bus| {
                 let _ = bus.emit(Topic::Workspaces(list));
-            }
-            for w in changed {
-                let _ = bus.emit(Topic::WindowWorkspace(w));
-            }
-            for w in gone {
-                let _ = bus.retract(Topic::WindowWorkspace(w));
-            }
-        });
+            });
+        }
+        if windows_changed {
+            // Each window's record carries the workspace said of it.
+            self.sync_places();
+        }
     }
 }

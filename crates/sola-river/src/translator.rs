@@ -2,7 +2,9 @@
 //!
 //! Everything here operates on `AppData` directly — this is the only file
 //! in the crate that imports both the bus and wayland sides.
-use sola_bus::topics::Topic;
+use std::collections::HashMap;
+
+use sola_bus::topics::{Topic, WindowFacts};
 use tracing::debug;
 use wayland_client::{Proxy, QueueHandle};
 
@@ -26,8 +28,8 @@ pub fn emit_windows(state: &mut AppData) {
     emit_window_tabs(state);
 }
 
-/// Tell the shell, once each, which tab a told window is
-/// (`Topic::WindowTab`); `crate::client::window::drop_window` retracts it.
+/// Tell the shell, once each, which tab a told window is (in its
+/// `WindowFacts`); `crate::client::window::drop_window` retracts the record.
 fn emit_window_tabs(state: &mut AppData) {
     let new: Vec<(u32, String)> = state
         .registry
@@ -37,11 +39,54 @@ fn emit_window_tabs(state: &mut AppData) {
         .collect();
     for (window_id, tab) in new {
         state.tabs_told.insert(window_id);
-        let _ = state.bus.emit(Topic::WindowTab(sola_bus::topics::WindowTab { window_id, tab }));
+        tell_facts(state, window_id, |f| f.tab = Some(tab));
     }
 }
 
-/// Emit the window's current rectangle as the sticky `Topic::WindowGeometry`.
+/// Change one thing in a window's facts; when that changes them, send the
+/// whole record. A window with no facts yet is sent nothing.
+pub fn tell_facts(state: &mut AppData, window_id: u32, change: impl FnOnce(&mut WindowFacts)) {
+    if let Some(facts) = changed_facts(&mut state.facts, window_id, change) {
+        state.bus.emit(Topic::WindowFacts(facts));
+    }
+}
+
+/// Apply `change` to `window_id`'s facts in `known`; the record to send, if
+/// it differs from the one last sent (and is not empty before it was first).
+fn changed_facts(
+    known: &mut HashMap<u32, WindowFacts>,
+    window_id: u32,
+    change: impl FnOnce(&mut WindowFacts),
+) -> Option<WindowFacts> {
+    let mut facts = known.get(&window_id).cloned().unwrap_or(WindowFacts {
+        window_id,
+        rect: None,
+        tab: None,
+        parent: None,
+    });
+    change(&mut facts);
+    if known.get(&window_id) == Some(&facts) {
+        return None;
+    }
+    if !known.contains_key(&window_id)
+        && facts.rect.is_none()
+        && facts.tab.is_none()
+        && facts.parent.is_none()
+    {
+        return None;
+    }
+    known.insert(window_id, facts.clone());
+    Some(facts)
+}
+
+/// Retract a closed window's facts, once, if any were sent.
+pub fn retract_facts(state: &mut AppData, window_id: u32) {
+    if let Some(facts) = state.facts.remove(&window_id) {
+        let _ = state.bus.retract(Topic::WindowFacts(facts));
+    }
+}
+
+/// Tell the shell the window's current rectangle (in its `WindowFacts`).
 /// No-op until both size and position are known. Callers gate on the registry
 /// setter returning `true` (changed) so this fires only on a real move/resize.
 pub fn emit_geometry(state: &mut AppData, window_id: u32) {
@@ -60,9 +105,9 @@ pub fn emit_geometry(state: &mut AppData, window_id: u32) {
         y = g.y,
         width = g.width,
         height = g.height,
-        "emitting WindowGeometry"
+        "emitting WindowFacts rect"
     );
-    state.bus.emit(Topic::WindowGeometry(g));
+    tell_facts(state, window_id, |f| f.rect = Some(g));
 }
 
 /// Apply a chord-set update from `pending.chords`. MUST be called
@@ -135,4 +180,36 @@ fn bind_chord(
     use crate::protocol::river_window_management_v1::river_seat_v1::Modifiers;
     let m = Modifiers::from_bits_retain(modifiers);
     xb.get_xkb_binding(seat, keysym, m, qh, (keysym, modifiers))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sola_bus::topics::WindowRect;
+
+    fn rect(x: i32) -> WindowRect {
+        WindowRect { x, y: 0, width: 10, height: 10 }
+    }
+
+    #[test]
+    fn facts_are_sent_whole_when_one_changes_and_not_while_empty() {
+        let mut known = HashMap::new();
+        // Nothing known yet: nothing to say.
+        assert_eq!(changed_facts(&mut known, 4, |f| f.parent = None), None);
+        let first = changed_facts(&mut known, 4, |f| f.rect = Some(rect(1))).unwrap();
+        assert_eq!(first.rect, Some(rect(1)));
+        // Same again: quiet.
+        assert_eq!(changed_facts(&mut known, 4, |f| f.rect = Some(rect(1))), None);
+        // The tab joins the rect in one record.
+        let second = changed_facts(&mut known, 4, |f| f.tab = Some("t".into())).unwrap();
+        assert_eq!((second.rect, second.tab.as_deref()), (Some(rect(1)), Some("t")));
+        // A parent that goes is cleared, not retracted, and the rest stays.
+        changed_facts(&mut known, 4, |f| f.parent = Some(2)).unwrap();
+        let cleared = changed_facts(&mut known, 4, |f| f.parent = None).unwrap();
+        assert_eq!(cleared.parent, None);
+        assert_eq!(cleared.tab.as_deref(), Some("t"));
+        // Closing takes the record once.
+        assert!(known.remove(&4).is_some());
+        assert!(known.remove(&4).is_none());
+    }
 }

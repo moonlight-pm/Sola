@@ -3,8 +3,8 @@
 //! [`TabWindows::open`]. That announces the tab (`Topic::Tab`) just before
 //! the window opens, so the shell can tell which window it is and keep its
 //! place in the tab bar; the shell answers with the window's sola-river id
-//! and whether it is on screen (`Topic::TabWindow`). Subscribe to
-//! `TopicKind::TabWindow` and feed every bus message to
+//! and whether it is on screen (`Topic::WindowPlace`, whose `tab` is the
+//! key). Subscribe to `TopicKind::WindowPlace` and feed every bus message to
 //! [`TabWindows::update`]. [`TabWindows::set_activity`] puts a mark on the
 //! tab's row in the bar (`Topic::TabActivity`: working, or waiting on a
 //! decision). [`TabWindows::open_as`] opens a window as another app — the
@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use iced::{Task, window};
 use sola_bus::Message;
-use sola_bus::topics::{Activity, ShowTab, Tab, TabActivity, TabOpener, TabWindow, Topic};
+use sola_bus::topics::{Activity, ShowTab, Tab, TabActivity, TabOpener, Topic};
 
 struct Entry {
     key: String,
@@ -41,6 +41,10 @@ pub struct TabWindows {
     /// Windows this process has opened as tabs.
     opened: u32,
     windows: HashMap<window::Id, Entry>,
+    /// The tab key each sola-river window id last carried in its
+    /// `WindowPlace`, so a retraction or a tab changed away reads as that
+    /// key's pair taken back.
+    keys_by_river: HashMap<u32, String>,
 }
 
 impl TabWindows {
@@ -49,6 +53,7 @@ impl TabWindows {
             app_id,
             opened: 0,
             windows: HashMap::new(),
+            keys_by_river: HashMap::new(),
         }
     }
 
@@ -196,32 +201,47 @@ impl TabWindows {
         }
     }
 
-    /// Fold one bus message (`TabWindow` pairs, shown changes, and their
-    /// retractions). A new pair is announced back with the window's id. A
-    /// pair taken back from a window that is still ours (sola-river lost
-    /// sight of it for a moment) is shown again, as a window starts, and
-    /// announced again so the shell can pair it when it is back: a page left
-    /// at rest would wait for a shown that never comes. Returns true when a
-    /// window's shown state changed.
+    /// Fold one bus message (`WindowPlace` records: a window's pair with a
+    /// tab, shown changes, and their retractions). A new pair is announced
+    /// back with the window's id. A pair taken back (the record retracted,
+    /// or its tab changed away) from a window that is still ours (sola-river
+    /// lost sight of it for a moment) is shown again, as a window starts,
+    /// and announced again so the shell can pair it when it is back: a page
+    /// left at rest would wait for a shown that never comes. Returns true
+    /// when a window's shown state changed.
     pub fn update(&mut self, msg: &Message) -> bool {
-        let Some(Topic::TabWindow(TabWindow {
-            key,
-            window_id,
-            shown,
-        })) = Topic::parse(msg)
-        else {
+        let Some(Topic::WindowPlace(place)) = Topic::parse(msg) else {
             return false;
         };
-        let river = msg.sticky.then_some(window_id);
+        let now = if msg.sticky { place.tab.clone() } else { None };
+        let before = if msg.sticky || self.keys_by_river.contains_key(&place.window_id) {
+            self.keys_by_river.get(&place.window_id).cloned()
+        } else {
+            place.tab.clone()
+        };
+        let mut changed = false;
+        if let Some(old) = before.filter(|k| Some(k) != now.as_ref()) {
+            self.keys_by_river.remove(&place.window_id);
+            changed |= self.pair(&old, None, true);
+        }
+        if let Some(key) = now {
+            self.keys_by_river.insert(place.window_id, key.clone());
+            changed |= self.pair(&key, Some(place.window_id), place.shown);
+        }
+        changed
+    }
+
+    /// Set what the shell says of `key`'s window: its river id (`None`, the
+    /// pair taken back) and whether it is shown.
+    fn pair(&mut self, key: &str, river: Option<u32>, shown: bool) -> bool {
         let Some(entry) = self.windows.values_mut().find(|e| e.key == key) else {
             return false;
         };
-        let shown = shown || !msg.sticky;
         let shown_changed = entry.shown != shown;
         entry.shown = shown;
         if entry.river != river {
             entry.river = river;
-            announce(&tab(&key, &entry.app_id, entry.seq, river, entry.background, entry.icon.clone()));
+            announce(&tab(key, &entry.app_id, entry.seq, river, entry.background, entry.icon.clone()));
         }
         shown_changed
     }

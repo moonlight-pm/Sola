@@ -10,18 +10,22 @@ mod common;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 
-use sola_bus::topics::{Topic, TopicKind, WindowGeometry, ZoneLayout};
+use sola_bus::topics::{Topic, TopicKind, WindowFacts, WindowRect, ZoneLayout};
 use sola_bus::{BusClient, Message};
 
 use common::{receive_through, start_bus, subscribe, wait_for_socket};
 
 fn geometry(window_id: u32) -> Topic {
-    Topic::WindowGeometry(WindowGeometry {
+    Topic::WindowFacts(WindowFacts {
         window_id,
-        x: 0,
-        y: 0,
-        width: 800,
-        height: 600,
+        rect: Some(WindowRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        }),
+        tab: None,
+        parent: None,
     })
 }
 
@@ -131,14 +135,14 @@ fn watcher(socket: &str, kinds: &[TopicKind]) -> BusClient {
 }
 
 fn is_geometry(m: &Message, window: u32, sticky: bool) -> bool {
-    m.topic == "WindowGeometry" && m.sticky == sticky && m.keys == [window.to_string()]
+    m.topic == "WindowFacts" && m.sticky == sticky && m.keys == [window.to_string()]
 }
 
 /// What `client` receives through the first message that `done` picks.
 fn receive_until(client: &BusClient, done: impl Fn(&Message) -> bool) -> Vec<Message> {
     let mut got = Vec::new();
     loop {
-        let batch = receive_through(client, "WindowGeometry");
+        let batch = receive_through(client, "WindowFacts");
         let finished = batch.last().is_some_and(&done);
         got.extend(batch);
         if finished {
@@ -150,7 +154,7 @@ fn receive_until(client: &BusClient, done: impl Fn(&Message) -> bool) -> Vec<Mes
 #[test]
 fn an_ended_process_takes_its_records_with_it() {
     let (_dir, _bus, socket) = bus();
-    let watcher = watcher(&socket, &[TopicKind::WindowGeometry]);
+    let watcher = watcher(&socket, &[TopicKind::WindowFacts]);
 
     let writer = start_writer(
         &socket,
@@ -168,7 +172,7 @@ fn an_ended_process_takes_its_records_with_it() {
 #[test]
 fn a_supervised_process_keeps_its_records_until_it_settles_again() {
     let (_dir, _bus, socket) = bus();
-    let watcher = watcher(&socket, &[TopicKind::WindowGeometry]);
+    let watcher = watcher(&socket, &[TopicKind::WindowFacts]);
 
     let first = start_writer(
         &socket,
@@ -207,7 +211,7 @@ fn a_supervised_process_keeps_its_records_until_it_settles_again() {
 #[test]
 fn a_persistent_record_outlives_its_writer() {
     let (_dir, _bus, socket) = bus();
-    let mut watcher = watcher(&socket, &[TopicKind::WindowGeometry, TopicKind::ZoneLayout]);
+    let mut watcher = watcher(&socket, &[TopicKind::WindowFacts, TopicKind::ZoneLayout]);
 
     let writer = start_writer(
         &socket,
@@ -223,7 +227,7 @@ fn a_persistent_record_outlives_its_writer() {
     let mut got = receive_until(&watcher, |m| is_geometry(m, 3, false));
     // Everything the bus sent with that retraction has come by this
     // Replayed, the bus answering on the watcher's own connection.
-    got.extend(subscribe(&mut watcher, &[TopicKind::WindowGeometry, TopicKind::ZoneLayout, TopicKind::Shutdown]));
+    got.extend(subscribe(&mut watcher, &[TopicKind::WindowFacts, TopicKind::ZoneLayout, TopicKind::Shutdown]));
     assert!(
         !got.iter().any(|m| m.topic == "ZoneLayout" && !m.sticky),
         "the zone layout was retracted with its writer: {got:?}"

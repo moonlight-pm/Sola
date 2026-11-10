@@ -105,19 +105,22 @@ problem is the state, not the traffic.
 
 ## Per-window records (D2)
 
-Seven per-window kinds and two per-tab kinds become three, each with one
-owner:
+Seven per-window kinds become two, each with one owner:
 
 | New | Owner | Replaces | Keyed by |
 |---|---|---|---|
 | `WindowFacts` | `sola-river` | `WindowGeometry`, `WindowTab`, `WindowParent` | `window_id` |
 | `WindowPlace` | `sola-shell` | `WindowChrome`, `WindowFloating`, `WindowWorkspace`, `TabWindow` | `window_id` |
-| `Tab` (gains `activity`) | the tab's app | `Tab`, `TabActivity` | `key` |
 
-`WindowPlace` carries the window's tab key and whether it is shown, so an
-app finds its tabs' windows there. River stops writing floating state of its
-own; after a bus restart the shell's client re-sends its records.
-`WindowVideos` (the browser's, a few records) stays.
+Each is sent again whole when any of it changes and retracted when the
+window closes. `WindowPlace` carries the window's tab key and whether it is
+shown, so an app finds its tabs' windows there; `workspace` is `None` until
+the shell has said where the window belongs, and for a pinned window. River
+stops writing floating state of its own; after a bus restart the shell's
+client re-sends its records. `WindowVideos` (the browser's, a few records)
+stays. `TabActivity` stays apart from `Tab`: a changed activity re-sending
+the whole tab would run the shell's tab handler, which can move a window to
+its saved place.
 
 ## Private state off the bus (D3)
 
@@ -152,7 +155,7 @@ bus treats `$supervised` and `$settled` as unknown topics and drops them.
 
 ## Expected result
 
-On the same desk: about 315 records instead of 578 (172 per-window, 72
-tabs, about 55 per-app, about 16 per-desk), every replay complete, records
+On the same desk: about 350 records instead of 578 (172 per-window, 72
+tabs and 38 tab activities, about 55 per-app, about 16 per-desk), every replay complete, records
 gone with the apps that wrote them, and no app subscribed to kinds it does
 not read.

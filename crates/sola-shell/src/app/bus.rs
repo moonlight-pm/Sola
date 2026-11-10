@@ -10,8 +10,8 @@ use iced::Task;
 use sola_bus::topics::{
     AppMenuPayload, AppNotification, AppToast, Application, ChordEvent, FocusTarget,
     LaunchResultPayload, MailStatus, MenuActionPayload, MouseClickedPayload, MouseEnteredPayload,
-    OutputGeometry, Topic, UserAppExitedPayload, Window, WindowChrome, WindowFloating,
-    WindowGeometry, WindowParent, Zone,
+    OutputGeometry, Topic, UserAppExitedPayload, Window, WindowFacts, WindowPlace, WindowRect,
+    Zone,
 };
 use sola_core::theme::Theme as BusTheme;
 
@@ -111,24 +111,8 @@ impl Shell {
             Topic::MouseLeft => self.on_mouse_left(),
             Topic::LaunchResult(r) => self.on_launch_result(r),
             Topic::UserAppExited(e) => self.on_user_app_exited(e),
-            Topic::WindowParent(p) => {
-                self.on_window_parent(p, message.sticky);
-                Task::none()
-            }
-            Topic::WindowTab(t) => {
-                // The tab this window names (sola-river): pair by it.
-                if message.sticky {
-                    self.window_tabs.insert(t.window_id, t.tab);
-                } else {
-                    self.window_tabs.remove(&t.window_id);
-                }
-                if self.pair_tabs(std::time::Instant::now()) {
-                    self.sync_floats();
-                    self.keep_focus_on_screen();
-                    self.emit_all_frames();
-                    self.emit_composition();
-                }
-                self.persist_tabs();
+            Topic::WindowFacts(f) => {
+                self.on_window_facts(f, message.sticky);
                 Task::none()
             }
             Topic::TabOpener(o) => {
@@ -160,10 +144,6 @@ impl Shell {
                     Some(wid) => self.activate_window(wid),
                     None => tracing::debug!(key = %s.key, "ShowTab: no window"),
                 }
-                Task::none()
-            }
-            Topic::WindowGeometry(g) => {
-                self.on_window_geometry(g);
                 Task::none()
             }
             // External links. Live sola-browser already subscribed to
@@ -202,7 +182,7 @@ impl Shell {
                 let out = message.sticky && f.out;
                 if out != self.desk_out {
                     self.desk_out = out;
-                    self.sync_tab_shown();
+                    self.sync_places();
                     if out && self.lock_idle {
                         if let Err(why) = crate::lock::lock("idle") {
                             tracing::info!(why, "idle: not locking");
@@ -404,10 +384,7 @@ impl Shell {
             self.pending_parents.remove(&wid);
             self.pending_fullscreen.remove(&wid);
             let named = self.window_tabs.contains_key(&wid);
-            if let Some(key) = self.pairing.window_closed(wid, named) {
-                retract_tab_window(key);
-            }
-            self.tab_shown_sent.remove(&wid);
+            self.pairing.window_closed(wid, named);
         }
         self.zoning.forget_windows(&removed_wids);
 
@@ -560,7 +537,7 @@ impl Shell {
         }
 
         // Tell sola-river / kit apps which windows are floating (move/resize + CSD).
-        self.sync_window_floating();
+        self.sync_places();
         self.emit_all_frames();
 
         self.emit_composition();
@@ -587,27 +564,68 @@ impl Shell {
 
     /// River named a dialog's parent (or took it back). A dialog leaves the
     /// bar and rides above its parent.
-    fn on_window_parent(&mut self, p: WindowParent, sticky: bool) {
-        let app_id = self.app_id_for_window(p.window_id);
-        if !sticky {
-            // Closing, usually (sola-river retracts on close, before the new
-            // Windows list). One left without a parent stays a float with
-            // no row.
-            self.pending_parents.remove(&p.window_id);
-            if self.tabs.clear_parent(p.window_id) {
+    /// What sola-river knows of a window changed, or the window closed
+    /// (a retraction): each fact that changed goes to its handler.
+    fn on_window_facts(&mut self, facts: WindowFacts, sticky: bool) {
+        let id = facts.window_id;
+        let none = WindowFacts {
+            window_id: id,
+            rect: None,
+            tab: None,
+            parent: None,
+        };
+        let before = self.window_facts.remove(&id).unwrap_or_else(|| none.clone());
+        let now = if sticky { facts } else { none };
+        if now.parent != before.parent {
+            self.on_window_parent(id, now.parent);
+        }
+        if now.tab != before.tab {
+            self.on_window_tab(id, now.tab.clone());
+        }
+        if let Some(rect) = now.rect.filter(|r| Some(*r) != before.rect) {
+            self.on_window_geometry(id, rect);
+        }
+        if sticky {
+            self.window_facts.insert(id, now);
+        }
+    }
+
+    /// The tab a window names (sola-river), or none now: pair by it.
+    fn on_window_tab(&mut self, window_id: u32, tab: Option<String>) {
+        match tab {
+            Some(tab) => self.window_tabs.insert(window_id, tab),
+            None => self.window_tabs.remove(&window_id),
+        };
+        if self.pair_tabs(std::time::Instant::now()) {
+            self.sync_floats();
+            self.keep_focus_on_screen();
+            self.emit_all_frames();
+            self.emit_composition();
+        }
+        self.persist_tabs();
+    }
+
+    /// The window a dialog belongs to, or none now (usually closing:
+    /// sola-river retracts on close, before the new Windows list).
+    fn on_window_parent(&mut self, window_id: u32, parent: Option<u32>) {
+        let app_id = self.app_id_for_window(window_id);
+        let Some(parent) = parent else {
+            // One left without a parent stays a float with no row.
+            self.pending_parents.remove(&window_id);
+            if self.tabs.clear_parent(window_id) {
                 self.emit_composition();
             }
             return;
-        }
+        };
         let Some(app_id) = app_id else {
             // Before its Windows entry: placed as a dialog when it comes.
-            self.pending_parents.insert(p.window_id, p.parent);
+            self.pending_parents.insert(window_id, parent);
             return;
         };
-        tracing::info!(window_id = p.window_id, parent = p.parent, "dialog");
-        let was_tab = self.tabs.set_parent(p.window_id, p.parent);
-        self.zoning.float(&app_id, p.window_id, false);
-        self.sync_window_floating();
+        tracing::info!(window_id, parent, "dialog");
+        let was_tab = self.tabs.set_parent(window_id, parent);
+        self.zoning.float(&app_id, window_id, false);
+        self.sync_places();
         if was_tab {
             self.emit_all_frames();
             self.persist_tabs();
@@ -624,7 +642,7 @@ impl Shell {
             self.tab_openers.remove(&tab.key);
             if let Some(wid) = self.pairing.retract(&tab.key) {
                 tracing::info!(window_id = wid, key = %tab.key, "tab closed");
-                retract_tab_window(tab.key);
+                self.sync_places();
             }
             return;
         }
@@ -656,7 +674,7 @@ impl Shell {
     }
 
     /// Pair announced tabs with their windows (see `pairing.rs`), tell the
-    /// apps which window each tab is (`TabWindow`), and remember placed
+    /// apps which window each tab is (`WindowPlace.tab`), and remember placed
     /// windows by their tab's key. True when one moved to a saved place.
     fn pair_tabs(&mut self, now: std::time::Instant) -> bool {
         let candidates: Vec<(u32, String, u32, Option<String>)> = self
@@ -678,16 +696,9 @@ impl Shell {
             if self.tabs.set_key(window_id, &key, now).is_some() {
                 moved = true;
             }
-            let shown = self.tab_on_screen(window_id);
-            self.tab_shown_sent.insert(window_id, shown);
-            super::with_bus(|bus| {
-                let _ = bus.emit(Topic::TabWindow(sola_bus::topics::TabWindow {
-                    key,
-                    window_id,
-                    shown,
-                }));
-            });
         }
+        // Each paired window's record now names its tab.
+        self.sync_places();
         moved
     }
 
@@ -695,30 +706,6 @@ impl Shell {
     /// full idle fade.
     fn tab_on_screen(&self, window_id: u32) -> bool {
         !self.desk_out && self.last_composition.contains(&window_id)
-    }
-
-    /// Tell apps which of their tab windows went on or off screen (after a
-    /// Composition, or the idle fade going full or ending): a browser rests
-    /// the pages behind.
-    pub(crate) fn sync_tab_shown(&mut self) {
-        let changes: Vec<(u32, String, bool)> = self
-            .pairing
-            .pairs()
-            .filter_map(|(wid, key)| {
-                let shown = self.tab_on_screen(wid);
-                (self.tab_shown_sent.get(&wid) != Some(&shown)).then(|| (wid, key.to_string(), shown))
-            })
-            .collect();
-        for (window_id, key, shown) in changes {
-            self.tab_shown_sent.insert(window_id, shown);
-            super::with_bus(|bus| {
-                let _ = bus.emit(Topic::TabWindow(sola_bus::topics::TabWindow {
-                    key,
-                    window_id,
-                    shown,
-                }));
-            });
-        }
     }
 
     /// Bring floating in line with the bar after windows moved zones
@@ -737,7 +724,7 @@ impl Shell {
             }
         }
         Self::emit_frames(frames);
-        self.sync_window_floating();
+        self.sync_places();
     }
 
     /// Keyboard focus stays on something on screen: a focused tab that is
@@ -791,7 +778,7 @@ impl Shell {
         // Always re-emit in case this is the focused app (per-app shortcuts changed).
         self.emit_registered_chords();
         // An app that publishes menus draws its own frame: no compositor rim.
-        self.sync_window_chrome();
+        self.sync_places();
         let _ = focused_is_this; // used implicitly via emit_registered_chords
     }
 
@@ -1417,80 +1404,66 @@ impl Shell {
     // Zone snapshot
     // -------------------------------------------------------------------------
 
-    /// A window moved or resized (Topic::WindowGeometry from sola-river). If the
+    /// A window moved or resized (sola-river's WindowFacts). If the
     /// window is currently floating, persist its rectangle per app_id so the
     /// float restores there on relaunch. Non-floating windows are ignored.
-    fn on_window_geometry(&mut self, g: WindowGeometry) {
+    fn on_window_geometry(&mut self, window_id: u32, g: WindowRect) {
         // Track every window's live rect so an explicit float can inset from
         // where the window currently sits (see ZoningState::current_rect).
-        self.zoning.live_geometry.insert(g.window_id, g.clone());
+        self.zoning.live_geometry.insert(window_id, g);
         let Some(app_id) = self
             .known_windows
             .iter()
-            .find(|w| w.window_id == g.window_id)
+            .find(|w| w.window_id == window_id)
             .map(|w| w.app_id.clone())
         else {
             return;
         };
         if self
             .zoning
-            .note_window_geometry(&app_id, g.window_id, g.x, g.y, g.width, g.height)
+            .note_window_geometry(&app_id, window_id, g.x, g.y, g.width, g.height)
         {
             self.save_floats();
         }
     }
 
-    /// Publish `Topic::WindowFloating` for any window whose float state changed
-    /// since the last call, so sola-river can gate interactive move/resize on
-    /// the window under the pointer. Called after every handler that can change
-    /// a window's zone (float key, window appearance, zone-map replay).
-    pub(super) fn sync_window_floating(&mut self) {
-        let ids: Vec<u32> = self.known_windows.iter().map(|w| w.window_id).collect();
-        let changes = self.zoning.take_floating_changes(&ids);
-        if changes.is_empty() {
-            return;
-        }
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-            for (window_id, floating) in changes {
-                let _ = bus.emit(Topic::WindowFloating(WindowFloating {
-                    window_id,
-                    floating,
-                }));
-            }
-        }
-    }
-}
-
-impl Shell {
-    /// Publish `Topic::WindowChrome` for every app window whose chrome
-    /// changed (tiled, Cinema, compositor rim), and retract departed ones.
-    /// Runs with every frame emission and when an app publishes menus.
-    pub(super) fn sync_window_chrome(&mut self) {
-        let next: Vec<WindowChrome> = self
+    /// Publish where each window is (`Topic::WindowPlace`) for every window
+    /// whose place changed, and retract departed ones: tiled, floating
+    /// (sola-river gates move/resize on it), Cinema, the compositor's rim,
+    /// the workspace it was said to be on, its tab and whether that is on
+    /// screen (a browser rests the pages behind). Runs with every frame
+    /// emission and after anything else that changes one of them.
+    pub(crate) fn sync_places(&mut self) {
+        let next: Vec<WindowPlace> = self
             .known_windows
             .iter()
             .filter(|w| w.app_id != Self::APP_ID)
-            .map(|w| WindowChrome {
-                window_id: w.window_id,
-                tiled: self
-                    .tabs
-                    .zone_of(w.window_id)
-                    .is_some_and(|z| matches!(z, Zone::Fullscreen | Zone::Grid(_)))
-                    && !self.zoning.is_floating(w.window_id),
-                cinema: self.tabs.zone_of(w.window_id) == Some(Zone::Cinema),
-                rim: self.menus.get_menu(&w.app_id).is_none(),
+            .map(|w| {
+                let zone = self.tabs.zone_of(w.window_id);
+                let floating = self.zoning.is_floating(w.window_id);
+                let tab = self.pairing.key_of(w.window_id).map(String::from);
+                WindowPlace {
+                    window_id: w.window_id,
+                    tiled: zone.is_some_and(|z| matches!(z, Zone::Fullscreen | Zone::Grid(_))) && !floating,
+                    floating,
+                    cinema: zone == Some(Zone::Cinema),
+                    rim: self.menus.get_menu(&w.app_id).is_none(),
+                    workspace: self.workspace.told(w.window_id).map(String::from),
+                    shown: tab.is_some() && self.tab_on_screen(w.window_id),
+                    tab,
+                }
             })
             .collect();
-        let changes = self.window_chrome.update(next);
+        let changes = self.places.update(next);
         if changes.emit.is_empty() && changes.retract.is_empty() {
             return;
         }
         if let Some(Ok(mut bus)) = sola_kit::app::try_bus().map(|b| b.lock()) {
-            for chrome in changes.emit {
-                let _ = bus.emit(Topic::WindowChrome(chrome));
+            for place in changes.emit {
+                let _ = bus.emit(Topic::WindowPlace(place));
             }
-            for chrome in changes.retract {
-                let _ = bus.retract(Topic::WindowChrome(chrome));
+            for place in changes.retract {
+                let _ = bus.retract(Topic::WindowPlace(place));
             }
         }
     }
@@ -1529,13 +1502,3 @@ mod windows_identity_tests {
     }
 }
 
-/// Drop the sticky `TabWindow` for a tab whose window is gone.
-fn retract_tab_window(key: String) {
-    super::with_bus(|bus| {
-        let _ = bus.retract(Topic::TabWindow(sola_bus::topics::TabWindow {
-            key,
-            window_id: 0,
-            shown: false,
-        }));
-    });
-}

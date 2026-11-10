@@ -270,7 +270,7 @@ pub struct App<E: Engine> {
     /// every Tick; `cached_tabs` is the value at last read.
     pub tabs_handle: TabsHandle,
     /// The workspace each page window is on (sola-river id → workspace id,
-    /// from the shell's `WindowWorkspace`).
+    /// from the shell's `WindowPlace`).
     window_ws: HashMap<u32, String>,
     /// Active-tab id (worker is the sole writer after startup).
     /// Chrome keeps `cached_active` for optimistic paint.

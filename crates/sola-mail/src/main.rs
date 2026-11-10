@@ -33,8 +33,7 @@ fn main() -> iced::Result {
             TopicKind::MenuAction,
             TopicKind::CloseApp,
             TopicKind::Windows,
-            TopicKind::WindowFloating,
-            TopicKind::WindowChrome,
+            TopicKind::WindowPlace,
             TopicKind::MailConfig,
         ])
         .app_menu_definition(menu(

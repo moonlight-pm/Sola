@@ -3,7 +3,7 @@
 use tracing::{debug, error, info, warn};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_child};
 
-use sola_bus::topics::{FullscreenRequest, Topic, WindowGeometry, WindowParent};
+use sola_bus::topics::{FullscreenRequest, Topic};
 
 use crate::client::{AppData, op};
 use crate::protocol::river_window_management_v1::{
@@ -184,14 +184,7 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             Event::Parent { parent } => {
                 let parent = parent.and_then(|p| state.windows_by_object.get(&p.id()).copied());
                 info!(window_id, ?parent, "parent");
-                match parent {
-                    Some(parent) => {
-                        let _ = state
-                            .bus
-                            .emit(Topic::WindowParent(WindowParent { window_id, parent }));
-                    }
-                    None => retract_parent(state, window_id),
-                }
+                crate::translator::tell_facts(state, window_id, |f| f.parent = parent);
             }
             Event::FullscreenRequested { output: _ } => {
                 let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
@@ -325,12 +318,7 @@ fn take_back_id(state: &mut AppData, minted: u32, identifier: &str) {
 pub(crate) fn drop_window(state: &mut AppData, window_id: u32) {
     state.window_ids.forget(window_id);
     state.unidentified.remove(&window_id);
-    if state.tabs_told.remove(&window_id) {
-        let _ = state.bus.retract(Topic::WindowTab(sola_bus::topics::WindowTab {
-            window_id,
-            tab: String::new(),
-        }));
-    }
+    state.tabs_told.remove(&window_id);
     // River asserts in Window.destroy() that no seat is still focused
     // on the window. Queue clear_focus so the next manage_start sends
     // it before we destroy the proxy.
@@ -366,25 +354,10 @@ pub(crate) fn drop_window(state: &mut AppData, window_id: u32) {
     if state.pointer_window == Some(window_id) {
         state.pointer_window = None;
     }
-    let _ = state.bus.retract(Topic::WindowGeometry(WindowGeometry {
-        window_id,
-        x: 0,
-        y: 0,
-        width: 0,
-        height: 0,
-    }));
-    retract_parent(state, window_id);
+    crate::translator::retract_facts(state, window_id);
     if let Some(window) = proxy {
         window.destroy();
     }
-}
-
-/// Drop `window_id`'s sticky `WindowParent` (closed, or no parent now).
-fn retract_parent(state: &mut AppData, window_id: u32) {
-    let _ = state.bus.retract(Topic::WindowParent(WindowParent {
-        window_id,
-        parent: 0,
-    }));
 }
 
 /// Drop compositor entries whose process is gone. A SIGKILL'd sola-shell

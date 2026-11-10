@@ -271,7 +271,7 @@ pub fn drive(state: &mut AppData) {
     if released {
         seat.op_end();
         // Clear `op` BEFORE emitting so the gate in `emit_geometry` lets this
-        // one through — a single final WindowGeometry for the whole drag.
+        // one through — a single final WindowFacts for the whole drag.
         state.op = None;
         clear_cursor(state);
         crate::translator::emit_geometry(state, wid);
