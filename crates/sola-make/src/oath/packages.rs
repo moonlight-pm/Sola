@@ -110,6 +110,10 @@ pub const BASE: &[&str] = &[
 
 /// In apply order: a package comes after the ones it needs.
 pub const PACKAGES: &[Package] = &[
+    // KVM and Remote Desktop, its window (`svc:sola-kvm` runs `sola-kvm`):
+    // moving it restarts input sharing only. wl-copy / wl-paste: their
+    // clipboard.
+    app("sola-kvm", &["sola-kvm", "sola-kvm-view"], &["wl-clipboard"]),
     Package {
         name: "sola",
         bins: &[
@@ -127,6 +131,11 @@ pub const PACKAGES: &[Package] = &[
         ],
         build: &["rust", "pkgconf", "libxkbcommon"],
         needs: &[
+            // Until every machine has `pkg:sola-kvm`: its programs left this
+            // package, so a machine that took this one alone would lose
+            // /bin/sola-kvm. Drop it then. It must not need this one back:
+            // Oath refuses a cycle.
+            "sola-kvm",
             "tmux",
             "pipewire",
             "wireplumber",
@@ -154,10 +163,6 @@ pub const PACKAGES: &[Package] = &[
     // Vault and its daemon (`svc:sola-vault` runs `sola-vaultd`): moving
     // it restarts the vault only.
     app("sola-vault", &["sola-vault", "sola-vaultd"], &[]),
-    // KVM and Remote Desktop, its window (`svc:sola-kvm` runs `sola-kvm`):
-    // moving it restarts input sharing only. wl-copy / wl-paste: their
-    // clipboard.
-    app("sola-kvm", &["sola-kvm", "sola-kvm-view"], &["wl-clipboard"]),
     Package {
         name: "sola-browser",
         bins: &["sola-browser"],
@@ -201,15 +206,15 @@ mod tests {
 
     #[test]
     fn apps_need_what_they_load_not_the_core() {
-        for pkg in PACKAGES.iter().skip(1) {
+        for pkg in PACKAGES.iter().filter(|p| p.name != "sola") {
             assert!(!pkg.runtime_needs().contains(&"sola"), "{} needs the core", pkg.name);
             assert!(pkg.runtime_needs().contains(&"wayland"), "{}", pkg.name);
         }
-        let core = &PACKAGES[0];
-        assert_eq!(core.name, "sola");
+        let core = PACKAGES.iter().find(|p| p.name == "sola").expect("the core");
         assert!(core.share && core.bins.contains(&"sola-river"));
         assert!(!core.bins.contains(&"sola-mail"), "apps are out of the core");
         assert!(!core.bins.contains(&"sola-kvm"), "KVM restarts on its own");
+        assert!(core.needs.contains(&"sola-kvm"), "a machine takes the two together");
     }
 
     #[test]
