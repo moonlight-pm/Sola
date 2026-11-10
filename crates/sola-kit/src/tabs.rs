@@ -197,8 +197,12 @@ impl TabWindows {
     }
 
     /// Fold one bus message (`TabWindow` pairs, shown changes, and their
-    /// retractions). A new pair is announced back with the window's id.
-    /// Returns true when a window's shown state changed.
+    /// retractions). A new pair is announced back with the window's id. A
+    /// pair taken back from a window that is still ours (sola-river lost
+    /// sight of it for a moment) is shown again, as a window starts, and
+    /// announced again so the shell can pair it when it is back: a page left
+    /// at rest would wait for a shown that never comes. Returns true when a
+    /// window's shown state changed.
     pub fn update(&mut self, msg: &Message) -> bool {
         let Some(Topic::TabWindow(TabWindow {
             key,
@@ -212,15 +216,12 @@ impl TabWindows {
         let Some(entry) = self.windows.values_mut().find(|e| e.key == key) else {
             return false;
         };
-        let shown_changed = msg.sticky && entry.shown != shown;
-        if msg.sticky {
-            entry.shown = shown;
-        }
+        let shown = shown || !msg.sticky;
+        let shown_changed = entry.shown != shown;
+        entry.shown = shown;
         if entry.river != river {
             entry.river = river;
-            if river.is_some() {
-                announce(&tab(&key, &entry.app_id, entry.seq, river, entry.background, entry.icon.clone()));
-            }
+            announce(&tab(&key, &entry.app_id, entry.seq, river, entry.background, entry.icon.clone()));
         }
         shown_changed
     }

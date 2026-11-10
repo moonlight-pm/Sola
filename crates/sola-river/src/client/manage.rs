@@ -6,7 +6,7 @@
 //! positions (`set_position`), and focus (`focus_window` / `clear_focus`).
 use std::collections::{HashMap, HashSet};
 
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::client::AppData;
 use crate::pending::FocusAction;
@@ -185,11 +185,16 @@ pub(crate) fn gamescope_size_gate(
 pub fn handle_manage_start(state: &mut AppData) {
     // This sequence's enters are read; a move from here on is new.
     state.pointer_moved = false;
+    let first = !state.windows_known;
+    state.windows_known = true;
     // River names a window as it creates it, before this sequence: one
     // still unnamed keeps the id it was given, and is told now.
     if !state.unidentified.is_empty() {
         tracing::warn!(windows = ?state.unidentified, "windows River did not name; told by their new ids");
         state.unidentified.clear();
+        crate::translator::emit_windows(state);
+    } else if first {
+        info!(count = state.registry.as_windows().len(), "first manage sequence: telling the windows");
         crate::translator::emit_windows(state);
     }
     let Some(wm) = state.wm.clone() else { return };
@@ -257,7 +262,7 @@ pub fn handle_manage_start(state: &mut AppData) {
         // configure only adds Wayland traffic that piles up against a busy
         // client. See `should_send`.
         if should_send(state.last_proposed.get(&window_id).copied(), propose) {
-            tracing::info!(window_id, %app_id, w = propose.0, h = propose.1, "propose_dimensions");
+            tracing::debug!(window_id, %app_id, w = propose.0, h = propose.1, "propose_dimensions");
             proxy.propose_dimensions(propose.0, propose.1);
             state.last_proposed.insert(window_id, propose);
             if propose.0 > 0 && propose.1 > 0 {

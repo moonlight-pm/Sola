@@ -27,6 +27,7 @@ pub mod page_windows;
 pub mod paste_js;
 pub mod popup;
 pub mod profiles;
+pub mod quit_apps;
 pub mod run;
 pub mod session;
 pub mod shader;

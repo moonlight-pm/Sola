@@ -235,8 +235,10 @@ impl<E: Engine> App<E> {
                     }
                     Some(self.reopen_as_app(&id))
                 } else {
-                    // Removed (here or elsewhere): its windows close.
+                    // Removed (here or elsewhere): its windows close, and
+                    // none come back.
                     self.webapps.apps.remove(&app.app_id);
+                    self.quit_apps.forget(&app.app_id);
                     Some(self.close_app_windows(&app.app_id))
                 }
             }
@@ -244,7 +246,7 @@ impl<E: Engine> App<E> {
                 Some(self.on_app_menu(&m.app_id, &m.action_id))
             }
             Topic::CloseApp(app_id) if self.webapps.hosts(&app_id) => {
-                Some(self.close_app_windows(&app_id))
+                Some(self.quit_app(&app_id))
             }
             Topic::NotificationActivate(a) if self.webapps.hosts(&a.app_id) => {
                 let tab = a.tab_id.map(TabId)?;
@@ -270,13 +272,63 @@ impl<E: Engine> App<E> {
             return;
         };
         self.webapps.launch = None;
-        if let Some(tab) = self.webapps.tabs_of(app_id).into_iter().min_by_key(|t| t.0) {
+        let back = self.open_quit_windows(&app);
+        if let Some(tab) = self.webapps.tabs_of(app_id).into_iter().filter(|t| !back.contains(t)).min_by_key(|t| t.0) {
             tracing::info!(app = %app_id, tab = tab.0, "web app up");
             self.switch_active_tab(tab);
             self.windows.show(tab);
             return;
         }
+        if let Some(&tab) = back.first() {
+            self.switch_active_tab(tab);
+            return;
+        }
         self.open_app_window(&app.app_id);
+    }
+
+    /// The windows `app` had when it was quit and are not up now, opened
+    /// again, each under its own page id so the shell puts it back where it
+    /// was. (The browser's last page stays in its session when quitting
+    /// quits the browser, so one may be up already.)
+    fn open_quit_windows(&mut self, app: &Application) -> Vec<TabId> {
+        let pages = self.quit_apps.take(&app.app_id);
+        if pages.is_empty() {
+            return Vec::new();
+        }
+        let up: HashSet<String> = self
+            .webapps
+            .tabs_of(&app.app_id)
+            .iter()
+            .filter_map(|t| self.page_ids.get(t).cloned())
+            .collect();
+        let profile = app_profile(app);
+        let back: Vec<TabId> = pages
+            .iter()
+            .filter(|p| !up.contains(&p.id))
+            .map(|p| self.open_saved_page(&app.app_id, &profile, p))
+            .collect();
+        tracing::info!(app = %app.app_id, windows = back.len(), "web app's windows back");
+        self.persist_session();
+        back
+    }
+
+    fn open_saved_page(&mut self, app_id: &str, profile: &str, page: &crate::session::SessionTab) -> TabId {
+        let id = self.engine.alloc_tab_id();
+        self.page_ids.insert(id, page.id.clone());
+        self.webapps.tabs.insert(id, app_id.to_string());
+        let url = crate::util::normalize_url(&page.url);
+        let url = if url.is_empty() { BLANK_URL.to_string() } else { url };
+        let (history, history_index) = crate::session::history_from_session(page);
+        self.cached_tabs.push(crate::engine::TabInfo {
+            is_loading: url != BLANK_URL,
+            history,
+            history_index,
+            profile: profile.to_string(),
+            ..crate::engine::TabInfo::chrome(id, url.clone(), page.title.clone())
+        });
+        self.slot().need_park_prime.lock().unwrap().insert(id.0);
+        self.open_in(profile, id, url, page.title.clone());
+        id
     }
 
     /// A launch handed to this running browser: another window of an app
@@ -388,11 +440,26 @@ impl<E: Engine> App<E> {
                 self.webapps.removing = Some(app_id.to_string());
                 Task::none()
             }
-            ACTION_QUIT => self.close_app_windows(app_id),
+            ACTION_QUIT => self.quit_app(app_id),
             // Reload and Edit act on the active page: the app's, since its
             // window has the keys.
             other => integration::run_intent(self, integration::intent_for_menu_action(other)),
         }
+    }
+
+    /// Quit web app `app_id` (its Quit, Super+Q): remember its windows, so
+    /// opening it again brings them all back, then close them.
+    pub(crate) fn quit_app(&mut self, app_id: &str) -> Task<Msg> {
+        let tabs = self.webapps.tabs_of(app_id);
+        let mut pages: Vec<crate::engine::TabInfo> =
+            self.page_snapshot().into_iter().filter(|t| tabs.contains(&t.id)).collect();
+        pages.sort_by_key(|t| t.id.0);
+        if let Some(first) = pages.first().map(|t| t.id) {
+            let saved = crate::session::session_from_tabs(&pages, first, &[], &self.page_ids, &self.webapps.tabs);
+            tracing::info!(app = %app_id, windows = saved.tabs.len(), "web app quit: its windows remembered");
+            self.quit_apps.remember(app_id, saved.tabs);
+        }
+        self.close_app_windows(app_id)
     }
 
     /// Close every window of app `app_id` (its pages).
@@ -555,6 +622,7 @@ impl<E: Engine> App<E> {
         let Some(app_id) = self.webapps.removing.take() else {
             return Task::none();
         };
+        self.quit_apps.forget(&app_id);
         let Some(app) = self.webapps.apps.remove(&app_id) else {
             return Task::none();
         };

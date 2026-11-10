@@ -66,10 +66,15 @@ impl Pairing {
 
     /// A window closed. Returns the tab it was. The tab is spent too, so it
     /// cannot pair with the process's next window before the app retracts
-    /// it (an app that reopens a tab announces it again).
-    pub fn window_closed(&mut self, window_id: u32) -> Option<String> {
+    /// it (an app that reopens a tab announces it again). Not when the
+    /// window `named` its tab: it pairs only with that tab, which waits for
+    /// it, as the same window comes back after a restarted sola-river, until
+    /// the app retracts the tab.
+    pub fn window_closed(&mut self, window_id: u32, named: bool) -> Option<String> {
         let key = self.paired.remove(&window_id)?;
-        self.tabs.remove(&key);
+        if !named {
+            self.tabs.remove(&key);
+        }
         Some(key)
     }
 
@@ -275,7 +280,7 @@ mod tests {
         p.announce(tab("t/b", 7, 2));
         let new = p.pair(&[(10, "sola-terminal", 7, None), (11, "sola-terminal", 7, None)]);
         assert_eq!(new, vec![(11, "t/b".into())]);
-        assert_eq!(p.window_closed(10), Some("t/a".into()));
+        assert_eq!(p.window_closed(10, false), Some("t/a".into()));
         // The closed window's tab does not pair with the next window.
         p.announce(tab("t/c", 7, 3));
         let new = p.pair(&[(11, "sola-terminal", 7, None), (12, "sola-terminal", 7, None)]);
@@ -345,4 +350,25 @@ mod tests {
         p.announce(browser("b/2", 7, 2));
         assert_eq!(p.pair(&refs), vec![(10, "b/2".into())]);
     }
+
+    #[test]
+    fn a_window_that_named_its_tab_pairs_again_when_it_comes_back() {
+        let mut p = Pairing::default();
+        p.announce(Announced {
+            key: "t/a".into(),
+            app_id: "t".into(),
+            pid: 7,
+            seq: 1,
+            window_id: None,
+            background: false,
+        });
+        let token = tab_token("t/a");
+        let window = [(10, "t", 7, Some(token.as_str()))];
+        assert_eq!(p.pair(&window), [(10, "t/a".to_string())]);
+        assert_eq!(p.window_closed(10, true), Some("t/a".into()));
+        assert_eq!(p.pair(&window), [(10, "t/a".to_string())]);
+        assert_eq!(p.window_closed(10, false), Some("t/a".into()));
+        assert!(p.pair(&window).is_empty(), "an unnamed close spends the tab");
+    }
+
 }

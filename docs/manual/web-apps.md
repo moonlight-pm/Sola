@@ -45,7 +45,7 @@ The titlebar shows the app's name and its menus:
 - **Copy Link** copies the address of the page in this window, since a web
   app has no location bar.
 - **Close Window** closes this window of the app; **Quit** *name* closes
-  all of them. Browser itself ends only when those were its last windows.
+  all of them. Browser itself ends only when those were its last windows. Opening the app again brings back every window it had when you quit it, at the pages they showed.
 
 The page's own dialogs open in the app's window: JavaScript dialogs,
 HTTP sign-in, camera and microphone, notifications, and file uploads. Its

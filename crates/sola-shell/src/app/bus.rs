@@ -413,7 +413,8 @@ impl Shell {
             self.tabs.remove(wid, now);
             self.pending_parents.remove(&wid);
             self.pending_fullscreen.remove(&wid);
-            if let Some(key) = self.pairing.window_closed(wid) {
+            let named = self.window_tabs.contains_key(&wid);
+            if let Some(key) = self.pairing.window_closed(wid, named) {
                 retract_tab_window(key);
             }
             self.tab_shown_sent.remove(&wid);

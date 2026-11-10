@@ -10,6 +10,13 @@ use crate::client::AppData;
 use crate::registry::chord_diff;
 
 pub fn emit_windows(state: &mut AppData) {
+    // Until River's first manage sequence the windows it already had are
+    // still arriving, one at a time: a list now would tell the shell that
+    // the rest had closed (a restarted sola-river), and a list per window
+    // floods it. The first sequence tells them all at once.
+    if !state.windows_known {
+        return;
+    }
     // A window River has not named yet is not told: it may take back the
     // id it had ([`crate::window_ids`]).
     let mut windows = state.registry.as_windows();

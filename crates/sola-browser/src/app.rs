@@ -293,6 +293,8 @@ pub struct App<E: Engine> {
     recently_closed: Vec<crate::session::ClosedTab>,
     /// Each page's stable id ([`crate::session::SessionTab::id`]).
     page_ids: HashMap<TabId, String>,
+    /// The windows of web apps that were quit, to bring back when opened.
+    quit_apps: crate::quit_apps::QuitApps,
     /// Each page's favicon file, named on its tab ([`favicons`]).
     page_icons: HashMap<TabId, String>,
     /// Each page's videos, told to sola-river ([`videos`]).
@@ -434,6 +436,7 @@ impl<E: Engine> App<E> {
             engine_tabs_seen: false,
             recently_closed,
             page_ids: HashMap::new(),
+            quit_apps: crate::quit_apps::QuitApps::load(),
             page_icons: HashMap::new(),
             videos: videos::Videos::default(),
             webapps: webapps::WebApps::default(),

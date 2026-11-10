@@ -1,6 +1,6 @@
 //! Dispatch for `river_window_manager_v1` and `river_window_v1`.
 
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, event_created_child};
 
 use sola_bus::topics::{FullscreenRequest, Topic, WindowGeometry, WindowParent};
@@ -125,7 +125,7 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
             }
             Event::AppId { app_id } => {
                 let value = app_id.unwrap_or_default();
-                info!(window_id, app_id = %value, "app_id set");
+                debug!(window_id, app_id = %value, "app_id set");
                 state.registry.set_app_id(window_id, value);
                 // Empty app_id is common for gamescope under River — fill from pid.
                 if state.registry.maybe_infer_gamescope_identity(window_id) {
@@ -161,7 +161,7 @@ impl Dispatch<RiverWindowV1, ()> for AppData {
                 ..
             } => {
                 let app_id = state.registry.app_id_for(window_id).unwrap_or("?");
-                info!(window_id, app_id, max_width, max_height, "dimensions hint");
+                debug!(window_id, app_id, max_width, max_height, "dimensions hint");
                 state
                     .registry
                     .set_max_size(window_id, max_width, max_height);
