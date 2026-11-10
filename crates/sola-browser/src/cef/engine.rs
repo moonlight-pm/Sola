@@ -4895,7 +4895,9 @@ fn osr_drag_drop(
     y: i32,
     modifiers: u32,
 ) -> bool {
-    let size = *state.size.lock().unwrap();
+    // The page's own view, not the shared size: a page window wider than
+    // that took every drop on its right as off the page.
+    let size = osr_view_size(state, host.browser().as_ref());
     let entered = state.osr_drag.borrow().as_ref().is_some_and(|d| d.entered);
     if !entered || x < 0 || y < 0 || x >= size.0 as i32 || y >= size.1 as i32 {
         return osr_drag_cancel(state, host, x, y);
