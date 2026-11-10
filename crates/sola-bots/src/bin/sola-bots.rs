@@ -1,7 +1,7 @@
 //! Bots iced app — talks to sola-botsd over HTTP + SSE (same as the phone).
 
 use sola_bots::ui::{self, App};
-use sola_bus::topics::{MenuDefinition, MenuItem, TopicKind};
+use sola_bus::topics::{MenuDefinition, MenuItem};
 use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, startup, window_settings_transparent};
 use sola_kit::fonts;
@@ -9,7 +9,7 @@ use sola_kit::fonts;
 fn main() -> iced::Result {
     startup(ui::APP_ID);
     BusSetup::new(ui::APP_ID)
-        .subscribe(TopicKind::ALL)
+        .app_kinds(&[])
         .app_menu_definition(MenuDefinition {
             label: "Bots".into(),
             items: vec![

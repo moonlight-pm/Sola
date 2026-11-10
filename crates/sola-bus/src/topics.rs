@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -186,8 +185,7 @@ pub struct WindowFloating {
 /// A floating app's remembered rectangle, keyed by `app_id`. Carried by the
 /// persistent `Topic::FloatGeometry` so a floating window restores to where it
 /// last was across relaunch and across a full restart. Kept separate from the
-/// `Zones:` map so `Zone` stays a clean unit enum and geometry churn doesn't
-/// rewrite the zone assignments.
+/// zone layout so geometry churn doesn't rewrite it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FloatGeometry {
     pub app_id: String,
@@ -477,13 +475,6 @@ pub struct WorkspacePrefs {
 /// was the id of the Common workspace, so a layout saved then comes back with
 /// Common's windows pinned.
 pub const PINNED_LAYOUT_ID: &str = "common";
-
-/// Retired with the Common workspace; nothing sends it. Kept because a
-/// topic's place in the list is its number on the wire.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct PinnedTabs {
-    pub keys: Vec<String>,
-}
 
 /// The workspaces in order and which one is showing (shell → apps).
 /// Carried by the sticky `Topic::Workspaces`; the browser picks the
@@ -1715,30 +1706,6 @@ pub struct MailRuleCondition {
     pub value: String,
 }
 
-/// Per-window UI preferences for sola-terminal. Persistent so they
-/// survive across terminal restarts and bus restarts.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
-pub struct TerminalConfig {
-    pub sidebar_width: u32,
-    pub sidebar_collapsed: bool,
-    /// Tab selected when the terminal last quit. Restored on boot so a
-    /// restart lands on the same tab rather than whichever sticky
-    /// `TerminalSession` arrives first.
-    #[serde(default)]
-    pub active_tab_id: Option<String>,
-}
-
-impl Default for TerminalConfig {
-    fn default() -> Self {
-        Self {
-            sidebar_width: 220,
-            sidebar_collapsed: false,
-            active_tab_id: None,
-        }
-    }
-}
-
 /// Orientation of a pane split. `Vertical` places the two panes
 /// side-by-side with a vertical divider (the new pane lands to the
 /// RIGHT, `⌘⇧→`); `Horizontal` stacks them with a horizontal divider
@@ -1791,21 +1758,6 @@ pub struct TerminalSession {
     pub layout: Option<PaneLayout>,
 }
 
-/// One persisted browser tab. Keyed by `id` (UUIDv4 generated at tab
-/// creation). `ordinal` orders the tab strip; gaps are fine, JS sorts
-/// by ordinal. `session_state` is the base64-encoded WebKit page
-/// session blob (back/forward stack, scroll position, form state) and
-/// is `None` until the tab has been navigated.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BrowserTab {
-    pub id: String,
-    pub url: String,
-    pub title: String,
-    pub ordinal: u32,
-    #[serde(default)]
-    pub session_state: Option<String>,
-}
-
 /// Open paint tabs. Paths only — unsaved buffers are not persisted.
 /// Missing files are skipped on restore and pruned on the next emit.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1814,45 +1766,6 @@ pub struct PaintSession {
     pub paths: Vec<PathBuf>,
     #[serde(default)]
     pub selected: Option<PathBuf>,
-}
-
-/// Browser-wide singleton config. Headroom for future fields (default
-/// search engine, zoom default, etc.) without breaking the schema.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BrowserConfig {
-    #[serde(default)]
-    pub active_tab_id: Option<String>,
-}
-
-/// Monitor UI preferences. Persistent so the sticky-panel width
-/// survives across monitor restarts and bus restarts.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(default)]
-pub struct MonitorConfig {
-    pub sidebar_width: u32,
-}
-
-impl Default for MonitorConfig {
-    fn default() -> Self {
-        Self { sidebar_width: 240 }
-    }
-}
-
-/// One visited URL. Cap and MRU policy are enforced by the browser
-/// before emitting `BrowserHistory` (the singleton aggregate).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct HistoryEntry {
-    pub url: String,
-    pub title: String,
-    pub visits: u32,
-}
-
-/// Singleton browser history aggregate. The browser owns the cap and
-/// MRU ordering; the bus persists the latest snapshot.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BrowserHistory {
-    #[serde(default)]
-    pub entries: Vec<HistoryEntry>,
 }
 
 /// Capture request used by sola-river's screenshot path (call plane).
@@ -2206,15 +2119,10 @@ define_topics! {
     SetAppMenu(AppMenuPayload),
     MenuAction(MenuActionPayload),
 
-    // Zone assignments by app_id. Shell owns the map; emits a fresh
-    // copy after each snap. Persistent so layouts survive restart.
-    #[persistent]
-    Zones(HashMap<String, Zone>),
-
     // Remembered rectangle of each floating app, keyed by app_id. Shell owns
     // it: records from Topic::WindowGeometry while a window is floating, restores
     // on relaunch. Persistent so float placement survives a restart. Separate
-    // from Zones so geometry churn doesn't rewrite the zone map.
+    // from the zone layout so geometry churn doesn't rewrite it.
     #[persistent(keys = [app_id])]
     FloatGeometry(FloatGeometry),
 
@@ -2246,40 +2154,12 @@ define_topics! {
     #[persistent(keys = [app_id])]
     Application(Application),
 
-    // Terminal UI preferences (sidebar width / collapsed). Persistent
-    // so terminal restarts restore the user's layout.
-    #[persistent]
-    TerminalConfig(TerminalConfig),
-
-    // Monitor UI preferences (sticky-panel width). Persistent
-    // so the user's chosen width survives across restarts.
-    #[persistent]
-    MonitorConfig(MonitorConfig),
-
     // One terminal tab as persisted on the bus. Keyed by `id` so each
     // tab has its own `(TerminalSession, [id])` slot — add a tab by
     // emitting; remove by retracting; reorder by re-emitting with new
     // ordinals.
     #[persistent(keys = [id])]
     TerminalSession(TerminalSession),
-
-    // Browser singleton config (active tab id, future browser-wide
-    // settings). Lives in its own namespace file so frequent active-tab
-    // changes don't churn the shared state.yaml.
-    #[persistent(namespace = "browser")]
-    BrowserConfig(BrowserConfig),
-
-    // Browser visited-URL history aggregate. Singleton; the browser
-    // enforces the cap (1000) and MRU ordering before emitting. Lives
-    // in its own namespace file.
-    #[persistent(namespace = "browser/history")]
-    BrowserHistory(BrowserHistory),
-
-    // One persisted browser tab. Keyed by `id` so each tab has its
-    // own `(BrowserTab, [id])` slot in the namespace
-    // ~/.config/sola/browser/tabs/<id>.yaml.
-    #[persistent(keys = [id], namespace = "browser/tabs/:id")]
-    BrowserTab(BrowserTab),
 
     // Browser
     OpenUrl(OpenUrlRequest),
@@ -2486,10 +2366,6 @@ define_topics! {
     // Persistent. Appended last.
     #[persistent]
     WorkspacePrefs(WorkspacePrefs),
-
-    // Retired with the Common workspace (shell → apps). Sticky.
-    #[sticky]
-    PinnedTabs(PinnedTabs),
 
     // The tab a new tab was opened from (app → shell). Appended last.
     TabOpener(TabOpener),
@@ -2894,7 +2770,7 @@ mod tests {
     fn behavior_reflects_annotations() {
         use crate::topic::Behavior;
         // Persistent variants
-        assert_eq!(TopicKind::Zones.behavior(), Behavior::Persistent);
+        assert_eq!(TopicKind::ZoneLayout.behavior(), Behavior::Persistent);
         // Sticky variants
         assert_eq!(TopicKind::Windows.behavior(), Behavior::Sticky);
         assert_eq!(TopicKind::OutputGeometry.behavior(), Behavior::Sticky);
@@ -3012,19 +2888,19 @@ mod tests {
     }
 
     #[test]
-    fn zones_roundtrips_via_yaml() {
-        let mut zones: HashMap<String, Zone> = HashMap::new();
-        zones.insert("sola-browser".into(), Zone::Grid(1));
-        zones.insert("sola-terminal".into(), Zone::Grid(2));
+    fn zone_layout_roundtrips_via_yaml() {
+        let mut layout = ZoneLayout::default();
+        layout.rows = 2;
+        layout.zones.push(GridZone { id: 3, row: 1, column: 0, rows: 1, columns: 2 });
 
-        let topic = Topic::Zones(zones.clone());
+        let topic = Topic::ZoneLayout(layout.clone());
         let value = topic
             .to_yaml_value()
-            .expect("Zones is persistent; must serialize to YAML");
+            .expect("ZoneLayout is persistent; must serialize to YAML");
 
-        match Topic::from_yaml_section(TopicKind::Zones, value) {
-            Some(Topic::Zones(back)) => assert_eq!(back, zones),
-            other => panic!("expected Zones, got {other:?}"),
+        match Topic::from_yaml_section(TopicKind::ZoneLayout, value) {
+            Some(Topic::ZoneLayout(back)) => assert_eq!(back, layout),
+            other => panic!("expected ZoneLayout, got {other:?}"),
         }
     }
 
@@ -3069,17 +2945,8 @@ mod tests {
 
     #[test]
     fn zone_float_roundtrips_via_yaml() {
-        let mut zones: HashMap<String, Zone> = HashMap::new();
-        zones.insert("UnrealEditor".into(), Zone::Float);
-
-        let value = Topic::Zones(zones.clone())
-            .to_yaml_value()
-            .expect("Zones is persistent; must serialize to YAML");
-
-        match Topic::from_yaml_section(TopicKind::Zones, value) {
-            Some(Topic::Zones(back)) => assert_eq!(back, zones),
-            other => panic!("expected Zones, got {other:?}"),
-        }
+        let value = serde_yaml_ng::to_value(Zone::Float).unwrap();
+        assert_eq!(serde_yaml_ng::from_value::<Zone>(value).unwrap(), Zone::Float);
     }
 
     #[test]
@@ -3283,96 +3150,6 @@ mod tests {
         let v = topic.to_json_value();
         assert!(v.is_object(), "expected object, got {v:?}");
         assert!(v.get("email").is_some());
-    }
-
-    #[test]
-    fn terminal_config_roundtrips_via_postcard() {
-        let cfg = TerminalConfig {
-            sidebar_width: 312,
-            sidebar_collapsed: true,
-            active_tab_id: Some("tab-xyz".into()),
-        };
-        let topic = Topic::TerminalConfig(cfg.clone());
-        let msg = topic.to_message();
-        let parsed = Topic::parse(&msg).unwrap();
-        match parsed {
-            Topic::TerminalConfig(back) => {
-                assert_eq!(back.sidebar_width, 312);
-                assert!(back.sidebar_collapsed);
-                assert_eq!(back.active_tab_id.as_deref(), Some("tab-xyz"));
-            }
-            other => panic!("expected TerminalConfig, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn terminal_config_roundtrips_via_yaml() {
-        let cfg = TerminalConfig {
-            sidebar_width: 240,
-            sidebar_collapsed: false,
-            active_tab_id: Some("tab-abc".into()),
-        };
-        let topic = Topic::TerminalConfig(cfg);
-        let value = topic
-            .to_yaml_value()
-            .expect("persistent payload should serialize to TOML");
-        let restored = Topic::from_yaml_section(TopicKind::TerminalConfig, value)
-            .expect("section should deserialize");
-        match restored {
-            Topic::TerminalConfig(back) => {
-                assert_eq!(back.sidebar_width, 240);
-                assert!(!back.sidebar_collapsed);
-                assert_eq!(back.active_tab_id.as_deref(), Some("tab-abc"));
-            }
-            other => panic!("expected TerminalConfig, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn terminal_config_yaml_without_active_tab_defaults_to_none() {
-        // Old state.yaml records only had sidebar fields.
-        let value = serde_yaml_ng::from_str("sidebar_width: 250\nsidebar_collapsed: false\n")
-            .expect("yaml");
-        let restored = Topic::from_yaml_section(TopicKind::TerminalConfig, value)
-            .expect("section should deserialize");
-        match restored {
-            Topic::TerminalConfig(back) => {
-                assert_eq!(back.sidebar_width, 250);
-                assert!(back.active_tab_id.is_none());
-            }
-            other => panic!("expected TerminalConfig, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn monitor_config_roundtrips_via_postcard() {
-        let cfg = MonitorConfig { sidebar_width: 312 };
-        let topic = Topic::MonitorConfig(cfg.clone());
-        let msg = topic.to_message();
-        let parsed = Topic::parse(&msg).unwrap();
-        match parsed {
-            Topic::MonitorConfig(back) => {
-                assert_eq!(back.sidebar_width, 312);
-            }
-            other => panic!("expected MonitorConfig, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn monitor_config_roundtrips_via_yaml() {
-        let cfg = MonitorConfig { sidebar_width: 240 };
-        let topic = Topic::MonitorConfig(cfg);
-        let value = topic
-            .to_yaml_value()
-            .expect("persistent payload should serialize to TOML");
-        let restored = Topic::from_yaml_section(TopicKind::MonitorConfig, value)
-            .expect("section should deserialize");
-        match restored {
-            Topic::MonitorConfig(back) => {
-                assert_eq!(back.sidebar_width, 240);
-            }
-            other => panic!("expected MonitorConfig, got {other:?}"),
-        }
     }
 
     #[test]
@@ -3852,7 +3629,7 @@ mod persistent_yaml_tests {
         define_topics! {
             Ping,
             #[persistent]
-            Zones(std::collections::HashMap<String, Zone>),
+            Grid(std::collections::HashMap<String, Zone>),
         }
     }
 
@@ -3875,16 +3652,16 @@ mod persistent_yaml_tests {
             },
         );
 
-        let topic = Topic::Zones(zones.clone());
+        let topic = Topic::Grid(zones.clone());
         let value = topic
             .to_yaml_value()
             .expect("persistent payload should serialize to YAML");
 
         let restored =
-            Topic::from_yaml_section(TopicKind::Zones, value).expect("section should deserialize");
+            Topic::from_yaml_section(TopicKind::Grid, value).expect("section should deserialize");
 
         match restored {
-            Topic::Zones(decoded) => assert_eq!(decoded, zones),
+            Topic::Grid(decoded) => assert_eq!(decoded, zones),
             _ => panic!("wrong variant after round-trip"),
         }
     }
@@ -3899,6 +3676,6 @@ mod persistent_yaml_tests {
     fn malformed_section_returns_none() {
         // Wrong shape for a HashMap<String, Zone>: a bare string.
         let value = serde_yaml_ng::Value::String("oops".into());
-        assert!(Topic::from_yaml_section(TopicKind::Zones, value).is_none());
+        assert!(Topic::from_yaml_section(TopicKind::Grid, value).is_none());
     }
 }

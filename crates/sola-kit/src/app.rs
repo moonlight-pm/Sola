@@ -104,6 +104,22 @@ fn bus_kinds() -> Option<&'static [TopicKind]> {
 /// ```
 ///
 /// [`install`]: BusSetup::install
+/// What an app with a kit window reads through the kit's helpers: its
+/// theme ([`apply_theme_update`]), being asked to quit ([`is_self_quit`]),
+/// and its frame ([`crate::float::FloatState::update`]).
+pub const WINDOW_KINDS: &[TopicKind] = &[
+    TopicKind::Theme,
+    TopicKind::MenuAction,
+    TopicKind::CloseApp,
+    TopicKind::Windows,
+    TopicKind::WindowFloating,
+    TopicKind::WindowChrome,
+];
+
+/// What an app with tab windows reads through [`crate::tabs::TabWindows`]:
+/// each tab's window, and the tab bar asking one to close.
+pub const TAB_KINDS: &[TopicKind] = &[TopicKind::TabWindow, TopicKind::CloseTab];
+
 pub struct BusSetup {
     app_id: &'static str,
     subscribe: Option<&'static [TopicKind]>,
@@ -154,12 +170,22 @@ impl BusSetup {
         self
     }
 
-    /// Subscribe the bus client to the given topic kinds before
-    /// installation. Pass `TopicKind::ALL` to mirror sola-monitor's
-    /// audit posture; pass a narrower slice for normal apps.
+    /// Subscribe the bus client to exactly these topic kinds (and the
+    /// kit's own, [`with_kit_kinds`]). An app with a kit window uses
+    /// [`Self::app_kinds`]. On subscribing, the bus replays every record
+    /// of each kind, so name only what the app reads: `TopicKind::ALL` is
+    /// for an audit view (Monitor) and the shell, which read nearly all of it.
     pub fn subscribe(mut self, kinds: &'static [TopicKind]) -> Self {
         self.subscribe = Some(kinds);
         self
+    }
+
+    /// Subscribe an app with a kit window: [`WINDOW_KINDS`], what the kit's
+    /// helpers read for it, and `own`, what the app's code reads.
+    pub fn app_kinds(self, own: &[TopicKind]) -> Self {
+        let mut kinds = WINDOW_KINDS.to_vec();
+        kinds.extend(own.iter().filter(|k| !WINDOW_KINDS.contains(k)));
+        self.subscribe(Box::leak(kinds.into_boxed_slice()))
     }
 
     /// Publish a single-menu app menu before installation. Most apps
@@ -610,7 +636,7 @@ fn ensure_bus_poller() {
             match next {
                 Some(msg) => {
                     if crate::keys::observe(&msg) {
-                        crate::menu::republish();
+                        crate::menu::keys_changed();
                     }
                     crate::menu::observe(&msg);
                     crate::desk_menu::observe(&msg);
@@ -619,7 +645,12 @@ fn ensure_bus_poller() {
                     }
                     forward_or_buffer(Arc::new(msg))
                 }
-                None => std::thread::sleep(Duration::from_millis(8)),
+                None => {
+                    // Caught up with the bus: send the menus once for a
+                    // burst of key changes (a replay brings one per app).
+                    crate::menu::publish_stale();
+                    std::thread::sleep(Duration::from_millis(8))
+                }
             }
         }
     });

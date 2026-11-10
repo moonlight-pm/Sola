@@ -38,7 +38,7 @@ fn main() -> iced::Result {
     startup(APP_ID);
 
     BusSetup::new(APP_ID)
-        .subscribe(TopicKind::ALL)
+        .app_kinds(&[TopicKind::OpenImage])
         .app_menu(
             "Preview",
             [sola_kit::menu::close_window_item(), sola_kit::menu::quit_item("Quit Preview")],

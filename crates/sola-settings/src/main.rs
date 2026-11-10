@@ -55,7 +55,19 @@ fn main() -> iced::Result {
     startup(APP_ID);
 
     BusSetup::new(APP_ID)
-        .subscribe(TopicKind::ALL)
+        .app_kinds(&[
+            TopicKind::Application,
+            TopicKind::MailConfig,
+            TopicKind::CalendarConfig,
+            TopicKind::Background,
+            TopicKind::Appearance,
+            TopicKind::WorkspacePrefs,
+            TopicKind::ThemeVariations,
+            TopicKind::KeyActions,
+            TopicKind::Keybindings,
+            TopicKind::ZoneLayout,
+            TopicKind::OutputGeometry,
+        ])
         .app_menu(
             "Settings",
             [sola_kit::menu::close_window_item(), sola_kit::menu::quit_item("Quit Settings")],

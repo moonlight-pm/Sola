@@ -48,7 +48,7 @@ fn main() -> iced::Result {
     startup(APP_ID);
 
     BusSetup::new(APP_ID)
-        .subscribe(sola_bus::topics::TopicKind::ALL)
+        .app_kinds(&[])
         .app_menu(
             "Remote Desktop",
             [sola_kit::menu::close_window_item(), sola_kit::menu::quit_item("Quit Remote Desktop")],

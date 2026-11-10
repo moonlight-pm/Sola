@@ -89,7 +89,7 @@ fn main() -> iced::Result {
     } else {
         startup(APP_ID);
         BusSetup::new(APP_ID)
-            .subscribe(TopicKind::ALL)
+            .subscribe(&[TopicKind::Theme, TopicKind::MenuAction, TopicKind::CloseApp])
             .app_menu("Install", [("quit", "Quit Installer", KeyCode::Q.meta())])
             .install();
     }

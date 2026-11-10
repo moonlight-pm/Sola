@@ -16,7 +16,7 @@ use crate::topics::TopicKind;
 /// (`next` 83df4558, the Sola in Oath's desk output): a numbered
 /// `$subscribe` carries indices into this list. Frozen: never reorder or
 /// drop a name, and add none. A kind removed since stays, and decodes to
-/// nothing (`CustomTheme`).
+/// nothing ([`REMOVED`]).
 pub const NUMBERED: &[&str] = &[
     "MouseLeft", "Shutdown", "LaunchApp", "LaunchResult", "UserAppExited",
     "CloseApp", "ClientConnected", "ClientDisconnected", "Composition", "Frame",
@@ -32,6 +32,12 @@ pub const NUMBERED: &[&str] = &[
     "TerminalConfig", "MonitorConfig", "TerminalSession", "BrowserConfig",
     "BrowserHistory", "BrowserTab", "PaintSession", "CalendarConfig",
     "TabLayout", "Background", "Appearance", "CalendarAgenda",
+];
+
+/// The names in [`NUMBERED`] whose kinds this build no longer has.
+pub const REMOVED: &[&str] = &[
+    "Zones", "CustomTheme", "TerminalConfig", "MonitorConfig", "BrowserConfig",
+    "BrowserHistory", "BrowserTab",
 ];
 
 /// The frames that subscribe to `kinds`: the names, then the numbered set
@@ -92,18 +98,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn numbered_is_this_build_with_custom_theme() {
+    fn numbered_is_this_build_with_the_removed_kinds() {
         // The frozen list differs from this build's order only by the
-        // removed CustomTheme. A kind added after the freeze is missing
-        // from it, and a bus from before names never sees it.
+        // removed kinds. A kind added after the freeze is missing from it,
+        // and a bus from before names never sees it.
         let now: Vec<&str> = TopicKind::ALL
             .iter()
             .map(|k| k.as_str())
             .filter(|n| NUMBERED.contains(n))
             .collect();
-        let frozen: Vec<&str> = NUMBERED.iter().copied().filter(|n| *n != "CustomTheme").collect();
+        let frozen: Vec<&str> = NUMBERED.iter().copied().filter(|n| !REMOVED.contains(n)).collect();
         assert_eq!(frozen, now);
-        assert_eq!(NUMBERED.iter().position(|n| *n == "CustomTheme"), Some(50));
+        for name in REMOVED {
+            assert!(NUMBERED.contains(name), "{name} left the frozen list");
+            assert!(TopicKind::from_str(name).is_none(), "{name} is a kind again");
+        }
+        let at = |n: &str| NUMBERED.iter().position(|x| *x == n);
+        assert_eq!(at("Zones"), Some(45));
+        assert_eq!(at("CustomTheme"), Some(50));
+        assert_eq!(at("TerminalConfig"), Some(52));
+        assert_eq!(at("MonitorConfig"), Some(53));
+        assert_eq!(at("BrowserConfig"), Some(55));
+        assert_eq!(at("BrowserHistory"), Some(56));
+        assert_eq!(at("BrowserTab"), Some(57));
+        assert_eq!(NUMBERED.len(), 64);
     }
 
     #[test]
@@ -133,10 +151,13 @@ mod tests {
 
     #[test]
     fn unknown_entries_are_skipped() {
-        let msg = Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![50u32, 999, 0]));
+        let msg = Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![50u32, 999, 0, 45]));
         assert_eq!(decode_numbered(&msg).unwrap(), vec![TopicKind::MouseLeft]);
-        let only_removed = Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![50u32]));
+        let only_removed =
+            Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![45u32, 50, 52, 53, 55, 56, 57]));
         assert!(decode_numbered(&only_removed).is_err());
+        let mixed = Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![57u32, 49]));
+        assert_eq!(decode_numbered(&mixed).unwrap(), vec![TopicKind::Theme]);
         let names = Message::with_payload(
             crate::CONTROL_SUBSCRIBE_NAMES,
             encode_payload(&vec!["Theme".to_string(), "FromTheFuture".to_string()]),

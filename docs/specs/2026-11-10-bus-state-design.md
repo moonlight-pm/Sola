@@ -135,7 +135,8 @@ so no layout, session or float place is lost.
   `state.yaml` sections quietly.
 - **Subscriptions name what the app reads.** The kit gives a baseline (what
   its frame, theme, quit and menus read); an app adds its own. Only Monitor
-  subscribes to every kind; the shell lists what it reads.
+  (an audit view) and the shell (which reads nearly every kind) subscribe
+  to everything.
 - **No menu storm:** the kit marks its menus stale when keys change and
   publishes them once, when its poller has caught up with the bus.
 - **Monitor lists every record**, by topic and keys.

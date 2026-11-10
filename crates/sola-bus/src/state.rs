@@ -19,7 +19,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde_yaml_ng::{Mapping, Value};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::Message;
 use crate::topics::{Topic, TopicKind};
@@ -27,6 +27,13 @@ use crate::topics::{Topic, TopicKind};
 /// `Message::source` used for sticky entries restored from disk. A
 /// client emit overrides this the first time it replaces the value.
 pub const BUS_SOURCE: &str = "sola-bus";
+
+/// Kinds retired from the bus. A `state.yaml` from before may still hold a
+/// section for one; it is skipped quietly, where an unknown name warns.
+pub const RETIRED: &[&str] = &[
+    "CustomTheme", "Zones", "TerminalConfig", "MonitorConfig", "BrowserConfig",
+    "BrowserHistory", "BrowserTab", "PinnedTabs",
+];
 
 /// `~/.config/sola/state.yaml`.
 pub fn state_path() -> PathBuf {
@@ -65,7 +72,11 @@ pub fn load(path: &Path) -> Vec<Message> {
             continue;
         };
         let Some(kind) = TopicKind::from_str(&section) else {
-            warn!(section = %section, "unknown persistent topic; skipping");
+            if RETIRED.contains(&section.as_str()) {
+                debug!(section = %section, "retired topic; skipping");
+            } else {
+                warn!(section = %section, "unknown persistent topic; skipping");
+            }
             continue;
         };
         if !kind.behavior().is_persistent() {
@@ -408,30 +419,49 @@ mod tests {
     }
 
     #[test]
-    fn zones_round_trip_through_disk() {
-        use crate::topics::Zone;
-        use std::collections::HashMap;
-
+    fn zone_layout_round_trips_through_disk() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.yaml");
 
-        let mut zones = HashMap::new();
-        zones.insert("sola-browser".to_string(), Zone::Grid(1));
-        zones.insert("sola-terminal".to_string(), Zone::Grid(2));
+        let mut layout = crate::topics::ZoneLayout::default();
+        layout.rows = 2;
 
-        write_section(&path, &Topic::Zones(zones.clone())).unwrap();
+        write_section(&path, &Topic::ZoneLayout(layout.clone())).unwrap();
         assert!(path.exists(), "write_section should create the file");
 
         let restored = load(&path);
         assert_eq!(restored.len(), 1, "exactly one sticky expected");
         let msg = &restored[0];
-        assert_eq!(msg.topic, "Zones");
+        assert_eq!(msg.topic, "ZoneLayout");
         assert!(msg.sticky);
         assert_eq!(msg.source, BUS_SOURCE);
 
         match Topic::parse(msg) {
-            Some(Topic::Zones(map)) => assert_eq!(map, zones),
-            other => panic!("expected Zones, got {other:?}"),
+            Some(Topic::ZoneLayout(back)) => assert_eq!(back, layout),
+            other => panic!("expected ZoneLayout, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn retired_sections_are_skipped_and_the_rest_load() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.yaml");
+        write_section(&path, &Topic::ZoneLayout(crate::topics::ZoneLayout::default())).unwrap();
+        let mut raw = fs::read_to_string(&path).unwrap();
+        for name in RETIRED {
+            raw.push_str(&format!("{name}:\n  anything: here\n"));
+        }
+        raw.push_str("NotARealTopic:\n  foo: bar\n");
+        fs::write(&path, raw).unwrap();
+        let restored = load(&path);
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].topic, "ZoneLayout");
+    }
+
+    #[test]
+    fn retired_names_are_not_kinds() {
+        for name in RETIRED {
+            assert!(TopicKind::from_str(name).is_none(), "{name} is a kind again");
         }
     }
 
@@ -443,15 +473,11 @@ mod tests {
         // bus should skip it on load but must not clobber it on write.
         fs::write(&path, "ManualNotes:\n  key: value\n").unwrap();
 
-        let zones = std::collections::HashMap::from([(
-            "sola-browser".to_string(),
-            crate::topics::Zone::Grid(1),
-        )]);
-        write_section(&path, &Topic::Zones(zones)).unwrap();
+        write_section(&path, &Topic::ZoneLayout(crate::topics::ZoneLayout::default())).unwrap();
 
         let raw = fs::read_to_string(&path).unwrap();
         assert!(raw.contains("ManualNotes:"), "unrelated section lost");
-        assert!(raw.contains("Zones:"), "new section missing");
+        assert!(raw.contains("ZoneLayout:"), "new section missing");
     }
 
     #[test]
@@ -459,25 +485,23 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.yaml");
 
-        let mut zones = std::collections::HashMap::new();
-        zones.insert("sola-browser".to_string(), crate::topics::Zone::Grid(1));
-        write_section(&path, &Topic::Zones(zones)).unwrap();
+        write_section(&path, &Topic::ZoneLayout(crate::topics::ZoneLayout::default())).unwrap();
         assert!(path.exists());
 
-        // Construct a synthetic Zones retract message.
-        let mut msg = Topic::Zones(std::collections::HashMap::new()).to_message();
+        // Construct a synthetic ZoneLayout retract message.
+        let mut msg = Topic::ZoneLayout(crate::topics::ZoneLayout::default()).to_message();
         msg.sticky = false;
         retract_section(&path, &msg).unwrap();
 
         let raw = fs::read_to_string(&path).unwrap();
-        assert!(!raw.contains("Zones:"), "Zones section should be gone");
+        assert!(!raw.contains("ZoneLayout:"), "ZoneLayout section should be gone");
     }
 
     #[test]
     fn retract_on_missing_file_is_noop() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.yaml");
-        let msg = Topic::Zones(std::collections::HashMap::new()).to_message();
+        let msg = Topic::ZoneLayout(crate::topics::ZoneLayout::default()).to_message();
         retract_section(&path, &msg).unwrap();
         assert!(!path.exists(), "retract should not create the file");
     }
@@ -486,31 +510,31 @@ mod tests {
 
     #[test]
     fn write_namespaced_singleton_has_no_section_header() {
-        use crate::topics::BrowserConfig;
+        use crate::topics::{AgendaDay, CalendarAgenda};
         let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("browser.yaml");
-        let t = Topic::BrowserConfig(BrowserConfig {
-            active_tab_id: Some("abc".into()),
+        let path = tmp.path().join("agenda.yaml");
+        let t = Topic::CalendarAgenda(CalendarAgenda {
+            days: vec![AgendaDay::default()],
         });
         write_namespaced(&path, &t).unwrap();
         let raw = fs::read_to_string(&path).unwrap();
         assert!(
-            !raw.contains("BrowserConfig:"),
+            !raw.contains("CalendarAgenda:"),
             "no section header expected"
         );
-        assert!(raw.contains("active_tab_id: abc"));
+        assert!(raw.contains("days:"));
     }
 
     #[test]
     fn load_namespaced_singleton_yields_one_sticky() {
         let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("browser.yaml");
-        fs::write(&path, "active_tab_id: abc\n").unwrap();
-        let msgs = load_namespaced_singleton(&path, TopicKind::BrowserConfig);
+        let path = tmp.path().join("agenda.yaml");
+        fs::write(&path, "days:\n- {}\n").unwrap();
+        let msgs = load_namespaced_singleton(&path, TopicKind::CalendarAgenda);
         assert_eq!(msgs.len(), 1);
         match Topic::parse(&msgs[0]).unwrap() {
-            Topic::BrowserConfig(c) => assert_eq!(c.active_tab_id.as_deref(), Some("abc")),
-            other => panic!("expected BrowserConfig, got {other:?}"),
+            Topic::CalendarAgenda(c) => assert_eq!(c.days.len(), 1),
+            other => panic!("expected CalendarAgenda, got {other:?}"),
         }
         assert_eq!(msgs[0].source, BUS_SOURCE);
         assert!(msgs[0].sticky);
@@ -520,29 +544,25 @@ mod tests {
     fn load_namespaced_singleton_missing_file_is_empty() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("absent.yaml");
-        let msgs = load_namespaced_singleton(&path, TopicKind::BrowserConfig);
+        let msgs = load_namespaced_singleton(&path, TopicKind::CalendarAgenda);
         assert!(msgs.is_empty());
     }
+
+    // No live kind is both keyed and namespaced, so the keyed walk is
+    // tested on FloatGeometry (keyed by `app_id`), which is a kind with
+    // keys; the walk does not look at the namespace.
 
     #[test]
     fn load_namespaced_keyed_walks_directory() {
         let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join("browser/tabs");
+        let dir = tmp.path().join("float/geometry");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join("a.yaml"),
-            "id: a\nurl: https://a/\ntitle: A\nordinal: 0\n",
-        )
-        .unwrap();
-        fs::write(
-            dir.join("b.yaml"),
-            "id: b\nurl: https://b/\ntitle: B\nordinal: 1\n",
-        )
-        .unwrap();
+        fs::write(dir.join("a.yaml"), "app_id: a\nx: 1\ny: 2\nwidth: 3\nheight: 4\n").unwrap();
+        fs::write(dir.join("b.yaml"), "app_id: b\nx: 5\ny: 6\nwidth: 7\nheight: 8\n").unwrap();
         // A non-yaml file in the dir should be ignored.
-        fs::write(dir.join("readme.txt"), "not a tab").unwrap();
+        fs::write(dir.join("readme.txt"), "not a record").unwrap();
 
-        let msgs = load_namespaced_keyed(&dir, TopicKind::BrowserTab);
+        let msgs = load_namespaced_keyed(&dir, TopicKind::FloatGeometry);
         assert_eq!(msgs.len(), 2);
         let mut keys: Vec<String> = msgs.iter().flat_map(|m| m.keys.clone()).collect();
         keys.sort();
@@ -557,7 +577,7 @@ mod tests {
     fn load_namespaced_keyed_missing_dir_is_empty() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().join("nonexistent");
-        let msgs = load_namespaced_keyed(&dir, TopicKind::BrowserTab);
+        let msgs = load_namespaced_keyed(&dir, TopicKind::FloatGeometry);
         assert!(msgs.is_empty());
     }
 
@@ -579,24 +599,18 @@ mod tests {
 
     #[test]
     fn write_then_load_namespaced_keyed_round_trips() {
-        use crate::topics::BrowserTab;
+        use crate::topics::FloatGeometry;
         let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join("browser/tabs");
+        let dir = tmp.path().join("float/geometry");
 
-        let tab_a = BrowserTab {
-            id: "a".into(),
-            url: "https://a/".into(),
-            title: "A".into(),
-            ordinal: 0,
-            session_state: None,
-        };
-        write_namespaced(&dir.join("a.yaml"), &Topic::BrowserTab(tab_a.clone())).unwrap();
+        let a = FloatGeometry { app_id: "a".into(), x: 1, y: 2, width: 3, height: 4 };
+        write_namespaced(&dir.join("a.yaml"), &Topic::FloatGeometry(a.clone())).unwrap();
 
-        let msgs = load_namespaced_keyed(&dir, TopicKind::BrowserTab);
+        let msgs = load_namespaced_keyed(&dir, TopicKind::FloatGeometry);
         assert_eq!(msgs.len(), 1);
         match Topic::parse(&msgs[0]).unwrap() {
-            Topic::BrowserTab(tab) => assert_eq!(tab, tab_a),
-            other => panic!("expected BrowserTab, got {other:?}"),
+            Topic::FloatGeometry(back) => assert_eq!(back, a),
+            other => panic!("expected FloatGeometry, got {other:?}"),
         }
     }
 }

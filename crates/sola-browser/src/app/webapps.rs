@@ -632,6 +632,7 @@ impl<E: Engine> App<E> {
                 tracing::warn!(error = %e, "remove web app failed");
             }
         }
+        sola_kit::menu::forget_for(&app_id);
         if app_id.starts_with("web-") {
             let _ = std::fs::remove_file(icon_dir().join(format!("{app_id}.png")));
         }

@@ -75,8 +75,9 @@ rest.
 build that sent only numbers (`subscribe::NUMBERED`, 64 names). That
 build's numbers were the kinds' order in the enum `sola-bus` generates,
 which groups them by retention, so adding a topic renumbered others; the
-frozen list keeps those numbers, including `CustomTheme`'s, a topic since
-removed. The bus skips numbers it cannot place and applies the rest; when
+frozen list keeps those numbers, including those of topics since
+removed (`CustomTheme`, `Zones`, `TerminalConfig`, `MonitorConfig`,
+`BrowserConfig`, `BrowserHistory`, `BrowserTab`). The bus skips numbers it cannot place and applies the rest; when
 nothing usable remains, the connection keeps its previous set. A kind
 added after the freeze has no number, and a bus from before names never
 receives a subscription to it.
@@ -170,14 +171,12 @@ an absolute path, otherwise `~/.config/sola`.
 
 | Topic | File | Layout |
 |---|---|---|
-| `SessionApps`, `MailConfig`, `CalendarConfig`, `Background`, `Appearance`, `Zones`, `TerminalConfig`, `MonitorConfig` | `state.yaml` | A top-level key named after the topic, holding the payload |
+| `SessionApps`, `MailConfig`, `CalendarConfig`, `Background`, `Appearance` | `state.yaml` | A top-level key named after the topic, holding the payload |
 | `FloatGeometry`, `Application`, `TerminalSession` | `state.yaml` | A top-level key holding a list, one entry per record |
 | `Theme` | `theme/current.yaml` | The whole file |
 | `TabLayout` | `shell/tabs.yaml` | The whole file |
 | `CalendarAgenda` | `calendar/agenda.yaml` | The whole file |
 | `PaintSession` | `paint.yaml` | The whole file |
-| `BrowserConfig`, `BrowserHistory` | `browser.yaml`, `browser/history.yaml` | The whole file |
-| `BrowserTab` | `browser/tabs/<id>.yaml` | One file per record |
 
 The bus rewrites a file each time one of its records changes (a temporary
 file renamed into place), and a retraction removes the entry or deletes the
@@ -245,7 +244,6 @@ What `sola-river` does with these is in [Compositor](compositor.md).
 | `TabLayout` | The bar as last saved: `zones`, its runs in order (each a `zone`, its `apps` as tab keys, or app ids for windows that are not tabs, `shown`, the index of the tab the zone shows, and its `workspace`); `workspaces` (`id`, `name`); `showing`; `full` (the workspaces whose Full zone is on screen) | Shell | Shell, at its next start: returning windows take their places | Persistent |
 | `Workspaces` | The `workspaces` in order (`id`, `name`) and the one `showing` | Shell | Browser (a new page window opens under the showing workspace's profile) | Sticky |
 | `WindowWorkspace` | `window_id`, `workspace` | Shell, once the window is where it belongs (not while it may still move to its tab's saved place); retracted when the window closes or is pinned | Browser (a page whose workspace has another profile reopens under it; a pinned page, with no workspace, keeps its profile) | Sticky by `window_id` |
-| `PinnedTabs` | Retired with Common; nothing sends it, and it stays because a topic's place in the list is its number on the wire | | | |
 | `FocusPinned` | `pinned`: the focused window is on every workspace | Shell | The kit, in every app (the check on the Pin item in a titlebar's Window menu) | Sticky |
 | `FloatGeometry` | A floating app's last rectangle: `app_id`, `x`, `y`, `width`, `height` | Shell | Shell | Persistent by `app_id` |
 
@@ -297,7 +295,6 @@ The fade and the dim are described in [Compositor § The idle fade](compositor.m
 | `ScreenLock` | `locked` | `sola-lock`: `true` once the compositor confirms the lock, `false` once you unlock it. A lock screen that dies says nothing, so `true` stands while the compositor keeps the screen locked ([Security](security.md#locking)) | `sola-vaultd` (locks the vault, unless **Lock when the screen locks** is off) | Sticky |
 | `TerminalSession` | One Terminal tab: `id`, tmux session, working directory, order, pane layout | Terminal | Terminal | Persistent by `id` |
 | `PaintSession` | The open images' paths and the selected one | Paint | Paint | Persistent |
-| `Zones`, `TerminalConfig`, `MonitorConfig`, `BrowserConfig`, `BrowserHistory`, `BrowserTab` | Declared only | Nothing | Nothing | Persistent (`BrowserTab` by `id`) |
 
 No current app publishes or reads the last six; the bus still restores
 their files if they exist.

@@ -53,7 +53,7 @@ fn main() -> iced::Result {
     worker::start();
 
     BusSetup::new(APP_ID)
-        .subscribe(TopicKind::ALL)
+        .app_kinds(&[TopicKind::NotificationActivate, TopicKind::CalendarConfig])
         .app_menu_definition(MenuDefinition {
             label: "Calendar".into(),
             items: vec![
