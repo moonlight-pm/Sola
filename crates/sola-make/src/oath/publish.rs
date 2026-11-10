@@ -25,7 +25,7 @@
 //!    for each: the pack (if the origin lacks it), then `pkg/<name>.json`,
 //!    signed with `~/.config/oath/sign_ed25519`. One whose head is that
 //!    hash already stays as it is. A machine whose `host:local.publishers`
-//!    trusts that key for `sola,sola-*` takes the heads at its next `oath
+//!    trusts that key (`names="*"`) takes the heads at its next `oath
 //!    update`; a head wins over the desk profile's pin.
 //!
 //! A package no machine has yet, or a new or changed service, still needs
@@ -229,7 +229,7 @@ fn can_sign() -> Result<(), String> {
         return Err(format!(
             "no signing key at {0}: ssh-keygen -t ed25519 -N '' -C oath@<host> -f {0}, \
              and the owner adds its .pub to each machine's host:local.publishers \
-             as names=\"sola,sola-*\" ssh-ed25519 …",
+             as names=\"*\" ssh-ed25519 …",
             key.display()
         ));
     }

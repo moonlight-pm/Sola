@@ -198,7 +198,7 @@ docs/
     products applied here, with the guard (so the machine runs what goes
     out: say what restarts when asking); then each `oath publish`ed as
     its signed head (Oath R72, key `~/.config/oath/sign_ed25519`), which
-    every machine trusting that key for `sola,sola-*` takes at its next
+    every machine trusting that key (`names="*"`: any package) takes at its next
     `oath update`; then, when Oath asks (0995609 on), `sudo oath update
     --record --confirm` once, so this machine records those heads as the
     ones it took (it moves nothing). Outward-facing. `--local` builds the plans here and
