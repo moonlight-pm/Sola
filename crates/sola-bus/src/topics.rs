@@ -214,6 +214,64 @@ pub struct WindowChrome {
     pub rim: bool,
 }
 
+/// What sola-river knows of a window that the shell needs: where it is,
+/// the tab it is, the window it belongs to. Carried by the sticky
+/// `Topic::WindowFacts`, keyed by `window_id`, sent again whole when any of
+/// it changes and retracted when the window closes. sola-river is its one
+/// writer (`docs/specs/2026-11-10-bus-state-design.md`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowFacts {
+    pub window_id: u32,
+    /// Its rectangle on the output, once River has sized it (quiet during
+    /// a drag).
+    pub rect: Option<WindowRect>,
+    /// The tab token its Wayland app id carries (`<app_id>#<token>`), for
+    /// a kit app's tab window.
+    pub tab: Option<String>,
+    /// The window it belongs to, for a dialog or a picker.
+    pub parent: Option<u32>,
+}
+
+/// A window's rectangle on the output, in logical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Where the shell put a window, and what that means for whoever draws it
+/// and for its app. Carried by the sticky `Topic::WindowPlace`, keyed by
+/// `window_id`: one record for every window but the shell's own, sent
+/// again whole when any of it changes, retracted when the window closes.
+/// The shell is its one writer (`docs/specs/2026-11-10-bus-state-design.md`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowPlace {
+    pub window_id: u32,
+    /// In a zone (a grid zone or Full) and not floating: River
+    /// `set_tiled`, so clients drop their shadows.
+    pub tiled: bool,
+    /// Floating over the tiles: sola-river lets it be moved and resized,
+    /// and a kit window resizes from its edges.
+    pub floating: bool,
+    /// Covering the whole output (Cinema): a kit app drops its frame.
+    pub cinema: bool,
+    /// Its app published no menu (not a Sola app) and draws no frame of
+    /// its own, so sola-river borders it with a hairline.
+    pub rim: bool,
+    /// The workspace it is on, said once the window is where it belongs:
+    /// `None` before that, and for a pinned window, which is on them all
+    /// (a browser page keeps the profile it has).
+    pub workspace: Option<String>,
+    /// The tab it is (`<app_id>/<the app's tab id>`), once the shell has
+    /// paired it.
+    pub tab: Option<String>,
+    /// On screen: in the last composition, and not under a full idle
+    /// fade. A browser rests the pages behind.
+    pub shown: bool,
+}
+
 /// A window an app opens as a tab (app → shell), announced just before
 /// the window opens. Carried by the sticky `Topic::Tab`, keyed by `key`;
 /// the app retracts it when the tab closes. The shell pairs each process's
@@ -2340,6 +2398,17 @@ define_topics! {
     // window_id; retracted when it shows none. Appended last.
     #[sticky(keys = [window_id])]
     WindowVideos(WindowVideos),
+
+    // What sola-river knows of a window (where it is, its tab, its
+    // parent). Sticky, keyed by window_id; retracted when it closes.
+    #[sticky(keys = [window_id])]
+    WindowFacts(WindowFacts),
+
+    // Where the shell put a window (tiled, floating, Cinema, rim, its
+    // workspace, its tab, shown). Sticky, keyed by window_id; retracted
+    // when it closes.
+    #[sticky(keys = [window_id])]
+    WindowPlace(WindowPlace),
 }
 
 #[cfg(test)]
@@ -2448,6 +2517,35 @@ mod tests {
         };
         let msg = super::Topic::Tab(tab.clone()).to_message();
         assert!(matches!(super::Topic::parse(&msg), Some(super::Topic::Tab(t)) if t.key == tab.key));
+    }
+
+    #[test]
+    fn window_facts_and_places_read_back_keyed_by_window() {
+        let facts = WindowFacts {
+            window_id: 7,
+            rect: Some(WindowRect { x: 1, y: 2, width: 300, height: 200 }),
+            tab: None,
+            parent: Some(3),
+        };
+        assert!(TopicKind::WindowFacts.behavior().is_sticky());
+        assert!(TopicKind::WindowPlace.behavior().is_sticky());
+        let msg = Topic::WindowFacts(facts.clone()).to_message();
+        assert_eq!(msg.keys, ["7"]);
+        assert!(matches!(Topic::parse(&msg), Some(Topic::WindowFacts(f)) if f == facts));
+
+        let place = WindowPlace {
+            window_id: 7,
+            tiled: true,
+            floating: false,
+            cinema: false,
+            rim: false,
+            workspace: None,
+            tab: Some("sola-browser/abc".into()),
+            shown: true,
+        };
+        let msg = Topic::WindowPlace(place.clone()).to_message();
+        assert_eq!(msg.keys, ["7"]);
+        assert!(matches!(Topic::parse(&msg), Some(Topic::WindowPlace(p)) if p == place));
     }
 
     #[test]
