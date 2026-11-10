@@ -10,10 +10,10 @@ use crate::audit::Report;
 use crate::git::{self, Pushed};
 use crate::model::{Inputs, Source};
 use crate::origin::{self, Listing};
-use crate::{oath, when};
+use crate::{heads, oath, when};
 
 /// The catalog (`oath get` for every package and service, and the host),
-/// the release record and the store (`oath reap`).
+/// the release record, the heads taken and the store (`oath reap`).
 pub fn local() -> Inputs {
     let mut problems = Vec::new();
     let ids: Vec<String> = match oath::json(&["ls"]) {
@@ -41,8 +41,22 @@ pub fn local() -> Inputs {
             None
         }
     };
+    let heads = heads::read().unwrap_or_else(|e| {
+        problems.push(e);
+        Default::default()
+    });
     let reap = oath::json(&["reap"]).map_err(|e| problems.push(e)).ok();
-    Inputs { packages, services, host, release, reap, problems, read_at: when::format(when::now()) }
+    Inputs {
+        packages,
+        services,
+        host,
+        release,
+        heads,
+        last_apply: oath::last_apply(),
+        reap,
+        problems,
+        read_at: when::format(when::now()),
+    }
 }
 
 pub fn pushed(sources: Vec<Source>) -> BTreeMap<(String, String), Pushed> {

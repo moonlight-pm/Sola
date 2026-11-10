@@ -110,11 +110,20 @@ pub fn apply(ids: &[String]) -> Result<(), String> {
     run(Command::new("sudo").args(["oath", "apply"]).args(ids)).map(drop)
 }
 
+/// What a publish of one head said.
+pub struct Published {
+    /// False when the origin's head was that hash already.
+    pub new: bool,
+    /// This machine trusts the key for that name, so it should record the
+    /// head as the one it took (`sudo oath update --record --confirm`);
+    /// `oath publish` runs as the user and cannot.
+    pub record: bool,
+}
+
 /// `oath publish --confirm <id> --committed <time>`: this machine's pin
 /// of `id` as its signed head on the default origin (Oath R72). As the
-/// user, not root: the signing and origin keys are the user's. True when
-/// it published; false when the origin's head was that hash already.
-pub fn publish_head(id: &str, committed: &str) -> Result<bool, String> {
+/// user, not root: the signing and origin keys are the user's.
+pub fn publish_head(id: &str, committed: &str) -> Result<Published, String> {
     let out = Command::new("oath")
         .args(["--json", "publish", "--confirm", id, "--committed", committed])
         .output()
@@ -129,7 +138,17 @@ pub fn publish_head(id: &str, committed: &str) -> Result<bool, String> {
         }
         return Err(format!("oath publish {id}: {why}"));
     }
-    Ok(v["published"] == true)
+    Ok(Published { new: v["published"] == true, record: v["record"].is_string() })
+}
+
+/// `oath update --record --confirm`: record each head this machine runs
+/// as the one it took (`/oath/heads.json`), so Oath does not call a build
+/// it just published an overlay. It moves nothing and reads no release.
+pub fn record_heads() -> Result<String, String> {
+    let out = run(Command::new("sudo").args(["oath", "--json", "update", "--record", "--confirm"]))?;
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+    let records: Vec<&str> = v["records"].as_array().into_iter().flatten().filter_map(|r| r.as_str()).collect();
+    Ok(if records.is_empty() { "the record had them all".into() } else { records.join(" ") })
 }
 
 /// `{"hash", "needs", "source"}` for `--from-json`.

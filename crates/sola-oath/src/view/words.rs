@@ -42,12 +42,28 @@ fn worst(p: &Package) -> String {
     }
 }
 
-/// Whether an update touches it, said plainly.
+/// What an update does to a build that is not its head or the
+/// release's, said plainly.
 fn on_update(p: &Package) -> &'static str {
-    if p.in_release() {
+    if p.head.is_some() {
+        "An update replaces it with its signed head"
+    } else if p.in_release() {
         "An update replaces it with the release's build"
     } else {
-        "No release carries it, so an update leaves it alone"
+        "No release carries it, and this machine has taken no head of it"
+    }
+}
+
+/// `master@5e5d3a46`, or the hash when Oath has no record.
+fn made_from(p: &Package) -> String {
+    p.source.as_ref().map_or_else(|| short(&p.hash).to_string(), |s| s.short())
+}
+
+/// After "…": whether anything newer is out, by the last check.
+fn newer(e: &Ecosystem, p: &Package, what: &str) -> String {
+    match &e.check {
+        Some(c) if c.error.is_none() && !p.moves() => format!("Nothing newer is out (checked {}).", when::ago(&c.at)),
+        _ => format!("A newer {what} has not been checked for."),
     }
 }
 
@@ -83,17 +99,23 @@ pub fn verdict(e: &Ecosystem, p: &Package) -> (Tone, String) {
     let s = match p.standing {
         Standing::Local => match (&p.source, &p.pushed) {
             (Some(_), Some(Pushed::Yes(branch))) => {
-                format!("A local build from {built}, which {branch} has. {}, and nothing is lost.", on_update(p))
+                format!("A local build from {built}, which {branch} has, so nothing is lost. {}.", on_update(p))
             }
             (Some(_), Some(Pushed::Unknown(why))) => {
                 format!("A local build from {built}. Whether it is pushed is unknown: {why}. {}.", on_update(p))
             }
             (Some(_), _) => format!("A local build from {built}. {}.", on_update(p)),
-            (None, _) => format!(
-                "Not the release's build: {} here where the release pins {}, and Oath has no record of where it came from.",
-                short(&p.hash),
-                short(p.release.as_deref().unwrap_or_default()),
-            ),
+            (None, _) => {
+                let theirs = match (&p.head, &p.release) {
+                    (Some(h), _) => format!("its head is {}", short(&h.hash)),
+                    (None, Some(r)) => format!("the release pins {}", short(r)),
+                    (None, None) => "nothing names another".into(),
+                };
+                format!(
+                    "Not its head or the release's build: {} here where {theirs}, and Oath has no record of where it came from.",
+                    short(&p.hash)
+                )
+            }
         },
         Standing::Update => {
             let to = p.newest.as_ref().map(|m| {
@@ -104,11 +126,16 @@ pub fn verdict(e: &Ecosystem, p: &Package) -> (Tone, String) {
                 };
                 format!("{}{v}", short(&m.to_hash))
             });
-            format!(
-                "The release this machine runs pins {}. The newest release moves it to {}.",
-                short(p.release.as_deref().unwrap_or_default()),
-                to.unwrap_or_default()
-            )
+            let to = to.unwrap_or_default();
+            match &p.newest {
+                Some(m) if m.is_head() => {
+                    format!("It runs {}. A newer signed head is out, {to}, and an update moves it there.", made_from(p))
+                }
+                _ => format!(
+                    "The release this machine runs pins {}. The newest release moves it to {to}.",
+                    short(p.release.as_deref().unwrap_or_default()),
+                ),
+            }
         }
         Standing::Off => {
             if p.versions.is_empty() {
@@ -124,14 +151,32 @@ pub fn verdict(e: &Ecosystem, p: &Package) -> (Tone, String) {
                 "On the origin, and not in this machine's catalog.".into()
             }
         }
-        _ if !p.in_release() => "Added on this machine. No release carries it, so an update leaves it alone.".into(),
-        _ => {
-            let mut s = match &e.check {
-                Some(c) if c.error.is_none() && !p.moves() => {
-                    format!("The release's build, and no newer release is out (checked {}).", when::ago(&c.at))
-                }
-                _ => "The release's build. A newer release has not been checked for.".into(),
+        _ if p.at_head => {
+            let mut s = match &p.head {
+                Some(h) if h.hash == p.hash => format!(
+                    "Its signed head, from {}, signed by {} and published {}. {}",
+                    made_from(p),
+                    h.signer,
+                    when::ago(&h.published),
+                    newer(e, p, "head")
+                ),
+                // Seen by a check: Oath's record is from the last update.
+                Some(h) => format!(
+                    "Its signed head, from {}. {} Oath's record of the heads it took names {} until the next update.",
+                    made_from(p),
+                    newer(e, p, "head"),
+                    short(&h.hash)
+                ),
+                None => format!("Its signed head, from {}. {}", made_from(p), newer(e, p, "head")),
             };
+            if let Some(Upstream::Newer(v)) = &p.upstream {
+                s.push_str(&format!(" Upstream is at {v}, which no head has taken yet."));
+            }
+            s
+        }
+        _ if !p.in_release() => "Added on this machine. No release carries it.".into(),
+        _ => {
+            let mut s = format!("The release's build. {}", newer(e, p, "release"));
             if let Some(Upstream::Newer(v)) = &p.upstream {
                 s.push_str(&format!(" Upstream is at {v}, which no release has taken yet."));
             }
@@ -215,7 +260,11 @@ pub fn summary(e: &Ecosystem) -> Vec<(Part, String)> {
                     }
                     out.push((Part::Quiet, format!(" (checked {}).", when::ago(&c.at))));
                 }
-                _ => out.push((Part::Quiet, format!("No newer release is out (checked {}).", when::ago(&c.at)))),
+                (_, n) if n > 0 => {
+                    out.push((Part::Accent, format!("{} to newer heads", plural(n, "package moves", "packages move"))));
+                    out.push((Part::Quiet, format!(" (checked {}).", when::ago(&c.at))));
+                }
+                _ => out.push((Part::Quiet, format!("Nothing newer is out (checked {}).", when::ago(&c.at)))),
             }
         }
     }

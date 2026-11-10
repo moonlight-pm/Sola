@@ -1,5 +1,5 @@
-//! Asking Oath: `oath --json <verb>` as `home` (every verb this app runs
-//! reads only), and the catalog's own files under `/oath`.
+//! Asking Oath: `oath --json <verb>` as `home` (every verb but `add` reads
+//! only), and the catalog's own files under `/oath`.
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -23,16 +23,42 @@ pub fn release_file() -> PathBuf {
     root().join("output.json")
 }
 
+/// The heads this machine took (R72).
+pub fn heads_file() -> PathBuf {
+    root().join("heads.json")
+}
+
 /// One line per apply; a new line means the packages moved.
 pub fn apply_log() -> PathBuf {
     root().join("log/apply.jsonl")
+}
+
+/// When the last apply ran, by its line in the apply log.
+pub fn last_apply() -> Option<String> {
+    let text = std::fs::read_to_string(apply_log()).ok()?;
+    let line = text.lines().rev().find(|l| !l.trim().is_empty())?;
+    let v: Value = serde_json::from_str(line).ok()?;
+    v.get("time").and_then(Value::as_str).map(str::to_string)
 }
 
 /// `oath --json <args>`: the JSON it printed, or what went wrong in words.
 /// A verb that refuses prints `{"error": …, "hint": …}`; that comes back
 /// as the error.
 pub fn json(args: &[&str]) -> Result<Value, String> {
-    let out = Command::new(bin())
+    answer(Command::new(bin()), args)
+}
+
+/// `sudo -n oath --json <args>`, for the one verb that changes the
+/// machine. `home` needs no password for sudo on Oath; `-n` fails rather
+/// than wait for one elsewhere.
+pub fn json_as_root(args: &[&str]) -> Result<Value, String> {
+    let mut cmd = Command::new("sudo");
+    cmd.arg("-n").arg(bin());
+    answer(cmd, args)
+}
+
+fn answer(mut cmd: Command, args: &[&str]) -> Result<Value, String> {
+    let out = cmd
         .arg("--json")
         .args(args)
         .stdin(Stdio::null())

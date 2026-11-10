@@ -1,16 +1,19 @@
-//! sola-oath — Oath: the package ecosystem of this machine, for looking.
-//! Every package here and on the origin, where each stands against the
-//! release (current, an update, a local build, not pushed, off, on the
+//! sola-oath — Oath: the package ecosystem of this machine. Every package
+//! here and on the origin, where each stands against its signed head and
+//! the release (current, an update, a local build, not pushed, off, on the
 //! origin only, with advisories over any of them), its tree up and down,
-//! its weight, and what the security audit says. It runs `oath --json`
-//! as home and changes nothing.
+//! its weight, and what the security audit says. It runs `oath --json` as
+//! home and changes nothing, but for **Add** on a package on the origin
+//! only, which runs `sudo oath add`.
 //!
 //! The shell lists it as **Oath**, only on an Oath machine.
 
+mod add;
 mod audit;
 mod check;
 mod git;
 mod graph;
+mod heads;
 mod load;
 mod model;
 mod oath;
@@ -100,6 +103,14 @@ struct App {
     /// An apply landed while reading: read once more after.
     again: bool,
     checking: bool,
+    /// The package being added.
+    adding: Option<String>,
+    /// What came of the last Add.
+    added: Option<add::Outcome>,
+    /// What adding each package on the origin only would make, by name,
+    /// and the ones being asked about.
+    previews: BTreeMap<String, add::Preview>,
+    previewing: BTreeSet<String>,
 
     view: View,
     take: Take,
@@ -136,6 +147,9 @@ pub enum Msg {
     Listing(Result<Listing, String>),
     Check,
     Checked(Box<Check>),
+    Add(String),
+    Added(Box<add::Outcome>),
+    Previewed(String, Result<add::Preview, String>),
 
     Show(View),
     Take(Take),
@@ -183,6 +197,10 @@ impl App {
             reading: true,
             again: false,
             checking: false,
+            adding: None,
+            added: None,
+            previews: BTreeMap::new(),
+            previewing: BTreeSet::new(),
             view: View::Packages,
             take: Take::Strata,
             disk: true,
@@ -245,6 +263,22 @@ impl App {
             .or_else(|| first(&|p| p.standing == Standing::Update))
             .or_else(|| e.get("sola").map(|p| p.name.clone()))
             .or_else(|| e.pkgs.keys().next().cloned())
+    }
+
+    /// Ask Oath what adding `name` would make, once, if it is on the
+    /// origin only and not a recipe.
+    fn preview(&mut self, name: &str) -> Task<Msg> {
+        let addable = self.eco.as_ref().and_then(|e| e.get(name)).is_some_and(|p| {
+            p.standing == Standing::OriginOnly && !p.listed.as_ref().is_some_and(|l| l.recipe)
+        });
+        if !addable || self.previews.contains_key(name) || !self.previewing.insert(name.to_string()) {
+            return Task::none();
+        }
+        let n = name.to_string();
+        blocking("oath add (preview)", move || add::preview(&n), {
+            let name = name.to_string();
+            move |r| Msg::Previewed(name.clone(), r)
+        })
     }
 
     fn read(&mut self) -> Task<Msg> {
@@ -313,6 +347,7 @@ impl App {
             Msg::Failed(why) => {
                 self.reading = false;
                 self.checking = false;
+                self.adding = None;
                 self.failed.push(why);
                 self.rebuild();
             }
@@ -339,6 +374,32 @@ impl App {
                 self.check = Some(*c);
                 self.rebuild();
             }
+            Msg::Add(name) => {
+                if self.adding.is_none() {
+                    self.adding = Some(name.clone());
+                    self.added = None;
+                    return blocking("oath add", move || add::run(name), |o| Msg::Added(Box::new(o)));
+                }
+            }
+            Msg::Added(o) => {
+                self.adding = None;
+                let moved = o.result.as_ref().is_ok_and(|a| !a.made.is_empty());
+                self.added = Some(*o);
+                self.previews.clear();
+                if moved {
+                    return self.read();
+                }
+            }
+            Msg::Previewed(name, r) => {
+                self.previewing.remove(&name);
+                match r {
+                    Ok(p) => {
+                        self.previews.insert(name, p);
+                    }
+                    // An Oath before 0995609 refuses as home: the sheet says less.
+                    Err(e) => tracing::debug!(name, error = %e, "no add preview"),
+                }
+            }
 
             Msg::Show(v) => {
                 if v != View::Map && self.sel.is_none() {
@@ -360,7 +421,9 @@ impl App {
                 if self.sel.as_ref() != Some(&name) {
                     self.all_hits = false;
                 }
+                let preview = self.preview(&name);
                 self.sel = Some(name);
+                return preview;
             }
             Msg::AllHits => self.all_hits = true,
             Msg::Deselect => self.sel = None,
@@ -374,7 +437,9 @@ impl App {
                     self.trail.drain(..excess);
                 }
                 self.all_hits = false;
+                let preview = self.preview(&name);
                 self.sel = Some(name);
+                return preview;
             }
             Msg::ToggleCategory(c) => {
                 if !self.open_categories.remove(&c) {
@@ -426,7 +491,19 @@ impl App {
         let shown: Option<&'a str> = self.shown().and_then(|n| e.get(&n)).map(|p| p.name.as_str());
         let sheet = || -> Element<'a, Msg> {
             match shown.and_then(|n| e.get(n)) {
-                Some(p) => view::sheet::view(e, p, ink, &self.open_sections, self.sheet_width(), self.all_hits),
+                Some(p) => view::sheet::view(
+                    e,
+                    p,
+                    ink,
+                    &self.open_sections,
+                    self.sheet_width(),
+                    self.all_hits,
+                    view::sheet::Adding {
+                        now: self.adding.as_deref(),
+                        last: self.added.as_ref(),
+                        previews: &self.previews,
+                    },
+                ),
                 None => Space::new().into(),
             }
         };

@@ -199,7 +199,9 @@ docs/
     out: say what restarts when asking); then each `oath publish`ed as
     its signed head (Oath R72, key `~/.config/oath/sign_ed25519`), which
     every machine trusting that key for `sola,sola-*` takes at its next
-    `oath update`. Outward-facing. `--local` builds the plans here and
+    `oath update`; then, when Oath asks (0995609 on), `sudo oath update
+    --record --confirm` once, so this machine records those heads as the
+    ones it took (it moves nothing). Outward-facing. `--local` builds the plans here and
     uploads, applies and publishes nothing (no asking). A package no
     machine has yet, or a new or changed service, still needs Oath's desk
     profile: ask the Oath session.

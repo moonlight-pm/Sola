@@ -11,6 +11,7 @@ use crate::audit::{Report, Security, Upstream};
 use crate::check::{Check, Move};
 use crate::git::Pushed;
 use crate::graph::Graph;
+use crate::heads::Head;
 use crate::origin::{Listed, Listing};
 use crate::standing::Standing;
 
@@ -89,6 +90,16 @@ pub struct Package {
     pub verified: Option<(String, bool)>,
     /// What the release this machine runs pins, if it carries it.
     pub release: Option<String>,
+    /// The head this machine took of it (`/oath/heads.json`), if it has
+    /// one.
+    pub head: Option<Head>,
+    /// It runs its signed head: the one taken, or, when Oath's record is
+    /// older, the one a check made since the last apply found.
+    pub at_head: bool,
+    /// Oath calls it an overlay (`oath get`): the build here is neither
+    /// the head it took nor the release's pin, and no check since says it
+    /// is its head.
+    pub overlay: bool,
     /// The newest release's move, when a check found one.
     pub newest: Option<Move>,
     pub versions: Vec<OnDisk>,
@@ -114,6 +125,12 @@ impl Package {
     /// The release's build: no overlay, no addition.
     pub fn is_release_build(&self) -> bool {
         self.release.as_deref() == Some(self.hash.as_str())
+    }
+
+    /// A release or a head carries it, so `oath update` has something to
+    /// put in its place.
+    pub fn published(&self) -> bool {
+        self.in_release() || self.head.is_some()
     }
 
     pub fn in_release(&self) -> bool {
@@ -160,6 +177,10 @@ pub struct Inputs {
     pub host: Option<Value>,
     /// `/oath/output.json`.
     pub release: Option<Value>,
+    /// `/oath/heads.json`, by name.
+    pub heads: BTreeMap<String, Head>,
+    /// When the last apply ran (the apply log).
+    pub last_apply: Option<String>,
     /// `oath --json reap`.
     pub reap: Option<Value>,
     /// Whatever could not be read, in words.
@@ -177,8 +198,8 @@ impl Inputs {
             .to_string()
     }
 
-    /// The sources of builds that are not the release's: what git must be
-    /// asked about.
+    /// The sources of builds that are neither the release's nor the head
+    /// this machine took: what git must be asked about.
     pub fn sources_to_check(&self) -> Vec<Source> {
         let pins = self.release.as_ref().and_then(|r| r.get("pins"));
         let mut out: Vec<Source> = Vec::new();
@@ -186,7 +207,7 @@ impl Inputs {
             let name = id_name(v);
             let hash = live_hash(v);
             let pin = pins.and_then(|p| p.get(name)).and_then(Value::as_str);
-            if pin == Some(hash.as_str()) {
+            if pin == Some(hash.as_str()) || self.heads.get(name).is_some_and(|h| h.hash == hash) {
                 continue;
             }
             if let Some(src) = source_of(v)
@@ -227,6 +248,22 @@ fn live_hash(v: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string()
+}
+
+/// `oath get` names an overlay (R47): a present package whose live pin is
+/// not the head it took, or with none, not the release's pin.
+fn is_overlay(v: &Value) -> bool {
+    v.get("overlay").is_some_and(|o| !o.is_null())
+}
+
+/// A check made since the last apply, which said what it could.
+fn fresh<'a>(check: Option<&'a Check>, last_apply: Option<&str>) -> Option<&'a Check> {
+    let c = check.filter(|c| c.error.is_none())?;
+    let at = crate::when::parse(&c.at)?;
+    match last_apply.and_then(crate::when::parse) {
+        Some(applied) if applied >= at => None,
+        _ => Some(c),
+    }
 }
 
 fn source_of(v: &Value) -> Option<Source> {
@@ -280,6 +317,7 @@ impl Ecosystem {
         });
         let pins = rel.and_then(|r| r.get("pins"));
         let packs = rel.and_then(|r| r.get("packs"));
+        let fresh = fresh(check, inputs.last_apply.as_deref());
 
         let mut on_disk: BTreeMap<String, Vec<OnDisk>> = BTreeMap::new();
         for v in inputs.reap.as_ref().and_then(|r| r.get("versions")).and_then(Value::as_array).into_iter().flatten() {
@@ -352,19 +390,32 @@ impl Ecosystem {
                 None => Security::NoReport,
             };
             let source = source_of(v);
+            let present = d("present").and_then(Value::as_bool).unwrap_or(false);
+            let head = inputs.heads.get(&name).cloned();
+            // Oath's record of the heads it took is older than a check that
+            // found nothing newer for it: it runs its head. (Only an update
+            // writes the record, so a publish from here leaves it behind.)
+            let checked = present
+                && head.is_some()
+                && fresh.is_some_and(|c| c.moves.get(&name).is_none_or(Move::nothing_newer));
+            let overlay = is_overlay(v) && !checked;
+            let at_head = present && !overlay && (checked || head.as_ref().is_some_and(|h| h.hash == hash));
             let pkg = Package {
                 version,
                 description: s("description"),
                 home: s("home"),
                 category,
                 here: true,
-                present: d("present").and_then(Value::as_bool).unwrap_or(false),
+                present,
                 removable: v.pointer("/actual/removable").and_then(Value::as_bool).unwrap_or(true),
                 links: strs(v.pointer("/actual/links")),
                 pushed: source.as_ref().and_then(|s| pushed.get(&(s.repo.clone(), s.commit.clone())).cloned()),
                 source,
                 verified,
                 release: pins.and_then(|p| p.get(&name)).and_then(Value::as_str).map(str::to_string),
+                head,
+                at_head,
+                overlay,
                 newest: check.and_then(|c| c.moves.get(&name).cloned()),
                 versions: on_disk.remove(&name).unwrap_or_default(),
                 services: services.remove(&name).unwrap_or_default(),
@@ -402,6 +453,9 @@ impl Ecosystem {
                         source: None,
                         verified: None,
                         release: None,
+                        head: None,
+                        at_head: false,
+                        overlay: false,
                         newest: None,
                         versions: Vec::new(),
                         services: Vec::new(),
@@ -467,19 +521,21 @@ fn standing_of(p: &Package) -> Standing {
     if !p.present {
         return Standing::Off;
     }
-    if p.is_release_build() {
-        return if p.moves() { Standing::Update } else { Standing::Current };
+    // A build of work no remote has is the only copy of it, whether or not
+    // a release or a head carries the name.
+    if !p.at_head && !p.is_release_build() {
+        match (&p.source, &p.pushed) {
+            (Some(s), _) if s.dirty => return Standing::NotPushed,
+            (Some(_), Some(Pushed::No | Pushed::Dirty)) => return Standing::NotPushed,
+            _ => {}
+        }
     }
-    match (&p.source, &p.pushed) {
-        (Some(s), _) if s.dirty => Standing::NotPushed,
-        (Some(_), Some(Pushed::No | Pushed::Dirty)) => Standing::NotPushed,
-        (Some(_), _) => Standing::Local,
-        // An overlay with no record of where it came from.
-        (None, _) if p.in_release() => Standing::Local,
-        // Something this machine added that no release carries, made
-        // here from a plan or taken from the origin.
-        (None, _) => Standing::Current,
+    if p.overlay {
+        return Standing::Local;
     }
+    // Its head, the release's build, or something this machine added that
+    // neither carries.
+    if p.moves() { Standing::Update } else { Standing::Current }
 }
 
 #[cfg(test)]
@@ -504,12 +560,24 @@ mod tests {
         })
     }
 
+    /// As `oath get` marks a build that is not the head or pin it took.
+    fn overlaid(mut v: Value) -> Value {
+        v["overlay"] = json!({"live": v.pointer("/actual/hash").cloned()});
+        v
+    }
+
     fn inputs() -> Inputs {
         Inputs {
             packages: vec![
                 get("glibc", "g", true, &[], None),
                 get("zlib", "z", true, &[], None),
-                get("mesa", "m2", true, &["zlib"], Some(json!({"repo": "r", "commit": "c1", "branch": "next", "dirty": false}))),
+                overlaid(get(
+                    "mesa",
+                    "m2",
+                    true,
+                    &["zlib"],
+                    Some(json!({"repo": "r", "commit": "c1", "branch": "next", "dirty": false})),
+                )),
                 get("llama", "l", true, &[], Some(json!({"repo": "r", "commit": "c2", "branch": "master", "dirty": true}))),
                 get("codex", "x", false, &[], None),
                 get("cf", "cf", true, &[], None),
@@ -575,5 +643,67 @@ mod tests {
     fn only_builds_that_are_not_the_release_are_checked() {
         let srcs = inputs().sources_to_check();
         assert_eq!(srcs.iter().map(|s| s.commit.as_str()).collect::<Vec<_>>(), ["c1", "c2"]);
+    }
+
+    /// novus after a publish: it runs the head it just put up, while
+    /// `/oath/heads.json` still holds the one the last update took.
+    fn published_here(last_apply: &str) -> Inputs {
+        let src = json!({"repo": "s", "commit": "c3", "branch": "master", "dirty": false});
+        let head = |hash: &str| crate::heads::Head { hash: hash.into(), signer: "oath@novus".into(), published: "p".into() };
+        let mut i = inputs();
+        i.packages.push(overlaid(get("sola", "new", true, &[], Some(src.clone()))));
+        i.packages.push(get("sola-mail", "mail", true, &[], Some(src)));
+        i.heads = BTreeMap::from([("sola".into(), head("old")), ("sola-mail".into(), head("mail"))]);
+        i.last_apply = Some(last_apply.into());
+        i
+    }
+
+    #[test]
+    fn a_head_it_took_is_current() {
+        let e = Ecosystem::build(&published_here("2026-11-10T04:03:47Z"), None, None, None, &BTreeMap::new());
+        let mail = &e.pkgs["sola-mail"];
+        assert!(mail.at_head && !mail.overlay);
+        assert_eq!(mail.standing, Standing::Current);
+        // Oath's record is older, so Oath calls it an overlay.
+        assert_eq!(e.pkgs["sola"].standing, Standing::Local);
+        // Git is asked about the build that is not the head taken.
+        assert!(published_here("t").sources_to_check().iter().any(|s| s.commit == "c3"));
+    }
+
+    #[test]
+    fn a_check_since_the_last_apply_knows_the_newer_head() {
+        let quiet = crate::check::parse("2026-11-10T04:20:00Z", &json!({"output": "97ae", "runs": true, "moves": []}));
+        let e = Ecosystem::build(&published_here("2026-11-10T04:03:47Z"), None, None, Some(&quiet), &BTreeMap::new());
+        let sola = &e.pkgs["sola"];
+        assert!(sola.at_head && !sola.overlay);
+        assert_eq!(sola.standing, Standing::Current);
+        // A local build is still one: no head of it, so the check can't say.
+        assert_eq!(e.pkgs["mesa"].standing, Standing::Local);
+
+        // A check from before the last apply knows nothing of this build.
+        let e = Ecosystem::build(&published_here("2026-11-10T05:00:00Z"), None, None, Some(&quiet), &BTreeMap::new());
+        assert_eq!(e.pkgs["sola"].standing, Standing::Local);
+
+        // A newer head waits: still the build Oath named.
+        let moved = crate::check::parse(
+            "2026-11-10T04:20:00Z",
+            &json!({"output": "97ae", "runs": true,
+                    "moves": [{"id": "pkg:sola", "move": "head", "from": "new", "to": "newer", "overlay": true}]}),
+        );
+        let e = Ecosystem::build(&published_here("2026-11-10T04:03:47Z"), None, None, Some(&moved), &BTreeMap::new());
+        assert_eq!(e.pkgs["sola"].standing, Standing::Local);
+        assert_eq!(e.pkgs["sola-mail"].standing, Standing::Current);
+    }
+
+    #[test]
+    fn a_newer_head_is_an_update() {
+        let check = crate::check::parse(
+            "2026-11-10T04:20:00Z",
+            &json!({"output": "97ae", "runs": true,
+                    "moves": [{"id": "pkg:sola-mail", "move": "head", "from": "mail", "to": "mail2"}]}),
+        );
+        let e = Ecosystem::build(&published_here("2026-11-10T04:03:47Z"), None, None, Some(&check), &BTreeMap::new());
+        assert_eq!(e.pkgs["sola-mail"].standing, Standing::Update);
+        assert_eq!(e.moving(), 1);
     }
 }
