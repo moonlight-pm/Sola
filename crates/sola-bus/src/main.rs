@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -14,19 +15,41 @@ use sola_bus::transport;
 
 type ClientId = u64;
 
-/// Per-client outbound queue depth. Large enough to absorb the back-to-back
-/// bursts the shell emits (LaunchApp + RegisteredChords + Composition +
-/// Focus) while still bounding memory if a client goes permanently silent.
+/// Per-client outbound queue depth, in deliveries: a replay is one. Large
+/// enough to absorb the back-to-back bursts the shell emits (LaunchApp +
+/// RegisteredChords + Composition + Focus); a client that falls this far
+/// behind has its connection closed ([`deliver`]).
 const CLIENT_QUEUE_DEPTH: usize = 256;
 
+/// What a client's writer thread sends: one message, or a subscribe's
+/// whole replay, which takes one place in the queue so it is never cut
+/// short.
+enum Delivery {
+    One(sola_bus::Message),
+    Replay(Vec<sola_bus::Message>),
+}
+
+/// A connected client, as the broadcasters see it.
+struct Client {
+    /// Its outbound queue. The writer thread owns the socket's write side;
+    /// broadcasters only `try_send` here.
+    tx: mpsc::SyncSender<Delivery>,
+    /// The socket, to close it when the client falls behind.
+    stream: UnixStream,
+}
+
+/// A stored sticky message and its kind, known when it was stored.
+struct Record {
+    message: sola_bus::Message,
+    kind: TopicKind,
+}
+
 struct BusState {
-    /// Per-client outbound queue. Writers are owned by dedicated writer
-    /// threads; broadcasters just try_send here and move on.
-    clients: HashMap<ClientId, mpsc::SyncSender<sola_bus::Message>>,
+    clients: HashMap<ClientId, Client>,
     /// Latest sticky message per (topic, keys), replayed to newly connected clients.
     /// `keys` is empty for unkeyed topics — at most one such sticky exists per topic kind.
     /// Keyed topics may have many concurrent stickies, addressed by their key values.
-    sticky: HashMap<(String, Vec<String>), sola_bus::Message>,
+    sticky: HashMap<(String, Vec<String>), Record>,
     /// client_id → app_id for clients that have sent `$identify`.
     roster: HashMap<ClientId, String>,
     /// client_id → topic kinds the client has subscribed to.
@@ -65,8 +88,10 @@ fn main() {
     );
 
     let mut sticky = HashMap::new();
-    for msg in restored {
-        sticky.insert((msg.topic.clone(), msg.keys.clone()), msg);
+    for message in restored {
+        if let Some(kind) = Topic::parse(&message).map(|t| t.kind()) {
+            sticky.insert((message.topic.clone(), message.keys.clone()), Record { message, kind });
+        }
     }
 
     let state: SharedState = Arc::new(Mutex::new(BusState {
@@ -84,15 +109,15 @@ fn main() {
                 let id = next_id;
                 next_id += 1;
 
-                let writer_stream = match stream.try_clone() {
-                    Ok(s) => s,
-                    Err(e) => {
+                let (writer_stream, closer) = match (stream.try_clone(), stream.try_clone()) {
+                    (Ok(w), Ok(c)) => (w, c),
+                    (Err(e), _) | (_, Err(e)) => {
                         error!(client = id, "failed to clone stream: {e}");
                         continue;
                     }
                 };
 
-                let (tx, rx) = mpsc::sync_channel::<sola_bus::Message>(CLIENT_QUEUE_DEPTH);
+                let (tx, rx) = mpsc::sync_channel::<Delivery>(CLIENT_QUEUE_DEPTH);
 
                 // Writer thread: blocking writes to this client. Owned
                 // exclusively here so no other thread can stall on this
@@ -102,7 +127,7 @@ fn main() {
                 });
 
                 let mut bus = state.lock().unwrap();
-                bus.clients.insert(id, tx);
+                bus.clients.insert(id, Client { tx, stream: closer });
                 info!(client = id, "connected");
                 drop(bus);
 
@@ -121,18 +146,46 @@ fn main() {
 /// Drain the per-client queue and write each message to the socket with
 /// blocking I/O. Exits when `rx` is closed (all senders dropped) or when
 /// a write fails.
-fn writer_loop(id: ClientId, mut stream: UnixStream, rx: mpsc::Receiver<sola_bus::Message>) {
-    while let Ok(msg) = rx.recv() {
-        if let Err(e) = transport::write_event(&mut stream, &msg) {
+fn writer_loop(id: ClientId, mut stream: UnixStream, rx: mpsc::Receiver<Delivery>) {
+    while let Ok(delivery) = rx.recv() {
+        let result = match delivery {
+            Delivery::One(msg) => transport::write_event(&mut stream, &msg),
+            Delivery::Replay(msgs) => msgs
+                .iter()
+                .try_for_each(|msg| transport::write_event(&mut stream, msg)),
+        };
+        if let Err(e) = result {
             match e.kind() {
                 io::ErrorKind::BrokenPipe
                 | io::ErrorKind::ConnectionReset
-                | io::ErrorKind::UnexpectedEof => {
-                    // Client already gone. Reader thread will clean up.
+                | io::ErrorKind::UnexpectedEof
+                | io::ErrorKind::NotConnected => {
+                    // Client gone, or closed by `deliver`. Reader thread will clean up.
                 }
                 _ => warn!(client = id, "writer error: {e}"),
             }
             break;
+        }
+    }
+}
+
+/// Queue `delivery` for client `id`. A client whose queue is full has
+/// fallen too far behind to be told everything: rather than drop what it
+/// would miss, close its connection. It connects again, subscribes again
+/// and gets a fresh replay (every client reconnects after a bus restart
+/// the same way).
+fn deliver(id: ClientId, delivery: Delivery, bus: &mut BusState) {
+    let Some(client) = bus.clients.get(&id) else {
+        return;
+    };
+    match client.tx.try_send(delivery) {
+        Ok(()) | Err(mpsc::TrySendError::Disconnected(_)) => {}
+        Err(mpsc::TrySendError::Full(_)) => {
+            let app_id = bus.roster.get(&id).map(String::as_str).unwrap_or("?");
+            warn!(client = id, app_id, "client fell behind; closing its connection so it subscribes again");
+            let _ = client.stream.shutdown(Shutdown::Both);
+            bus.clients.remove(&id);
+            bus.subscriptions.remove(&id);
         }
     }
 }
@@ -173,25 +226,30 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
                         ),
                     },
                     _ => {
+                        let Some(kind) = Topic::parse(&event).map(|t| t.kind()) else {
+                            warn!(client = id, topic = %event.topic, "dropping unknown topic");
+                            continue;
+                        };
                         let mut bus = state.lock().unwrap();
-                        let kind = sola_bus::topics::Topic::parse(&event).map(|t| t.kind());
-                        let is_sticky_kind = kind.is_some_and(|k| k.behavior().is_sticky());
+                        let key = (event.topic.clone(), event.keys.clone());
                         if event.sticky {
-                            let key = (event.topic.clone(), event.keys.clone());
-                            bus.sticky.insert(key, event.clone());
-                        } else if is_sticky_kind {
+                            bus.sticky.insert(
+                                key,
+                                Record {
+                                    message: event.clone(),
+                                    kind,
+                                },
+                            );
+                        } else if kind.behavior().is_sticky() {
                             // Retract: client signals removal by sending sticky=false on a
                             // sticky/persistent topic kind. Evict from in-memory map and,
                             // if persistent, from disk.
-                            let key = (event.topic.clone(), event.keys.clone());
                             bus.sticky.remove(&key);
-                            if let Some(k) = kind {
-                                if k.behavior().is_persistent() {
-                                    retract_persistent(&bus.state_path, k, &event);
-                                }
+                            if kind.behavior().is_persistent() {
+                                retract_persistent(&bus.state_path, kind, &event);
                             }
                         }
-                        broadcast(id, &event, &mut bus);
+                        broadcast(id, &event, kind, &mut bus);
                         if event.sticky {
                             persist_if_needed(&event, &mut bus);
                         }
@@ -215,8 +273,8 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
 
     let mut bus = state.lock().unwrap();
     if let Some(app_id) = bus.roster.remove(&id) {
-        let evt = sola_bus::topics::Topic::ClientDisconnected(app_id).to_message();
-        broadcast(id, &evt, &mut bus);
+        let evt = Topic::ClientDisconnected(app_id).to_message();
+        broadcast(id, &evt, TopicKind::ClientDisconnected, &mut bus);
     }
     bus.clients.remove(&id);
     bus.subscriptions.remove(&id);
@@ -243,18 +301,11 @@ fn handle_identify(id: ClientId, app_id: String, state: &SharedState) {
         return; // already identified with this id — no broadcast
     }
     info!(client = id, %app_id, "identified");
-    let evt = sola_bus::topics::Topic::ClientConnected(app_id).to_message();
-    broadcast(id, &evt, &mut bus);
+    let evt = Topic::ClientConnected(app_id).to_message();
+    broadcast(id, &evt, TopicKind::ClientConnected, &mut bus);
 }
 
-fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
-    let kind = match sola_bus::topics::Topic::parse(event) {
-        Some(t) => t.kind(),
-        None => {
-            warn!(topic = %event.topic, "broadcast dropping unknown topic");
-            return;
-        }
-    };
+fn broadcast(sender: ClientId, event: &sola_bus::Message, kind: TopicKind, bus: &mut BusState) {
     // Sticky/persistent topics carry *shared state*: the sender is writing a
     // canonical value that every subscriber — themselves included — should
     // observe through the same delivery path. Skipping self for sticky topics
@@ -265,24 +316,14 @@ fn broadcast(sender: ClientId, event: &sola_bus::Message, bus: &mut BusState) {
     // Ephemeral topics still skip self — input events, deliveries, and other
     // "fire and forget" messages don't want echoes.
     let echo_to_sender = kind.behavior().is_sticky();
-    for (&id, tx) in bus.clients.iter() {
-        if id == sender && !echo_to_sender {
-            continue;
-        }
-        let wants = bus
-            .subscriptions
-            .get(&id)
-            .is_some_and(|s| s.contains(&kind));
-        if !wants {
-            continue;
-        }
-        match tx.try_send(event.clone()) {
-            Ok(()) => {}
-            Err(mpsc::TrySendError::Full(_)) => {
-                warn!(client = id, topic = %event.topic, "dropped (queue full)");
-            }
-            Err(mpsc::TrySendError::Disconnected(_)) => {}
-        }
+    let to: Vec<ClientId> = bus
+        .subscriptions
+        .iter()
+        .filter(|(id, kinds)| (**id != sender || echo_to_sender) && kinds.contains(&kind))
+        .map(|(id, _)| *id)
+        .collect();
+    for id in to {
+        deliver(id, Delivery::One(event.clone()), bus);
     }
 }
 
@@ -343,39 +384,39 @@ fn retract_persistent(state_path: &Path, kind: TopicKind, event: &sola_bus::Mess
 fn handle_subscribe(id: ClientId, kinds: Vec<TopicKind>, state: &SharedState) {
     let new_kinds: HashSet<_> = kinds.into_iter().collect();
     let mut bus = state.lock().unwrap();
+    if !bus.clients.contains_key(&id) {
+        return; // closed by `deliver`; it will connect again
+    }
     let prev = bus
         .subscriptions
         .insert(id, new_kinds.clone())
         .unwrap_or_default();
     let added: HashSet<_> = new_kinds.difference(&prev).copied().collect();
+
+    // The stickies whose kind is newly subscribed, the roster for
+    // ClientConnected, then `Replayed`: one delivery, so the client gets
+    // all of it or, if it is too far behind to take it, a closed
+    // connection and a fresh subscribe.
+    let mut replay: Vec<sola_bus::Message> = bus
+        .sticky
+        .values()
+        .filter(|r| added.contains(&r.kind))
+        .map(|r| r.message.clone())
+        .collect();
+    if added.contains(&TopicKind::ClientConnected) {
+        replay.extend(
+            bus.roster
+                .values()
+                .map(|app_id| Topic::ClientConnected(app_id.clone()).to_message()),
+        );
+    }
     info!(
         client = id,
         count = new_kinds.len(),
         added = added.len(),
+        replayed = replay.len(),
         "subscribed"
     );
-
-    let Some(tx) = bus.clients.get(&id).cloned() else {
-        return;
-    };
-
-    // Replay stickies whose kind is newly subscribed.
-    for msg in bus.sticky.values() {
-        if let Some(kind) = sola_bus::topics::Topic::parse(msg).map(|t| t.kind()) {
-            if added.contains(&kind) {
-                let _ = tx.try_send(msg.clone());
-            }
-        }
-    }
-
-    // Roster replay for ClientConnected.
-    if added.contains(&sola_bus::topics::TopicKind::ClientConnected) {
-        for app_id in bus.roster.values() {
-            let evt = sola_bus::topics::Topic::ClientConnected(app_id.clone()).to_message();
-            let _ = tx.try_send(evt);
-        }
-    }
-
-    // On the same channel after the replay: the client has all of it.
-    let _ = tx.try_send(sola_bus::topics::Topic::Replayed.to_message());
+    replay.push(Topic::Replayed.to_message());
+    deliver(id, Delivery::Replay(replay), &mut bus);
 }
