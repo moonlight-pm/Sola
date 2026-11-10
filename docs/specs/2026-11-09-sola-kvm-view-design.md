@@ -61,8 +61,14 @@ keeps the desk's bindings out of the way while the window has the keyboard.
 a click on the picture takes them again. Keys held when focus leaves are
 released on the host.
 
+## Clipboard
+
+Text, on the two streams: `ClipboardSet` when the window takes the keyboard,
+`ClipboardGet` and its `Clipboard` answer when it lets go (and likewise on
+Ctrl+Alt+Esc and the click that takes them back). The viewer remembers the text
+both sides last agreed on and skips a sync that would change nothing.
+
 ## Not in this slice
 
-NVIDIA decoders only; the main display only; one viewer at a time; no audio; no
-clipboard in view mode; the window does not resize the host's screen; no
-launcher entry.
+NVIDIA decoders only; the main display only; one viewer at a time; no audio;
+pictures on the clipboard; the window does not resize the host's screen.

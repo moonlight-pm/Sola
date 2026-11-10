@@ -14,17 +14,22 @@
 
 use std::io;
 
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 /// The view port is the KVM port plus this.
 pub const PORT_OFFSET: u16 = 1;
 /// The largest frame either side reads (a key frame at 8K fits well inside).
 pub const MAX_FRAME: u32 = 64 << 20;
+/// The most clipboard text either side sends.
+pub const MAX_CLIPBOARD: usize = 8 << 20;
 
 const DISPLAY: u8 = 1;
 const PICTURE: u8 = 2;
 const REFUSED: u8 = 3;
+const CLIPBOARD: u8 = 4;
 const KEYFRAME: u8 = 1;
 const EVENT: u8 = 2;
+const CLIPBOARD_SET: u8 = 3;
+const CLIPBOARD_GET: u8 = 4;
 
 /// Which direction a connection is; its first frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +77,8 @@ pub enum Down {
     Picture { key: bool, pts_us: u64, data: Vec<u8> },
     /// The host will not send its screen, and why, in words for the window.
     Refused(String),
+    /// The host's clipboard text, answering [`Up::ClipboardGet`].
+    Clipboard(String),
 }
 
 impl Down {
@@ -102,6 +109,11 @@ impl Down {
                 out.extend_from_slice(why.as_bytes());
                 out
             }
+            Self::Clipboard(text) => {
+                let mut out = vec![CLIPBOARD];
+                out.extend_from_slice(text.as_bytes());
+                out
+            }
         }
     }
 
@@ -120,6 +132,7 @@ impl Down {
                 data: rest[9..].to_vec(),
             }),
             REFUSED => Ok(Self::Refused(String::from_utf8_lossy(rest).into_owned())),
+            CLIPBOARD => Ok(Self::Clipboard(String::from_utf8_lossy(rest).into_owned())),
             _ => Err(bad(format!("a bad frame from the host (tag {tag}, {} bytes)", rest.len()))),
         }
     }
@@ -132,6 +145,10 @@ pub enum Up {
     Keyframe,
     /// One KVM1 packet.
     Event(Vec<u8>),
+    /// Put this text on the host's clipboard.
+    ClipboardSet(String),
+    /// Send the host's clipboard text ([`Down::Clipboard`]).
+    ClipboardGet,
 }
 
 impl Up {
@@ -144,6 +161,13 @@ impl Up {
                 out.extend_from_slice(packet);
                 out
             }
+            Self::ClipboardSet(text) => {
+                let mut out = Vec::with_capacity(1 + text.len());
+                out.push(CLIPBOARD_SET);
+                out.extend_from_slice(text.as_bytes());
+                out
+            }
+            Self::ClipboardGet => vec![CLIPBOARD_GET],
         }
     }
 
@@ -151,6 +175,8 @@ impl Up {
         match bytes.split_first() {
             Some((&KEYFRAME, [])) => Ok(Self::Keyframe),
             Some((&EVENT, packet)) => Ok(Self::Event(packet.to_vec())),
+            Some((&CLIPBOARD_SET, text)) => Ok(Self::ClipboardSet(String::from_utf8_lossy(text).into_owned())),
+            Some((&CLIPBOARD_GET, [])) => Ok(Self::ClipboardGet),
             _ => Err(bad("a bad frame from the viewer".into())),
         }
     }
@@ -197,6 +223,7 @@ mod tests {
                 data: Vec::new(),
             },
             Down::Refused("Screen Recording is off".into()),
+            Down::Clipboard("copied on the host".into()),
         ] {
             assert_eq!(Down::decode(&msg.encode()).unwrap(), msg);
         }
@@ -204,7 +231,7 @@ mod tests {
 
     #[test]
     fn up_round_trips() {
-        for msg in [Up::Keyframe, Up::Event(vec![1, 2, 3])] {
+        for msg in [Up::Keyframe, Up::Event(vec![1, 2, 3]), Up::ClipboardSet("copied here".into()), Up::ClipboardGet] {
             assert_eq!(Up::decode(&msg.encode()).unwrap(), msg);
         }
     }

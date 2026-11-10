@@ -34,7 +34,8 @@ enum Status {
 }
 
 pub struct App {
-    host: String,
+    /// `None`: no machine to show, and the status says why.
+    host: Option<String>,
     port: u16,
     status: Status,
     display: Option<Display>,
@@ -44,6 +45,7 @@ pub struct App {
     held: BTreeSet<u32>,
     /// False once Ctrl+Alt+Esc has handed keyboard and pointer back.
     captured: bool,
+    focused: bool,
     inhibitor: Option<Arc<Inhibitor>>,
     window_id: Option<window::Id>,
     theme: Theme,
@@ -62,6 +64,7 @@ pub enum Msg {
     },
     Pointer(Packet),
     Capture,
+    Focused,
     Unfocused,
     Inhibited(Option<Arc<Inhibitor>>),
     WindowReady(Option<window::Id>),
@@ -71,17 +74,22 @@ pub enum Msg {
 }
 
 impl App {
-    pub fn boot(host: String, port: u16) -> (Self, Task<Msg>) {
+    pub fn boot(target: Result<(String, u16), String>) -> (Self, Task<Msg>) {
+        let (host, port, status) = match target {
+            Ok((host, port)) => (Some(host), port, Status::Connecting),
+            Err(why) => (None, 0, Status::Refused(why)),
+        };
         (
             Self {
                 host,
                 port,
-                status: Status::Connecting,
+                status,
                 display: None,
                 pictures: Arc::default(),
                 outgoing: None,
                 held: BTreeSet::new(),
                 captured: true,
+                focused: false,
                 inhibitor: None,
                 window_id: None,
                 theme: default_theme(),
@@ -92,7 +100,11 @@ impl App {
     }
 
     pub fn title(&self) -> String {
-        self.host.clone()
+        self.name().to_string()
+    }
+
+    fn name(&self) -> &str {
+        self.host.as_deref().unwrap_or("Remote Desktop")
     }
 
     pub fn theme(&self) -> Theme {
@@ -100,14 +112,16 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
-        let link = Subscription::run_with(
-            Link {
-                host: self.host.clone(),
-                port: self.port,
-                pictures: Arc::clone(&self.pictures),
-            },
-            run_link,
-        );
+        let link = self.host.clone().map_or_else(Subscription::none, |host| {
+            Subscription::run_with(
+                Link {
+                    host,
+                    port: self.port,
+                    pictures: Arc::clone(&self.pictures),
+                },
+                run_link,
+            )
+        });
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
             link.map(Msg::Net),
@@ -131,6 +145,7 @@ impl App {
                     repeat: false,
                     modifiers,
                 }),
+                Event::Window(window::Event::Focused) => Some(Msg::Focused),
                 Event::Window(window::Event::Unfocused) => Some(Msg::Unfocused),
                 _ => None,
             }),
@@ -161,9 +176,18 @@ impl App {
             Msg::Pointer(packet) => self.send(packet),
             Msg::Capture => {
                 self.captured = true;
+                self.clipboard_to_host();
                 return self.inhibit();
             }
-            Msg::Unfocused => self.release_keys(),
+            Msg::Focused => {
+                self.focused = true;
+                self.clipboard_to_host();
+            }
+            Msg::Unfocused => {
+                self.focused = false;
+                self.release_keys();
+                self.clipboard_from_host();
+            }
             Msg::Inhibited(inhibitor) => {
                 // A release that landed while this was on its way wins.
                 if self.captured {
@@ -187,6 +211,7 @@ impl App {
             net::Event::Connected(display) => {
                 self.display = Some(display);
                 self.status = Status::Showing;
+                self.clipboard_to_host();
             }
             // The message alone brings the redraw that uploads it.
             net::Event::Picture => self.pictures.drawn(),
@@ -211,8 +236,10 @@ impl App {
         }
         if pressed {
             self.held.insert(code);
-        } else {
-            self.held.remove(&code);
+        } else if !self.held.remove(&code) {
+            // Pressed elsewhere and let go here: the other machine never
+            // heard it go down.
+            return Task::none();
         }
         let state = match (pressed, repeat) {
             (false, _) => 0,
@@ -226,11 +253,26 @@ impl App {
     /// Ctrl+Alt+Esc: keyboard, pointer and the desk's shortcuts come back.
     /// A click on the picture takes them again.
     fn release(&mut self) -> Task<Msg> {
+        self.clipboard_from_host();
         self.captured = false;
         self.inhibitor = None;
         self.held.clear();
         self.send(Packet::Leave);
         Task::none()
+    }
+
+    /// Coming in: what was copied here is there to paste.
+    fn clipboard_to_host(&self) {
+        if self.captured && self.focused {
+            self.send_out(Outgoing::PushClipboard);
+        }
+    }
+
+    /// Going out: what was copied there is here to paste.
+    fn clipboard_from_host(&self) {
+        if self.captured {
+            self.send_out(Outgoing::PullClipboard);
+        }
     }
 
     fn release_keys(&mut self) {
@@ -247,16 +289,20 @@ impl App {
     }
 
     fn send(&self, packet: Packet) {
+        self.send_out(Outgoing::Packet(packet));
+    }
+
+    fn send_out(&self, out: Outgoing) {
         if let Some(outgoing) = &self.outgoing {
-            let _ = outgoing.send(Outgoing::Packet(packet));
+            let _ = outgoing.send(out);
         }
     }
 
     pub fn view(&self) -> Element<'_, Msg> {
         let note = match &self.status {
             Status::Showing => None,
-            Status::Connecting => Some(format!("Connecting to {}…", self.host)),
-            Status::Lost(why) => Some(format!("Lost {}: {why}. Connecting again…", self.host)),
+            Status::Connecting => Some(format!("Connecting to {}…", self.name())),
+            Status::Lost(why) => Some(format!("Lost {}: {why}. Connecting again…", self.name())),
             Status::Refused(why) => Some(why.clone()),
         };
         let body: Element<'_, Msg> = match note {
@@ -276,7 +322,7 @@ impl App {
             .style(|_| container::background(Color::BLACK));
         sola_kit::window_frame(
             self.float.chrome_any(),
-            &self.host,
+            self.name(),
             Msg::TitleDrag,
             Msg::TitleClose,
             Msg::TitleResize,

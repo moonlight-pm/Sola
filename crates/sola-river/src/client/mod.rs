@@ -478,9 +478,11 @@ pub fn bus_tick(state: &mut AppData) {
                         state.pending.queue_exit_fullscreen(prev);
                     }
                 }
-                state
-                    .pending
-                    .set_focus(crate::pending::FocusAction::Window(t.window_id));
+                state.pending.set_focus(if t.window_id == sola_bus::topics::FocusTarget::NO_WINDOW {
+                    crate::pending::FocusAction::None
+                } else {
+                    crate::pending::FocusAction::Window(t.window_id)
+                });
             }
             sola_bus::topics::Topic::RegisteredChords(chords) => {
                 let pairs: Vec<(u32, u32)> = chords

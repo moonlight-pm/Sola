@@ -20,15 +20,30 @@ use app::App;
 const APP_ID: &str = "sola-kvm-view";
 const DEFAULT_KVM_PORT: u16 = 4242;
 
+/// Which machine to show: the one named, or (from the launcher, which names
+/// none) the one this machine is paired to view. `Err` says why there is
+/// none, in words for the window.
+fn target() -> Result<(String, u16), String> {
+    if let Some(target) = std::env::args().nth(1).filter(|a| !a.starts_with('-')) {
+        return Ok(match target.rsplit_once(':') {
+            Some((host, port)) => (host.to_string(), port.parse().unwrap_or(DEFAULT_KVM_PORT)),
+            None => (target, DEFAULT_KVM_PORT),
+        });
+    }
+    let hosts = sola_kvm::link::view_hosts(&sola_kvm::link::dir())
+        .map_err(|e| format!("The paired machines cannot be read: {e}"))?;
+    match hosts.as_slice() {
+        [host] => Ok((host.clone(), DEFAULT_KVM_PORT)),
+        [] => Err("No machine is paired for Remote Desktop yet. Run: sola-kvm pair <host> --view".into()),
+        many => Err(format!(
+            "Several machines are paired: {}. Open one with: sola-kvm view <host>",
+            many.join(", ")
+        )),
+    }
+}
+
 fn main() -> iced::Result {
-    let Some(target) = std::env::args().nth(1).filter(|a| !a.starts_with('-')) else {
-        eprintln!("usage: sola-kvm-view <host>[:<kvm port>]");
-        std::process::exit(2);
-    };
-    let (host, port) = match target.rsplit_once(':') {
-        Some((host, port)) => (host.to_string(), port.parse().unwrap_or(DEFAULT_KVM_PORT)),
-        None => (target, DEFAULT_KVM_PORT),
-    };
+    let target = target();
 
     startup(APP_ID);
 
@@ -43,7 +58,7 @@ fn main() -> iced::Result {
     let mut settings = window_settings_transparent(APP_ID);
     settings.size = iced::Size::new(1512.0, 1010.0);
 
-    iced::application(move || App::boot(host.clone(), port), App::update, App::view)
+    iced::application(move || App::boot(target.clone()), App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .theme(App::theme)

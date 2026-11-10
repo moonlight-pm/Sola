@@ -490,7 +490,7 @@ fn install_bus_stream_tx(tx: iced::futures::channel::mpsc::UnboundedSender<Arc<M
 }
 
 /// `kinds` and the ones the kit itself needs: its menus' (`KeyActions`,
-/// `Keybindings`, `ZoneLayout`) and the desk menu's picks
+/// `Keybindings`, `ZoneLayout`, `Workspaces`) and the desk menu's picks
 /// (`DeskMenuPick`), for the life of the process. An app that subscribes
 /// again on its own passes its kinds through this first.
 pub fn with_kit_kinds(kinds: &'static [TopicKind]) -> &'static [TopicKind] {
@@ -498,6 +498,7 @@ pub fn with_kit_kinds(kinds: &'static [TopicKind]) -> &'static [TopicKind] {
         TopicKind::KeyActions,
         TopicKind::Keybindings,
         TopicKind::ZoneLayout,
+        TopicKind::Workspaces,
         TopicKind::DeskMenuPick,
         TopicKind::FocusPinned,
     ];

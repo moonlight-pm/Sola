@@ -142,6 +142,24 @@ pub fn load_view(dir: &Path, host: &str) -> io::Result<Option<Keys>> {
     Ok(Some(Keys { private, public, peer }))
 }
 
+/// The hosts this machine is paired to view, in name order.
+pub fn view_hosts(dir: &Path) -> io::Result<Vec<String>> {
+    let entries = match std::fs::read_dir(dir.join("view")) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut hosts = Vec::new();
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().is_some_and(|e| e == "pub") {
+            hosts.extend(path.file_stem().and_then(|s| s.to_str()).map(str::to_string));
+        }
+    }
+    hosts.sort();
+    Ok(hosts)
+}
+
 fn view_peer_path(dir: &Path, host: &str) -> io::Result<PathBuf> {
     if host.is_empty() || host.contains(['/', '\\']) || host.starts_with('.') {
         return Err(bad(format!("{host:?} is not a host name")));
@@ -681,6 +699,18 @@ fn bad(msg: String) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn view_hosts_lists_the_paired_hosts_in_order() {
+        let dir = std::env::temp_dir().join(format!("sola-kvm-view-hosts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(view_hosts(&dir).unwrap().is_empty());
+        save_view_peer(&dir, "zed", &[1; 32]).unwrap();
+        save_view_peer(&dir, "ember", &[2; 32]).unwrap();
+        std::fs::write(dir.join("view/notes.txt"), "not a key").unwrap();
+        assert_eq!(view_hosts(&dir).unwrap(), ["ember", "zed"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// A paired server and peer, and a stranger who knows the peer's
     /// public key.

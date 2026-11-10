@@ -215,7 +215,7 @@ the kit's `TabWindows`.
 | `WindowChrome` | `window_id`; `tiled` (in a tiled zone), `cinema` (covering the output), `rim` (its app published no menu, so it draws no frame of its own) | Shell; retracted when the window closes | `sola-river` (tiled state, the rim, rounded corners); kit apps (no frame in Cinema) | Sticky by `window_id` |
 | `Composition` | Window ids to show, bottom to top | Shell | `sola-river` | Ephemeral |
 | `Frame` | One window's `window_id`, `x`, `y`, `width`, `height`, and `fullscreen` flag | Shell | `sola-river` | Ephemeral |
-| `Focus` | The `window_id` to give the keyboard | Shell | `sola-river` | Ephemeral |
+| `Focus` | The `window_id` to give the keyboard, or 0 for no window | Shell | `sola-river` | Ephemeral |
 | `AppHidden` | An `app_id` left out of `Composition` | Shell ([Hide](sola-shell.md#hide)); retracted to show it again | Shell | Sticky by `app_id` |
 | `CloseWindow` | A `window_id` | Shell (a bar row's stoplight, for a window that is not a tab) | `sola-river`: asks that window to close, as its own close button would | Ephemeral |
 | `MouseEntered` | The `window_id` the pointer entered; `still` when the pointer did not move (the window under it changed) | `sola-river` | Shell | Ephemeral |

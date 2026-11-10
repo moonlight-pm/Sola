@@ -17,7 +17,7 @@
 
 use std::sync::RwLock;
 
-use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, Zone, ZoneLayout};
+use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, Workspaces, Zone, ZoneLayout};
 use sola_core::{KeyChord, KeyCode};
 
 /// This process's latest published menus.
@@ -31,18 +31,29 @@ static HOSTED: RwLock<Vec<AppMenuPayload>> = RwLock::new(Vec::new());
 /// zones. `None`: the default.
 static LAYOUT: RwLock<Option<ZoneLayout>> = RwLock::new(None);
 
+/// The workspaces (`Topic::Workspaces`), for the Window menu's Send to
+/// items. `None`: not said yet.
+static WORKSPACES: RwLock<Option<Workspaces>> = RwLock::new(None);
+
 /// [`current`]'s answer until something it reads changes.
 static CURRENT: RwLock<Option<AppMenuPayload>> = RwLock::new(None);
 
-/// Learn the zone layout from a bus message (the kit's poller shows it
-/// every one).
+/// Learn the zone layout and the workspaces from a bus message (the kit's
+/// poller shows it every one).
 pub(crate) fn observe(message: &sola_bus::Message) {
-    if message.topic != "ZoneLayout" {
+    if message.topic != "ZoneLayout" && message.topic != "Workspaces" {
         return;
     }
-    if let Some(Topic::ZoneLayout(l)) = Topic::parse(message) {
-        *LAYOUT.write().unwrap_or_else(|p| p.into_inner()) = message.sticky.then_some(l);
-        forget_current();
+    match Topic::parse(message) {
+        Some(Topic::ZoneLayout(l)) => {
+            *LAYOUT.write().unwrap_or_else(|p| p.into_inner()) = message.sticky.then_some(l);
+            forget_current();
+        }
+        Some(Topic::Workspaces(w)) => {
+            *WORKSPACES.write().unwrap_or_else(|p| p.into_inner()) = message.sticky.then_some(w);
+            forget_current();
+        }
+        _ => {}
     }
 }
 
@@ -72,6 +83,25 @@ pub fn fill_window_menu(menu: &mut MenuDefinition, layout: &ZoneLayout) {
         block.insert(0, MenuItem::Divider);
         menu.items.splice(at..at, block);
     }
+}
+
+/// Give a Window menu one Send to item per workspace, at its end, named
+/// after the workspace; their keys come with the rest. The showing one is
+/// checked, as where the window is, unless the window is pinned: it is on
+/// them all, and sending it to one unpins it there.
+pub fn fill_workspaces(menu: &mut MenuDefinition, workspaces: &Workspaces, pinned: bool) {
+    if workspaces.workspaces.is_empty() {
+        return;
+    }
+    menu.items.push(MenuItem::Divider);
+    menu.items
+        .extend(workspaces.workspaces.iter().enumerate().map(|(index, ws)| MenuItem::Action {
+            id: workspace_action_id(index),
+            label: format!("Send to {}", ws.name),
+            shortcut: None,
+            disabled: false,
+            checked: !pinned && ws.id == workspaces.showing,
+        }));
 }
 
 /// Publish this app's menus: kept for its titlebars and sent to the shell.
@@ -153,9 +183,16 @@ pub fn prepare(payload: AppMenuPayload) -> AppMenuPayload {
         .unwrap_or_else(|p| p.into_inner())
         .clone()
         .unwrap_or_default();
+    let workspaces = WORKSPACES
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .unwrap_or_default();
     if let Some(menu) = payload.menus.iter_mut().find(|m| m.label == WINDOW_MENU_LABEL) {
+        let pinned = crate::pinned::focus_is_pinned();
         fill_window_menu(menu, &layout);
-        check_pin(menu, crate::pinned::focus_is_pinned());
+        fill_workspaces(menu, &workspaces, pinned);
+        check_pin(menu, pinned);
     }
     crate::keys::apply(&payload)
 }
@@ -236,9 +273,18 @@ pub const ACTION_PIN: &str = "window.pin";
 /// shell's; it adds their items to the menus it draws).
 pub const ACTION_GRID_PREFIX: &str = "window.zone.";
 
+/// A workspace's item: `window.workspace.<index>` (the workspaces are the
+/// shell's; it adds their items to the menus it draws).
+pub const ACTION_WORKSPACE_PREFIX: &str = "window.workspace.";
+
 /// The Window menu item id that moves a tab to grid zone `id`.
 pub fn grid_action_id(id: u32) -> String {
     format!("{ACTION_GRID_PREFIX}{id}")
+}
+
+/// The Window menu item id that sends a window to workspace `index`.
+pub fn workspace_action_id(index: usize) -> String {
+    format!("{ACTION_WORKSPACE_PREFIX}{index}")
 }
 
 /// Compositor action the shell handles instead of forwarding `MenuAction`.
@@ -248,6 +294,7 @@ pub enum WindowAction {
     Cycle,
     Pin,
     Zone(Zone),
+    SendToWorkspace(usize),
 }
 
 /// One row of the default Window menu (not a divider).
@@ -406,6 +453,9 @@ pub fn parse_window_action(id: &str) -> Option<WindowAction> {
     if let Some(n) = id.strip_prefix(ACTION_GRID_PREFIX) {
         return n.parse().ok().map(|n| WindowAction::Zone(Zone::Grid(n)));
     }
+    if let Some(n) = id.strip_prefix(ACTION_WORKSPACE_PREFIX) {
+        return n.parse().ok().map(WindowAction::SendToWorkspace);
+    }
     WINDOW_MENU_ENTRIES.iter().find_map(|entry| match entry {
         WindowMenuEntry::Item(i) if i.id == id => Some(i.action),
         _ => None,
@@ -426,6 +476,68 @@ pub fn ensure_window_menu(mut payload: AppMenuPayload) -> AppMenuPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sola_bus::topics::Workspace;
+
+    fn two_workspaces() -> Workspaces {
+        let workspace = |id: &str, name: &str| Workspace {
+            id: id.into(),
+            name: name.into(),
+        };
+        Workspaces {
+            workspaces: vec![workspace("a", "Main"), workspace("b", "Games")],
+            showing: "b".into(),
+        }
+    }
+
+    fn sends(menu: &MenuDefinition) -> Vec<(String, String, bool)> {
+        menu.items
+            .iter()
+            .filter_map(|i| match i {
+                MenuItem::Action { id, label, checked, .. } if id.starts_with(ACTION_WORKSPACE_PREFIX) => {
+                    Some((id.clone(), label.clone(), *checked))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn one_send_item_per_workspace_with_the_showing_one_checked() {
+        let mut menu = window_menu();
+        fill_workspaces(&mut menu, &two_workspaces(), false);
+        assert_eq!(
+            sends(&menu),
+            [
+                ("window.workspace.0".to_string(), "Send to Main".to_string(), false),
+                ("window.workspace.1".to_string(), "Send to Games".to_string(), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_pinned_window_is_on_no_one_workspace() {
+        let mut menu = window_menu();
+        fill_workspaces(&mut menu, &two_workspaces(), true);
+        assert!(sends(&menu).iter().all(|(_, _, checked)| !checked));
+    }
+
+    #[test]
+    fn no_workspaces_known_leaves_the_menu_alone() {
+        let mut menu = window_menu();
+        let before = menu.items.len();
+        fill_workspaces(&mut menu, &Workspaces::default(), false);
+        assert_eq!(menu.items.len(), before);
+    }
+
+    #[test]
+    fn a_send_item_is_the_shell_s() {
+        assert_eq!(
+            parse_window_action(&workspace_action_id(2)),
+            Some(WindowAction::SendToWorkspace(2))
+        );
+        assert!(is_shell_action("window.workspace.0"));
+        assert_eq!(parse_window_action("window.workspace.x"), None);
+    }
 
     #[test]
     fn the_pin_item_is_the_shell_s_and_shows_whether_the_window_is_pinned() {

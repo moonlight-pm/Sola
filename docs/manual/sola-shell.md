@@ -518,8 +518,10 @@ shortcuts work on them as on any window.
 An app's last menu is the **Window** menu (an app can replace it). It
 holds **Hide** (Super+H), **Cycle Windows** (Super+Backtick), **Pin to All
 Workspaces** ([pinned windows](#pinned-windows)), **Float**, the grid's zones
-(named by their place), **Full** and **Cinema**, each with its key now, so
-each of those keys also has a mouse path. The Shell acts on the focused window.
+(named by their place), **Full** and **Cinema**, then a **Send to** item for
+each workspace (the showing one checked), each with its key now, so each of
+those keys also has a mouse path. The zones and workspaces follow the desk as
+it changes. The Shell acts on the focused window.
 
 ## The right-click menu
 

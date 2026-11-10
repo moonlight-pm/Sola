@@ -290,6 +290,9 @@ capture the screen directly; choose Allow.
 sola-kvm view <mac-host>
 ```
 
+Or open **Remote Desktop** from the launcher: with one machine paired it
+opens that one, and with none or several it says what to do.
+
 While the window has the keyboard, every key goes to the Mac, and Super acts
 as Cmd. **Ctrl+Alt+Esc** gives the keyboard and pointer back to Sola, and a
 click on the picture takes them again. Clicking another window also gives
@@ -299,8 +302,12 @@ The Mac listens on TCP 4243 (the KVM port plus one) and only starts capturing
 when a viewer connects. Only the paired machine's key gets in, and the traffic
 is encrypted. If the connection drops, the window connects again by itself.
 
-It shows the Mac's main display, one viewer at a time, with no sound and no
-shared clipboard.
+Copied text follows the window: what you copied here reaches the Mac when
+the window takes the keyboard, and what you copied on the Mac comes back when
+it lets go. Text only: a picture copied on either side stays there.
+
+It shows the Mac's main display, one viewer at a time, with no sound. To move its window to another workspace while it has the
+keyboard, use the titlebar's **Window** menu.
 
 ## How it works
 
