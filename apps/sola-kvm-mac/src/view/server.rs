@@ -15,13 +15,14 @@ use super::capture;
 use crate::inject::{CgInjector, Injector};
 use crate::link::{Conn, Keys};
 use crate::protocol::{self, Packet};
-use crate::view_wire::{Down, MAX_FRAME, PORT_OFFSET, Stream, Up};
+use crate::view_wire::{Down, MAX_CLIPBOARD, PORT_OFFSET, Stream, Up};
 
 /// How long a connection has to prove it is the paired machine. These run
 /// one at a time on the accept thread, so a stranger cannot pile up threads.
 const HANDSHAKE: Duration = Duration::from_secs(5);
 const OPEN_FRAME: u32 = 16;
-const INPUT_FRAME: u32 = 4096;
+/// Input is small; a frame this big is clipboard text.
+const UP_FRAME: u32 = MAX_CLIPBOARD as u32 + 16;
 
 /// What a viewer is sent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +35,7 @@ pub enum Source {
 
 pub enum Msg {
     Picture(Down),
+    Clipboard(String),
     Closed,
 }
 
@@ -52,6 +54,10 @@ struct Shared {
     video: Mutex<Option<TcpStream>>,
     input: Mutex<Option<TcpStream>>,
     force_key: Arc<AtomicBool>,
+    /// The video stream's queue, for clipboard answers.
+    to_viewer: Mutex<Option<Sender<Msg>>>,
+    /// The test card's clipboard: it never touches this Mac's.
+    test_clipboard: Mutex<String>,
 }
 
 impl Shared {
@@ -107,6 +113,10 @@ pub fn spawn(bind: &str, keys: Keys, source: Source) -> io::Result<()> {
     Ok(())
 }
 
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn open(tcp: &mut TcpStream, keys: &Keys) -> io::Result<(Conn, Stream)> {
     tcp.set_nodelay(true)?;
     tcp.set_read_timeout(Some(HANDSHAKE))?;
@@ -120,6 +130,7 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
     Shared::take_over(&shared.video, &tcp)?;
     let (tx, rx) = mpsc::channel();
     watch_for_close(&tcp, tx.clone())?;
+    *lock(&shared.to_viewer) = Some(tx.clone());
     let in_flight = Arc::new(AtomicUsize::new(0));
     let feed = Feed {
         tx,
@@ -135,10 +146,16 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
     };
     info!(?screen, "remote view: sending");
     conn.write_frame(&mut tcp, &screen.encode())?;
-    while let Ok(Msg::Picture(picture)) = rx.recv() {
-        let sent = conn.write_frame(&mut tcp, &picture.encode());
-        in_flight.fetch_sub(1, Ordering::Relaxed);
-        sent?;
+    loop {
+        match rx.recv() {
+            Ok(Msg::Picture(picture)) => {
+                let sent = conn.write_frame(&mut tcp, &picture.encode());
+                in_flight.fetch_sub(1, Ordering::Relaxed);
+                sent?;
+            }
+            Ok(Msg::Clipboard(text)) => conn.write_frame(&mut tcp, &Down::Clipboard(text).encode())?,
+            Ok(Msg::Closed) | Err(_) => break,
+        }
     }
     drop(running);
     Ok(())
@@ -160,8 +177,26 @@ fn input(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
     Shared::take_over(&shared.input, &tcp)?;
     let mut injector = CgInjector::new();
     let result = (|| loop {
-        match Up::decode(&conn.read_frame(&mut tcp, INPUT_FRAME.min(MAX_FRAME))?)? {
+        match Up::decode(&conn.read_frame(&mut tcp, UP_FRAME)?)? {
             Up::Keyframe => shared.force_key.store(true, Ordering::Relaxed),
+            Up::ClipboardSet(text) if source == Source::TestPattern => {
+                info!(bytes = text.len(), "test card: clipboard set");
+                *lock(&shared.test_clipboard) = text;
+            }
+            Up::ClipboardSet(text) => {
+                crate::clip::write_text(&text);
+            }
+            Up::ClipboardGet => {
+                let text = if source == Source::TestPattern {
+                    Some(format!("{} (from the test card)", lock(&shared.test_clipboard)))
+                } else {
+                    crate::clip::read_text()
+                };
+                // An image on the pasteboard has no text: nothing to send.
+                if let (Some(text), Some(tx)) = (text.filter(|t| t.len() <= MAX_CLIPBOARD), &*lock(&shared.to_viewer)) {
+                    let _ = tx.send(Msg::Clipboard(text));
+                }
+            }
             Up::Event(bytes) => match protocol::decode(&bytes) {
                 // The test card drives nothing: this Mac's pointer is someone's.
                 Ok((_, packet)) if source == Source::TestPattern => info!(?packet, "test card: input"),

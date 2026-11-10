@@ -45,6 +45,7 @@ pub struct App {
     held: BTreeSet<u32>,
     /// False once Ctrl+Alt+Esc has handed keyboard and pointer back.
     captured: bool,
+    focused: bool,
     inhibitor: Option<Arc<Inhibitor>>,
     window_id: Option<window::Id>,
     theme: Theme,
@@ -63,6 +64,7 @@ pub enum Msg {
     },
     Pointer(Packet),
     Capture,
+    Focused,
     Unfocused,
     Inhibited(Option<Arc<Inhibitor>>),
     WindowReady(Option<window::Id>),
@@ -87,6 +89,7 @@ impl App {
                 outgoing: None,
                 held: BTreeSet::new(),
                 captured: true,
+                focused: false,
                 inhibitor: None,
                 window_id: None,
                 theme: default_theme(),
@@ -142,6 +145,7 @@ impl App {
                     repeat: false,
                     modifiers,
                 }),
+                Event::Window(window::Event::Focused) => Some(Msg::Focused),
                 Event::Window(window::Event::Unfocused) => Some(Msg::Unfocused),
                 _ => None,
             }),
@@ -172,9 +176,18 @@ impl App {
             Msg::Pointer(packet) => self.send(packet),
             Msg::Capture => {
                 self.captured = true;
+                self.clipboard_to_host();
                 return self.inhibit();
             }
-            Msg::Unfocused => self.release_keys(),
+            Msg::Focused => {
+                self.focused = true;
+                self.clipboard_to_host();
+            }
+            Msg::Unfocused => {
+                self.focused = false;
+                self.release_keys();
+                self.clipboard_from_host();
+            }
             Msg::Inhibited(inhibitor) => {
                 // A release that landed while this was on its way wins.
                 if self.captured {
@@ -198,6 +211,7 @@ impl App {
             net::Event::Connected(display) => {
                 self.display = Some(display);
                 self.status = Status::Showing;
+                self.clipboard_to_host();
             }
             // The message alone brings the redraw that uploads it.
             net::Event::Picture => self.pictures.drawn(),
@@ -239,11 +253,26 @@ impl App {
     /// Ctrl+Alt+Esc: keyboard, pointer and the desk's shortcuts come back.
     /// A click on the picture takes them again.
     fn release(&mut self) -> Task<Msg> {
+        self.clipboard_from_host();
         self.captured = false;
         self.inhibitor = None;
         self.held.clear();
         self.send(Packet::Leave);
         Task::none()
+    }
+
+    /// Coming in: what was copied here is there to paste.
+    fn clipboard_to_host(&self) {
+        if self.captured && self.focused {
+            self.send_out(Outgoing::PushClipboard);
+        }
+    }
+
+    /// Going out: what was copied there is here to paste.
+    fn clipboard_from_host(&self) {
+        if self.captured {
+            self.send_out(Outgoing::PullClipboard);
+        }
     }
 
     fn release_keys(&mut self) {
@@ -260,8 +289,12 @@ impl App {
     }
 
     fn send(&self, packet: Packet) {
+        self.send_out(Outgoing::Packet(packet));
+    }
+
+    fn send_out(&self, out: Outgoing) {
         if let Some(outgoing) = &self.outgoing {
-            let _ = outgoing.send(Outgoing::Packet(packet));
+            let _ = outgoing.send(out);
         }
     }
 

@@ -11,9 +11,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use iced::futures::channel::mpsc::UnboundedSender;
+use sola_kvm::clip;
 use sola_kvm::link::{self, Conn, Keys};
 use sola_kvm::protocol::{self, Packet};
-use sola_kvm::view_wire::{Down, MAX_FRAME, PORT_OFFSET, Stream, Up};
+use sola_kvm::view_wire::{Down, MAX_CLIPBOARD, MAX_FRAME, PORT_OFFSET, Stream, Up};
 use tracing::{debug, info, warn};
 
 use crate::decode::Decoder;
@@ -49,6 +50,19 @@ pub enum Event {
 pub enum Outgoing {
     Packet(Packet),
     Keyframe,
+    /// Give the host this machine's clipboard.
+    PushClipboard,
+    /// Ask for the host's clipboard.
+    PullClipboard,
+    /// This machine's clipboard text, read and on its way.
+    Clipboard(String),
+}
+
+/// Clipboard work, off the input and video threads: reading or writing the
+/// desk's clipboard can take a moment.
+enum ClipJob {
+    Push,
+    Apply(String),
 }
 
 type Link = Arc<Mutex<Option<(TcpStream, Conn)>>>;
@@ -58,13 +72,21 @@ pub fn start(host: String, kvm_port: u16, pictures: Arc<Pictures>, events: Unbou
     let _ = events.unbounded_send(Event::Ready(tx.clone()));
     let link: Link = Arc::default();
     let writer = Arc::clone(&link);
+    let (clip_tx, clip_rx) = mpsc::channel();
+    let (to_writer, to_video) = (clip_tx.clone(), clip_tx);
+    let outgoing = tx.clone();
     let spawned = thread::Builder::new()
         .name("kvm-view-input".into())
-        .spawn(move || write_loop(rx, writer))
+        .spawn(move || write_loop(rx, writer, to_writer))
+        .and_then(|_| {
+            thread::Builder::new()
+                .name("kvm-view-clip".into())
+                .spawn(move || clip_loop(clip_rx, outgoing))
+        })
         .and_then(|_| {
             thread::Builder::new()
                 .name("kvm-view-video".into())
-                .spawn(move || video_loop(&host, kvm_port, &pictures, &events, &link, &tx))
+                .spawn(move || video_loop(&host, kvm_port, &pictures, &events, &link, &tx, &to_video))
         });
     if let Err(e) = spawned {
         warn!(%e, "remote view: could not start its threads");
@@ -78,6 +100,7 @@ fn video_loop(
     events: &UnboundedSender<Event>,
     link: &Link,
     outgoing: &Sender<Outgoing>,
+    clip: &Sender<ClipJob>,
 ) {
     let keys = match link::load_view(&link::dir(), host) {
         Ok(Some(keys)) => keys,
@@ -93,7 +116,7 @@ fn video_loop(
         }
     };
     loop {
-        match session(host, kvm_port, &keys, pictures, events, link, outgoing) {
+        match session(host, kvm_port, &keys, pictures, events, link, outgoing, clip) {
             Ok(Stop::Refused) => return,
             Err(e) => {
                 info!(host, error = %e, "remote view: connection lost");
@@ -117,6 +140,7 @@ fn session(
     events: &UnboundedSender<Event>,
     link: &Link,
     outgoing: &Sender<Outgoing>,
+    clip: &Sender<ClipJob>,
 ) -> io::Result<Stop> {
     let addr = resolve(host, kvm_port + PORT_OFFSET)?;
     let (mut tcp, mut conn) = connect(addr, keys, Stream::Video)?;
@@ -134,6 +158,9 @@ fn session(
             Down::Refused(why) => {
                 let _ = events.unbounded_send(Event::Refused(why));
                 return Ok(Stop::Refused);
+            }
+            Down::Clipboard(text) => {
+                let _ = clip.send(ClipJob::Apply(text));
             }
             Down::Picture { pts_us, data, .. } => {
                 let decoder = match &mut decoder {
@@ -229,7 +256,34 @@ fn keepalive(tcp: &TcpStream) {
     }
 }
 
-fn write_loop(rx: Receiver<Outgoing>, link: Link) {
+/// The text both machines last agreed on, so a sync that changes nothing
+/// does nothing: leaving the window must not overwrite what was copied here
+/// meanwhile with the host's unchanged clipboard.
+fn clip_loop(jobs: Receiver<ClipJob>, outgoing: Sender<Outgoing>) {
+    let mut agreed = None;
+    while let Ok(job) = jobs.recv() {
+        match job {
+            ClipJob::Push => {
+                let Some(text) = clip::read_text().filter(|t| t.len() <= MAX_CLIPBOARD) else {
+                    continue;
+                };
+                let hash = clip::hash_text(&text);
+                if agreed != Some(hash) {
+                    agreed = Some(hash);
+                    let _ = outgoing.send(Outgoing::Clipboard(text));
+                }
+            }
+            ClipJob::Apply(text) => {
+                let hash = clip::hash_text(&text);
+                if agreed != Some(hash) && clip::write_text(&text) {
+                    agreed = Some(hash);
+                }
+            }
+        }
+    }
+}
+
+fn write_loop(rx: Receiver<Outgoing>, link: Link, clip: Sender<ClipJob>) {
     let mut seq = 0u32;
     while let Ok(first) = rx.recv() {
         let mut batch = vec![first];
@@ -237,6 +291,12 @@ fn write_loop(rx: Receiver<Outgoing>, link: Link) {
         for out in coalesce(batch) {
             let up = match out {
                 Outgoing::Keyframe => Up::Keyframe,
+                Outgoing::PushClipboard => {
+                    let _ = clip.send(ClipJob::Push);
+                    continue;
+                }
+                Outgoing::PullClipboard => Up::ClipboardGet,
+                Outgoing::Clipboard(text) => Up::ClipboardSet(text),
                 Outgoing::Packet(packet) => {
                     seq = seq.wrapping_add(1);
                     match protocol::encode(seq, &packet) {
