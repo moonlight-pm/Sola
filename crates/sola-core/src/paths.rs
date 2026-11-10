@@ -60,7 +60,7 @@ pub fn log_dir() -> &'static Path {
     DIR.get_or_init(|| {
         resolve(
             std::env::var_os("SOLA_LOG_DIR"),
-            if on_oath() { state_dir() } else { None },
+            if on_oath() { xdg_state_dir() } else { None },
             OPT_LOG,
         )
     })
@@ -71,8 +71,16 @@ pub fn log_path(name: &str) -> PathBuf {
     log_dir().join(name)
 }
 
+/// Where Sola's apps keep their own state (`crate::state_file`):
+/// `$XDG_STATE_HOME/sola`, else `$HOME/.local/state/sola`, else
+/// `/opt/sola/state`. Resolved once per process.
+pub fn state_dir() -> &'static Path {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| xdg_state_dir().unwrap_or_else(|| PathBuf::from("/opt/sola/state")))
+}
+
 /// `$XDG_STATE_HOME/sola`, else `$HOME/.local/state/sola`.
-fn state_dir() -> Option<PathBuf> {
+fn xdg_state_dir() -> Option<PathBuf> {
     state_dir_from(std::env::var_os("XDG_STATE_HOME"), std::env::var_os("HOME"))
 }
 

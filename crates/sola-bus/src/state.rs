@@ -40,6 +40,26 @@ pub fn state_path() -> PathBuf {
     sola_core::config::sola_config_dir().join("state.yaml")
 }
 
+/// What the bus kept on disk for a kind since moved to its owner's own
+/// file (`sola_core::state_file`): section `section` of state.yaml. The
+/// owner reads it until it has saved its own copy.
+pub fn legacy_section<T: serde::de::DeserializeOwned>(section: &str) -> Option<T> {
+    legacy_section_at(&state_path(), section)
+}
+
+fn legacy_section_at<T: serde::de::DeserializeOwned>(path: &Path, section: &str) -> Option<T> {
+    let raw = fs::read_to_string(path).ok()?;
+    let mapping: Mapping = serde_yaml_ng::from_str(&raw).ok()?;
+    serde_yaml_ng::from_value(mapping.get(section)?.clone()).ok()
+}
+
+/// [`legacy_section`] for a kind the bus kept in a file of its own under
+/// the config dir (`shell/tabs.yaml`).
+pub fn legacy_file<T: serde::de::DeserializeOwned>(relative: &str) -> Option<T> {
+    let raw = fs::read_to_string(sola_core::config::sola_config_dir().join(relative)).ok()?;
+    serde_yaml_ng::from_str(&raw).ok()
+}
+
 /// Read state.yaml and return one sticky `Message` per valid
 /// persistent section. Missing file → empty vec. Parse errors,
 /// unknown sections, non-persistent sections, and schema mismatches
@@ -456,6 +476,18 @@ mod tests {
         let restored = load(&path);
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].topic, "ZoneLayout");
+    }
+
+    #[test]
+    fn a_legacy_section_reads_back_as_its_payload() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.yaml");
+        let mut layout = crate::topics::ZoneLayout::default();
+        layout.columns = 4;
+        write_section(&path, &Topic::ZoneLayout(layout.clone())).unwrap();
+        let back: Option<crate::topics::ZoneLayout> = legacy_section_at(&path, "ZoneLayout");
+        assert_eq!(back, Some(layout));
+        assert_eq!(legacy_section_at::<crate::topics::ZoneLayout>(&path, "Missing"), None);
     }
 
     #[test]
