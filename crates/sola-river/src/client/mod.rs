@@ -65,6 +65,9 @@ pub struct AppData {
     /// New windows River has not named yet (`identifier` comes after their
     /// app id and title): not in `Windows` until then.
     pub unidentified: std::collections::HashSet<u32>,
+    /// River's first manage sequence has begun: every window it already had
+    /// is in (`crate::translator::emit_windows` waits for it).
+    pub windows_known: bool,
     /// Windows whose tab the shell has been told (`Topic::WindowTab`).
     pub tabs_told: std::collections::HashSet<u32>,
     pub pending: PendingUpdate,
@@ -250,6 +253,7 @@ impl AppData {
             registry: WindowRegistry::new(),
             window_ids: crate::window_ids::WindowIds::default(),
             unidentified: std::collections::HashSet::new(),
+            windows_known: false,
             tabs_told: std::collections::HashSet::new(),
             pending: PendingUpdate::default(),
             chords: ChordRegistry::default(),
@@ -410,7 +414,7 @@ pub fn bus_tick(state: &mut AppData) {
             }
             sola_bus::topics::Topic::Frame(f) => {
                 let app_id = state.registry.app_id_for(f.window_id).unwrap_or("?");
-                tracing::info!(
+                tracing::debug!(
                     window_id = f.window_id,
                     app_id,
                     x = f.x,
