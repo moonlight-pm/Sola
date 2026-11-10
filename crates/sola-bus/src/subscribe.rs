@@ -37,7 +37,8 @@ pub const NUMBERED: &[&str] = &[
 /// The names in [`NUMBERED`] whose kinds this build no longer has.
 pub const REMOVED: &[&str] = &[
     "Zones", "CustomTheme", "TerminalConfig", "MonitorConfig", "BrowserConfig",
-    "BrowserHistory", "BrowserTab",
+    "BrowserHistory", "BrowserTab", "AppHidden", "FloatGeometry", "SessionApps",
+    "TerminalSession", "PaintSession", "TabLayout",
 ];
 
 /// The frames that subscribe to `kinds`: the names, then the numbered set
@@ -121,12 +122,18 @@ mod tests {
         assert_eq!(at("BrowserConfig"), Some(55));
         assert_eq!(at("BrowserHistory"), Some(56));
         assert_eq!(at("BrowserTab"), Some(57));
+        assert_eq!(at("AppHidden"), Some(27));
+        assert_eq!(at("FloatGeometry"), Some(46));
+        assert_eq!(at("SessionApps"), Some(47));
+        assert_eq!(at("TerminalSession"), Some(54));
+        assert_eq!(at("PaintSession"), Some(58));
+        assert_eq!(at("TabLayout"), Some(60));
         assert_eq!(NUMBERED.len(), 64);
     }
 
     #[test]
     fn names_round_trip() {
-        let kinds = [TopicKind::Theme, TopicKind::TabLayout, TopicKind::Application];
+        let kinds = [TopicKind::Theme, TopicKind::MailConfig, TopicKind::Application];
         let [names, _] = frames(&kinds);
         assert_eq!(names.topic, crate::CONTROL_SUBSCRIBE_NAMES);
         assert_eq!(decode_names(&names).unwrap(), kinds);
@@ -134,19 +141,19 @@ mod tests {
 
     #[test]
     fn numbered_uses_the_frozen_numbers() {
-        let kinds = [TopicKind::Theme, TopicKind::Application, TopicKind::TabLayout];
+        let kinds = [TopicKind::Theme, TopicKind::Application, TopicKind::MailConfig];
         let [_, numbered] = frames(&kinds);
         assert_eq!(numbered.topic, crate::CONTROL_SUBSCRIBE);
         let numbers: Vec<u32> = decode_payload(&numbered).unwrap();
-        assert_eq!(numbers, vec![49, 51, 60]);
+        assert_eq!(numbers, vec![49, 51, 48]);
         assert_eq!(decode_numbered(&numbered).unwrap(), kinds);
     }
 
     #[test]
     fn old_build_numbers_read_as_it_meant_them() {
-        // A shell from 83df4558 asking for TabLayout and Application.
-        let msg = Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![60u32, 51]));
-        assert_eq!(decode_numbered(&msg).unwrap(), vec![TopicKind::TabLayout, TopicKind::Application]);
+        // A shell from 83df4558 asking for MailConfig and Application.
+        let msg = Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![48u32, 51]));
+        assert_eq!(decode_numbered(&msg).unwrap(), vec![TopicKind::MailConfig, TopicKind::Application]);
     }
 
     #[test]

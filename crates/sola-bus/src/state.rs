@@ -32,7 +32,8 @@ pub const BUS_SOURCE: &str = "sola-bus";
 /// section for one; it is skipped quietly, where an unknown name warns.
 pub const RETIRED: &[&str] = &[
     "CustomTheme", "Zones", "TerminalConfig", "MonitorConfig", "BrowserConfig",
-    "BrowserHistory", "BrowserTab", "PinnedTabs",
+    "BrowserHistory", "BrowserTab", "PinnedTabs", "SessionApps", "FloatGeometry",
+    "TerminalSession", "AppHidden", "PaintSession", "TabLayout",
 ];
 
 /// `~/.config/sola/state.yaml`.
@@ -581,7 +582,7 @@ mod tests {
     }
 
     // No live kind is both keyed and namespaced, so the keyed walk is
-    // tested on FloatGeometry (keyed by `app_id`), which is a kind with
+    // tested on Application (keyed by `app_id`), which is a kind with
     // keys; the walk does not look at the namespace.
 
     #[test]
@@ -589,12 +590,12 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().join("float/geometry");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("a.yaml"), "app_id: a\nx: 1\ny: 2\nwidth: 3\nheight: 4\n").unwrap();
-        fs::write(dir.join("b.yaml"), "app_id: b\nx: 5\ny: 6\nwidth: 7\nheight: 8\n").unwrap();
+        fs::write(dir.join("a.yaml"), "app_id: a\nlabel: A\ncommand: a\nicon: i\n").unwrap();
+        fs::write(dir.join("b.yaml"), "app_id: b\nlabel: B\ncommand: b\nicon: i\n").unwrap();
         // A non-yaml file in the dir should be ignored.
         fs::write(dir.join("readme.txt"), "not a record").unwrap();
 
-        let msgs = load_namespaced_keyed(&dir, TopicKind::FloatGeometry);
+        let msgs = load_namespaced_keyed(&dir, TopicKind::Application);
         assert_eq!(msgs.len(), 2);
         let mut keys: Vec<String> = msgs.iter().flat_map(|m| m.keys.clone()).collect();
         keys.sort();
@@ -609,7 +610,7 @@ mod tests {
     fn load_namespaced_keyed_missing_dir_is_empty() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().join("nonexistent");
-        let msgs = load_namespaced_keyed(&dir, TopicKind::FloatGeometry);
+        let msgs = load_namespaced_keyed(&dir, TopicKind::Application);
         assert!(msgs.is_empty());
     }
 
@@ -631,18 +632,18 @@ mod tests {
 
     #[test]
     fn write_then_load_namespaced_keyed_round_trips() {
-        use crate::topics::FloatGeometry;
+        use crate::topics::Application;
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().join("float/geometry");
 
-        let a = FloatGeometry { app_id: "a".into(), x: 1, y: 2, width: 3, height: 4 };
-        write_namespaced(&dir.join("a.yaml"), &Topic::FloatGeometry(a.clone())).unwrap();
+        let a = Application { app_id: "a".into(), label: "A".into(), command: "a".into(), ..Default::default() };
+        write_namespaced(&dir.join("a.yaml"), &Topic::Application(a.clone())).unwrap();
 
-        let msgs = load_namespaced_keyed(&dir, TopicKind::FloatGeometry);
+        let msgs = load_namespaced_keyed(&dir, TopicKind::Application);
         assert_eq!(msgs.len(), 1);
         match Topic::parse(&msgs[0]).unwrap() {
-            Topic::FloatGeometry(back) => assert_eq!(back, a),
-            other => panic!("expected FloatGeometry, got {other:?}"),
+            Topic::Application(back) => assert_eq!(back, a),
+            other => panic!("expected Application, got {other:?}"),
         }
     }
 }

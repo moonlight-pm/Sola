@@ -8,10 +8,9 @@ use std::time::Duration;
 
 use iced::Task;
 use sola_bus::topics::{
-    AppHidden, AppMenuPayload, AppNotification, AppToast, Application, ChordEvent, FloatGeometry,
-    FocusTarget, LaunchResultPayload, MailStatus, MenuActionPayload, MouseClickedPayload,
-    MouseEnteredPayload,
-    OutputGeometry, TabLayout, Topic, UserAppExitedPayload, Window, WindowChrome, WindowFloating,
+    AppMenuPayload, AppNotification, AppToast, Application, ChordEvent, FocusTarget,
+    LaunchResultPayload, MailStatus, MenuActionPayload, MouseClickedPayload, MouseEnteredPayload,
+    OutputGeometry, Topic, UserAppExitedPayload, Window, WindowChrome, WindowFloating,
     WindowGeometry, WindowParent, Zone,
 };
 use sola_core::theme::Theme as BusTheme;
@@ -103,10 +102,6 @@ impl Shell {
                 self.on_application(a, message.sticky);
                 Task::none()
             }
-            Topic::AppHidden(h) => {
-                self.on_app_hidden(h, message.sticky);
-                Task::none()
-            }
             Topic::Chord(c) => self.on_chord(c),
             Topic::MouseEntered(e) => self.on_mouse_entered(e),
             Topic::MouseClicked(e) => {
@@ -134,10 +129,6 @@ impl Shell {
                     self.emit_composition();
                 }
                 self.persist_tabs();
-                Task::none()
-            }
-            Topic::TabLayout(l) => {
-                self.on_tab_layout(l);
                 Task::none()
             }
             Topic::TabOpener(o) => {
@@ -173,10 +164,6 @@ impl Shell {
             }
             Topic::WindowGeometry(g) => {
                 self.on_window_geometry(g);
-                Task::none()
-            }
-            Topic::FloatGeometry(f) => {
-                self.on_float_geometry(f);
                 Task::none()
             }
             // External links. Live sola-browser already subscribed to
@@ -625,42 +612,6 @@ impl Shell {
             self.emit_all_frames();
             self.persist_tabs();
         }
-        self.emit_composition();
-    }
-
-    /// The saved tab layout (persistent replay). Taken once; later
-    /// deliveries are our own echo. Windows already up are placed again so
-    /// they take their saved places.
-    fn on_tab_layout(&mut self, layout: TabLayout) {
-        if self.tab_layout_loaded {
-            return;
-        }
-        self.tab_layout_loaded = true;
-        self.tab_layout_ready = true;
-        let now = std::time::Instant::now();
-        tracing::info!(zones = layout.zones.len(), "tab layout loaded");
-        self.tabs.load(&layout, now);
-        self.last_tab_layout = Some(layout);
-        self.tabs.clear();
-        let windows: Vec<(u32, String)> = self
-            .known_windows
-            .iter()
-            .filter(|w| w.app_id != Self::APP_ID && self.tabs.parent_of(w.window_id).is_none())
-            .map(|w| (w.window_id, w.app_id.clone()))
-            .collect();
-        for (wid, app_id) in windows {
-            let floats = crate::zoning::floats_by_default(&app_id);
-            let key = self.pairing.key_of(wid).unwrap_or(&app_id).to_string();
-            let placed = self.tabs.place(wid, &app_id, &key, floats, true, now);
-            if placed.zone == Zone::Float {
-                Self::emit_frames(self.zoning.float(&app_id, wid, true).into_iter().collect());
-            } else {
-                self.zoning.unfloat(wid);
-            }
-        }
-        self.keep_focus_on_screen();
-        self.sync_window_floating();
-        self.emit_all_frames();
         self.emit_composition();
     }
 
@@ -1119,23 +1070,6 @@ impl Shell {
         }
     }
 
-    /// Hide or show an app's surfaces in composition (River hide/show).
-    /// Sticky emit → hide; sticky=false retract → show. Case-insensitive
-    /// match on window app_id when filtering composition.
-    fn on_app_hidden(&mut self, h: AppHidden, sticky: bool) {
-        let key = h.app_id.to_ascii_lowercase();
-        if sticky {
-            tracing::info!(app_id = %h.app_id, "AppHidden: hide");
-            self.hidden_apps.insert(key, h.app_id);
-        } else {
-            tracing::info!(app_id = %h.app_id, "AppHidden: show (retract)");
-            self.hidden_apps.remove(&key);
-        }
-        // A zone whose tabs are all hidden gives its width away.
-        self.emit_all_frames();
-        self.emit_composition();
-    }
-
     // -------------------------------------------------------------------------
     // Chord dispatch
     // -------------------------------------------------------------------------
@@ -1502,18 +1436,8 @@ impl Shell {
             .zoning
             .note_window_geometry(&app_id, g.window_id, g.x, g.y, g.width, g.height)
         {
-            if let Ok(mut bus) = sola_kit::app::bus().lock() {
-                let _ = bus.emit(Topic::FloatGeometry(
-                    self.zoning.float_geometry[&app_id].clone(),
-                ));
-            }
+            self.save_floats();
         }
-    }
-
-    /// Cache a floating app's remembered rectangle from Topic::FloatGeometry
-    /// (persistent replay at startup, or our own echo after recording).
-    fn on_float_geometry(&mut self, f: FloatGeometry) {
-        self.zoning.float_geometry.insert(f.app_id.clone(), f);
     }
 
     /// Publish `Topic::WindowFloating` for any window whose float state changed

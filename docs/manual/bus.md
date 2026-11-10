@@ -66,7 +66,7 @@ never forwards or answers them.
 | `$subscribe-names` | postcard list of strings: topic names | Replaces this connection's subscription set |
 | `$subscribe` | postcard list of integers: topic numbers | The same, for a bus from before `$subscribe-names`; ignored from a connection that has sent `$subscribe-names` |
 
-`$subscribe-names` names each kind as its messages do (`TabLayout`), so a
+`$subscribe-names` names each kind as its messages do (`Theme`), so a
 bus and a client from different builds agree on what was asked for. The
 bus skips names it does not know, a newer client's topics, and applies the
 rest.
@@ -171,12 +171,8 @@ an absolute path, otherwise `~/.config/sola`.
 
 | Topic | File | Layout |
 |---|---|---|
-| `SessionApps`, `MailConfig`, `CalendarConfig`, `Background`, `Appearance` | `state.yaml` | A top-level key named after the topic, holding the payload |
-| `FloatGeometry`, `Application`, `TerminalSession` | `state.yaml` | A top-level key holding a list, one entry per record |
 | `Theme` | `theme/current.yaml` | The whole file |
-| `TabLayout` | `shell/tabs.yaml` | The whole file |
 | `CalendarAgenda` | `calendar/agenda.yaml` | The whole file |
-| `PaintSession` | `paint.yaml` | The whole file |
 
 The bus rewrites a file each time one of its records changes (a temporary
 file renamed into place), and a retraction removes the entry or deletes the
@@ -215,7 +211,6 @@ the kit's `TabWindows`.
 | `Composition` | Window ids to show, bottom to top | Shell | `sola-river` | Ephemeral |
 | `Frame` | One window's `window_id`, `x`, `y`, `width`, `height`, and `fullscreen` flag | Shell | `sola-river` | Ephemeral |
 | `Focus` | The `window_id` to give the keyboard, or 0 for no window | Shell | `sola-river` | Ephemeral |
-| `AppHidden` | An `app_id` left out of `Composition` | Shell ([Hide](sola-shell.md#hide)); retracted to show it again | Shell | Sticky by `app_id` |
 | `CloseWindow` | A `window_id` | Shell (a bar row's stoplight, for a window that is not a tab) | `sola-river`: asks that window to close, as its own close button would | Ephemeral |
 | `MouseEntered` | The `window_id` the pointer entered; `still` when the pointer did not move (the window under it changed) | `sola-river` | Shell | Ephemeral |
 | `MouseLeft` | None | `sola-river` | Shell | Ephemeral |
@@ -241,11 +236,9 @@ What `sola-river` does with these is in [Compositor](compositor.md).
 | `ShowTab` | A tab's `key` | Browser, Paint, Projects, Design (a notification click, a dialog in a page behind, `tab.focus`) | Shell: shows the tab's window in its zone, on its workspace, and focuses it | Ephemeral |
 | `ShowWindow` | A `window_id` | Calendar (an app bringing its own window forward) | Shell: as for `ShowTab` | Ephemeral |
 | `CloseTab` | A tab's `key` | Shell (a bar row's stoplight) | The app that opened the tab: closes its window as its own close button would | Ephemeral |
-| `TabLayout` | The bar as last saved: `zones`, its runs in order (each a `zone`, its `apps` as tab keys, or app ids for windows that are not tabs, `shown`, the index of the tab the zone shows, and its `workspace`); `workspaces` (`id`, `name`); `showing`; `full` (the workspaces whose Full zone is on screen) | Shell | Shell, at its next start: returning windows take their places | Persistent |
 | `Workspaces` | The `workspaces` in order (`id`, `name`) and the one `showing` | Shell | Browser (a new page window opens under the showing workspace's profile) | Sticky |
 | `WindowWorkspace` | `window_id`, `workspace` | Shell, once the window is where it belongs (not while it may still move to its tab's saved place); retracted when the window closes or is pinned | Browser (a page whose workspace has another profile reopens under it; a pinned page, with no workspace, keeps its profile) | Sticky by `window_id` |
 | `FocusPinned` | `pinned`: the focused window is on every workspace | Shell | The kit, in every app (the check on the Pin item in a titlebar's Window menu) | Sticky |
-| `FloatGeometry` | A floating app's last rectangle: `app_id`, `x`, `y`, `width`, `height` | Shell | Shell | Persistent by `app_id` |
 
 The bar is described in [Shell § The bar](sola-shell.md#the-bar), its zones in [Shell § Zones](sola-shell.md#zones).
 
@@ -257,7 +250,6 @@ The bar is described in [Shell § The bar](sola-shell.md#the-bar), its zones in 
 | `LaunchResult` | `app_id`, `command`, `ok`, `error` | `sola-session` | Shell | Ephemeral |
 | `UserAppExited` | `app_id`, `command`, exit `code` or `signal` | `sola-session` | Shell | Ephemeral |
 | `CloseApp` | An `app_id` | Shell (Super+Q); kit apps closing themselves (a single-window app's close button, the Browser's last page) | `sola-session` (stops it), `sola-river` (asks its windows to close), the named app (quits), Browser (closes a web app's windows) | Ephemeral |
-| `SessionApps` | Open apps: `app_id`, `command` | `sola-session` | `sola-session`, at its next start | Persistent |
 | `Application` | A launcher entry: `app_id`, `label`, `command`, `icon`, `kind`, `url`, `profile` | Settings; Browser (web apps) | Shell, Settings, Browser | Persistent by `app_id` |
 | `SetAppMenu` | `app_id` and its menus: labels and items (action id, label, shortcut, disabled, checked) or dividers | Each app with a menu, at start | Shell (registers the focused app's Super shortcuts; an app with no menu gets the compositor's rim) | Sticky by `app_id` |
 | `MenuAction` | `app_id`, `action_id` of a chosen item or shortcut | Shell (a Super shortcut of the focused app's menu); a kit app's titlebar Window menu; a second launch of Terminal or Projects, to the running one | The app named by `app_id`; the Shell for Window-menu actions, which it applies to the focused window | Ephemeral |
@@ -293,8 +285,6 @@ The fade and the dim are described in [Compositor § The idle fade](compositor.m
 | `CalendarAgenda` | `days`, today through the next week: each a `date` (`YYYY-MM-DD`) and its `events` (`id`, `title`, `color`, `all_day`, `start`, `end` in unix seconds, `location`) | Calendar | Shell (the clock's panel, also while Calendar is closed) | Persistent |
 | `VaultState` | `signed_in`, `unlocked`, `email`, `server` (its web vault's address), `synced_at` (unix seconds of the last sync that worked, or of the one kept on disk after an unlock without network), `syncing`, `sync_error`, `items` (the trash not counted; 0 while locked); no item names and no values | `sola-vaultd`, on every change ([Vault](sola-vault.md)) | Shell (the flower menu has **Lock Vault** while `unlocked`) | Sticky |
 | `ScreenLock` | `locked` | `sola-lock`: `true` once the compositor confirms the lock, `false` once you unlock it. A lock screen that dies says nothing, so `true` stands while the compositor keeps the screen locked ([Security](security.md#locking)) | `sola-vaultd` (locks the vault, unless **Lock when the screen locks** is off) | Sticky |
-| `TerminalSession` | One Terminal tab: `id`, tmux session, working directory, order, pane layout | Terminal | Terminal | Persistent by `id` |
-| `PaintSession` | The open images' paths and the selected one | Paint | Paint | Persistent |
 
 No current app publishes or reads the last six; the bus still restores
 their files if they exist.

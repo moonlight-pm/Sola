@@ -401,8 +401,9 @@ pub struct ZoningState {
     /// float in the bar's Floating zone does; a dialog does not).
     floats: HashMap<u32, bool>,
     /// Last known rectangle of each floating app, keyed by app_id. Fed by
-    /// `Topic::WindowGeometry` for floating windows and by `Topic::FloatGeometry`
-    /// replay at startup; restored when the app's window floats again.
+    /// `Topic::WindowGeometry` for floating windows, and from the shell's
+    /// own file at boot (`crate::saved_state`); restored when the app's
+    /// window floats again.
     pub float_geometry: HashMap<String, FloatGeometry>,
     /// Latest on-screen rectangle of every known window, keyed by window_id.
     /// Fed by `Topic::WindowGeometry` (sola-river) for all windows; a float

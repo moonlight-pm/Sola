@@ -38,9 +38,18 @@ use crate::windows::{EMPTY, PaintWindows};
 pub const APP_ID: &str = "sola-paint";
 const HEADER_H: f32 = sola_kit::components::style::BAR_H;
 const MAX_DOCS: usize = 32;
-/// How long boot waits for the saved session before showing the empty
-/// window.
-const BOOT_SETTLE: Duration = Duration::from_millis(400);
+
+/// The open images, kept in Paint's own file (no other process reads it).
+fn session_file() -> sola_core::state_file::StateFile {
+    sola_core::state_file::StateFile::new("paint", "session.json")
+}
+
+/// The saved session; before the first save, what the bus kept.
+fn load_session(file: &sola_core::state_file::StateFile) -> PaintSession {
+    file.load()
+        .or_else(|| sola_bus::state::legacy_file::<PaintSession>("paint.yaml"))
+        .unwrap_or_default()
+}
 
 pub fn run() -> iced::Result {
     startup(APP_ID);
@@ -71,7 +80,7 @@ pub fn run() -> iced::Result {
     }
 
     BusSetup::new(APP_ID)
-        .app_kinds(&[TopicKind::TabWindow, TopicKind::CloseTab, TopicKind::OpenImage, TopicKind::PaintSession])
+        .app_kinds(&[TopicKind::TabWindow, TopicKind::CloseTab, TopicKind::OpenImage])
         .app_menu("Paint", [("quit", "Quit Paint", KeyCode::Q.meta())])
         .app_menu_definition(MenuDefinition {
             label: "File".into(),
@@ -175,8 +184,6 @@ pub struct App {
     theme: Theme,
     float: sola_kit::FloatState,
     icons: Icons,
-    /// True after the first sticky `PaintSession` (restore or our emit).
-    restored: bool,
     /// True while a restore batch is decoding — don't persist mid-flight.
     restoring: bool,
 }
@@ -197,7 +204,6 @@ impl Default for App {
             theme: default_theme(),
             float: sola_kit::FloatState::new(APP_ID),
             icons: Icons::new(),
-            restored: false,
             restoring: false,
         }
     }
@@ -205,10 +211,11 @@ impl Default for App {
 
 impl App {
     /// Open a window for each image on the command line (the first in
-    /// front); with none, wait a moment for the saved session before
-    /// showing the empty window.
+    /// front), then the saved session's images behind them.
     pub fn boot() -> (Self, Task<Msg>) {
         let mut app = Self::default();
+        // Read before anything can save over it.
+        let saved = load_session(&session_file());
         let mut tasks = Vec::new();
         for arg in std::env::args().skip(1) {
             if arg.is_empty() {
@@ -216,9 +223,7 @@ impl App {
             }
             tasks.push(app.open_path_sync(abs_path(PathBuf::from(arg))));
         }
-        tasks.push(Task::perform(tokio::time::sleep(BOOT_SETTLE), |()| {
-            Msg::BootSettled
-        }));
+        tasks.push(app.restore_session(saved));
         (app, Task::batch(tasks))
     }
 
@@ -274,10 +279,7 @@ impl App {
         if selected != self.selected {
             self.selected = selected;
             self.cancel_crop();
-            // Not before the saved session is read: it would be replaced.
-            if self.restored {
-                self.persist_session();
-            }
+            self.persist_session();
         }
     }
 
@@ -424,23 +426,15 @@ impl App {
         if self.restoring {
             return;
         }
-        self.restored = true;
         let session = PaintSession {
             paths: self.docs.iter().filter_map(|d| d.path.clone()).collect(),
             selected: self.selected_doc().and_then(|d| d.path.clone()),
         };
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
-            if let Err(e) = bus.emit(Topic::PaintSession(session)) {
-                tracing::warn!(error = %e, "persist paint session failed");
-            }
-        }
+        session_file().save(&session);
     }
 
-    fn on_paint_session(&mut self, session: PaintSession) -> Task<Msg> {
-        if self.restored {
-            return Task::none();
-        }
-        self.restored = true;
+    /// Open the saved session's images (those not already open).
+    fn restore_session(&mut self, session: PaintSession) -> Task<Msg> {
         let have: std::collections::HashSet<PathBuf> =
             self.docs.iter().filter_map(|d| d.path.clone()).collect();
         let keep_sel = self.selected.is_some();
@@ -696,9 +690,6 @@ impl App {
                     return iced::exit();
                 }
                 match Topic::parse(&message) {
-                    Some(Topic::PaintSession(session)) => {
-                        return self.on_paint_session(session);
-                    }
                     Some(Topic::OpenImage(req)) if req.for_app(APP_ID) => {
                         tracing::info!(
                             path = %req.path.display(),
@@ -742,11 +733,6 @@ impl App {
                 }
                 _ => {}
             },
-            Msg::BootSettled => {
-                if !self.restoring {
-                    return self.ensure_window();
-                }
-            }
             Msg::DocLoaded(result) => return self.on_loaded(result),
             Msg::SessionLoaded { loaded, select } => {
                 return self.on_session_loaded(loaded, select);
@@ -1236,5 +1222,23 @@ fn header_style(_theme: &Theme) -> container::Style {
             radius: 0.0.into(),
         },
         ..container::Style::default()
+    }
+}
+
+#[cfg(test)]
+mod session_file_tests {
+    use super::*;
+    use sola_core::state_file::StateFile;
+
+    #[test]
+    fn a_saved_session_reads_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = StateFile::at(dir.path().join("session.json"));
+        let session = PaintSession {
+            paths: vec![PathBuf::from("/tmp/a.png"), PathBuf::from("/tmp/b.jpg")],
+            selected: Some(PathBuf::from("/tmp/b.jpg")),
+        };
+        file.save(&session);
+        assert_eq!(load_session(&file), session);
     }
 }

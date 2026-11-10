@@ -74,8 +74,9 @@ pub struct LaunchAppPayload {
     pub command: String,
 }
 
-/// One open app to relaunch on next start. Owned by `sola-session` and
-/// carried (as a list) by the persistent `Topic::SessionApps`. `command`
+/// One open app to relaunch on next start. `sola-session` keeps the list
+/// in its own file (`session/apps.json` under `$XDG_STATE_HOME/sola/`;
+/// the bus carried it as `SessionApps` once). `command`
 /// is the same launch string `sola-session` originally spawned, so restore
 /// reuses the normal launch path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,15 +94,6 @@ pub struct LaunchResultPayload {
     pub command: String,
     pub ok: bool,
     pub error: Option<String>,
-}
-
-/// Request that the shell omit an app's surfaces from composition
-/// (River `hide`). Sticky and keyed by `app_id`: emit to hide, retract
-/// to show again. Super+H on the focused app emits this; restore via
-/// Super+Tab or the launcher (already-running).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AppHidden {
-    pub app_id: String,
 }
 
 /// Emitted by `sola` whenever a user app process exits. Exactly one of
@@ -182,10 +174,10 @@ pub struct WindowFloating {
     pub floating: bool,
 }
 
-/// A floating app's remembered rectangle, keyed by `app_id`. Carried by the
-/// persistent `Topic::FloatGeometry` so a floating window restores to where it
-/// last was across relaunch and across a full restart. Kept separate from the
-/// zone layout so geometry churn doesn't rewrite it.
+/// A floating app's remembered rectangle, keyed by `app_id`. The shell keeps
+/// them in its own file (`shell/floats.json` under `$XDG_STATE_HOME/sola/`;
+/// the bus carried them as `FloatGeometry` once) so a floating window
+/// restores to where it last was across relaunch and across a full restart.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FloatGeometry {
     pub app_id: String,
@@ -324,7 +316,9 @@ pub struct TabLayoutZone {
     pub workspace: String,
 }
 
-/// Where the shell's tab bar puts windows (`Topic::TabLayout`, persistent).
+/// Where the shell's tab bar puts windows. The shell keeps it in its own file
+/// (`shell/tabs.json` under `$XDG_STATE_HOME/sola/`; the bus carried it as
+/// `TabLayout` once).
 /// A window that comes back (its app restarted, or the session restored
 /// it) takes its place: its workspace, zone, and index. Also the
 /// workspaces themselves and which one shows, so the whole desk comes back
@@ -457,7 +451,7 @@ pub struct Workspace {
 
 /// How the workspaces show and step (`Topic::WorkspacePrefs`, persistent;
 /// Settings and the shell). A topic of its own rather than fields on
-/// `Appearance` or `TabLayout`: a package from before it still reads those.
+/// `Appearance` or the tab layout: a package from before it still reads those.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct WorkspacePrefs {
     /// Each workspace an island in the top row, by the flower, in place of
@@ -470,7 +464,7 @@ pub struct WorkspacePrefs {
     pub stops_at_common: bool,
 }
 
-/// Where a saved layout (`Topic::TabLayout`) lists the pinned windows, a row
+/// Where a saved tab layout lists the pinned windows, a row
 /// each under this workspace id, apart from their rows on each workspace. It
 /// was the id of the Common workspace, so a layout saved then comes back with
 /// Common's windows pinned.
@@ -1740,9 +1734,11 @@ pub enum PaneLayout {
     },
 }
 
-/// One terminal tab as persisted on the bus. The `tmux_session` is the
-/// authoritative identifier for the root/first pane's live PTY; `id` is
-/// the sticky key — each tab has its own `(TerminalSession, [id])` slot.
+/// One terminal tab as persisted. Terminal keeps them in its own file
+/// (`terminal/sessions.json` under `$XDG_STATE_HOME/sola/`; the bus carried
+/// them as `TerminalSession` once). The `tmux_session` is the
+/// authoritative identifier for the root/first pane's live PTY; `id` names
+/// the tab.
 /// `cwd` is a hint, refreshed via OSC 7. `ordinal` determines display
 /// order in the tab strip — gaps are fine, JS sorts by ordinal. `layout`
 /// carries the pane split tree once the tab has been split; `None`
@@ -1758,7 +1754,8 @@ pub struct TerminalSession {
     pub layout: Option<PaneLayout>,
 }
 
-/// Open paint tabs. Paths only — unsaved buffers are not persisted.
+/// Open paint tabs, kept in Paint's own file (`paint/session.json` under
+/// `$XDG_STATE_HOME/sola/`; the bus carried it as `PaintSession` once). Paths only — unsaved buffers are not persisted.
 /// Missing files are skipped on restore and pruned on the next emit.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PaintSession {
@@ -2068,11 +2065,6 @@ define_topics! {
     UserAppExited(UserAppExitedPayload),
     CloseApp(String),
 
-    // Hide app surfaces from composition (shell → river via Composition).
-    // Sticky + keyed by app_id; retract to show. See `AppHidden` docs.
-    #[sticky(keys = [app_id])]
-    AppHidden(AppHidden),
-
     // Lifecycle / presence
     ClientConnected(String),
     ClientDisconnected(String),
@@ -2119,19 +2111,6 @@ define_topics! {
     SetAppMenu(AppMenuPayload),
     MenuAction(MenuActionPayload),
 
-    // Remembered rectangle of each floating app, keyed by app_id. Shell owns
-    // it: records from Topic::WindowGeometry while a window is floating, restores
-    // on relaunch. Persistent so float placement survives a restart. Separate
-    // from the zone layout so geometry churn doesn't rewrite it.
-    #[persistent(keys = [app_id])]
-    FloatGeometry(FloatGeometry),
-
-    // Open user apps to restore on next start. sola-session owns the list
-    // and emits a fresh copy whenever its child set changes. Persistent so
-    // the open set survives a full restart and replays on subscribe.
-    #[persistent]
-    SessionApps(Vec<SessionApp>),
-
     // Mail account + filter rules. Edited by sola-settings, consumed by
     // sola-mail. Persistent — settings emits whenever the user saves.
     #[persistent]
@@ -2154,20 +2133,8 @@ define_topics! {
     #[persistent(keys = [app_id])]
     Application(Application),
 
-    // One terminal tab as persisted on the bus. Keyed by `id` so each
-    // tab has its own `(TerminalSession, [id])` slot — add a tab by
-    // emitting; remove by retracting; reorder by re-emitting with new
-    // ordinals.
-    #[persistent(keys = [id])]
-    TerminalSession(TerminalSession),
-
     // Browser
     OpenUrl(OpenUrlRequest),
-
-    // Paint tab strip. Singleton namespace so open/close does not churn
-    // state.yaml. Paths that no longer exist are skipped on restore.
-    #[persistent(namespace = "paint")]
-    PaintSession(PaintSession),
 
     // Image open. Ephemeral; default dest is sola-paint. Screenshots
     // set `app_id` to sola-preview. Cold-start uses LaunchApp + path.
@@ -2205,12 +2172,6 @@ define_topics! {
     #[sticky(keys = [window_id])]
     WindowParent(WindowParent),
 
-    // The shell's tab bar: zones, their tabs' app ids, what each shows.
-    // Shell owns it; persistent so the layout survives a restart. Own
-    // namespace so tab moves don't churn state.yaml. Appended last.
-    #[persistent(namespace = "shell/tabs")]
-    TabLayout(TabLayout),
-
     // A window an app opens as a tab (app → shell). Sticky, keyed by key;
     // retracted when the tab closes. Appended last.
     #[sticky(keys = [key])]
@@ -2236,7 +2197,7 @@ define_topics! {
     WindowChrome(WindowChrome),
 
     // The workspaces and the one showing (shell → apps). Sticky; the
-    // shell persists them inside `TabLayout`. Appended last.
+    // shell persists them inside its tab layout. Appended last.
     #[sticky]
     Workspaces(Workspaces),
 
@@ -2506,21 +2467,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paint_session_roundtrips_via_yaml() {
-        let session = PaintSession {
-            paths: vec![PathBuf::from("/tmp/a.png"), PathBuf::from("/tmp/b.jpg")],
-            selected: Some(PathBuf::from("/tmp/b.jpg")),
-        };
-        let topic = Topic::PaintSession(session.clone());
-        let value = topic.to_yaml_value().expect("PaintSession is persistent");
-        let restored = Topic::from_yaml_section(TopicKind::PaintSession, value)
-            .expect("section should deserialize");
-        match restored {
-            Topic::PaintSession(back) => assert_eq!(back, session),
-            other => panic!("expected PaintSession, got {other:?}"),
-        }
-    }
-
     fn open_image_defaults_to_paint() {
         let paint = OpenImageRequest {
             path: PathBuf::from("/tmp/a.png"),
@@ -2950,38 +2896,6 @@ mod tests {
     }
 
     #[test]
-    fn session_apps_is_persistent() {
-        use crate::topic::Behavior;
-        assert_eq!(TopicKind::SessionApps.behavior(), Behavior::Persistent);
-    }
-
-    #[test]
-    fn float_geometry_is_persistent_and_roundtrips() {
-        use crate::topic::Behavior;
-        assert_eq!(TopicKind::FloatGeometry.behavior(), Behavior::Persistent);
-        let fg = FloatGeometry {
-            app_id: "UnrealEditor".into(),
-            x: 10,
-            y: 20,
-            width: 1280,
-            height: 800,
-        };
-        let value = Topic::FloatGeometry(fg.clone())
-            .to_yaml_value()
-            .expect("FloatGeometry is persistent; must serialize to YAML");
-        match Topic::from_yaml_section(TopicKind::FloatGeometry, value) {
-            Some(Topic::FloatGeometry(back)) => {
-                assert_eq!(back.app_id, fg.app_id);
-                assert_eq!(
-                    (back.x, back.y, back.width, back.height),
-                    (10, 20, 1280, 800)
-                );
-            }
-            other => panic!("expected FloatGeometry, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn window_geometry_is_sticky_not_persistent() {
         use crate::topic::Behavior;
         assert_eq!(TopicKind::WindowGeometry.behavior(), Behavior::Sticky);
@@ -2997,41 +2911,6 @@ mod tests {
         };
         assert_eq!(wf.window_id, 7);
         assert!(wf.floating);
-    }
-
-    #[test]
-    fn session_apps_roundtrip_via_message() {
-        let apps = vec![
-            SessionApp {
-                app_id: "helium".into(),
-                command: "helium".into(),
-            },
-            SessionApp {
-                app_id: "sola-terminal".into(),
-                command: "/opt/sola/bin/sola-terminal".into(),
-            },
-        ];
-        let msg = Topic::SessionApps(apps.clone()).to_message();
-        assert_eq!(msg.topic, "SessionApps");
-        match Topic::parse(&msg) {
-            Some(Topic::SessionApps(back)) => assert_eq!(back, apps),
-            other => panic!("expected SessionApps, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn session_apps_roundtrip_via_yaml() {
-        let apps = vec![SessionApp {
-            app_id: "helium".into(),
-            command: "helium --restore".into(),
-        }];
-        let value = Topic::SessionApps(apps.clone())
-            .to_yaml_value()
-            .expect("SessionApps is persistent; must serialize to YAML");
-        match Topic::from_yaml_section(TopicKind::SessionApps, value) {
-            Some(Topic::SessionApps(back)) => assert_eq!(back, apps),
-            other => panic!("expected SessionApps, got {other:?}"),
-        }
     }
 
     #[test]
@@ -3153,38 +3032,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_session_roundtrip_via_postcard() {
-        let session = TerminalSession {
-            id: "tab-1".into(),
-            tmux_session: "sola-tab-1".into(),
-            cwd: Some("/home/joshua".into()),
-            ordinal: 0,
-            layout: None,
-        };
-        let topic = Topic::TerminalSession(session.clone());
-        let msg = topic.to_message();
-        let parsed = Topic::parse(&msg).unwrap();
-        match parsed {
-            Topic::TerminalSession(back) => assert_eq!(back, session),
-            other => panic!("expected TerminalSession, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn terminal_session_emits_id_as_key() {
-        let session = TerminalSession {
-            id: "abc-123".into(),
-            tmux_session: "sola-x".into(),
-            cwd: None,
-            ordinal: 7,
-            layout: None,
-        };
-        let topic = Topic::TerminalSession(session);
-        assert_eq!(topic.keys_for(), vec!["abc-123".to_string()]);
-    }
-
-    #[test]
-    fn terminal_session_roundtrip_via_yaml() {
+    fn terminal_session_reads_back_from_the_bus_yaml() {
         let session = TerminalSession {
             id: "x".into(),
             tmux_session: "sola-x".into(),
@@ -3192,20 +3040,12 @@ mod tests {
             ordinal: 3,
             layout: None,
         };
-        let topic = Topic::TerminalSession(session.clone());
-        let value = topic
-            .to_yaml_value()
-            .expect("persistent payload should serialize to TOML");
-        let restored = Topic::from_yaml_section(TopicKind::TerminalSession, value)
-            .expect("section should deserialize");
-        match restored {
-            Topic::TerminalSession(back) => assert_eq!(back, session),
-            other => panic!("expected TerminalSession, got {other:?}"),
-        }
+        let yaml = serde_yaml_ng::to_string(&session).unwrap();
+        assert_eq!(serde_yaml_ng::from_str::<TerminalSession>(&yaml).unwrap(), session);
     }
 
     #[test]
-    fn terminal_session_with_layout_roundtrips_via_yaml() {
+    fn terminal_session_with_layout_reads_back_from_the_bus_yaml() {
         let session = TerminalSession {
             id: "split-tab".into(),
             tmux_session: "sola-a".into(),
@@ -3224,16 +3064,27 @@ mod tests {
                 }),
             }),
         };
-        let topic = Topic::TerminalSession(session.clone());
-        let value = topic
-            .to_yaml_value()
-            .expect("persistent payload should serialize to YAML");
-        let restored = Topic::from_yaml_section(TopicKind::TerminalSession, value)
-            .expect("section should deserialize");
-        match restored {
-            Topic::TerminalSession(back) => assert_eq!(back, session),
-            other => panic!("expected TerminalSession, got {other:?}"),
-        }
+        let yaml = serde_yaml_ng::to_string(&session).unwrap();
+        assert_eq!(serde_yaml_ng::from_str::<TerminalSession>(&yaml).unwrap(), session);
+    }
+
+    #[test]
+    fn payloads_the_bus_once_carried_still_read_back_from_its_yaml() {
+        let fg = FloatGeometry { app_id: "UnrealEditor".into(), x: 10, y: 20, width: 1280, height: 800 };
+        let yaml = serde_yaml_ng::to_string(&fg).unwrap();
+        assert_eq!(serde_yaml_ng::from_str::<FloatGeometry>(&yaml).unwrap(), fg);
+        let apps = vec![SessionApp { app_id: "helium".into(), command: "helium --restore".into() }];
+        let yaml = serde_yaml_ng::to_string(&apps).unwrap();
+        assert_eq!(serde_yaml_ng::from_str::<Vec<SessionApp>>(&yaml).unwrap(), apps);
+        let paint = PaintSession {
+            paths: vec![PathBuf::from("/tmp/a.png"), PathBuf::from("/tmp/b.jpg")],
+            selected: Some(PathBuf::from("/tmp/b.jpg")),
+        };
+        let yaml = serde_yaml_ng::to_string(&paint).unwrap();
+        assert_eq!(serde_yaml_ng::from_str::<PaintSession>(&yaml).unwrap(), paint);
+        let tabs = TabLayout::default();
+        let yaml = serde_yaml_ng::to_string(&tabs).unwrap();
+        assert_eq!(serde_yaml_ng::from_str::<TabLayout>(&yaml).unwrap(), tabs);
     }
 
     #[test]

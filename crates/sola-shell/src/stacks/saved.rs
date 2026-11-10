@@ -1,4 +1,4 @@
-//! Remembered places: the saved layout (`Topic::TabLayout`) waiting for
+//! Remembered places: the saved layout (the shell's `tabs.json`) waiting for
 //! the session to restore its windows, and the places of windows that
 //! just left, waiting for their app to come back.
 

@@ -14,6 +14,7 @@ pub mod perf;
 pub mod pty;
 pub mod remote;
 pub mod sel_follow;
+pub mod sessions;
 pub mod state;
 pub mod term_view;
 pub mod tmux;

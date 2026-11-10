@@ -28,6 +28,7 @@ pub mod bindings;
 pub mod notify;
 pub mod pairing;
 mod pictures;
+mod saved_state;
 mod power;
 mod screenshot;
 pub mod selection;

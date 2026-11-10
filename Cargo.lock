@@ -8723,6 +8723,7 @@ dependencies = [
  "sola-bus",
  "sola-core",
  "sola-kit",
+ "tempfile",
  "tokio",
  "tracing",
 ]

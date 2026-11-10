@@ -12,10 +12,23 @@ use sola_bus::topics::{
 };
 
 /// How long `restore_session` drains startup replays (the persisted
-/// `SessionApps` set and the sticky `Windows` list) before deciding what to
+/// sticky `Windows` list) before deciding what to
 /// relaunch. Also gives the compositor a moment to come up at cold boot.
+/// The open-app set, kept in the session's own file (it is read by no one else).
+fn apps_file() -> StateFile {
+    StateFile::new("session", "apps.json")
+}
+
+/// The saved open-app set; before the first save, what the bus kept.
+fn load_persisted(file: &StateFile) -> Vec<SessionApp> {
+    file.load()
+        .or_else(|| sola_bus::state::legacy_section::<Vec<SessionApp>>("SessionApps"))
+        .unwrap_or_default()
+}
+
 const RESTORE_SETTLE: Duration = Duration::from_millis(750);
 
+use sola_core::state_file::StateFile;
 use sola_core::{env, paths};
 
 use crate::adopted::{self, Adopted};
@@ -125,8 +138,8 @@ impl Session {
         let _ = self.bus.emit(Topic::UserAppExited(payload));
     }
 
-    /// Publish the current open-app set as the persistent `SessionApps`
-    /// topic so it can be restored on the next start. One entry per
+    /// Save the current open-app set to the session's state file so it can
+    /// be restored on the next start. One entry per
     /// `app_id` (a multi-instance app collapses to one), skipping apps
     /// that are already closing. Called on every child-set change — never
     /// standalone at startup, so a stale-empty `children` (after a bare
@@ -140,26 +153,26 @@ impl Session {
         let lost = self.lost.iter().map(|l| (l.app_id.clone(), l.command.clone()));
         let adopted = self.adopted.iter().map(|a| (a.app_id.clone(), a.command.clone()));
         let apps = session_apps_from_pairs(pairs.chain(lost).chain(adopted));
-        let _ = self.bus.emit(Topic::SessionApps(apps));
+        apps_file().save(&apps);
     }
 
     /// One-shot session restore, run once at startup after subscribing.
     ///
-    /// Drains the initial replays for `RESTORE_SETTLE` — the persisted
-    /// `SessionApps` (last session's open set) and the sticky `Windows`
-    /// (whatever is currently running) — then relaunches every persisted
+    /// Takes last session's open set from the state file, drains the
+    /// initial replay of the sticky `Windows` (whatever is currently
+    /// running) for `RESTORE_SETTLE`, then relaunches every persisted
     /// app that isn't already running. The "minus what's running" filter
     /// makes this self-correcting: a cold boot relaunches everything; a
     /// bare `sola-session` restart relaunches nothing (apps still up).
     pub fn restore_session(&mut self) {
         let deadline = Instant::now() + RESTORE_SETTLE;
-        let mut persisted: Vec<SessionApp> = Vec::new();
+        let persisted = load_persisted(&apps_file());
         let mut running: HashSet<String> = HashSet::new();
 
         while Instant::now() < deadline {
             while let Some(msg) = self.bus.try_recv() {
                 if let Some(topic) = Topic::parse(&msg) {
-                    self.absorb_restore(topic, &mut persisted, &mut running);
+                    self.absorb_restore(topic, &mut running);
                 }
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -168,7 +181,7 @@ impl Session {
             }
             if let Some(msg) = self.bus.recv_timeout(remaining) {
                 if let Some(topic) = Topic::parse(&msg) {
-                    self.absorb_restore(topic, &mut persisted, &mut running);
+                    self.absorb_restore(topic, &mut running);
                 }
             }
         }
@@ -225,17 +238,15 @@ impl Session {
         }
     }
 
-    /// Fold one message into the restore accumulators. `SessionApps` and
-    /// `Windows` update the snapshots; anything else (a launch/close that
+    /// Fold one message into the restore accumulator. `Windows` updates
+    /// the snapshot; anything else (a launch/close that
     /// arrives during settle) is handled normally so it isn't dropped.
     fn absorb_restore(
         &mut self,
         topic: Topic,
-        persisted: &mut Vec<SessionApp>,
         running: &mut HashSet<String>,
     ) {
         match topic {
-            Topic::SessionApps(apps) => *persisted = apps,
             Topic::Windows(ws) => {
                 *running = ws.iter().map(|w| w.app_id.clone()).collect();
                 // The apps found running are told by their windows' pids
@@ -809,9 +820,8 @@ const SESSION_TOPICS: &[TopicKind] = &[
     // A non-Sola app's last window closed from Sola quits it.
     TopicKind::CloseWindow,
     TopicKind::Shutdown,
-    // For session restore: the persisted open-app set plus the sticky
-    // current-window list (to skip apps already running).
-    TopicKind::SessionApps,
+    // For session restore: the sticky current-window list (to skip apps
+    // already running).
     TopicKind::Windows,
     // An apply moved packages: apps on an old program start again.
     TopicKind::PackagesMoved,
@@ -943,6 +953,15 @@ mod tests {
 
     fn set(ids: &[&str]) -> HashSet<String> {
         ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn the_saved_set_reads_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = StateFile::at(dir.path().join("apps.json"));
+        let apps = vec![app("sola-mail", "sola-mail")];
+        file.save(&apps);
+        assert_eq!(load_persisted(&file), apps);
     }
 
     #[test]

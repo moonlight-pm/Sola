@@ -363,12 +363,6 @@ impl Shell {
     /// and for a pinned one, which is on them all: a browser page keeps the
     /// profile it has).
     pub(crate) fn sync_workspaces(&mut self) {
-        // Until the saved layout is back, every window sits on the first
-        // workspace for a moment; saying so would make apps act on it (the
-        // browser reopens pages under another profile).
-        if !self.tab_layout_loaded {
-            return;
-        }
         let list = Workspaces {
             workspaces: self.tabs.workspaces(),
             showing: self.tabs.showing_id().to_string(),
