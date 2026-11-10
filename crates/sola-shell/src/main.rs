@@ -49,6 +49,7 @@ fn main() -> iced::Result {
     // ask logind to reboot or power off. "Launch Application…" opens
     // the launcher overlay.
     BusSetup::new(APP_ID)
+        .supervised()
         .subscribe(TopicKind::ALL)
         .app_menu_definition(menu::state::system_menu())
         .install();

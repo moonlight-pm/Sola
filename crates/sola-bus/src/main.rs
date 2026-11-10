@@ -1,3 +1,5 @@
+mod process;
+
 use std::collections::{HashMap, HashSet};
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -14,6 +16,10 @@ use sola_bus::topics::{Topic, TopicKind};
 use sola_bus::transport;
 
 type ClientId = u64;
+
+/// The sender of a message the bus makes itself (a retraction for an ended
+/// process): no client's id.
+const BUS_SENDER: ClientId = ClientId::MAX;
 
 /// Per-client outbound queue depth, in deliveries: a replay is one. Large
 /// enough to absorb the back-to-back bursts the shell emits (LaunchApp +
@@ -36,12 +42,22 @@ struct Client {
     tx: mpsc::SyncSender<Delivery>,
     /// The socket, to close it when the client falls behind.
     stream: UnixStream,
+    /// Its process, when the kernel says.
+    pid: Option<i32>,
 }
 
 /// A stored sticky message and its kind, known when it was stored.
 struct Record {
     message: sola_bus::Message,
     kind: TopicKind,
+    /// The process that wrote it last, for a sticky (not persistent) kind:
+    /// the record goes when that process ends for good.
+    owner: Option<Owner>,
+}
+
+struct Owner {
+    app_id: String,
+    pid: i32,
 }
 
 struct BusState {
@@ -56,6 +72,10 @@ struct BusState {
     subscriptions: HashMap<ClientId, HashSet<sola_bus::topics::TopicKind>>,
     /// Path to the persistent-sticky file on disk. Set once at startup.
     state_path: PathBuf,
+    /// Processes with a connection that have not ended (each watched once).
+    alive: HashSet<i32>,
+    /// Processes that said a supervisor restarts them (`$supervised`).
+    supervised: HashSet<i32>,
 }
 
 type SharedState = Arc<Mutex<BusState>>;
@@ -90,7 +110,15 @@ fn main() {
     let mut sticky = HashMap::new();
     for message in restored {
         if let Some(kind) = Topic::parse(&message).map(|t| t.kind()) {
-            sticky.insert((message.topic.clone(), message.keys.clone()), Record { message, kind });
+            let key = (message.topic.clone(), message.keys.clone());
+            sticky.insert(
+                key,
+                Record {
+                    message,
+                    kind,
+                    owner: None,
+                },
+            );
         }
     }
 
@@ -100,6 +128,8 @@ fn main() {
         roster: HashMap::new(),
         subscriptions: HashMap::new(),
         state_path,
+        alive: HashSet::new(),
+        supervised: HashSet::new(),
     }));
     let mut next_id: ClientId = 0;
 
@@ -126,10 +156,23 @@ fn main() {
                     writer_loop(id, writer_stream, rx);
                 });
 
+                let pid = process::peer_pid(&stream);
                 let mut bus = state.lock().unwrap();
-                bus.clients.insert(id, Client { tx, stream: closer });
-                info!(client = id, "connected");
+                bus.clients.insert(
+                    id,
+                    Client {
+                        tx,
+                        stream: closer,
+                        pid,
+                    },
+                );
+                info!(client = id, pid, "connected");
+                let first_of_its_process = pid.is_some_and(|pid| bus.alive.insert(pid));
                 drop(bus);
+                if let (Some(pid), true) = (pid, first_of_its_process) {
+                    let state = Arc::clone(&state);
+                    thread::spawn(move || watch_process(pid, &state));
+                }
 
                 let state = Arc::clone(&state);
                 thread::spawn(move || {
@@ -216,6 +259,13 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
                             "subscribe decode failed — client stays on previous set"
                         ),
                     },
+                    sola_bus::CONTROL_SUPERVISED => {
+                        let mut bus = state.lock().unwrap();
+                        if let Some(pid) = bus.clients.get(&id).and_then(|c| c.pid) {
+                            bus.supervised.insert(pid);
+                        }
+                    }
+                    sola_bus::CONTROL_SETTLED => handle_settled(id, state),
                     sola_bus::CONTROL_SUBSCRIBE if named => {}
                     sola_bus::CONTROL_SUBSCRIBE => match sola_bus::subscribe::decode_numbered(&event) {
                         Ok(kinds) => handle_subscribe(id, kinds, state),
@@ -233,11 +283,13 @@ fn handle_client(id: ClientId, mut reader: UnixStream, state: &SharedState) {
                         let mut bus = state.lock().unwrap();
                         let key = (event.topic.clone(), event.keys.clone());
                         if event.sticky {
+                            let owner = owner_of(id, &event, kind, &bus);
                             bus.sticky.insert(
                                 key,
                                 Record {
                                     message: event.clone(),
                                     kind,
+                                    owner,
                                 },
                             );
                         } else if kind.behavior().is_sticky() {
@@ -419,4 +471,79 @@ fn handle_subscribe(id: ClientId, kinds: Vec<TopicKind>, state: &SharedState) {
     );
     replay.push(Topic::Replayed.to_message());
     deliver(id, Delivery::Replay(replay), &mut bus);
+}
+
+/// Who owns a sticky record client `id` just wrote: its process, for a
+/// sticky kind. A persistent record is configuration and outlives its
+/// writer, so it has none.
+fn owner_of(id: ClientId, event: &sola_bus::Message, kind: TopicKind, bus: &BusState) -> Option<Owner> {
+    if kind.behavior().is_persistent() {
+        return None;
+    }
+    let pid = bus.clients.get(&id)?.pid?;
+    let app_id = bus.roster.get(&id).cloned().unwrap_or_else(|| event.source.clone());
+    Some(Owner { app_id, pid })
+}
+
+/// Wait for process `pid` to end, then retract its records, unless a
+/// supervisor restarts it: then they wait for it to come back and settle.
+fn watch_process(pid: i32, state: &SharedState) {
+    if let Err(e) = process::wait_for_exit(pid) {
+        // Its records stay until it retracts them, as before owners.
+        warn!(pid, %e, "cannot watch a client's process; its records stay");
+        return;
+    }
+    let mut bus = state.lock().unwrap();
+    bus.alive.remove(&pid);
+    if bus.supervised.remove(&pid) {
+        let kept = bus.sticky.values().filter(|r| owned_by(r, |o| o.pid == pid)).count();
+        info!(pid, kept, "a supervised process ended; its records wait for it");
+        return;
+    }
+    let ended: Vec<_> = bus
+        .sticky
+        .iter()
+        .filter(|(_, r)| owned_by(r, |o| o.pid == pid))
+        .map(|(key, _)| key.clone())
+        .collect();
+    if !ended.is_empty() {
+        info!(pid, retracted = ended.len(), "a process ended; retracting its records");
+    }
+    retract_records(ended, &mut bus);
+}
+
+/// `$settled` from client `id`: its process has sent its current state, so
+/// retract what an ended process of the same app still owns.
+fn handle_settled(id: ClientId, state: &SharedState) {
+    let mut bus = state.lock().unwrap();
+    let Some(app_id) = bus.roster.get(&id).cloned() else {
+        return;
+    };
+    let alive = bus.alive.clone();
+    let stale: Vec<_> = bus
+        .sticky
+        .iter()
+        .filter(|(_, r)| owned_by(r, |o| o.app_id == app_id && !alive.contains(&o.pid)))
+        .map(|(key, _)| key.clone())
+        .collect();
+    info!(client = id, %app_id, retracted = stale.len(), "settled");
+    retract_records(stale, &mut bus);
+}
+
+fn owned_by(record: &Record, test: impl Fn(&Owner) -> bool) -> bool {
+    record.owner.as_ref().is_some_and(test)
+}
+
+/// Remove records the bus retracts on an owner's behalf, and tell their
+/// subscribers as the owner's own retraction would.
+fn retract_records(keys: Vec<(String, Vec<String>)>, bus: &mut BusState) {
+    for key in keys {
+        let Some(record) = bus.sticky.remove(&key) else {
+            continue;
+        };
+        let mut retraction = record.message;
+        retraction.id = uuid::Uuid::now_v7();
+        retraction.sticky = false;
+        broadcast(BUS_SENDER, &retraction, record.kind, bus);
+    }
 }

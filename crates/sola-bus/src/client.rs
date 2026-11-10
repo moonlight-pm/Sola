@@ -51,6 +51,9 @@ pub struct BusClient {
     /// first connect (queue flush is enough) from reconnect (must republish
     /// stickies the previous bus process already consumed and then wiped).
     ever_connected: bool,
+    /// Said on every connection: a supervisor restarts this process
+    /// ([`set_supervised`](Self::set_supervised)).
+    supervised: bool,
 }
 
 impl BusClient {
@@ -67,6 +70,7 @@ impl BusClient {
             queue: VecDeque::new(),
             sticky_outbox: HashMap::new(),
             ever_connected: false,
+            supervised: false,
         }
     }
 
@@ -78,6 +82,23 @@ impl BusClient {
         self.app_id = id.into();
         // Queued when disconnected; sent immediately when connected.
         let _ = self.identify();
+    }
+
+    /// Tell the bus a supervisor restarts this process when it ends (a
+    /// desk service), so the records it wrote stay until it is back and
+    /// calls [`settled`](Self::settled). Without it, the bus retracts a
+    /// process's records when the process ends. Said again on every
+    /// connection.
+    pub fn set_supervised(&mut self) {
+        self.supervised = true;
+        let _ = self.send(&Message::new(crate::CONTROL_SUPERVISED));
+    }
+
+    /// Tell the bus this process has sent its current state: the records
+    /// an ended process of the same app still owns, ones this one did not
+    /// send again, are retracted.
+    pub fn settled(&mut self) -> io::Result<()> {
+        self.send(&Message::new(crate::CONTROL_SETTLED))
     }
 
     /// Subscribe to the given topic kinds. Until this is called, the bus
@@ -180,6 +201,11 @@ impl BusClient {
             let id_msg = encode_identify(&self.app_id);
             if let Err(e) = self.write_now(&id_msg) {
                 warn!(%e, "identify on connect failed");
+            }
+        }
+        if self.supervised && is_reconnect {
+            if let Err(e) = self.write_now(&Message::new(crate::CONTROL_SUPERVISED)) {
+                warn!(%e, "supervised on connect failed");
             }
         }
 

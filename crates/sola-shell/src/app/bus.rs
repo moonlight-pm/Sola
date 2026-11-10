@@ -89,6 +89,9 @@ impl Shell {
                         tracing::info!(count = w.len(), "bus replayed: placing the windows up");
                         self.take_windows(w);
                     }
+                    // The windows are placed and their records sent: what
+                    // an earlier shell wrote and this one did not can go.
+                    sola_kit::app::settled();
                 }
                 Task::none()
             }

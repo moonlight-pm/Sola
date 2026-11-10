@@ -518,6 +518,14 @@ pub fn handle_render_start(state: &mut AppData) {
     state.pending.render_dirty = false;
     wm.render_finish();
     debug!(composition_len, positions_len, "render_finish sent");
+
+    // By the end of the first render sequence every window River had is
+    // told, with its size: what an earlier sola-river wrote and this one
+    // did not can go.
+    if state.windows_known && !state.bus_settled {
+        state.bus_settled = true;
+        state.bus.settled();
+    }
 }
 
 fn apply_composition_visibility(state: &AppData, order: &[u32], restack: bool) {

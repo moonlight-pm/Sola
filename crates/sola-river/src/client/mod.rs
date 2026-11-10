@@ -68,6 +68,9 @@ pub struct AppData {
     /// River's first manage sequence has begun: every window it already had
     /// is in (`crate::translator::emit_windows` waits for it).
     pub windows_known: bool,
+    /// The bus has been told this process has sent its window state
+    /// (`BusClient::settled`), once, after its first render sequence.
+    pub bus_settled: bool,
     /// Windows whose tab the shell has been told (`Topic::WindowTab`).
     pub tabs_told: std::collections::HashSet<u32>,
     pub pending: PendingUpdate,
@@ -254,6 +257,7 @@ impl AppData {
             window_ids: crate::window_ids::WindowIds::default(),
             unidentified: std::collections::HashSet::new(),
             windows_known: false,
+            bus_settled: false,
             tabs_told: std::collections::HashSet::new(),
             pending: PendingUpdate::default(),
             chords: ChordRegistry::default(),

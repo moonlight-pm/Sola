@@ -8418,6 +8418,7 @@ dependencies = [
 name = "sola-bus"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "postcard",
  "serde",
  "serde_json",

@@ -8,7 +8,9 @@ pub mod topics;
 pub mod transport;
 
 pub use client::BusClient;
-pub use message::{CONTROL_IDENTIFY, CONTROL_SUBSCRIBE, CONTROL_SUBSCRIBE_NAMES, Message};
+pub use message::{
+    CONTROL_IDENTIFY, CONTROL_SETTLED, CONTROL_SUBSCRIBE, CONTROL_SUBSCRIBE_NAMES, CONTROL_SUPERVISED, Message,
+};
 pub use registry::{BusHandler, BusRegistry, Delivery};
 
 /// Returns the bus socket path from `$SOLA_BUS_PATH` or the default

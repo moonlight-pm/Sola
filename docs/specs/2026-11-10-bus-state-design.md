@@ -96,10 +96,12 @@ problem is the state, not the traffic.
 - A process that only loses its connection (a bus restart, a closed slow
   connection, re-executing itself in place) keeps its pid, so nothing is
   removed. Its client re-sends its stickies on reconnect, as today.
-- Supervised: `sola-river`, `sola-shell`, `sola-session`, `sola-vaultd`,
-  `sola-kvm`, `sola-botsd`. Each sends `$settled` once it has published its
-  state after starting (river after its first window sync; the shell after
-  `Replayed` and placing the windows).
+- Supervised: `sola-river` and `sola-shell`, whose records describe windows
+  that outlive them. River settles after its first render sequence (every
+  window told, with its size); the shell after `Replayed` and placing the
+  windows. The other services need no flag: `sola-vaultd`'s `VaultState`
+  should go while the vault is down (it retracts it itself), and
+  `sola-session` writes only persistent `SessionApps`.
 
 ## Per-window records (D2)
 

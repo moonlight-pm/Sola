@@ -51,6 +51,17 @@ pub fn bus() -> &'static Mutex<BusClient> {
 
 /// Borrow the process-wide bus if [`BusSetup::install`] has run.
 /// Unit tests and optional emit paths use this instead of panicking.
+/// Tell the bus this process has sent its state after starting (a
+/// [`BusSetup::supervised`] service): what an ended process of the same app
+/// still owns, and this one did not send again, is retracted.
+pub fn settled() {
+    if let Some(Ok(mut bus)) = try_bus().map(|b| b.lock()) {
+        if let Err(e) = bus.settled() {
+            tracing::warn!("bus settled failed: {e}");
+        }
+    }
+}
+
 pub fn try_bus() -> Option<&'static Mutex<BusClient>> {
     BUS.get().map(|a| a.as_ref())
 }
@@ -101,6 +112,7 @@ pub struct BusSetup {
     call_owner: Option<String>,
     call_methods: Vec<sola_call::MethodSpec>,
     opens: Option<sola_open::claims::Claim>,
+    supervised: bool,
 }
 
 impl BusSetup {
@@ -113,7 +125,15 @@ impl BusSetup {
             call_owner: None,
             call_methods: Vec::new(),
             opens: None,
+            supervised: false,
         }
+    }
+
+    /// A desk service its supervisor restarts: the bus keeps what it wrote
+    /// across a restart until it calls [`settled`] ([`BusClient::set_supervised`]).
+    pub fn supervised(mut self) -> Self {
+        self.supervised = true;
+        self
     }
 
     /// Claim the link schemes and file types this app opens
@@ -216,6 +236,9 @@ impl BusSetup {
         // Identity tags sticky `source` and re-identifies on bus reconnect
         // so the host roster is restored after a sola-bus restart.
         client.set_app_id(self.app_id);
+        if self.supervised {
+            client.set_supervised();
+        }
         // `connect_blocking` returns `()` and loops until `connect()`
         // succeeds (it already warns once on the first failure). When
         // it returns, the bus is connected — log with app_id for

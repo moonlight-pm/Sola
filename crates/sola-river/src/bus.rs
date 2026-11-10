@@ -54,6 +54,8 @@ impl BusClient {
     pub fn new() -> Self {
         let mut inner = sola_bus::BusClient::new();
         inner.set_app_id("sola-river");
+        // A service: its records wait for it across a restart.
+        inner.set_supervised();
         Self {
             inner,
             subscriptions: SUBSCRIPTIONS.to_vec(),
@@ -112,6 +114,13 @@ impl BusClient {
     pub fn emit(&mut self, topic: Topic) {
         if let Err(e) = self.inner.emit(topic) {
             tracing::warn!(%e, "bus emit failed");
+        }
+    }
+
+    /// Tell the bus this process has sent its state after starting.
+    pub fn settled(&mut self) {
+        if let Err(e) = self.inner.settled() {
+            tracing::warn!(%e, "bus settled failed");
         }
     }
 
