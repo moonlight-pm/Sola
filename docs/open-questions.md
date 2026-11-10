@@ -244,9 +244,9 @@ a warning, and 100 new users), with the two narrow scopes on Data Access and the
 home page, `/privacy` and `moonlight.pm` on Branding. `/privacy` is live (2026-11-09).
 `moonlight.pm` is proven in Search Console (2026-11-09, auto-verified by the
 `google-site-verification` TXT record it already had; keep that record).
-The demo video is on YouTube, unlisted (2026-11-09). Verification still needs, on
-Data Access, the justification for `calendar.events`, the video's link, and the
-submission.
+The demo video is on YouTube, unlisted. Branding is verified and published, and
+the verification request went in on 2026-11-09: Data Access reads "under review".
+Google answers by email.
 
 **Related:** `calendar` capability.
 
