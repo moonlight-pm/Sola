@@ -6,11 +6,13 @@
 use std::ffi::{c_int, c_uint, c_void};
 use std::ptr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use tracing::info;
 
 use crate::nvdec_sys::*;
 use crate::pictures::{Frame, Pictures};
+use crate::stats::{Stamp, micros};
 
 const DECODE_SURFACES: u8 = 8;
 const OUTPUT_SURFACES: u64 = 2;
@@ -23,6 +25,8 @@ struct State {
     pictures: Arc<Pictures>,
     /// The window needs telling about a picture.
     tell: bool,
+    /// The picture being pushed: capture to its arrival, and when it arrived.
+    arrival: Option<(u32, Instant)>,
     error: Option<String>,
 }
 
@@ -54,6 +58,7 @@ impl Decoder {
             size: (0, 0),
             pictures,
             tell: false,
+            arrival: None,
             error: None,
         });
         let mut params = ParserParams {
@@ -79,8 +84,9 @@ impl Decoder {
         Ok(this)
     }
 
-    /// Decode one picture. True when the window needs telling.
-    pub fn push(&mut self, data: &[u8], pts_us: u64) -> Result<bool, String> {
+    /// Decode one picture that took `before_us` from capture to `arrived`.
+    /// True when the window needs telling.
+    pub fn push(&mut self, data: &[u8], pts_us: u64, before_us: u32, arrived: Instant) -> Result<bool, String> {
         let mut packet = SourcePacket {
             flags: PKT_TIMESTAMP | PKT_ENDOFPICTURE,
             size: data.len() as _,
@@ -88,6 +94,7 @@ impl Decoder {
             timestamp: pts_us as i64,
         };
         self.state.tell = false;
+        self.state.arrival = Some((before_us, arrived));
         let status = unsafe { (self.state.api.parse)(self.parser, &mut packet) };
         if let Some(error) = self.state.error.take() {
             return Err(error);
@@ -170,6 +177,10 @@ impl State {
         )?;
         let mut frame = self.pictures.spare();
         let copied = self.copy(device, pitch as usize, &mut frame);
+        frame.stamp = self.arrival.map(|(before_us, arrived)| Stamp {
+            to_decoded_us: before_us.saturating_add(micros(arrived.elapsed())),
+            decoded: Instant::now(),
+        });
         let unmapped = unsafe { (self.api.unmap_frame)(self.decoder, device) };
         copied?;
         check(unmapped, "cuvidUnmapVideoFrame")?;

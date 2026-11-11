@@ -1,6 +1,7 @@
 //! The picture on the GPU, and the pointer over it. Two textures (luma and
 //! half-size chroma), replaced whole when a new picture comes, on one quad
-//! letterboxed in the widget.
+//! letterboxed in the widget; the other machine's pointer is drawn over it
+//! ([`Pointer`]) when the host sends it apart.
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use sola_kvm::protocol::Packet;
 use crate::app::Msg;
 use crate::fit::{fit, to_points};
 use crate::pictures::{Frame, Pictures};
+use crate::pointer::Pointer;
 
 /// Pixels of a smooth scroll that make one wheel detent.
 const PIXELS_PER_DETENT: f32 = 32.0;
@@ -20,6 +22,8 @@ pub struct Picture {
     pub pictures: Arc<Pictures>,
     /// The other machine's coordinates; `None` until it says.
     pub points: Option<(u32, u32)>,
+    /// Where its pointer was sent, in its coordinates.
+    pub pointer: Option<(i32, i32)>,
     /// The pointer and keyboard are going to the other machine.
     pub captured: bool,
 }
@@ -88,13 +92,18 @@ impl shader::Program<Msg> for Picture {
     }
 
     fn draw(&self, _state: &(), _cursor: mouse::Cursor, _bounds: Rectangle) -> Primitive {
+        let across = |at: i32, points: u32| at as f32 / points.max(1) as f32;
         Primitive {
             pictures: Arc::clone(&self.pictures),
+            pointer: self
+                .pointer
+                .zip(self.points)
+                .map(|((x, y), (w, h))| (across(x, w), across(y, h))),
         }
     }
 
     fn mouse_interaction(&self, _state: &(), bounds: Rectangle, cursor: mouse::Cursor) -> mouse::Interaction {
-        // The other machine draws its own pointer into the picture.
+        // The other machine's pointer is in the picture or drawn over it.
         match self.over(bounds, cursor) {
             Some(at) if self.captured && self.target(bounds, at).is_some() => mouse::Interaction::Hidden,
             _ => mouse::Interaction::default(),
@@ -104,6 +113,8 @@ impl shader::Program<Msg> for Picture {
 
 pub struct Primitive {
     pictures: Arc<Pictures>,
+    /// The other machine's pointer, 0 to 1 across the picture.
+    pointer: Option<(f32, f32)>,
 }
 
 impl std::fmt::Debug for Primitive {
@@ -125,9 +136,13 @@ impl shader::Primitive for Primitive {
     ) {
         if let Some(frame) = self.pictures.take() {
             pipe.upload(device, queue, &frame);
+            if let Some(stamp) = frame.stamp {
+                self.pictures.stats.shown(stamp);
+            }
             self.pictures.give_back(frame);
         }
-        pipe.place(queue, *bounds, viewport);
+        pipe.pointer.upload(device, queue, self.pictures.cursor());
+        pipe.place(queue, *bounds, viewport, self.pointer);
     }
 
     fn render(
@@ -162,15 +177,63 @@ impl shader::Primitive for Primitive {
         pass.set_pipeline(&pipe.render);
         pass.set_bind_group(0, &textures.bind, &[]);
         pass.draw(0..6, 0..1);
+        pipe.pointer.render(&mut pass, clip);
     }
 }
 
+/// A quad and how to write its colors; `picture.wgsl`'s `Uniforms`.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct Uniforms {
+pub struct Uniforms {
     rect: [f32; 4],
     srgb_target: u32,
     padding: [u32; 3],
+}
+
+impl Uniforms {
+    pub fn new(rect: [f32; 4], srgb_target: bool) -> Self {
+        Self {
+            rect,
+            srgb_target: u32::from(srgb_target),
+            padding: [0; 3],
+        }
+    }
+}
+
+/// From the widget's logical coordinates to the target's.
+pub struct Place {
+    bounds: Rectangle,
+    scale: f32,
+    target: (f32, f32),
+}
+
+impl Place {
+    fn new(bounds: Rectangle, viewport: &Viewport) -> Self {
+        let target = viewport.physical_size();
+        Self {
+            bounds,
+            scale: viewport.scale_factor() as f32,
+            target: (target.width as f32, target.height as f32),
+        }
+    }
+
+    /// `r` in physical pixels.
+    pub fn physical(&self, r: Rectangle) -> Rectangle {
+        Rectangle {
+            x: (self.bounds.x + r.x) * self.scale,
+            y: (self.bounds.y + r.y) * self.scale,
+            width: r.width * self.scale,
+            height: r.height * self.scale,
+        }
+    }
+
+    /// `r` in clip space: left, top, right, bottom.
+    pub fn clip(&self, r: Rectangle) -> [f32; 4] {
+        let p = self.physical(r);
+        let x = |px: f32| px / self.target.0 * 2.0 - 1.0;
+        let y = |px: f32| 1.0 - px / self.target.1 * 2.0;
+        [x(p.x), y(p.y), x(p.x + p.width), y(p.y + p.height)]
+    }
 }
 
 struct Textures {
@@ -187,6 +250,7 @@ pub struct Pipeline {
     uniforms: wgpu::Buffer,
     srgb_target: bool,
     textures: Option<Textures>,
+    pointer: Pointer,
 }
 
 impl std::fmt::Debug for Pipeline {
@@ -279,6 +343,7 @@ impl shader::Pipeline for Pipeline {
             uniforms,
             srgb_target: format.is_srgb(),
             textures: None,
+            pointer: Pointer::new(device, &module, format),
         }
     }
 }
@@ -342,22 +407,18 @@ impl Pipeline {
         Textures { size, y, uv, bind }
     }
 
-    /// Put the quad where the picture goes, in clip space.
-    fn place(&self, queue: &wgpu::Queue, bounds: Rectangle, viewport: &Viewport) {
+    /// Put the quad where the picture goes, in clip space, and the pointer
+    /// at `pointer` on it.
+    fn place(&mut self, queue: &wgpu::Queue, bounds: Rectangle, viewport: &Viewport, pointer: Option<(f32, f32)>) {
         let Some(textures) = &self.textures else {
             return;
         };
-        let target = viewport.physical_size();
-        let scale = viewport.scale_factor() as f32;
+        let place = Place::new(bounds, viewport);
         let picture = fit(textures.size, bounds.size());
-        let x = |logical: f32| (bounds.x + logical) * scale / target.width as f32 * 2.0 - 1.0;
-        let y = |logical: f32| 1.0 - (bounds.y + logical) * scale / target.height as f32 * 2.0;
-        let uniforms = Uniforms {
-            rect: [x(picture.x), y(picture.y), x(picture.x + picture.width), y(picture.y + picture.height)],
-            srgb_target: u32::from(self.srgb_target),
-            padding: [0; 3],
-        };
+        let uniforms = Uniforms::new(place.clip(picture), self.srgb_target);
         queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniforms));
+        let pixels = textures.size.0;
+        self.pointer.place(queue, &place, picture, pixels, pointer, self.srgb_target);
     }
 }
 
@@ -381,6 +442,15 @@ fn write_plane(queue: &wgpu::Queue, texture: &wgpu::Texture, data: &[u8], size: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shader_validates() {
+        use wgpu::naga;
+        let module = naga::front::wgsl::parse_str(include_str!("picture.wgsl")).expect("parses");
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
+            .validate(&module)
+            .expect("validates");
+    }
 
     #[test]
     fn the_wheel_is_negated_on_both_axes() {

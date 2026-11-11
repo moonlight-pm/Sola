@@ -10,7 +10,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use iced::futures::channel::mpsc::UnboundedSender;
 use sola_kvm::clip;
 use sola_kvm::link::{self, Conn, Keys};
 use sola_kvm::protocol::{self, Packet};
@@ -19,6 +18,7 @@ use tracing::{debug, info, warn};
 
 use crate::decode::Decoder;
 use crate::pictures::Pictures;
+use crate::stats::{Sample, micros};
 
 const CONNECT: Duration = Duration::from_secs(3);
 const HANDSHAKE: Duration = Duration::from_secs(5);
@@ -33,6 +33,9 @@ pub struct Display {
     pub points: (u32, u32),
 }
 
+/// Where [`Event`]s go: the window, or `--measure`.
+pub type Tell = Arc<dyn Fn(Event) + Send + Sync>;
+
 /// What the window hears.
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -41,6 +44,8 @@ pub enum Event {
     Connected(Display),
     /// A new picture waits in [`Pictures`].
     Picture,
+    /// The host's pointer changed; it waits in [`Pictures`].
+    Cursor,
     Lost(String),
     /// The host will not send a picture; trying again will not help.
     Refused(String),
@@ -50,6 +55,8 @@ pub enum Event {
 pub enum Outgoing {
     Packet(Packet),
     Keyframe,
+    /// Picture `seq` is decoded.
+    Ack { seq: u32, held_us: u32 },
     /// Give the host this machine's clipboard.
     PushClipboard,
     /// Ask for the host's clipboard.
@@ -67,9 +74,33 @@ enum ClipJob {
 
 type Link = Arc<Mutex<Option<(TcpStream, Conn)>>>;
 
-pub fn start(host: String, kvm_port: u16, pictures: Arc<Pictures>, events: UnboundedSender<Event>) {
+/// `--measure --link <mbps>`: pictures read no faster than a link this fast
+/// carries them, so the host meets a slower way than the real one. It
+/// stands in for the link; nothing else waits on it.
+pub struct Throttle {
+    kbps: u64,
+    free_at: Instant,
+}
+
+impl Throttle {
+    pub fn new(mbps: f64) -> Self {
+        Self {
+            kbps: ((mbps * 1000.0) as u64).max(1),
+            free_at: Instant::now(),
+        }
+    }
+
+    /// Wait until `bytes`, read just now, would have come over the link.
+    fn carry(&mut self, bytes: usize) {
+        let now = Instant::now();
+        self.free_at = self.free_at.max(now) + Duration::from_micros(bytes as u64 * 8 * 1000 / self.kbps);
+        thread::sleep(self.free_at.saturating_duration_since(now));
+    }
+}
+
+pub fn start(host: String, kvm_port: u16, pictures: Arc<Pictures>, events: Tell, mut throttle: Option<Throttle>) {
     let (tx, rx) = mpsc::channel();
-    let _ = events.unbounded_send(Event::Ready(tx.clone()));
+    events(Event::Ready(tx.clone()));
     let link: Link = Arc::default();
     let writer = Arc::clone(&link);
     let (clip_tx, clip_rx) = mpsc::channel();
@@ -86,7 +117,7 @@ pub fn start(host: String, kvm_port: u16, pictures: Arc<Pictures>, events: Unbou
         .and_then(|_| {
             thread::Builder::new()
                 .name("kvm-view-video".into())
-                .spawn(move || video_loop(&host, kvm_port, &pictures, &events, &link, &tx, &to_video))
+                .spawn(move || video_loop(&host, kvm_port, &pictures, &events, &link, &tx, &to_video, &mut throttle))
         });
     if let Err(e) = spawned {
         warn!(%e, "remote view: could not start its threads");
@@ -97,30 +128,31 @@ fn video_loop(
     host: &str,
     kvm_port: u16,
     pictures: &Arc<Pictures>,
-    events: &UnboundedSender<Event>,
+    events: &Tell,
     link: &Link,
     outgoing: &Sender<Outgoing>,
     clip: &Sender<ClipJob>,
+    throttle: &mut Option<Throttle>,
 ) {
     let keys = match link::load_view(&link::dir(), host) {
         Ok(Some(keys)) => keys,
         Ok(None) => {
-            let _ = events.unbounded_send(Event::Refused(format!(
+            events(Event::Refused(format!(
                 "This machine is not paired to view {host}. Run: sola-kvm pair {host} --view"
             )));
             return;
         }
         Err(e) => {
-            let _ = events.unbounded_send(Event::Refused(format!("The keys for {host} cannot be read: {e}")));
+            events(Event::Refused(format!("The keys for {host} cannot be read: {e}")));
             return;
         }
     };
     loop {
-        match session(host, kvm_port, &keys, pictures, events, link, outgoing, clip) {
+        match session(host, kvm_port, &keys, pictures, events, link, outgoing, clip, throttle) {
             Ok(Stop::Refused) => return,
             Err(e) => {
                 info!(host, error = %e, "remote view: connection lost");
-                let _ = events.unbounded_send(Event::Lost(e.to_string()));
+                events(Event::Lost(e.to_string()));
             }
         }
         lock(link).take();
@@ -137,43 +169,77 @@ fn session(
     kvm_port: u16,
     keys: &Keys,
     pictures: &Arc<Pictures>,
-    events: &UnboundedSender<Event>,
+    events: &Tell,
     link: &Link,
     outgoing: &Sender<Outgoing>,
     clip: &Sender<ClipJob>,
+    throttle: &mut Option<Throttle>,
 ) -> io::Result<Stop> {
     let addr = resolve(host, kvm_port + PORT_OFFSET)?;
     let (mut tcp, mut conn) = connect(addr, keys, Stream::Video)?;
     *lock(link) = Some(connect(addr, keys, Stream::Input)?);
     let mut decoder = None;
-    let mut rate = Rate::new();
     info!(%addr, "remote view: connected");
     loop {
-        match Down::decode(&conn.read_frame(&mut tcp, MAX_FRAME)?)? {
+        let frame = conn.read_frame(&mut tcp, MAX_FRAME)?;
+        if let Some(throttle) = throttle {
+            throttle.carry(frame.len());
+        }
+        let Some(down) = Down::decode(&frame)? else {
+            continue;
+        };
+        match down {
             Down::Display { points_w, points_h, .. } => {
-                let _ = events.unbounded_send(Event::Connected(Display {
+                // A host that sends no pointer keeps it in the picture.
+                pictures.set_cursor(None);
+                events(Event::Connected(Display {
                     points: (points_w, points_h),
                 }));
             }
             Down::Refused(why) => {
-                let _ = events.unbounded_send(Event::Refused(why));
+                events(Event::Refused(why));
                 return Ok(Stop::Refused);
             }
             Down::Clipboard(text) => {
                 let _ = clip.send(ClipJob::Apply(text));
             }
-            Down::Picture { pts_us, data, .. } => {
+            Down::Cursor(cursor) => {
+                debug!(
+                    width = cursor.width,
+                    height = cursor.height,
+                    hot_x = cursor.hot_x,
+                    hot_y = cursor.hot_y,
+                    "remote view: the host's pointer"
+                );
+                pictures.set_cursor(Some(cursor));
+                events(Event::Cursor);
+            }
+            Down::Picture(picture) => {
+                let arrived = Instant::now();
                 let decoder = match &mut decoder {
                     Some(decoder) => decoder,
                     None => decoder.insert(Decoder::new(Arc::clone(pictures)).map_err(invalid)?),
                 };
-                let started = Instant::now();
-                let pushed = decoder.push(&data, pts_us);
-                rate.count(data.len(), started.elapsed());
+                let before_us = picture.age_us.saturating_add(picture.net_us);
+                let pushed = decoder.push(&picture.data, picture.pts_us, before_us, arrived);
+                let held_us = micros(arrived.elapsed());
+                let _ = outgoing.send(Outgoing::Ack {
+                    seq: picture.seq,
+                    held_us,
+                });
+                let sample = Sample {
+                    bytes: picture.data.len(),
+                    host_us: picture.age_us,
+                    net_us: picture.net_us,
+                    decode_us: held_us,
+                    kbps: picture.kbps,
+                    skipped: picture.skipped,
+                };
+                if let Some(second) = pictures.stats.picture(&sample) {
+                    debug!(stats = %second.line(), "remote view: a second of pictures");
+                }
                 match pushed {
-                    Ok(true) => {
-                        let _ = events.unbounded_send(Event::Picture);
-                    }
+                    Ok(true) => events(Event::Picture),
                     Ok(false) => {}
                     Err(e) => {
                         warn!(error = %e, "remote view: a picture did not decode; asking for a key picture");
@@ -181,41 +247,6 @@ fn session(
                     }
                 }
             }
-        }
-    }
-}
-
-/// Pictures and bits per second, in the log at debug level.
-struct Rate {
-    since: Instant,
-    pictures: u32,
-    bytes: usize,
-    decoding: Duration,
-}
-
-impl Rate {
-    fn new() -> Self {
-        Self {
-            since: Instant::now(),
-            pictures: 0,
-            bytes: 0,
-            decoding: Duration::ZERO,
-        }
-    }
-
-    fn count(&mut self, bytes: usize, decoding: Duration) {
-        self.pictures += 1;
-        self.bytes += bytes;
-        self.decoding += decoding;
-        let elapsed = self.since.elapsed().as_secs_f64();
-        if elapsed >= 1.0 {
-            debug!(
-                fps = self.pictures as f64 / elapsed,
-                mbps = self.bytes as f64 * 8.0 / elapsed / 1e6,
-                decode_ms = self.decoding.as_secs_f64() * 1e3 / f64::from(self.pictures),
-                "remote view: rate"
-            );
-            *self = Self::new();
         }
     }
 }
@@ -291,6 +322,7 @@ fn write_loop(rx: Receiver<Outgoing>, link: Link, clip: Sender<ClipJob>) {
         for out in coalesce(batch) {
             let up = match out {
                 Outgoing::Keyframe => Up::Keyframe,
+                Outgoing::Ack { seq, held_us } => Up::Ack { seq, held_us },
                 Outgoing::PushClipboard => {
                     let _ = clip.send(ClipJob::Push);
                     continue;

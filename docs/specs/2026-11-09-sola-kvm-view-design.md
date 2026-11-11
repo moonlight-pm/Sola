@@ -72,3 +72,5 @@ both sides last agreed on and skips a sync that would change nothing.
 
 NVIDIA decoders only; the main display only; one viewer at a time; no audio;
 pictures on the clipboard; the window does not resize the host's screen.
+Next: [measured, a pointer drawn here, a stream that keeps
+up](2026-11-11-remote-desktop-latency-design.md).
