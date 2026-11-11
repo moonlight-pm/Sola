@@ -1,8 +1,8 @@
 # Remote Desktop: measured, a pointer drawn here, a stream that keeps up
 
-**Status:** decided 2026-11-11; all three steps built on branch
-`remote-desktop-latency` and measured against a scratch agent on ember (not
-merged, the agent on ember not reinstalled).
+**Status:** decided 2026-11-11; all three steps built, measured against a
+scratch agent on ember, merged (f349e8d1), and installed: `pkg:sola-kvm` on
+novus and the agent on ember, from next@d4ed702c.
 
 **Decided by Joshua (2026-11-11):** after a look at voxl (Tembo's remote
 desktop, [tembo/voxl](https://github.com/tembo/voxl)), take three of its ideas,
