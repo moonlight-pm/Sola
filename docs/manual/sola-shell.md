@@ -505,11 +505,20 @@ a drawing it is named by its place ("Column 1", "Row 2").
 
 ## Titlebars
 
-Every Sola window draws its own frame: a titlebar with the red close dot,
-the app's menus (the first under the app's name in bold), the **Window**
-menu, and the window's title at the right. A menu that does not fit is
-left out. The top row has no app menus. A focused window's frame has a
-lit rim.
+Every Sola window draws its own frame: a titlebar with three lights, the
+app's menus (the first under the app's name in bold), the **Window** menu,
+and the window's title at the right. The lights are coloured on the focused
+window and grey on the others:
+
+- **Red** closes the window.
+- **Yellow** hides its app, as **Hide** (Super+H) does.
+- **Green** opens a sheet under it with a little drawing of the screen for
+  each zone of your layout ([Zones](#zones)), then Full, Cinema and Float.
+  Pick one, by mouse or with the arrows and Return, and the window moves
+  there. Esc or a click elsewhere closes it.
+
+A menu that does not fit is left out. The top row has no app menus. A
+focused window's frame has a lit rim.
 
 Windows of other programs (XWayland, other Wayland apps) have no Sola
 titlebar. The compositor gives them the same rim, and rounded corners

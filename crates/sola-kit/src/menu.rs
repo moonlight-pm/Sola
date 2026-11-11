@@ -58,6 +58,16 @@ pub(crate) fn observe(message: &sola_bus::Message) {
     }
 }
 
+/// The zone layout now (the default until the shell says), for the
+/// titlebar's zone picker.
+pub(crate) fn zone_layout() -> ZoneLayout {
+    LAYOUT
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .unwrap_or_default()
+}
+
 /// Give a Window menu the layout's grid zones, after Float, named by
 /// their place ("Column 1"); their keys come with the rest
 /// (`crate::keys::apply`, or the shell's own table).
@@ -221,11 +231,7 @@ pub fn current() -> Option<AppMenuPayload> {
 /// none) with the layout's grid zones, and every item's key now.
 pub fn prepare(payload: AppMenuPayload) -> AppMenuPayload {
     let mut payload = ensure_window_menu(payload);
-    let layout = LAYOUT
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .clone()
-        .unwrap_or_default();
+    let layout = zone_layout();
     let workspaces = WORKSPACES
         .read()
         .unwrap_or_else(|p| p.into_inner())

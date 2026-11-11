@@ -10,12 +10,14 @@
 //! - **Bare:** content only, square and opaque (Cinema, so it can scan
 //!   out).
 //!
-//! The titlebar row, left to right: the close dot, the app's first menu
-//! under its name in bold, its other menus, the Window menu, then the
-//! window's title in tertiary ink, right-aligned. Menus come from
-//! [`crate::menu::current`]; a choice goes through [`crate::menu::choose`].
-//! A menu's dropdown hangs under its title inside the window. Spec:
-//! `docs/specs/2026-10-21-next-tab-bar-design.md`, slice 6.
+//! The titlebar row, left to right: the stoplight (close, hide, zone), the
+//! app's first menu under its name in bold, its other menus, the Window
+//! menu, then the window's title in tertiary ink, right-aligned. Menus come
+//! from [`crate::menu::current`]; a choice goes through
+//! [`crate::menu::choose`]. A menu's dropdown hangs under its title inside
+//! the window; the green light's zone picker hangs under it. Yellow and
+//! green are the Window menu's Hide and zone items, so the shell carries
+//! them out. Spec: `docs/specs/2026-10-21-next-tab-bar-design.md`, slice 6.
 
 mod bar;
 mod dropdown;
@@ -23,6 +25,7 @@ mod frame;
 mod grips;
 mod island;
 mod paint;
+mod zones;
 
 /// The close dot's red (the titlebar's stoplight), for a sidebar row's
 /// hover close.
@@ -65,7 +68,7 @@ impl From<bool> for Chrome {
 /// Frame `content` with the titlebar and this app's published menus.
 ///
 /// `on_drag` starts a move ([`crate::float::drag`]) and is only sent while
-/// floating; `on_close` is the close dot; `on_resize` starts an edge resize
+/// floating; `on_close` is the red light; `on_resize` starts an edge resize
 /// ([`crate::float::drag_resize`]) while floating.
 pub fn window_frame<'a, Message>(
     chrome: impl Into<Chrome>,

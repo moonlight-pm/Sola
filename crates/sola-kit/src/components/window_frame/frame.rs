@@ -12,8 +12,9 @@ use iced::window::Direction;
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector, window};
 use sola_bus::topics::{AppMenuPayload, MenuDefinition};
 
-use super::bar::{self, Bar, Hit};
+use super::bar::{self, Bar, Dot, Hit};
 use super::dropdown::Dropdown;
+use super::zones::ZonePicker;
 use super::{Chrome, HEIGHT, grips, paint};
 
 /// The last focus change any frame in this process saw. A frame whose
@@ -30,9 +31,12 @@ pub(super) struct State {
     pub focused: Option<bool>,
     /// The menu whose dropdown is showing.
     pub open: Option<usize>,
-    /// The highlighted row of the open dropdown.
+    /// The zone picker is showing (the green light was pressed).
+    pub zones: bool,
+    /// The highlighted row of the open dropdown, or drawing of the picker.
     pub hot: Option<usize>,
-    pub close_hover: bool,
+    /// The light under the pointer.
+    pub dot_hover: Option<Dot>,
     pub bar: Bar,
 }
 
@@ -42,9 +46,15 @@ impl State {
             .unwrap_or_else(|| PROCESS_FOCUSED.load(Ordering::Relaxed))
     }
 
+    /// Close the open dropdown or the zone picker.
     pub fn close_menu(&mut self) {
         self.open = None;
+        self.zones = false;
         self.hot = None;
+    }
+
+    fn popped(&self) -> bool {
+        self.open.is_some() || self.zones
     }
 }
 
@@ -115,6 +125,18 @@ impl<'a, Message> WindowFrame<'a, Message> {
 
     fn labels(&self) -> Vec<String> {
         self.definitions().iter().map(|m| m.label.clone()).collect()
+    }
+
+    /// The app the menus are for: the shell hides it, or moves its focused
+    /// window, for the yellow and green lights.
+    fn app_id(&self) -> Option<&str> {
+        self.menus.as_ref().map(|m| m.app_id.as_str())
+    }
+
+    /// Which lights show, in [`Dot::ALL`] order.
+    fn dots(&self) -> [bool; 3] {
+        let app = self.app_id().is_some();
+        [self.on_close.is_some(), app, app]
     }
 }
 
@@ -207,8 +229,8 @@ where
                 width: bounds.width,
                 colors: &colors,
                 open: state.open,
-                close: self.on_close.is_some(),
-                close_hover: state.close_hover,
+                dots: self.dots(),
+                lit: state.dot_hover.or(state.zones.then_some(Dot::Zone)),
             },
             bounds,
         );
@@ -335,6 +357,19 @@ where
                 anchor,
             ))));
         }
+        if tree.state.downcast_ref::<State>().zones && self.chrome != Chrome::Bare {
+            let this: &'b Self = self;
+            let app_id = this.app_id()?;
+            let state = tree.state.downcast_mut::<State>();
+            let bounds = layout.bounds();
+            let anchor = Point::new(
+                bounds.x + state.bar.dots[2].x + translation.x,
+                bounds.y + HEIGHT + 4.0 + translation.y,
+            );
+            return Some(overlay::Element::new(Box::new(ZonePicker::new(
+                state, app_id, anchor,
+            ))));
+        }
         let child = layout.children().next().expect("frame content");
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
@@ -374,9 +409,12 @@ impl<Message: Clone> WindowFrame<'_, Message> {
             Event::Mouse(mouse::Event::CursorMoved { .. })
             | Event::Mouse(mouse::Event::CursorLeft) => {
                 let hit = on_bar(bounds, cursor).and_then(|p| state.bar.hit(p));
-                let close_hover = hit == Some(Hit::Close) && self.on_close.is_some();
-                let mut changed = close_hover != state.close_hover;
-                state.close_hover = close_hover;
+                let dot_hover = match hit {
+                    Some(Hit::Dot(d)) if self.dots()[d as usize] => Some(d),
+                    _ => None,
+                };
+                let mut changed = dot_hover != state.dot_hover;
+                state.dot_hover = dot_hover;
                 // Hovering another title while a menu is open switches to it.
                 if let (Some(open), Some(Hit::Menu(i))) = (state.open, hit) {
                     if open != i {
@@ -406,14 +444,26 @@ impl<Message: Clone> WindowFrame<'_, Message> {
                 match on_bar(bounds, cursor).and_then(|p| state.bar.hit(p)) {
                     Some(hit) if *button == mouse::Button::Left => {
                         match hit {
-                            Hit::Close => {
+                            Hit::Dot(Dot::Close) => {
                                 state.close_menu();
                                 if let Some(m) = &self.on_close {
                                     shell.publish(m.clone());
                                 }
                             }
+                            Hit::Dot(Dot::Hide) => {
+                                state.close_menu();
+                                if let Some(app_id) = self.app_id() {
+                                    crate::menu::choose(app_id, crate::menu::ACTION_HIDE);
+                                }
+                            }
+                            Hit::Dot(Dot::Zone) => {
+                                let open = !state.zones && self.app_id().is_some();
+                                state.close_menu();
+                                state.zones = open;
+                            }
                             Hit::Menu(i) => {
                                 state.open = if state.open == Some(i) { None } else { Some(i) };
+                                state.zones = false;
                                 state.hot = None;
                             }
                             Hit::Bar => {
@@ -433,7 +483,7 @@ impl<Message: Clone> WindowFrame<'_, Message> {
                         shell.capture_event();
                         return true;
                     }
-                    None if state.open.is_some() => {
+                    None if state.popped() => {
                         // A press outside an open menu only closes it.
                         state.close_menu();
                         shell.request_redraw();
