@@ -112,7 +112,9 @@ pub const BASE: &[&str] = &[
 pub const PACKAGES: &[Package] = &[
     // KVM and Remote Desktop, its window (`svc:sola-kvm` runs `sola-kvm`):
     // moving it restarts input sharing only. wl-copy / wl-paste: their
-    // clipboard.
+    // clipboard. The desk profile pins it (since 2026-11-10), so a machine
+    // takes it at its next update without the core needing it, and the
+    // core does not move with it.
     app("sola-kvm", &["sola-kvm", "sola-kvm-view"], &["wl-clipboard"]),
     Package {
         name: "sola",
@@ -131,11 +133,6 @@ pub const PACKAGES: &[Package] = &[
         ],
         build: &["rust", "pkgconf", "libxkbcommon"],
         needs: &[
-            // Until every machine has `pkg:sola-kvm`: its programs left this
-            // package, so a machine that took this one alone would lose
-            // /bin/sola-kvm. Drop it then. It must not need this one back:
-            // Oath refuses a cycle.
-            "sola-kvm",
             "tmux",
             "pipewire",
             "wireplumber",
@@ -214,7 +211,8 @@ mod tests {
         assert!(core.share && core.bins.contains(&"sola-river"));
         assert!(!core.bins.contains(&"sola-mail"), "apps are out of the core");
         assert!(!core.bins.contains(&"sola-kvm"), "KVM restarts on its own");
-        assert!(core.needs.contains(&"sola-kvm"), "a machine takes the two together");
+        // A need is pinned at a hash: moving KVM would move the desk.
+        assert!(!core.needs.contains(&"sola-kvm"), "KVM moves without the desk");
     }
 
     #[test]
