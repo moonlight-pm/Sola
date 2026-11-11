@@ -1,6 +1,8 @@
 # Remote Desktop: a screen of its own, the size of the window
 
-**Status:** decided 2026-11-11; to build on branch `remote-desktop-screen`.
+**Status:** decided and built 2026-11-11 on branch `remote-desktop-screen`;
+applied on novus (`pkg:sola-kvm` 5d06e2819665 from next@ca6c9d27) and the
+agent on ember (from next@81bdd88c); not merged.
 
 **Decided by Joshua (2026-11-11):** "weren't you going to make it so the mac
 changes its resolution to match what the content size is?" and "is it
@@ -62,9 +64,33 @@ made in 5–25 ms; online 0.15–0.4 s after its first settings, which macOS
 announces to no one in this process, so the agent looks; resized in about
 60 ms; made main by putting it at (0, 0) with `kCGConfigureForAppOnly`, which
 macOS undoes if the agent exits. Released, it is gone for every other process
-within a second, but this process's own display list keeps it: the agent
-keeps the ids it made. Whether ScreenCaptureKit lists it at once is unseen
-(the probe had no Screen Recording grant).
+within a second.
+
+Once a process has changed the arrangement, its own view of the displays
+(`CGDisplayBounds`, the online list, the main display) stops following: a
+resize of the made display, or its release, is seen by every other process
+and not by the one that made it. The agent first waited on its own view and
+gave up on the first resize; it now takes the displays from ScreenCaptureKit,
+which asks the window server each time (where each display is, when the made
+one has its size, which is main: the one at 0,0), and keeps the ids it let
+go, which ScreenCaptureKit may list for a moment after.
+
+## Built (2026-11-11)
+
+`apps/sola-kvm-mac/src/view/display.rs` (the display), `shape.rs` (the size
+rule), `capture.rs` (which display, restarts at a new size). The viewer lays
+its picture out before connecting, says its size on the input stream, and
+connects only once it knows it.
+
+- The test card from a scratch agent on ember, in a window on a private desk:
+  it followed the window through the shell's zones (1512×972, 1010×624,
+  640×624, the least), one pixel to one, with no bars; fewer pixels, so 6 to
+  10 ms from capture to shown.
+- The installed agent, with the installed viewer on a private desk: a display
+  made main at the window's size, ScreenCaptureKit capturing it with the
+  pointer left out, the Mac's menu bar, Dock and windows on it, and resized
+  with the window (1010×624, 640×624, back); after, ember had its one screen
+  again.
 
 ## Not in this
 
