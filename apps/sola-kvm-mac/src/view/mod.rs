@@ -10,6 +10,7 @@ mod annexb;
 mod capture;
 #[cfg(target_os = "macos")]
 mod encode;
+mod flow;
 #[cfg(target_os = "macos")]
 mod pattern;
 mod server;

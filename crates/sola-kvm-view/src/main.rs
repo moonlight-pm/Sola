@@ -7,10 +7,13 @@ mod app;
 mod decode;
 mod fit;
 mod inhibit;
+mod measure;
+mod menu;
 mod net;
 mod nvdec_sys;
 mod picture;
 mod pictures;
+mod stats;
 
 use sola_kit::app::{BusSetup, startup, window_settings_transparent};
 use sola_kit::fonts;
@@ -42,18 +45,23 @@ fn target() -> Result<(String, u16), String> {
     }
 }
 
-fn main() -> iced::Result {
+/// `--measure <pictures>`: how many pictures to measure with no window.
+fn measure_arg() -> Option<u32> {
+    let args: Vec<String> = std::env::args().collect();
+    let at = args.iter().position(|a| a == "--measure")?;
+    Some(args.get(at + 1).and_then(|n| n.parse().ok()).unwrap_or(600))
+}
+
+fn main() -> std::process::ExitCode {
     let target = target();
+    if let Some(pictures) = measure_arg() {
+        return measure::run(target, pictures);
+    }
 
     startup(APP_ID);
 
-    BusSetup::new(APP_ID)
-        .app_kinds(&[])
-        .app_menu(
-            "Remote Desktop",
-            [sola_kit::menu::close_window_item(), sola_kit::menu::quit_item("Quit Remote Desktop")],
-        )
-        .install();
+    BusSetup::new(APP_ID).app_kinds(&[]).install();
+    sola_kit::menu::publish(menu::app_menu(false));
 
     let mut settings = window_settings_transparent(APP_ID);
     settings.size = iced::Size::new(1512.0, 1010.0);
@@ -65,4 +73,11 @@ fn main() -> iced::Result {
         .default_font(fonts::ui())
         .window(settings)
         .run()
+        .map_or_else(
+            |e| {
+                tracing::error!(%e, "remote view: the window failed");
+                std::process::ExitCode::FAILURE
+            },
+            |()| std::process::ExitCode::SUCCESS,
+        )
 }

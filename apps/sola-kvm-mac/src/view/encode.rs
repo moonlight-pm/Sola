@@ -24,11 +24,10 @@ use objc2_video_toolbox::{
 use tracing::{info, warn};
 
 use super::annexb;
-use super::server::Msg;
-use crate::view_wire::Down;
+use super::flow::CEILING_KBPS;
+use super::server::{Encoded, Msg};
 
 pub const FPS: i32 = 60;
-const BITS_PER_SECOND: i32 = 50_000_000;
 /// A key picture this often even when none is asked for.
 const KEY_INTERVAL_SECONDS: i32 = 10;
 
@@ -64,7 +63,8 @@ impl Encoder {
         Ok(Self { session, out })
     }
 
-    pub fn encode(&self, image: &CVImageBuffer, pts: CMTime, force_key: bool) -> Result<(), i32> {
+    /// `captured_us` comes back with the picture ([`Encoded`]).
+    pub fn encode(&self, image: &CVImageBuffer, pts: CMTime, force_key: bool, captured_us: u64) -> Result<(), i32> {
         let force: Option<CFRetained<CFDictionary<CFString, CFBoolean>>> = force_key.then(|| {
             let t = unsafe { kCFBooleanTrue }.expect("kCFBooleanTrue");
             CFDictionary::from_slices(&[unsafe { kVTEncodeFrameOptionKey_ForceKeyFrame }], &[t])
@@ -76,7 +76,7 @@ impl Encoder {
                 pts,
                 kCMTimeInvalid,
                 props,
-                ptr::null_mut(),
+                captured_us as usize as *mut c_void,
                 ptr::null_mut(),
             )
         };
@@ -124,7 +124,7 @@ fn create(width: i32, height: i32, out: *mut Out, low_latency: bool) -> Result<C
 fn configure(session: &VTCompressionSession) {
     let t: &CFType = unsafe { kCFBooleanTrue }.expect("kCFBooleanTrue");
     let f: &CFType = unsafe { objc2_core_foundation::kCFBooleanFalse }.expect("kCFBooleanFalse");
-    let rate = CFNumber::new_i32(BITS_PER_SECOND);
+    let rate = CFNumber::new_i32(CEILING_KBPS as i32 * 1000);
     let fps = CFNumber::new_i32(FPS);
     let key_interval = CFNumber::new_i32(KEY_INTERVAL_SECONDS);
     let properties: [(&str, &CFString, &CFType); 6] = unsafe {
@@ -151,14 +151,14 @@ fn configure(session: &VTCompressionSession) {
 
 unsafe extern "C-unwind" fn on_encoded(
     refcon: *mut c_void,
-    _source: *mut c_void,
+    source: *mut c_void,
     status: i32,
     _flags: VTEncodeInfoFlags,
     sample: *mut CMSampleBuffer,
 ) {
     let out = unsafe { &*refcon.cast::<Out>() };
     let picture = match unsafe { sample.as_ref() } {
-        Some(sample) if status == 0 => unsafe { picture(sample) },
+        Some(sample) if status == 0 => unsafe { picture(sample, source as usize as u64) },
         // A dropped frame comes here with no sample.
         _ => None,
     };
@@ -175,7 +175,7 @@ unsafe extern "C-unwind" fn on_encoded(
     }
 }
 
-unsafe fn picture(sample: &CMSampleBuffer) -> Option<Down> {
+unsafe fn picture(sample: &CMSampleBuffer, captured_us: u64) -> Option<Encoded> {
     let key = unsafe { is_key(sample) };
     let pts = unsafe { sample.presentation_time_stamp() };
     let pts_us = (pts.value as i128 * 1_000_000 / i128::from(pts.timescale.max(1))) as u64;
@@ -184,7 +184,12 @@ unsafe fn picture(sample: &CMSampleBuffer) -> Option<Down> {
     let mut data = Vec::new();
     let header = unsafe { parameter_sets(&format, key.then_some(&mut data)) }?;
     annexb::push_sample(&mut data, unsafe { contiguous(&block) }?, header)?;
-    Some(Down::Picture { key, pts_us, data })
+    Some(Encoded {
+        key,
+        pts_us,
+        captured_us,
+        data,
+    })
 }
 
 unsafe fn is_key(sample: &CMSampleBuffer) -> bool {

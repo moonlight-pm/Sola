@@ -7,17 +7,19 @@ use std::sync::mpsc::Sender;
 use iced::futures::SinkExt as _;
 use iced::futures::StreamExt as _;
 use iced::keyboard::{self, key::Physical};
-use iced::widget::{center, container, shader, text};
-use iced::{Color, Element, Event, Length, Subscription, Task, Theme, event, stream, window};
+use iced::widget::{center, container, shader, stack, text};
+use iced::{Alignment, Color, Element, Event, Length, Subscription, Task, Theme, event, stream, window};
 
 use sola_bus::Message;
 use sola_bus::topics::Topic;
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
+use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 use sola_kvm::protocol::Packet;
 
 use crate::APP_ID;
 use crate::inhibit::{self, Inhibitor};
+use crate::menu;
 use crate::net::{self, Display, Outgoing};
 use crate::picture::Picture;
 use crate::pictures::Pictures;
@@ -46,6 +48,8 @@ pub struct App {
     /// False once Ctrl+Alt+Esc has handed keyboard and pointer back.
     captured: bool,
     focused: bool,
+    /// View → Statistics: the window's corner says how the pictures come.
+    statistics: bool,
     inhibitor: Option<Arc<Inhibitor>>,
     window_id: Option<window::Id>,
     theme: Theme,
@@ -90,6 +94,7 @@ impl App {
                 held: BTreeSet::new(),
                 captured: true,
                 focused: false,
+                statistics: false,
                 inhibitor: None,
                 window_id: None,
                 theme: default_theme(),
@@ -163,6 +168,10 @@ impl App {
                 if let Some(Topic::MenuAction(p)) = Topic::parse(&message) {
                     if p.app_id == APP_ID && p.action_id == "quit" {
                         return iced::exit();
+                    }
+                    if p.app_id == APP_ID && p.action_id == menu::STATISTICS {
+                        self.statistics = !self.statistics;
+                        sola_kit::menu::publish(menu::app_menu(self.statistics));
                     }
                 }
             }
@@ -307,14 +316,19 @@ impl App {
         };
         let body: Element<'_, Msg> = match note {
             Some(note) => center(text(note)).into(),
-            None => shader(Picture {
-                pictures: Arc::clone(&self.pictures),
-                points: self.display.map(|d| d.points),
-                captured: self.captured,
-            })
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into(),
+            None => {
+                let picture = shader(Picture {
+                    pictures: Arc::clone(&self.pictures),
+                    points: self.display.map(|d| d.points),
+                    captured: self.captured,
+                })
+                .width(Length::Fill)
+                .height(Length::Fill);
+                match self.statistics.then(|| self.statistics_panel()) {
+                    Some(panel) => stack![picture, panel].into(),
+                    None => picture.into(),
+                }
+            }
         };
         let body = container(body)
             .width(Length::Fill)
@@ -328,6 +342,26 @@ impl App {
             Msg::TitleResize,
             body.into(),
         )
+    }
+}
+
+impl App {
+    /// The last second of pictures, in a corner over the picture.
+    fn statistics_panel(&self) -> Element<'_, Msg> {
+        let words = match self.pictures.stats.last() {
+            (_, Some(second)) => second.to_string(),
+            (_, None) => "Waiting for a second of pictures…".into(),
+        };
+        let panel = container(text(words).font(fonts::mono()).size(12).color(Color::WHITE))
+            .padding(8)
+            .style(|_| container::background(Color::from_rgba(0.0, 0.0, 0.0, 0.7)));
+        container(panel)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(8)
+            .align_x(Alignment::End)
+            .align_y(Alignment::Start)
+            .into()
     }
 }
 
@@ -349,7 +383,14 @@ fn run_link(link: &Link) -> impl iced::futures::Stream<Item = net::Event> + use<
     let (host, port, pictures) = (link.host.clone(), link.port, Arc::clone(&link.pictures));
     stream::channel(64, async move |mut output: iced::futures::channel::mpsc::Sender<net::Event>| {
         let (tx, mut rx) = iced::futures::channel::mpsc::unbounded();
-        net::start(host, port, pictures, tx);
+        net::start(
+            host,
+            port,
+            pictures,
+            Arc::new(move |event| {
+                let _ = tx.unbounded_send(event);
+            }),
+        );
         while let Some(event) = rx.next().await {
             if output.send(event).await.is_err() {
                 return;

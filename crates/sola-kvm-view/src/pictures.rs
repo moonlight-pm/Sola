@@ -5,6 +5,8 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use crate::stats::{Stamp, Stats};
+
 /// One decoded picture, NV12, tightly packed.
 #[derive(Default)]
 pub struct Frame {
@@ -12,10 +14,12 @@ pub struct Frame {
     pub height: u32,
     pub y: Vec<u8>,
     pub uv: Vec<u8>,
+    pub stamp: Option<Stamp>,
 }
 
 #[derive(Default)]
 pub struct Pictures {
+    pub stats: Stats,
     newest: Mutex<Option<Frame>>,
     spare: Mutex<Option<Frame>>,
     size: AtomicU64,
@@ -24,6 +28,13 @@ pub struct Pictures {
 }
 
 impl Pictures {
+    pub fn with_stats(stats: Stats) -> Self {
+        Self {
+            stats,
+            ..Self::default()
+        }
+    }
+
     /// A frame to decode into, with its old buffers when there is one.
     pub fn spare(&self) -> Frame {
         lock(&self.spare).take().unwrap_or_default()

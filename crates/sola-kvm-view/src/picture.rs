@@ -125,6 +125,9 @@ impl shader::Primitive for Primitive {
     ) {
         if let Some(frame) = self.pictures.take() {
             pipe.upload(device, queue, &frame);
+            if let Some(stamp) = frame.stamp {
+                self.pictures.stats.shown(stamp);
+            }
             self.pictures.give_back(frame);
         }
         pipe.place(queue, *bounds, viewport);

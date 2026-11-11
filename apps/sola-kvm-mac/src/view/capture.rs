@@ -2,7 +2,7 @@
 //! card), into the encoder.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Duration;
@@ -26,6 +26,7 @@ use objc2_screen_capture_kit::{
 use tracing::warn;
 
 use super::encode::{Encoder, FPS};
+use super::flow::now_us;
 use super::pattern;
 use super::server::{Feed, Msg, Source};
 use crate::view_wire::Down;
@@ -40,17 +41,20 @@ const QUEUE_DEPTH: isize = 5;
 pub struct Frames {
     encoder: Encoder,
     in_flight: Arc<AtomicUsize>,
+    skipped: Arc<AtomicU32>,
     force_key: Arc<AtomicBool>,
 }
 
 impl Frames {
     pub fn offer(&self, image: &CVImageBuffer, pts: CMTime) {
+        let captured_us = now_us();
         if self.in_flight.load(Ordering::Relaxed) >= MAX_IN_FLIGHT {
+            self.skipped.fetch_add(1, Ordering::Relaxed);
             return;
         }
         self.in_flight.fetch_add(1, Ordering::Relaxed);
         let key = self.force_key.swap(false, Ordering::Relaxed);
-        if let Err(status) = self.encoder.encode(image, pts, key) {
+        if let Err(status) = self.encoder.encode(image, pts, key, captured_us) {
             warn!(status, "remote view: the encoder would not take a frame");
             self.in_flight.fetch_sub(1, Ordering::Relaxed);
         }
@@ -86,9 +90,22 @@ pub fn start(source: Source, feed: Feed) -> Result<(Down, Running), String> {
 }
 
 fn frames(width: usize, height: usize, feed: Feed) -> Result<(Arc<Frames>, Sender<Msg>), String> {
-    let Feed { tx, in_flight, force_key } = feed;
+    let Feed {
+        tx,
+        in_flight,
+        skipped,
+        force_key,
+    } = feed;
     let encoder = Encoder::new(width as i32, height as i32, tx.clone(), Arc::clone(&in_flight))?;
-    Ok((Arc::new(Frames { encoder, in_flight, force_key }), tx))
+    Ok((
+        Arc::new(Frames {
+            encoder,
+            in_flight,
+            skipped,
+            force_key,
+        }),
+        tx,
+    ))
 }
 
 fn test_pattern(feed: Feed) -> Result<(Down, Running), String> {

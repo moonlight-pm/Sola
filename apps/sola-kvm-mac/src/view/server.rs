@@ -3,7 +3,7 @@
 
 use std::io::{self, Read};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -12,10 +12,11 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 use super::capture;
+use super::flow::{self, Flow, now_us};
 use crate::inject::{CgInjector, Injector};
 use crate::link::{Conn, Keys};
 use crate::protocol::{self, Packet};
-use crate::view_wire::{Down, MAX_CLIPBOARD, PORT_OFFSET, Stream, Up};
+use crate::view_wire::{Down, MAX_CLIPBOARD, PORT_OFFSET, Picture, Stream, Up};
 
 /// How long a connection has to prove it is the paired machine. These run
 /// one at a time on the accept thread, so a stranger cannot pile up threads.
@@ -33,8 +34,23 @@ pub enum Source {
     TestPattern,
 }
 
+/// A picture from the encoder, before what the wire says of its way.
+pub struct Encoded {
+    pub key: bool,
+    pub pts_us: u64,
+    /// When its frame was captured ([`now_us`]).
+    pub captured_us: u64,
+    pub data: Vec<u8>,
+}
+
 pub enum Msg {
-    Picture(Down),
+    Picture(Encoded),
+    /// The viewer decoded picture `seq`; the ack came at `at_us`.
+    Ack {
+        seq: u32,
+        held_us: u32,
+        at_us: u64,
+    },
     Clipboard(String),
     Closed,
 }
@@ -46,6 +62,8 @@ pub struct Feed {
     /// when too many are out, so a slow network drops frames before they
     /// are encoded and no later picture loses its reference.
     pub in_flight: Arc<AtomicUsize>,
+    /// Frames skipped since the last picture went.
+    pub skipped: Arc<AtomicU32>,
     pub force_key: Arc<AtomicBool>,
 }
 
@@ -54,7 +72,7 @@ struct Shared {
     video: Mutex<Option<TcpStream>>,
     input: Mutex<Option<TcpStream>>,
     force_key: Arc<AtomicBool>,
-    /// The video stream's queue, for clipboard answers.
+    /// The video stream's queue, for clipboard answers and acks.
     to_viewer: Mutex<Option<Sender<Msg>>>,
     /// The test card's clipboard: it never touches this Mac's.
     test_clipboard: Mutex<String>,
@@ -113,6 +131,10 @@ pub fn spawn(bind: &str, keys: Keys, source: Source) -> io::Result<()> {
     Ok(())
 }
 
+fn clamp_u32(v: u64) -> u32 {
+    u32::try_from(v).unwrap_or(u32::MAX)
+}
+
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -132,9 +154,11 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
     watch_for_close(&tcp, tx.clone())?;
     *lock(&shared.to_viewer) = Some(tx.clone());
     let in_flight = Arc::new(AtomicUsize::new(0));
+    let skipped = Arc::new(AtomicU32::new(0));
     let feed = Feed {
         tx,
         in_flight: Arc::clone(&in_flight),
+        skipped: Arc::clone(&skipped),
         force_key: Arc::clone(&shared.force_key),
     };
     let (screen, running) = match capture::start(source, feed) {
@@ -146,13 +170,28 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
     };
     info!(?screen, "remote view: sending");
     conn.write_frame(&mut tcp, &screen.encode())?;
+    let (mut flow, mut seq) = (Flow::default(), 0u32);
     loop {
         match rx.recv() {
-            Ok(Msg::Picture(picture)) => {
-                let sent = conn.write_frame(&mut tcp, &picture.encode());
+            Ok(Msg::Picture(encoded)) => {
+                seq = seq.wrapping_add(1).max(1);
+                let now = now_us();
+                let picture = Picture {
+                    key: encoded.key,
+                    seq,
+                    pts_us: encoded.pts_us,
+                    age_us: clamp_u32(now.saturating_sub(encoded.captured_us)),
+                    net_us: flow.net_us(),
+                    kbps: flow::CEILING_KBPS,
+                    skipped: u16::try_from(skipped.swap(0, Ordering::Relaxed)).unwrap_or(u16::MAX),
+                    data: encoded.data,
+                };
+                flow.sent(seq, now);
+                let sent = conn.write_frame(&mut tcp, &Down::Picture(picture).encode());
                 in_flight.fetch_sub(1, Ordering::Relaxed);
                 sent?;
             }
+            Ok(Msg::Ack { seq, held_us, at_us }) => flow.acked(seq, held_us, at_us),
             Ok(Msg::Clipboard(text)) => conn.write_frame(&mut tcp, &Down::Clipboard(text).encode())?,
             Ok(Msg::Closed) | Err(_) => break,
         }
@@ -177,7 +216,16 @@ fn input(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
     Shared::take_over(&shared.input, &tcp)?;
     let mut injector = CgInjector::new();
     let result = (|| loop {
-        match Up::decode(&conn.read_frame(&mut tcp, UP_FRAME)?)? {
+        let Some(up) = Up::decode(&conn.read_frame(&mut tcp, UP_FRAME)?)? else {
+            continue;
+        };
+        match up {
+            Up::Ack { seq, held_us } => {
+                let at_us = now_us();
+                if let Some(tx) = &*lock(&shared.to_viewer) {
+                    let _ = tx.send(Msg::Ack { seq, held_us, at_us });
+                }
+            }
             Up::Keyframe => shared.force_key.store(true, Ordering::Relaxed),
             Up::ClipboardSet(text) if source == Source::TestPattern => {
                 info!(bytes = text.len(), "test card: clipboard set");
