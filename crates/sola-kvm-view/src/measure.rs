@@ -1,15 +1,16 @@
-//! `--measure <pictures>`: the stream with no window. Decodes as the window
-//! would, prints each second of pictures and then all of them, and exits.
+//! `--measure <pictures> [--link <mbps>]`: the stream with no window.
+//! Decodes as the window would, prints each second of pictures and then all
+//! of them, and exits. `--link` reads as a slower link would carry it.
 
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use crate::net::{self, Event};
+use crate::net::{self, Event, Throttle};
 use crate::pictures::Pictures;
 use crate::stats::Stats;
 
-pub fn run(target: Result<(String, u16), String>, wanted: u32) -> ExitCode {
+pub fn run(target: Result<(String, u16), String>, wanted: u32, link_mbps: Option<f64>) -> ExitCode {
     let (host, port) = match target {
         Ok(target) => target,
         Err(why) => {
@@ -26,6 +27,7 @@ pub fn run(target: Result<(String, u16), String>, wanted: u32) -> ExitCode {
         Arc::new(move |event| {
             let _ = tx.send(event);
         }),
+        link_mbps.map(Throttle::new),
     );
     let mut printed = 0;
     while let Ok(event) = rx.recv() {

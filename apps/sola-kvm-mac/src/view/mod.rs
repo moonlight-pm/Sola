@@ -15,6 +15,7 @@ mod encode;
 mod flow;
 #[cfg(target_os = "macos")]
 mod pattern;
+mod rate;
 mod server;
 
 pub use server::{Source, spawn};

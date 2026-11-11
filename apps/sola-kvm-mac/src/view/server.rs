@@ -3,16 +3,17 @@
 
 use std::io::{self, Read};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::capture;
-use super::flow::{self, Flow, now_us};
+use super::flow::{Flow, Gate, now_us};
+use super::rate::Rate;
 use crate::inject::{CgInjector, Injector};
 use crate::link::{Conn, Keys};
 use crate::protocol::{self, Packet};
@@ -60,10 +61,11 @@ pub enum Msg {
 /// Where a session's encoded pictures go.
 pub struct Feed {
     pub tx: Sender<Msg>,
-    /// Pictures encoding or queued to send. The capture side skips a frame
-    /// when too many are out, so a slow network drops frames before they
-    /// are encoded and no later picture loses its reference.
-    pub in_flight: Arc<AtomicUsize>,
+    /// Pictures out, from the encoder to the viewer's ack, and the bitrate:
+    /// capture skips a frame when too many are out, so a slow network drops
+    /// frames before they are encoded and no later picture loses its
+    /// reference.
+    pub gate: Arc<Gate>,
     /// Frames skipped since the last picture went.
     pub skipped: Arc<AtomicU32>,
     pub force_key: Arc<AtomicBool>,
@@ -155,11 +157,11 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
     let (tx, rx) = mpsc::channel();
     watch_for_close(&tcp, tx.clone())?;
     *lock(&shared.to_viewer) = Some(tx.clone());
-    let in_flight = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(Gate::default());
     let skipped = Arc::new(AtomicU32::new(0));
     let feed = Feed {
         tx,
-        in_flight: Arc::clone(&in_flight),
+        gate: Arc::clone(&gate),
         skipped: Arc::clone(&skipped),
         force_key: Arc::clone(&shared.force_key),
     };
@@ -172,7 +174,7 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
     };
     info!(?screen, "remote view: sending");
     conn.write_frame(&mut tcp, &screen.encode())?;
-    let (mut flow, mut seq) = (Flow::default(), 0u32);
+    let (mut flow, mut rate, mut seq) = (Flow::default(), Rate::default(), 0u32);
     loop {
         match rx.recv() {
             Ok(Msg::Picture(encoded)) => {
@@ -184,16 +186,23 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
                     pts_us: encoded.pts_us,
                     age_us: clamp_u32(now.saturating_sub(encoded.captured_us)),
                     net_us: flow.net_us(),
-                    kbps: flow::CEILING_KBPS,
+                    kbps: rate.kbps(),
                     skipped: u16::try_from(skipped.swap(0, Ordering::Relaxed)).unwrap_or(u16::MAX),
                     data: encoded.data,
                 };
-                flow.sent(seq, now);
-                let sent = conn.write_frame(&mut tcp, &Down::Picture(picture).encode());
-                in_flight.fetch_sub(1, Ordering::Relaxed);
-                sent?;
+                flow.sent(seq, now, picture.data.len(), picture.key);
+                gate.follow(&flow, 0, rate.kbps());
+                conn.write_frame(&mut tcp, &Down::Picture(picture).encode())?;
             }
-            Ok(Msg::Ack { seq, held_us, at_us }) => flow.acked(seq, held_us, at_us),
+            Ok(Msg::Ack { seq, held_us, at_us }) => {
+                let acked = flow.acked(seq, held_us, at_us);
+                let (was, reading) = (rate.kbps(), flow.reading(at_us));
+                rate.follow(&reading);
+                if rate.kbps() != was {
+                    debug!(kbps = rate.kbps(), ?reading, "remote view: bitrate");
+                }
+                gate.follow(&flow, acked, rate.kbps());
+            }
             Ok(Msg::Clipboard(text)) => conn.write_frame(&mut tcp, &Down::Clipboard(text).encode())?,
             Ok(Msg::Cursor(cursor)) => conn.write_frame(&mut tcp, &Down::Cursor(cursor).encode())?,
             Ok(Msg::Closed) | Err(_) => break,

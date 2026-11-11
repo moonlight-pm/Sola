@@ -402,6 +402,7 @@ fn run_link(link: &Link) -> impl iced::futures::Stream<Item = net::Event> + use<
             Arc::new(move |event| {
                 let _ = tx.unbounded_send(event);
             }),
+            None,
         );
         while let Some(event) = rx.next().await {
             if output.send(event).await.is_err() {

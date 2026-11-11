@@ -4,7 +4,6 @@
 use std::ffi::{c_char, c_void};
 use std::ptr::{self, NonNull};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
 use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, kCFBooleanTrue};
@@ -16,7 +15,7 @@ use objc2_core_video::CVImageBuffer;
 use objc2_video_toolbox::{
     VTCompressionSession, VTEncodeInfoFlags, VTSessionSetProperty, kVTCompressionPropertyKey_AllowFrameReordering,
     kVTCompressionPropertyKey_AverageBitRate, kVTCompressionPropertyKey_ExpectedFrameRate,
-    kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
+    kVTCompressionPropertyKey_MaxAllowedFrameQP, kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
     kVTCompressionPropertyKey_ProfileLevel, kVTCompressionPropertyKey_RealTime, kVTEncodeFrameOptionKey_ForceKeyFrame,
     kVTProfileLevel_HEVC_Main_AutoLevel, kVTVideoEncoderSpecification_EnableLowLatencyRateControl,
     kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
@@ -24,16 +23,21 @@ use objc2_video_toolbox::{
 use tracing::{info, warn};
 
 use super::annexb;
-use super::flow::CEILING_KBPS;
+use super::flow::Gate;
+use super::rate::CEILING_KBPS;
 use super::server::{Encoded, Msg};
 
 pub const FPS: i32 = 60;
 /// A key picture this often even when none is asked for.
 const KEY_INTERVAL_SECONDS: i32 = 10;
+/// HEVC's coarsest. Left to itself the encoder stops short of it and drops
+/// frames instead when the bitrate is tight: at 2 Mbps the test card came
+/// once a second, and with this at 60 a second, coarser.
+const MAX_QP: i32 = 51;
 
 struct Out {
     tx: Sender<Msg>,
-    in_flight: Arc<AtomicUsize>,
+    gate: Arc<Gate>,
 }
 
 pub struct Encoder {
@@ -48,8 +52,8 @@ unsafe impl Send for Encoder {}
 unsafe impl Sync for Encoder {}
 
 impl Encoder {
-    pub fn new(width: i32, height: i32, tx: Sender<Msg>, in_flight: Arc<AtomicUsize>) -> Result<Self, String> {
-        let out = Box::into_raw(Box::new(Out { tx, in_flight }));
+    pub fn new(width: i32, height: i32, tx: Sender<Msg>, gate: Arc<Gate>) -> Result<Self, String> {
+        let out = Box::into_raw(Box::new(Out { tx, gate }));
         let session = create(width, height, out, true)
             .or_else(|status| {
                 info!(status, "remote view: no low-latency rate control for HEVC here; using the default");
@@ -81,6 +85,17 @@ impl Encoder {
             )
         };
         if status == 0 { Ok(()) } else { Err(status) }
+    }
+
+    /// Encode at `kbps` from the next frame, as WebRTC's Apple encoder
+    /// changes it during a session.
+    pub fn set_kbps(&self, kbps: u32) {
+        let rate = CFNumber::new_i32(i32::try_from(u64::from(kbps) * 1000).unwrap_or(i32::MAX));
+        let value: &CFType = &rate;
+        let status = unsafe { VTSessionSetProperty(&self.session, kVTCompressionPropertyKey_AverageBitRate, Some(value)) };
+        if status != 0 {
+            warn!(kbps, status, "remote view: the encoder refused a bitrate");
+        }
     }
 }
 
@@ -127,7 +142,8 @@ fn configure(session: &VTCompressionSession) {
     let rate = CFNumber::new_i32(CEILING_KBPS as i32 * 1000);
     let fps = CFNumber::new_i32(FPS);
     let key_interval = CFNumber::new_i32(KEY_INTERVAL_SECONDS);
-    let properties: [(&str, &CFString, &CFType); 6] = unsafe {
+    let max_qp = CFNumber::new_i32(MAX_QP);
+    let properties: [(&str, &CFString, &CFType); 7] = unsafe {
         [
             ("RealTime", kVTCompressionPropertyKey_RealTime, t),
             ("AllowFrameReordering", kVTCompressionPropertyKey_AllowFrameReordering, f),
@@ -135,6 +151,7 @@ fn configure(session: &VTCompressionSession) {
             ("AverageBitRate", kVTCompressionPropertyKey_AverageBitRate, &rate),
             ("ExpectedFrameRate", kVTCompressionPropertyKey_ExpectedFrameRate, &fps),
             ("MaxKeyFrameIntervalDuration", kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, &key_interval),
+            ("MaxAllowedFrameQP", kVTCompressionPropertyKey_MaxAllowedFrameQP, &max_qp),
         ]
     };
     for (name, key, value) in properties {
@@ -170,7 +187,7 @@ unsafe extern "C-unwind" fn on_encoded(
             if status != 0 {
                 warn!(status, "remote view: the encoder failed a frame");
             }
-            out.in_flight.fetch_sub(1, Ordering::Relaxed);
+            out.gate.dropped();
         }
     }
 }

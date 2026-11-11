@@ -3,7 +3,7 @@
 //! the viewer can draw it ([`cursor`](super::cursor)).
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Duration;
@@ -28,13 +28,13 @@ use tracing::{info, warn};
 
 use super::cursor::Watch;
 use super::encode::{Encoder, FPS};
-use super::flow::now_us;
+use super::flow::{Gate, now_us};
+use super::rate::CEILING_KBPS;
 use super::pattern;
 use super::server::{Feed, Msg, Source};
 use crate::view_wire::Down;
 
-/// Pictures allowed out at once; past this, frames are skipped.
-const MAX_IN_FLIGHT: usize = 3;
+const FRAME_US: u32 = 1_000_000 / FPS as u32;
 /// A guard against an Apple callback that never comes, not a wait on order.
 const CALLBACK: Duration = Duration::from_secs(10);
 const QUEUE_DEPTH: isize = 5;
@@ -42,23 +42,28 @@ const QUEUE_DEPTH: isize = 5;
 /// Frames on their way to the encoder.
 pub struct Frames {
     encoder: Encoder,
-    in_flight: Arc<AtomicUsize>,
+    gate: Arc<Gate>,
     skipped: Arc<AtomicU32>,
     force_key: Arc<AtomicBool>,
+    /// The bitrate the encoder has.
+    kbps: AtomicU32,
 }
 
 impl Frames {
     pub fn offer(&self, image: &CVImageBuffer, pts: CMTime) {
         let captured_us = now_us();
-        if self.in_flight.load(Ordering::Relaxed) >= MAX_IN_FLIGHT {
+        if !self.gate.admit(captured_us, FRAME_US) {
             self.skipped.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        self.in_flight.fetch_add(1, Ordering::Relaxed);
+        let kbps = self.gate.kbps();
+        if self.kbps.swap(kbps, Ordering::Relaxed) != kbps {
+            self.encoder.set_kbps(kbps);
+        }
         let key = self.force_key.swap(false, Ordering::Relaxed);
         if let Err(status) = self.encoder.encode(image, pts, key, captured_us) {
             warn!(status, "remote view: the encoder would not take a frame");
-            self.in_flight.fetch_sub(1, Ordering::Relaxed);
+            self.gate.dropped();
         }
     }
 }
@@ -99,17 +104,18 @@ pub fn start(source: Source, feed: Feed) -> Result<(Down, Running), String> {
 fn frames(width: usize, height: usize, feed: Feed) -> Result<(Arc<Frames>, Sender<Msg>), String> {
     let Feed {
         tx,
-        in_flight,
+        gate,
         skipped,
         force_key,
     } = feed;
-    let encoder = Encoder::new(width as i32, height as i32, tx.clone(), Arc::clone(&in_flight))?;
+    let encoder = Encoder::new(width as i32, height as i32, tx.clone(), Arc::clone(&gate))?;
     Ok((
         Arc::new(Frames {
             encoder,
-            in_flight,
+            gate,
             skipped,
             force_key,
+            kbps: AtomicU32::new(CEILING_KBPS),
         }),
         tx,
     ))

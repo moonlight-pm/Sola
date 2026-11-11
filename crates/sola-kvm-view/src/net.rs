@@ -74,7 +74,31 @@ enum ClipJob {
 
 type Link = Arc<Mutex<Option<(TcpStream, Conn)>>>;
 
-pub fn start(host: String, kvm_port: u16, pictures: Arc<Pictures>, events: Tell) {
+/// `--measure --link <mbps>`: pictures read no faster than a link this fast
+/// carries them, so the host meets a slower way than the real one. It
+/// stands in for the link; nothing else waits on it.
+pub struct Throttle {
+    kbps: u64,
+    free_at: Instant,
+}
+
+impl Throttle {
+    pub fn new(mbps: f64) -> Self {
+        Self {
+            kbps: ((mbps * 1000.0) as u64).max(1),
+            free_at: Instant::now(),
+        }
+    }
+
+    /// Wait until `bytes`, read just now, would have come over the link.
+    fn carry(&mut self, bytes: usize) {
+        let now = Instant::now();
+        self.free_at = self.free_at.max(now) + Duration::from_micros(bytes as u64 * 8 * 1000 / self.kbps);
+        thread::sleep(self.free_at.saturating_duration_since(now));
+    }
+}
+
+pub fn start(host: String, kvm_port: u16, pictures: Arc<Pictures>, events: Tell, mut throttle: Option<Throttle>) {
     let (tx, rx) = mpsc::channel();
     events(Event::Ready(tx.clone()));
     let link: Link = Arc::default();
@@ -93,7 +117,7 @@ pub fn start(host: String, kvm_port: u16, pictures: Arc<Pictures>, events: Tell)
         .and_then(|_| {
             thread::Builder::new()
                 .name("kvm-view-video".into())
-                .spawn(move || video_loop(&host, kvm_port, &pictures, &events, &link, &tx, &to_video))
+                .spawn(move || video_loop(&host, kvm_port, &pictures, &events, &link, &tx, &to_video, &mut throttle))
         });
     if let Err(e) = spawned {
         warn!(%e, "remote view: could not start its threads");
@@ -108,6 +132,7 @@ fn video_loop(
     link: &Link,
     outgoing: &Sender<Outgoing>,
     clip: &Sender<ClipJob>,
+    throttle: &mut Option<Throttle>,
 ) {
     let keys = match link::load_view(&link::dir(), host) {
         Ok(Some(keys)) => keys,
@@ -123,7 +148,7 @@ fn video_loop(
         }
     };
     loop {
-        match session(host, kvm_port, &keys, pictures, events, link, outgoing, clip) {
+        match session(host, kvm_port, &keys, pictures, events, link, outgoing, clip, throttle) {
             Ok(Stop::Refused) => return,
             Err(e) => {
                 info!(host, error = %e, "remote view: connection lost");
@@ -148,6 +173,7 @@ fn session(
     link: &Link,
     outgoing: &Sender<Outgoing>,
     clip: &Sender<ClipJob>,
+    throttle: &mut Option<Throttle>,
 ) -> io::Result<Stop> {
     let addr = resolve(host, kvm_port + PORT_OFFSET)?;
     let (mut tcp, mut conn) = connect(addr, keys, Stream::Video)?;
@@ -155,7 +181,11 @@ fn session(
     let mut decoder = None;
     info!(%addr, "remote view: connected");
     loop {
-        let Some(down) = Down::decode(&conn.read_frame(&mut tcp, MAX_FRAME)?)? else {
+        let frame = conn.read_frame(&mut tcp, MAX_FRAME)?;
+        if let Some(throttle) = throttle {
+            throttle.carry(frame.len());
+        }
+        let Some(down) = Down::decode(&frame)? else {
             continue;
         };
         match down {

@@ -69,11 +69,11 @@ impl Summary {
     pub fn line(&self) -> String {
         let show = self.show_ms.map(|ms| format!(", show {ms:.1}")).unwrap_or_default();
         format!(
-            "{:.1} fps ({:.1} shown), {:.1} of {} Mbps, delay {:.1} ms (worst {:.1}): host {:.1}, network {:.1}, decode {:.1}{show}; skipped {}",
+            "{:.1} fps ({:.1} shown), {:.1} of {:.1} Mbps, delay {:.1} ms (worst {:.1}): host {:.1}, network {:.1}, decode {:.1}{show}; skipped {}",
             self.fps(),
             self.shown_fps(),
             self.mbps,
-            self.kbps / 1000,
+            f64::from(self.kbps) / 1000.0,
             self.delay_ms,
             self.worst_ms,
             self.host_ms,
@@ -89,7 +89,7 @@ impl fmt::Display for Summary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let to = if self.show_ms.is_some() { "shown" } else { "decoded" };
         writeln!(f, "{:.0} pictures a second, {:.0} shown", self.fps(), self.shown_fps())?;
-        writeln!(f, "{:.1} of {} Mbps", self.mbps, self.kbps / 1000)?;
+        writeln!(f, "{:.1} of {:.1} Mbps", self.mbps, f64::from(self.kbps) / 1000.0)?;
         writeln!(f, "{:.0} ms capture to {to}, worst {:.0}", self.delay_ms, self.worst_ms)?;
         write!(
             f,

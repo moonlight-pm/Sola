@@ -46,17 +46,27 @@ fn target() -> Result<(String, u16), String> {
     }
 }
 
+/// The word after `flag`, when it is given.
+fn arg_after(flag: &str) -> Option<Option<String>> {
+    let args: Vec<String> = std::env::args().collect();
+    let at = args.iter().position(|a| a == flag)?;
+    Some(args.get(at + 1).cloned())
+}
+
 /// `--measure <pictures>`: how many pictures to measure with no window.
 fn measure_arg() -> Option<u32> {
-    let args: Vec<String> = std::env::args().collect();
-    let at = args.iter().position(|a| a == "--measure")?;
-    Some(args.get(at + 1).and_then(|n| n.parse().ok()).unwrap_or(600))
+    arg_after("--measure").map(|n| n.and_then(|n| n.parse().ok()).unwrap_or(600))
+}
+
+/// `--link <mbps>`, with `--measure`: a slower link than the real one.
+fn link_arg() -> Option<f64> {
+    arg_after("--link").flatten().and_then(|mbps| mbps.parse().ok())
 }
 
 fn main() -> std::process::ExitCode {
     let target = target();
     if let Some(pictures) = measure_arg() {
-        return measure::run(target, pictures);
+        return measure::run(target, pictures, link_arg());
     }
 
     startup(APP_ID);
