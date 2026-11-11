@@ -291,7 +291,7 @@ impl<E: Engine> App<E> {
             self.switch_active_tab(tab);
             return;
         }
-        self.open_app_window(&app.app_id);
+        self.open_app_window(&app.app_id, None);
     }
 
     /// The windows `app` had when it was quit and are not up now, opened
@@ -349,19 +349,20 @@ impl<E: Engine> App<E> {
             && self.webapps.apps.contains_key(app_id)
             && !self.webapps.tabs_of(app_id).is_empty();
         if up {
-            self.open_app_window(app_id);
+            self.open_app_window(app_id, None);
         } else {
             self.open_app(app_id);
         }
     }
 
-    /// A new window of app `app_id`, at its start page on its profile.
-    fn open_app_window(&mut self, app_id: &str) {
+    /// A new window of app `app_id`, at its start page on `profile`, else
+    /// the app's own.
+    fn open_app_window(&mut self, app_id: &str, profile: Option<String>) {
         let Some(app) = self.webapps.apps.get(app_id).cloned() else {
             return;
         };
         let url = app.url.clone().unwrap_or_default();
-        let profile = app_profile(&app);
+        let profile = profile.unwrap_or_else(|| app_profile(&app));
         tracing::info!(app = %app_id, %url, %profile, "web app opens a window");
         let tab = self.open_tab_beside(url, true, &profile);
         self.webapps.tabs.insert(tab, app_id.to_string());
@@ -427,7 +428,9 @@ impl<E: Engine> App<E> {
         let tab = self.app_page(app_id);
         match action {
             ACTION_NEW_WINDOW => {
-                self.open_app_window(app_id);
+                // On the sign-in of the window it was pressed in.
+                let profile = tab.map(|t| self.profile_of(t));
+                self.open_app_window(app_id, profile);
                 Task::none()
             }
             ACTION_OPEN_IN_BROWSER => {

@@ -89,7 +89,8 @@ as you like.
 
 - The launcher opens another window instead of bringing one forward, and
   **New Window** (⌘N) in the app's menu does too. A new window starts at the
-  app's start page.
+  app's start page: ⌘N's signed in as the window it was pressed in, the
+  launcher's as the app ([below](#another-workspaces-sign-in)).
 - One window is a row of its own, named for the app. With two or more on a
   workspace they group in the bar under the app's name, each named by its
   page's title. Super+Backtick steps through them.
@@ -101,9 +102,10 @@ as you like.
 
 Each workspace has a Browser profile of its own
 ([Profiles](sola-browser.md#profiles)), and each window of a web app runs
-one. A new window (the launcher, ⌘N) runs the profile the app was made
-from. On a workspace whose profile the window does not run, the app's menu
-has **Adopt Workspace**:
+one. A window the launcher opens runs the profile the app was made from;
+one ⌘N opens runs the profile of the window it was pressed in. On a
+workspace whose profile the window does not run, the app's menu has
+**Adopt Workspace**:
 
 - The window reloads at its page under the profile of the workspace
   showing: signed in as whoever is signed in to the site there, else at
@@ -135,9 +137,9 @@ sign-in stays).
   those. A right-click opens the page's right-click menu
   ([Browser](sola-browser.md#page-menu)) without **Wrap This Page…**,
   **Inspect Element**, or **Developer Tools**.
-- A new window always starts on the profile the app was wrapped from, and
-  a link from another app goes to a window on that profile; only a window
-  moves to another, by Adopt Workspace.
+- A window the launcher opens, and a link from another app, start on the
+  profile the app was wrapped from; only a window moves to another, by
+  Adopt Workspace (and ⌘N from it keeps it).
 - Clicking a sign-in button that leaves the site ("Sign in with Google")
   opens the sign-in as a Browser page. Signing in there signs the app in
   too, since it is the same profile; reload the app afterwards.
