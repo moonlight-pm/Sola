@@ -37,6 +37,7 @@ const EVENT: u8 = 2;
 const CLIPBOARD_SET: u8 = 3;
 const CLIPBOARD_GET: u8 = 4;
 const ACK: u8 = 5;
+const SIZE: u8 = 6;
 /// A picture's fields before its data.
 const PICTURE_HEADER: usize = 27;
 /// A pointer image's fields before its pixels.
@@ -225,6 +226,14 @@ impl Down {
     }
 }
 
+/// The viewer's picture area: logical pixels, and the window's scale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Size {
+    pub width: u32,
+    pub height: u32,
+    pub scale_percent: u16,
+}
+
 /// Viewer to host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Up {
@@ -238,6 +247,9 @@ pub enum Up {
     ClipboardGet,
     /// Picture `seq` is decoded; `held_us` from its last byte read to this.
     Ack { seq: u32, held_us: u32 },
+    /// Make the screen this size, when the host can; sent first and again
+    /// whenever it changes.
+    Size(Size),
 }
 
 impl Up {
@@ -263,6 +275,13 @@ impl Up {
                 out.extend_from_slice(&held_us.to_le_bytes());
                 out
             }
+            Self::Size(size) => {
+                let mut out = vec![SIZE];
+                out.extend_from_slice(&size.width.to_le_bytes());
+                out.extend_from_slice(&size.height.to_le_bytes());
+                out.extend_from_slice(&size.scale_percent.to_le_bytes());
+                out
+            }
         }
     }
 
@@ -277,7 +296,12 @@ impl Up {
                 seq: u32_at(rest, 0),
                 held_us: u32_at(rest, 4),
             },
-            Some((&(KEYFRAME | CLIPBOARD_GET | ACK), _)) | None => {
+            Some((&SIZE, rest)) if rest.len() == 10 => Self::Size(Size {
+                width: u32_at(rest, 0),
+                height: u32_at(rest, 4),
+                scale_percent: u16_at(rest, 8),
+            }),
+            Some((&(KEYFRAME | CLIPBOARD_GET | ACK | SIZE), _)) | None => {
                 return Err(bad("a bad frame from the viewer".into()));
             }
             Some(_) => return Ok(None),
@@ -360,6 +384,11 @@ mod tests {
                 seq: 812,
                 held_us: 3_100,
             },
+            Up::Size(Size {
+                width: 3635,
+                height: 2102,
+                scale_percent: 100,
+            }),
         ] {
             assert_eq!(Up::decode(&msg.encode()).unwrap(), Some(msg));
         }
@@ -397,5 +426,6 @@ mod tests {
         assert!(Up::decode(&[]).is_err());
         assert!(Up::decode(&[KEYFRAME, 9]).is_err());
         assert!(Up::decode(&[ACK, 1, 2, 3]).is_err());
+        assert!(Up::decode(&[SIZE, 1, 2, 3]).is_err());
     }
 }

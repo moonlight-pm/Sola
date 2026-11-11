@@ -17,7 +17,7 @@ use super::rate::Rate;
 use crate::inject::{CgInjector, Injector};
 use crate::link::{Conn, Keys};
 use crate::protocol::{self, Packet};
-use crate::view_wire::{Cursor, Down, MAX_CLIPBOARD, PORT_OFFSET, Picture, Stream, Up};
+use crate::view_wire::{Cursor, Down, MAX_CLIPBOARD, PORT_OFFSET, Picture, Size, Stream, Up};
 
 /// How long a connection has to prove it is the paired machine. These run
 /// one at a time on the accept thread, so a stranger cannot pile up threads.
@@ -41,6 +41,8 @@ pub struct Encoded {
     pub pts_us: u64,
     /// When its frame was captured ([`now_us`]).
     pub captured_us: u64,
+    /// The capture it came from ([`Feed::generation`]).
+    pub generation: u32,
     pub data: Vec<u8>,
 }
 
@@ -55,6 +57,10 @@ pub enum Msg {
     Clipboard(String),
     /// The pointer changed, for the viewer to draw.
     Cursor(Cursor),
+    /// The viewer said a new size ([`Shared::size`]).
+    Resize,
+    /// A capture stopped on its own.
+    Stopped(u32),
     Closed,
 }
 
@@ -69,6 +75,9 @@ pub struct Feed {
     /// Frames skipped since the last picture went.
     pub skipped: Arc<AtomicU32>,
     pub force_key: Arc<AtomicBool>,
+    /// Which capture of the session this is: pictures and stops from one
+    /// before it are let go.
+    pub generation: u32,
 }
 
 #[derive(Default)]
@@ -80,6 +89,8 @@ struct Shared {
     to_viewer: Mutex<Option<Sender<Msg>>>,
     /// The test card's clipboard: it never touches this Mac's.
     test_clipboard: Mutex<String>,
+    /// The size the viewer said last and the video stream has not taken.
+    size: Mutex<Option<Size>>,
 }
 
 impl Shared {
@@ -152,20 +163,51 @@ fn open(tcp: &mut TcpStream, keys: &Keys) -> io::Result<(Conn, Stream)> {
     Ok((conn, stream))
 }
 
+/// What a video stream starts its captures with.
+struct Captures {
+    source: Source,
+    /// The display made for the viewer, which goes with the stream.
+    screen: capture::Screen,
+    tx: Sender<Msg>,
+    skipped: Arc<AtomicU32>,
+    force_key: Arc<AtomicBool>,
+    generation: u32,
+}
+
+impl Captures {
+    /// A new capture at `size`, with its own gate.
+    fn start(&mut self, size: Option<Size>) -> Result<(Down, Arc<Gate>, capture::Running), String> {
+        self.generation += 1;
+        let gate = Arc::new(Gate::default());
+        let feed = Feed {
+            tx: self.tx.clone(),
+            gate: Arc::clone(&gate),
+            skipped: Arc::clone(&self.skipped),
+            force_key: Arc::clone(&self.force_key),
+            generation: self.generation,
+        };
+        let (display, running) = capture::start(self.source, size, &mut self.screen, feed)?;
+        Ok((display, gate, running))
+    }
+}
+
 fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source) -> io::Result<()> {
     Shared::take_over(&shared.video, &tcp)?;
     let (tx, rx) = mpsc::channel();
     watch_for_close(&tcp, tx.clone())?;
     *lock(&shared.to_viewer) = Some(tx.clone());
-    let gate = Arc::new(Gate::default());
     let skipped = Arc::new(AtomicU32::new(0));
-    let feed = Feed {
+    let mut captures = Captures {
+        source,
+        screen: capture::Screen::default(),
         tx,
-        gate: Arc::clone(&gate),
         skipped: Arc::clone(&skipped),
         force_key: Arc::clone(&shared.force_key),
+        generation: 0,
     };
-    let (screen, running) = match capture::start(source, feed) {
+    // The viewer says its size before it opens this stream.
+    let mut size = lock(&shared.size).take();
+    let (screen, mut gate, running) = match captures.start(size) {
         Ok(v) => v,
         Err(why) => {
             warn!(%why, "remote view: no picture to send");
@@ -174,9 +216,12 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
     };
     info!(?screen, "remote view: sending");
     conn.write_frame(&mut tcp, &screen.encode())?;
+    let mut running = Some(running);
     let (mut flow, mut rate, mut seq) = (Flow::default(), Rate::default(), 0u32);
     loop {
         match rx.recv() {
+            // From a capture before this one.
+            Ok(Msg::Picture(encoded)) if encoded.generation != captures.generation => {}
             Ok(Msg::Picture(encoded)) => {
                 seq = seq.wrapping_add(1).max(1);
                 let now = now_us();
@@ -205,9 +250,31 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
             }
             Ok(Msg::Clipboard(text)) => conn.write_frame(&mut tcp, &Down::Clipboard(text).encode())?,
             Ok(Msg::Cursor(cursor)) => conn.write_frame(&mut tcp, &Down::Cursor(cursor).encode())?,
-            Ok(Msg::Closed) | Err(_) => break,
+            Ok(Msg::Resize) => {
+                // Sizes that came while one was applied: the newest wins.
+                let Some(new) = lock(&shared.size).take().filter(|new| Some(*new) != size) else {
+                    continue;
+                };
+                size = Some(new);
+                running = None;
+                match captures.start(size) {
+                    Ok((screen, new_gate, new_running)) => {
+                        info!(?screen, "remote view: sending, at the window's new size");
+                        (gate, running) = (new_gate, Some(new_running));
+                        conn.write_frame(&mut tcp, &screen.encode())?;
+                    }
+                    Err(why) => {
+                        warn!(%why, "remote view: no picture to send at the new size");
+                        conn.write_frame(&mut tcp, &Down::Refused(why).encode())?;
+                        break;
+                    }
+                }
+            }
+            Ok(Msg::Stopped(generation)) if generation != captures.generation => {}
+            Ok(Msg::Stopped(_) | Msg::Closed) | Err(_) => break,
         }
     }
+    // The capture first, then the display made for it, with `captures`.
     drop(running);
     Ok(())
 }
@@ -239,6 +306,12 @@ fn input(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
                 }
             }
             Up::Keyframe => shared.force_key.store(true, Ordering::Relaxed),
+            Up::Size(size) => {
+                *lock(&shared.size) = Some(size);
+                if let Some(tx) = &*lock(&shared.to_viewer) {
+                    let _ = tx.send(Msg::Resize);
+                }
+            }
             Up::ClipboardSet(text) if source == Source::TestPattern => {
                 info!(bytes = text.len(), "test card: clipboard set");
                 *lock(&shared.test_clipboard) = text;

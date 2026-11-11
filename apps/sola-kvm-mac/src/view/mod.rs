@@ -11,12 +11,15 @@ mod capture;
 #[cfg(target_os = "macos")]
 mod cursor;
 #[cfg(target_os = "macos")]
+mod display;
+#[cfg(target_os = "macos")]
 mod encode;
 mod flow;
 #[cfg(target_os = "macos")]
 mod pattern;
 mod rate;
 mod server;
+mod shape;
 
 pub use server::{Source, spawn};
 
@@ -24,11 +27,14 @@ pub use server::{Source, spawn};
 #[cfg(not(target_os = "macos"))]
 mod capture {
     use super::server::{Feed, Source};
-    use crate::view_wire::Down;
+    use crate::view_wire::{Down, Size};
 
     pub struct Running;
 
-    pub fn start(_source: Source, _feed: Feed) -> Result<(Down, Running), String> {
+    #[derive(Default)]
+    pub struct Screen;
+
+    pub fn start(_source: Source, _size: Option<Size>, _screen: &mut Screen, _feed: Feed) -> Result<(Down, Running), String> {
         Err("remote view needs macOS".into())
     }
 }

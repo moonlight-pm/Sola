@@ -38,6 +38,8 @@ const MAX_QP: i32 = 51;
 struct Out {
     tx: Sender<Msg>,
     gate: Arc<Gate>,
+    /// Which capture of the session this encoder is for.
+    generation: u32,
 }
 
 pub struct Encoder {
@@ -52,8 +54,8 @@ unsafe impl Send for Encoder {}
 unsafe impl Sync for Encoder {}
 
 impl Encoder {
-    pub fn new(width: i32, height: i32, tx: Sender<Msg>, gate: Arc<Gate>) -> Result<Self, String> {
-        let out = Box::into_raw(Box::new(Out { tx, gate }));
+    pub fn new(width: i32, height: i32, tx: Sender<Msg>, gate: Arc<Gate>, generation: u32) -> Result<Self, String> {
+        let out = Box::into_raw(Box::new(Out { tx, gate, generation }));
         let session = create(width, height, out, true)
             .or_else(|status| {
                 info!(status, "remote view: no low-latency rate control for HEVC here; using the default");
@@ -175,7 +177,7 @@ unsafe extern "C-unwind" fn on_encoded(
 ) {
     let out = unsafe { &*refcon.cast::<Out>() };
     let picture = match unsafe { sample.as_ref() } {
-        Some(sample) if status == 0 => unsafe { picture(sample, source as usize as u64) },
+        Some(sample) if status == 0 => unsafe { picture(sample, source as usize as u64, out.generation) },
         // A dropped frame comes here with no sample.
         _ => None,
     };
@@ -192,7 +194,7 @@ unsafe extern "C-unwind" fn on_encoded(
     }
 }
 
-unsafe fn picture(sample: &CMSampleBuffer, captured_us: u64) -> Option<Encoded> {
+unsafe fn picture(sample: &CMSampleBuffer, captured_us: u64, generation: u32) -> Option<Encoded> {
     let key = unsafe { is_key(sample) };
     let pts = unsafe { sample.presentation_time_stamp() };
     let pts_us = (pts.value as i128 * 1_000_000 / i128::from(pts.timescale.max(1))) as u64;
@@ -205,6 +207,7 @@ unsafe fn picture(sample: &CMSampleBuffer, captured_us: u64) -> Option<Encoded> 
         key,
         pts_us,
         captured_us,
+        generation,
         data,
     })
 }

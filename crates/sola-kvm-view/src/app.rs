@@ -7,8 +7,8 @@ use std::sync::mpsc::Sender;
 use iced::futures::SinkExt as _;
 use iced::futures::StreamExt as _;
 use iced::keyboard::{self, key::Physical};
-use iced::widget::{center, container, shader, stack, text};
-use iced::{Alignment, Color, Element, Event, Length, Subscription, Task, Theme, event, stream, window};
+use iced::widget::{Stack, center, container, shader, text};
+use iced::{Alignment, Color, Element, Event, Length, Size, Subscription, Task, Theme, event, stream, window};
 
 use sola_bus::Message;
 use sola_bus::topics::Topic;
@@ -16,6 +16,7 @@ use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::fonts;
 use sola_kit::theme::default_theme;
 use sola_kvm::protocol::Packet;
+use sola_kvm::view_wire;
 
 use crate::APP_ID;
 use crate::inhibit::{self, Inhibitor};
@@ -50,6 +51,10 @@ pub struct App {
     /// Where the other machine's pointer was sent, in its points; `None`
     /// until a move since connecting.
     pointer: Option<(i32, i32)>,
+    /// The picture's area, which the host's screen is made to fit; `None`
+    /// until laid out, and nothing connects before.
+    area: Option<Size>,
+    scale: f32,
     focused: bool,
     /// View → Statistics: the window's corner says how the pictures come.
     statistics: bool,
@@ -70,6 +75,8 @@ pub enum Msg {
         modifiers: keyboard::Modifiers,
     },
     Pointer(Packet),
+    Area(Size),
+    Scale(f32),
     Capture,
     Focused,
     Unfocused,
@@ -97,6 +104,8 @@ impl App {
                 held: BTreeSet::new(),
                 captured: true,
                 pointer: None,
+                area: None,
+                scale: 1.0,
                 focused: false,
                 statistics: false,
                 inhibitor: None,
@@ -121,7 +130,8 @@ impl App {
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
-        let link = self.host.clone().map_or_else(Subscription::none, |host| {
+        let host = self.host.clone().filter(|_| self.area.is_some());
+        let link = host.map_or_else(Subscription::none, |host| {
             Subscription::run_with(
                 Link {
                     host,
@@ -155,6 +165,7 @@ impl App {
                     modifiers,
                 }),
                 Event::Window(window::Event::Focused) => Some(Msg::Focused),
+                Event::Window(window::Event::Rescaled(scale)) => Some(Msg::Scale(scale)),
                 Event::Window(window::Event::Unfocused) => Some(Msg::Unfocused),
                 _ => None,
             }),
@@ -192,6 +203,14 @@ impl App {
                 }
                 self.send(packet);
             }
+            Msg::Area(area) => {
+                self.area = Some(area);
+                self.want_size();
+            }
+            Msg::Scale(scale) => {
+                self.scale = scale;
+                self.want_size();
+            }
             Msg::Capture => {
                 self.captured = true;
                 self.clipboard_to_host();
@@ -214,7 +233,8 @@ impl App {
             }
             Msg::WindowReady(id) => {
                 self.window_id = id;
-                return self.inhibit();
+                let scale = id.map_or_else(Task::none, |id| window::scale_factor(id).map(Msg::Scale));
+                return Task::batch([self.inhibit(), scale]);
             }
             Msg::TitleDrag => return sola_kit::drag(self.window_id),
             Msg::TitleResize(direction) => return sola_kit::drag_resize(self.window_id, direction),
@@ -295,6 +315,21 @@ impl App {
         }
     }
 
+    /// The host's screen at the picture's area, when it can.
+    fn want_size(&self) {
+        let Some(area) = self.area else {
+            return;
+        };
+        let size = view_wire::Size {
+            width: area.width as u32,
+            height: area.height as u32,
+            scale_percent: (self.scale * 100.0).round() as u16,
+        };
+        if self.pictures.want(size) {
+            self.send_out(Outgoing::Size(size));
+        }
+    }
+
     fn release_keys(&mut self) {
         for keycode in std::mem::take(&mut self.held) {
             self.send(Packet::Key { keycode, pressed: 0 });
@@ -325,23 +360,21 @@ impl App {
             Status::Lost(why) => Some(format!("Lost {}: {why}. Connecting again…", self.name())),
             Status::Refused(why) => Some(why.clone()),
         };
-        let body: Element<'_, Msg> = match note {
-            Some(note) => center(text(note)).into(),
-            None => {
-                let picture = shader(Picture {
-                    pictures: Arc::clone(&self.pictures),
-                    points: self.display.map(|d| d.points),
-                    pointer: self.pointer,
-                    captured: self.captured,
-                })
-                .width(Length::Fill)
-                .height(Length::Fill);
-                match self.statistics.then(|| self.statistics_panel()) {
-                    Some(panel) => stack![picture, panel].into(),
-                    None => picture.into(),
-                }
-            }
+        // The picture is always laid out: its area is the size the host's
+        // screen is made, said before connecting.
+        let picture = shader(Picture {
+            pictures: Arc::clone(&self.pictures),
+            points: self.display.map(|d| d.points),
+            pointer: self.pointer,
+            captured: self.captured,
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
+        let over = match note {
+            Some(note) => Some(center(panel(text(note).color(Color::WHITE))).into()),
+            None => self.statistics.then(|| self.statistics_panel()),
         };
+        let body = Stack::new().push(picture).extend(over);
         let body = container(body)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -364,9 +397,7 @@ impl App {
             (_, Some(second)) => second.to_string(),
             (_, None) => "Waiting for a second of pictures…".into(),
         };
-        let panel = container(text(words).font(fonts::mono()).size(12).color(Color::WHITE))
-            .padding(8)
-            .style(|_| container::background(Color::from_rgba(0.0, 0.0, 0.0, 0.7)));
+        let panel = panel(text(words).font(fonts::mono()).size(12).color(Color::WHITE));
         container(panel)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -375,6 +406,13 @@ impl App {
             .align_y(Alignment::Start)
             .into()
     }
+}
+
+/// Words over the picture, on a dark ground.
+fn panel<'a>(words: impl Into<Element<'a, Msg>>) -> container::Container<'a, Msg> {
+    container(words)
+        .padding(8)
+        .style(|_| container::background(Color::from_rgba(0.0, 0.0, 0.0, 0.7)))
 }
 
 /// The subscription's identity: one link per host.
