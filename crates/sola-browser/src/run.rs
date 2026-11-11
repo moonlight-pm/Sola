@@ -327,9 +327,9 @@ pub fn run<E: Engine>(base_id: &'static str) -> ExitCode {
         VIEW_H,
     ));
 
-    // Browser + Edit + Profiles (dynamic profile list with active check).
+    // Browser + Edit (a window's titlebar adds Adopt Workspace when it wants it).
     let mut bus = sola_kit::app::BusSetup::new(app_id).subscribe(crate::integration::SUBSCRIBE);
-    for def in crate::integration::browser_app_menu(app_id).menus {
+    for def in crate::integration::browser_app_menu(app_id, false).menus {
         bus = bus.app_menu_definition(def);
     }
     bus = bus.calls(crate::calls::OWNER, crate::calls::methods());

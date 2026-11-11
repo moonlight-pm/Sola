@@ -44,6 +44,10 @@ pub struct WebApps {
     published: HashSet<String>,
     /// The start URL the engine has for each app page (`Cmd::AppSite`).
     sites_sent: HashMap<TabId, String>,
+    /// Browser pages an app's page sent off its site (a sign-in, a popup):
+    /// page → app id. Each joins the app when it comes back to the app's
+    /// site ([`App::join_returning_pages`]).
+    away: HashMap<TabId, String>,
     /// Each page's latest favicon (PNG): a wrapped app's icon.
     pub favicons: HashMap<TabId, Vec<u8>>,
     /// The Wrap This Page sheet.
@@ -110,8 +114,9 @@ impl WebApps {
     }
 }
 
-/// Web app `app`'s menus: its own, then Edit.
-pub fn app_menu(app: &Application) -> AppMenuPayload {
+/// Web app `app`'s menus: its own, then Edit. `adopt` adds Adopt
+/// Workspace, for a window that runs another workspace's profile.
+pub fn app_menu(app: &Application, adopt: bool) -> AppMenuPayload {
     let action = |id: &str, label: String, shortcut| MenuItem::Action {
         id: id.into(),
         label,
@@ -119,8 +124,11 @@ pub fn app_menu(app: &Application) -> AppMenuPayload {
         disabled: false,
         checked: false,
     };
-    let own = vec![
-        action(ACTION_NEW_WINDOW, "New Window".into(), Some(KeyCode::N.meta())),
+    let mut own = vec![action(ACTION_NEW_WINDOW, "New Window".into(), Some(KeyCode::N.meta()))];
+    if adopt {
+        own.push(integration::adopt_workspace_item());
+    }
+    own.extend([
         MenuItem::Divider,
         action(ACTION_OPEN_IN_BROWSER, "Open in Browser".into(), None),
         action(ACTION_COPY_LINK, "Copy Link".into(), None),
@@ -130,7 +138,7 @@ pub fn app_menu(app: &Application) -> AppMenuPayload {
         action(ACTION_REMOVE, "Remove Web App…".into(), None),
         MenuItem::Divider,
         action(ACTION_QUIT, format!("Quit {}", app.label), Some(KeyCode::Q.meta())),
-    ];
+    ]);
     // Undo through Select All: a web app has no find bar.
     let edit = EDIT_MENU_ITEMS
         .iter()
@@ -168,6 +176,21 @@ pub fn same_site(start: &str, url: &str) -> bool {
     crate::popup::same_site(start, url)
 }
 
+/// The pages in `away` whose URL (`url_of`) is on their app's site now.
+fn back_on_site<'a>(
+    away: &HashMap<TabId, String>,
+    apps: &HashMap<String, Application>,
+    url_of: impl Fn(TabId) -> Option<&'a str>,
+) -> Vec<(TabId, String)> {
+    away.iter()
+        .filter(|(tab, app_id)| {
+            let start = apps.get(*app_id).and_then(|a| a.url.as_deref());
+            matches!((start, url_of(**tab)), (Some(start), Some(url)) if same_site(start, url))
+        })
+        .map(|(tab, app_id)| (*tab, app_id.clone()))
+        .collect()
+}
+
 /// A popup is the app's while it has no address yet (a huddle's window opens
 /// blank) or one on the app's site; else it is a browser page, its address
 /// in sight.
@@ -179,8 +202,12 @@ fn popup_is_the_apps(start: &str, url: &str) -> bool {
 fn app_profile(app: &Application) -> String {
     app.profile
         .clone()
-        .filter(|p| crate::profiles::list().iter().any(|q| q.id == *p))
+        .filter(|p| profile_exists(p))
         .unwrap_or_else(crate::profiles::showing_profile)
+}
+
+fn profile_exists(id: &str) -> bool {
+    crate::profiles::list().iter().any(|q| q.id == id)
 }
 
 /// A page's title as an app's name: the site's part of it (titles end
@@ -226,7 +253,7 @@ impl<E: Engine> App<E> {
                         .get(&id)
                         .is_some_and(|old| old.label != app.label);
                     if renamed && !self.webapps.tabs_of(&id).is_empty() {
-                        sola_kit::menu::publish_for(app_menu(&app));
+                        sola_kit::menu::publish_for(app_menu(&app, false));
                         self.webapps.published.insert(id.clone());
                     }
                     self.webapps.apps.insert(id.clone(), app);
@@ -283,7 +310,7 @@ impl<E: Engine> App<E> {
             self.switch_active_tab(tab);
             return;
         }
-        self.open_app_window(&app.app_id);
+        self.open_app_window(&app.app_id, None);
     }
 
     /// The windows `app` had when it was quit and are not up now, opened
@@ -301,11 +328,14 @@ impl<E: Engine> App<E> {
             .iter()
             .filter_map(|t| self.page_ids.get(t).cloned())
             .collect();
-        let profile = app_profile(app);
         let back: Vec<TabId> = pages
             .iter()
             .filter(|p| !up.contains(&p.id))
-            .map(|p| self.open_saved_page(&app.app_id, &profile, p))
+            .map(|p| {
+                let profile = p.profile.clone().filter(|id| profile_exists(id));
+                let profile = profile.unwrap_or_else(|| app_profile(app));
+                self.open_saved_page(&app.app_id, &profile, p)
+            })
             .collect();
         tracing::info!(app = %app.app_id, windows = back.len(), "web app's windows back");
         self.persist_session();
@@ -338,19 +368,20 @@ impl<E: Engine> App<E> {
             && self.webapps.apps.contains_key(app_id)
             && !self.webapps.tabs_of(app_id).is_empty();
         if up {
-            self.open_app_window(app_id);
+            self.open_app_window(app_id, None);
         } else {
             self.open_app(app_id);
         }
     }
 
-    /// A new window of app `app_id`, at its start page on its profile.
-    fn open_app_window(&mut self, app_id: &str) {
+    /// A new window of app `app_id`, at its start page on `profile`, else
+    /// the app's own.
+    fn open_app_window(&mut self, app_id: &str, profile: Option<String>) {
         let Some(app) = self.webapps.apps.get(app_id).cloned() else {
             return;
         };
         let url = app.url.clone().unwrap_or_default();
-        let profile = app_profile(&app);
+        let profile = profile.unwrap_or_else(|| app_profile(&app));
         tracing::info!(app = %app_id, %url, %profile, "web app opens a window");
         let tab = self.open_tab_beside(url, true, &profile);
         self.webapps.tabs.insert(tab, app_id.to_string());
@@ -391,7 +422,11 @@ impl<E: Engine> App<E> {
     pub(crate) fn open_link(&mut self, opener: TabId, url: String, activate: bool, profile: &str) {
         let Some(app) = self.webapps.app_for_link(opener, &url).cloned() else {
             tracing::info!(%url, activate, "link → browser page");
-            self.open_tab_beside(url, activate, profile);
+            let tab = self.open_tab_beside(url, activate, profile);
+            // Off an app's site: it joins the app if it comes back.
+            if let Some(app_id) = self.webapps.tabs.get(&opener).cloned() {
+                self.webapps.away.insert(tab, app_id);
+            }
             return;
         };
         tracing::info!(%url, activate, app = %app.app_id, "link → its app");
@@ -416,7 +451,9 @@ impl<E: Engine> App<E> {
         let tab = self.app_page(app_id);
         match action {
             ACTION_NEW_WINDOW => {
-                self.open_app_window(app_id);
+                // On the sign-in of the window it was pressed in.
+                let profile = tab.map(|t| self.profile_of(t));
+                self.open_app_window(app_id, profile);
                 Task::none()
             }
             ACTION_OPEN_IN_BROWSER => {
@@ -436,6 +473,12 @@ impl<E: Engine> App<E> {
                 Some(t) => self.update(Msg::CloseTab(t)),
                 None => Task::none(),
             },
+            integration::ACTION_ADOPT_WORKSPACE => {
+                if let Some(t) = tab {
+                    self.adopt_workspace(t);
+                }
+                Task::none()
+            }
             ACTION_REMOVE => {
                 self.webapps.removing = Some(app_id.to_string());
                 Task::none()
@@ -455,7 +498,11 @@ impl<E: Engine> App<E> {
             self.page_snapshot().into_iter().filter(|t| tabs.contains(&t.id)).collect();
         pages.sort_by_key(|t| t.id.0);
         if let Some(first) = pages.first().map(|t| t.id) {
-            let saved = crate::session::session_from_tabs(&pages, first, &[], &self.page_ids, &self.webapps.tabs);
+            let mut saved = crate::session::session_from_tabs(&pages, first, &[], &self.page_ids, &self.webapps.tabs);
+            // Each window comes back on its own profile (Adopt Workspace).
+            for (tab, page) in saved.tabs.iter_mut().zip(&pages) {
+                tab.profile = Some(self.profile_of(page.id));
+            }
             tracing::info!(app = %app_id, windows = saved.tabs.len(), "web app quit: its windows remembered");
             self.quit_apps.remember(app_id, saved.tabs);
         }
@@ -491,7 +538,7 @@ impl<E: Engine> App<E> {
             return self.app_id.to_string();
         };
         if self.webapps.published.insert(app.app_id.clone()) {
-            sola_kit::menu::publish_for(app_menu(&app));
+            sola_kit::menu::publish_for(app_menu(&app, false));
         }
         app.app_id
     }
@@ -526,8 +573,37 @@ impl<E: Engine> App<E> {
                 self.webapps.tabs.insert(*tab, app.app_id.clone());
             } else {
                 tracing::info!(tab = tab.0, %url, "popup off the app's site: a browser page");
+                self.webapps.away.insert(*tab, app.app_id.clone());
             }
         }
+    }
+
+    /// Browser pages an app's page sent off its site that are back on it (a
+    /// sign-in's round trip) join the app in place, as Wrap does: their
+    /// windows reopen as the app's on this sync.
+    pub(crate) fn join_returning_pages(&mut self) -> Task<Msg> {
+        let tabs = &self.cached_tabs;
+        let apps = &self.webapps.apps;
+        self.webapps
+            .away
+            .retain(|tab, app_id| apps.contains_key(app_id) && tabs.iter().any(|t| t.id == *tab));
+        let back = back_on_site(&self.webapps.away, apps, |tab| {
+            tabs.iter().find(|t| t.id == tab).map(|t| t.url.as_str())
+        });
+        if back.is_empty() {
+            return Task::none();
+        }
+        let tasks: Vec<Task<Msg>> = back
+            .into_iter()
+            .map(|(tab, app_id)| {
+                tracing::info!(tab = tab.0, app = %app_id, "back on its app's site: joins the app");
+                self.webapps.away.remove(&tab);
+                self.webapps.tabs.insert(tab, app_id);
+                self.windows.close(tab).discard()
+            })
+            .collect();
+        self.persist_session();
+        Task::batch(tasks)
     }
 
     /// A notification from page `show.tab_id`: under its app when it is
@@ -680,7 +756,7 @@ impl<E: Engine> App<E> {
             .title(app.label.clone())
             .on_drag(Msg::WindowDrag(window))
             .on_resize(move |dir| Msg::WindowResize(window, dir))
-            .menus(app_menu(app));
+            .menus(app_menu(app, self.adoptable(tab).is_some()));
         frame.on_close(Msg::WindowClose(window)).into()
     }
 
@@ -787,7 +863,7 @@ mod tests {
 
     #[test]
     fn a_web_app_s_menu_copies_the_link_of_its_page() {
-        let menu = app_menu(&web_app("shortcut", "Shortcut", "https://app.shortcut.com"));
+        let menu = app_menu(&web_app("shortcut", "Shortcut", "https://app.shortcut.com"), false);
         let own = &menu.menus[0];
         assert_eq!(own.label, "Shortcut");
         assert!(own.items.iter().any(|i| matches!(
@@ -884,6 +960,22 @@ mod tests {
         assert_eq!(home(&web, 9, "https://app.shortcut.com/x").as_deref(), Some("board"));
     }
 
+    /// A sign-in that left the app's site joins the app once it is back on
+    /// it (any subdomain), not while it is away.
+    #[test]
+    fn a_page_sent_off_the_site_is_back_on_its_site() {
+        let apps = HashMap::from([(
+            "web-1".to_string(),
+            web_app("web-1", "Claude", "https://claude.ai/artifact/x"),
+        )]);
+        let away = HashMap::from([(TabId(5), "web-1".to_string())]);
+        let at = |url: &'static str| back_on_site(&away, &apps, move |_| Some(url));
+        assert!(at("https://api.workos.com/sso/authorize?x=1").is_empty());
+        assert_eq!(at("https://claude.ai/sso-callback"), [(TabId(5), "web-1".to_string())]);
+        assert_eq!(at("https://www.claude.ai/new").len(), 1);
+        assert!(back_on_site(&away, &HashMap::new(), |_| Some("https://claude.ai/")).is_empty());
+    }
+
     #[test]
     fn a_popup_is_the_app_s_while_blank_or_on_its_site() {
         let start = "https://app.shortcut.com/acme";
@@ -896,8 +988,27 @@ mod tests {
     #[test]
     fn a_web_app_s_menu_opens_another_window() {
         let app = web_app("web-1", "Shortcut", "https://app.shortcut.com");
-        let first = app_menu(&app).menus[0].items.first().cloned();
+        let first = app_menu(&app, false).menus[0].items.first().cloned();
         assert!(matches!(first, Some(MenuItem::Action { id, .. }) if id == ACTION_NEW_WINDOW));
+    }
+
+    /// A window on another workspace's profile offers Adopt Workspace,
+    /// under New Window; one on the showing workspace's does not.
+    #[test]
+    fn adopt_workspace_is_under_new_window_when_asked_for() {
+        let app = web_app("web-1", "Shortcut", "https://app.shortcut.com");
+        let ids = |adopt| -> Vec<String> {
+            app_menu(&app, adopt).menus[0]
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    MenuItem::Action { id, .. } => Some(id.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert!(!ids(false).iter().any(|id| id == integration::ACTION_ADOPT_WORKSPACE));
+        assert_eq!(ids(true)[..2], [ACTION_NEW_WINDOW, integration::ACTION_ADOPT_WORKSPACE]);
     }
 
     #[test]
@@ -908,7 +1019,7 @@ mod tests {
             kind: AppKind::Web,
             ..Default::default()
         };
-        let menu = app_menu(&app);
+        let menu = app_menu(&app, true);
         assert_eq!(menu.app_id, "web-1");
         assert_eq!(menu.menus[0].label, "Slack");
         let ids: Vec<&str> = menu.menus[1]

@@ -54,6 +54,10 @@ pub const ACTION_FIND_NEXT: &str = "find-next";
 pub const ACTION_FIND_PREV: &str = "find-prev";
 /// Browser → Wrap This Page…: the page becomes a web app.
 pub const ACTION_WRAP_PAGE: &str = "wrap-page";
+/// Adopt Workspace: the window's page runs the showing workspace's profile.
+/// In a window's titlebar menu only while it runs another (a web app's, a
+/// pinned page's).
+pub const ACTION_ADOPT_WORKSPACE: &str = "adopt-workspace";
 /// Topics the browser subscribes to. Theme/MenuAction are the live inputs;
 /// CloseApp is the shell's "quit this app" signal (via `is_self_quit`).
 ///
@@ -127,8 +131,9 @@ pub const EDIT_MENU_ITEMS: [(&str, &str, KeyChord); 9] = [
 ];
 
 /// Full menubar for the browser (Browser + Edit). No Profiles menu: a
-/// workspace has its own profile, so where a page is says which it runs.
-pub fn browser_app_menu(app_id: &str) -> AppMenuPayload {
+/// workspace has its own profile, so where a page is says which it runs;
+/// `adopt` adds Adopt Workspace, for a window whose page runs another.
+pub fn browser_app_menu(app_id: &str, adopt: bool) -> AppMenuPayload {
     let mut browser = menu_from_items("Browser", &MENU_ITEMS);
     // Before Quit: the page becomes its own app.
     let quit = browser.items.pop();
@@ -140,6 +145,9 @@ pub fn browser_app_menu(app_id: &str) -> AppMenuPayload {
         disabled: false,
         checked: false,
     });
+    if adopt {
+        browser.items.push(adopt_workspace_item());
+    }
     browser.items.push(MenuItem::Divider);
     browser.items.extend(quit);
     AppMenuPayload {
@@ -148,6 +156,17 @@ pub fn browser_app_menu(app_id: &str) -> AppMenuPayload {
             browser,
             menu_from_items("Edit", &EDIT_MENU_ITEMS),
         ],
+    }
+}
+
+/// Adopt Workspace, as a menu item.
+pub fn adopt_workspace_item() -> MenuItem {
+    MenuItem::Action {
+        id: ACTION_ADOPT_WORKSPACE.into(),
+        label: "Adopt Workspace".into(),
+        shortcut: None,
+        disabled: false,
+        checked: false,
     }
 }
 
@@ -219,6 +238,8 @@ pub enum BrowserIntent {
     FindPrev,
     /// The active page becomes a web app (the Wrap sheet).
     WrapPage,
+    /// The active page runs the showing workspace's profile.
+    AdoptWorkspace,
     Quit,
     None,
 }
@@ -254,6 +275,7 @@ pub fn intent_for_menu_action(action_id: &str) -> BrowserIntent {
         ACTION_FORWARD => BrowserIntent::Forward,
         ACTION_QUIT => BrowserIntent::Quit,
         ACTION_WRAP_PAGE => BrowserIntent::WrapPage,
+        ACTION_ADOPT_WORKSPACE => BrowserIntent::AdoptWorkspace,
         ACTION_DEVTOOLS => BrowserIntent::ShowDevTools,
         ACTION_EDIT_UNDO => BrowserIntent::Edit(EditCmd::Undo),
         ACTION_EDIT_REDO => BrowserIntent::Edit(EditCmd::Redo),
@@ -391,6 +413,11 @@ pub fn run_intent<E: Engine>(app: &mut App<E>, intent: BrowserIntent) -> Task<Ms
             Task::none()
         }
         BrowserIntent::WrapPage => app.open_wrap_sheet(),
+        BrowserIntent::AdoptWorkspace => {
+            let tab = app.cached_active;
+            app.adopt_workspace(tab);
+            Task::none()
+        }
         BrowserIntent::Quit => iced::exit(),
         BrowserIntent::None => Task::none(),
     }
@@ -535,8 +562,32 @@ mod tests {
     /// would stop grabbing it (⌘V then reached nothing).
     #[test]
     fn menu_keys_survive_the_shared_keys() {
-        let menu = browser_app_menu("sola-browser");
+        let menu = browser_app_menu("sola-browser", true);
         assert_eq!(menu_keys(&sola_kit::keys::apply(&menu)), menu_keys(&menu));
+    }
+
+    /// Adopt Workspace is on a window's Browser menu only while its page
+    /// runs another workspace's profile, beside Wrap This Page….
+    #[test]
+    fn adopt_workspace_follows_wrap_this_page_when_asked_for() {
+        let ids = |adopt| -> Vec<String> {
+            browser_app_menu("sola-browser", adopt).menus[0]
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    MenuItem::Action { id, .. } => Some(id.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert!(!ids(false).iter().any(|id| id == ACTION_ADOPT_WORKSPACE));
+        let with = ids(true);
+        let wrap = with.iter().position(|id| id == ACTION_WRAP_PAGE).unwrap();
+        assert_eq!(with[wrap + 1], ACTION_ADOPT_WORKSPACE);
+        assert_eq!(
+            intent_for_menu_action(ACTION_ADOPT_WORKSPACE),
+            BrowserIntent::AdoptWorkspace
+        );
     }
 
     #[test]
