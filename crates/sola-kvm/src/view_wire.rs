@@ -38,6 +38,7 @@ const CLIPBOARD_SET: u8 = 3;
 const CLIPBOARD_GET: u8 = 4;
 const ACK: u8 = 5;
 const SIZE: u8 = 6;
+const MIRROR: u8 = 7;
 /// A picture's fields before its data.
 const PICTURE_HEADER: usize = 27;
 /// A pointer image's fields before its pixels.
@@ -250,6 +251,9 @@ pub enum Up {
     /// Make the screen this size, when the host can; sent first and again
     /// whenever it changes.
     Size(Size),
+    /// Show the host's own screen (`true`), or extend it with one the
+    /// window's size (`false`, when this never comes); sent with the size.
+    Mirror(bool),
 }
 
 impl Up {
@@ -282,6 +286,7 @@ impl Up {
                 out.extend_from_slice(&size.scale_percent.to_le_bytes());
                 out
             }
+            Self::Mirror(mirror) => vec![MIRROR, u8::from(*mirror)],
         }
     }
 
@@ -301,7 +306,8 @@ impl Up {
                 height: u32_at(rest, 4),
                 scale_percent: u16_at(rest, 8),
             }),
-            Some((&(KEYFRAME | CLIPBOARD_GET | ACK | SIZE), _)) | None => {
+            Some((&MIRROR, [mirror])) => Self::Mirror(*mirror != 0),
+            Some((&(KEYFRAME | CLIPBOARD_GET | ACK | SIZE | MIRROR), _)) | None => {
                 return Err(bad("a bad frame from the viewer".into()));
             }
             Some(_) => return Ok(None),
@@ -389,6 +395,8 @@ mod tests {
                 height: 2102,
                 scale_percent: 100,
             }),
+            Up::Mirror(true),
+            Up::Mirror(false),
         ] {
             assert_eq!(Up::decode(&msg.encode()).unwrap(), Some(msg));
         }
@@ -427,5 +435,6 @@ mod tests {
         assert!(Up::decode(&[KEYFRAME, 9]).is_err());
         assert!(Up::decode(&[ACK, 1, 2, 3]).is_err());
         assert!(Up::decode(&[SIZE, 1, 2, 3]).is_err());
+        assert!(Up::decode(&[MIRROR]).is_err());
     }
 }

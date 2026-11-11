@@ -23,6 +23,15 @@ mod shape;
 
 pub use server::{Source, spawn};
 
+/// `sola-kvm-mac make-main <display>`: see [`display::make_main`].
+#[cfg(target_os = "macos")]
+pub use display::make_main;
+
+#[cfg(not(target_os = "macos"))]
+pub fn make_main(_display: u32) -> Result<(), String> {
+    Err("arranging displays needs macOS".into())
+}
+
 /// Stub for tests off macOS: there is no screen to send.
 #[cfg(not(target_os = "macos"))]
 mod capture {

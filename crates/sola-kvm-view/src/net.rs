@@ -5,6 +5,7 @@
 use std::io;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::os::fd::AsRawFd;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -59,6 +60,8 @@ pub enum Outgoing {
     Ack { seq: u32, held_us: u32 },
     /// Make the host's screen this size.
     Size(Size),
+    /// Show the host's own screen, or extend it.
+    Mirror(bool),
     /// Give the host this machine's clipboard.
     PushClipboard,
     /// Ask for the host's clipboard.
@@ -180,6 +183,7 @@ fn session(
     let addr = resolve(host, kvm_port + PORT_OFFSET)?;
     // Input first, with the size, so the host's first picture is at it.
     *lock(link) = Some(connect(addr, keys, Stream::Input)?);
+    let _ = outgoing.send(Outgoing::Mirror(pictures.mirror.load(Ordering::Relaxed)));
     if let Some(size) = pictures.wanted() {
         let _ = outgoing.send(Outgoing::Size(size));
     }
@@ -330,6 +334,7 @@ fn write_loop(rx: Receiver<Outgoing>, link: Link, clip: Sender<ClipJob>) {
                 Outgoing::Keyframe => Up::Keyframe,
                 Outgoing::Ack { seq, held_us } => Up::Ack { seq, held_us },
                 Outgoing::Size(size) => Up::Size(size),
+                Outgoing::Mirror(mirror) => Up::Mirror(mirror),
                 Outgoing::PushClipboard => {
                     let _ = clip.send(ClipJob::Push);
                     continue;

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::Sender;
 
 use iced::futures::SinkExt as _;
@@ -11,6 +12,7 @@ use iced::widget::{Stack, center, container, shader, text};
 use iced::{Alignment, Color, Element, Event, Length, Size, Subscription, Task, Theme, event, stream, window};
 
 use sola_bus::Message;
+use sola_core::state_file::StateFile;
 use sola_bus::topics::Topic;
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
 use sola_kit::fonts;
@@ -58,6 +60,9 @@ pub struct App {
     focused: bool,
     /// View → Statistics: the window's corner says how the pictures come.
     statistics: bool,
+    /// View → Mirror: the other machine's own screen, not one of the
+    /// window's size. Kept across starts.
+    mirror: bool,
     inhibitor: Option<Arc<Inhibitor>>,
     window_id: Option<window::Id>,
     theme: Theme,
@@ -99,7 +104,11 @@ impl App {
                 port,
                 status,
                 display: None,
-                pictures: Arc::default(),
+                pictures: {
+                    let pictures = Arc::new(Pictures::default());
+                    pictures.mirror.store(saved_mirror(), Ordering::Relaxed);
+                    pictures
+                },
                 outgoing: None,
                 held: BTreeSet::new(),
                 captured: true,
@@ -108,6 +117,7 @@ impl App {
                 scale: 1.0,
                 focused: false,
                 statistics: false,
+                mirror: saved_mirror(),
                 inhibitor: None,
                 window_id: None,
                 theme: default_theme(),
@@ -186,7 +196,10 @@ impl App {
                     }
                     if p.app_id == APP_ID && p.action_id == menu::STATISTICS {
                         self.statistics = !self.statistics;
-                        sola_kit::menu::publish(menu::app_menu(self.statistics));
+                        sola_kit::menu::publish(menu::app_menu(self.statistics, self.mirror));
+                    }
+                    if p.app_id == APP_ID && [menu::MIRROR, menu::EXTEND].contains(&p.action_id.as_str()) {
+                        self.set_mirror(p.action_id == menu::MIRROR);
                     }
                 }
             }
@@ -315,6 +328,15 @@ impl App {
         }
     }
 
+    /// Mirror the other machine's screen, or extend it, now and from now on.
+    fn set_mirror(&mut self, mirror: bool) {
+        self.mirror = mirror;
+        mirror_file().save(&mirror);
+        self.pictures.mirror.store(mirror, Ordering::Relaxed);
+        sola_kit::menu::publish(menu::app_menu(self.statistics, mirror));
+        self.send_out(Outgoing::Mirror(mirror));
+    }
+
     /// The host's screen at the picture's area, when it can.
     fn want_size(&self) {
         let Some(area) = self.area else {
@@ -406,6 +428,15 @@ impl App {
             .align_y(Alignment::Start)
             .into()
     }
+}
+
+fn mirror_file() -> StateFile {
+    StateFile::new(APP_ID, "mirror.json")
+}
+
+/// View → Mirror as last chosen; Extend before anything is.
+pub fn saved_mirror() -> bool {
+    mirror_file().load().unwrap_or(false)
 }
 
 /// Words over the picture, on a dark ground.

@@ -57,7 +57,8 @@ pub enum Msg {
     Clipboard(String),
     /// The pointer changed, for the viewer to draw.
     Cursor(Cursor),
-    /// The viewer said a new size ([`Shared::size`]).
+    /// The viewer said a new size or Mirror ([`Shared::size`],
+    /// [`Shared::mirror`]).
     Resize,
     /// A capture stopped on its own.
     Stopped(u32),
@@ -91,9 +92,18 @@ struct Shared {
     test_clipboard: Mutex<String>,
     /// The size the viewer said last and the video stream has not taken.
     size: Mutex<Option<Size>>,
+    /// The viewer would see this Mac's own screen, not one of its own.
+    mirror: AtomicBool,
 }
 
 impl Shared {
+    /// Tell the video stream the viewer's size or Mirror changed.
+    fn resize(&self) {
+        if let Some(tx) = &*lock(&self.to_viewer) {
+            let _ = tx.send(Msg::Resize);
+        }
+    }
+
     fn take_over(slot: &Mutex<Option<TcpStream>>, tcp: &TcpStream) -> io::Result<()> {
         let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(old) = slot.replace(tcp.try_clone()?) {
@@ -205,9 +215,12 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
         force_key: Arc::clone(&shared.force_key),
         generation: 0,
     };
-    // The viewer says its size before it opens this stream.
+    // The viewer says its size and Mirror before it opens this stream. A
+    // screen of the window's size unless it mirrors.
     let mut size = lock(&shared.size).take();
-    let (screen, mut gate, running) = match captures.start(size) {
+    let mut mirror = shared.mirror.load(Ordering::Relaxed);
+    let wanted = |size: Option<Size>, mirror: bool| size.filter(|_| !mirror);
+    let (screen, mut gate, running) = match captures.start(wanted(size, mirror)) {
         Ok(v) => v,
         Err(why) => {
             warn!(%why, "remote view: no picture to send");
@@ -251,13 +264,15 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
             Ok(Msg::Clipboard(text)) => conn.write_frame(&mut tcp, &Down::Clipboard(text).encode())?,
             Ok(Msg::Cursor(cursor)) => conn.write_frame(&mut tcp, &Down::Cursor(cursor).encode())?,
             Ok(Msg::Resize) => {
-                // Sizes that came while one was applied: the newest wins.
-                let Some(new) = lock(&shared.size).take().filter(|new| Some(*new) != size) else {
+                // What came while the last was applied: the newest wins.
+                let was = wanted(size, mirror);
+                size = lock(&shared.size).take().or(size);
+                mirror = shared.mirror.load(Ordering::Relaxed);
+                if wanted(size, mirror) == was {
                     continue;
-                };
-                size = Some(new);
+                }
                 running = None;
-                match captures.start(size) {
+                match captures.start(wanted(size, mirror)) {
                     Ok((screen, new_gate, new_running)) => {
                         info!(?screen, "remote view: sending, at the window's new size");
                         (gate, running) = (new_gate, Some(new_running));
@@ -308,9 +323,11 @@ fn input(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
             Up::Keyframe => shared.force_key.store(true, Ordering::Relaxed),
             Up::Size(size) => {
                 *lock(&shared.size) = Some(size);
-                if let Some(tx) = &*lock(&shared.to_viewer) {
-                    let _ = tx.send(Msg::Resize);
-                }
+                shared.resize();
+            }
+            Up::Mirror(mirror) => {
+                shared.mirror.store(mirror, Ordering::Relaxed);
+                shared.resize();
             }
             Up::ClipboardSet(text) if source == Source::TestPattern => {
                 info!(bytes = text.len(), "test card: clipboard set");

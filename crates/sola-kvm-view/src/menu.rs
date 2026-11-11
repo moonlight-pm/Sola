@@ -1,4 +1,5 @@
-//! Remote Desktop's menus: its own, and View with Statistics.
+//! Remote Desktop's menus: its own, and View with Mirror or Extend, and
+//! Statistics.
 
 use sola_bus::topics::{AppMenuPayload, MenuDefinition, MenuItem};
 
@@ -6,9 +7,25 @@ use crate::APP_ID;
 
 /// View → Statistics: the window's corner says how the pictures come.
 pub const STATISTICS: &str = "statistics";
+/// View → Mirror: the other machine's own screen.
+pub const MIRROR: &str = "mirror";
+/// View → Extend: a screen of the window's size, added to the other
+/// machine's and made its main one.
+pub const EXTEND: &str = "extend";
 
-/// The menus, with Statistics checked while they show.
-pub fn app_menu(statistics: bool) -> AppMenuPayload {
+fn item(id: &str, label: &str, checked: bool) -> MenuItem {
+    MenuItem::Action {
+        id: id.into(),
+        label: label.into(),
+        shortcut: None,
+        disabled: false,
+        checked,
+    }
+}
+
+/// The menus, with Mirror or Extend checked, and Statistics while they
+/// show.
+pub fn app_menu(statistics: bool, mirror: bool) -> AppMenuPayload {
     AppMenuPayload {
         app_id: APP_ID.into(),
         menus: vec![
@@ -21,13 +38,12 @@ pub fn app_menu(statistics: bool) -> AppMenuPayload {
             },
             MenuDefinition {
                 label: "View".into(),
-                items: vec![MenuItem::Action {
-                    id: STATISTICS.into(),
-                    label: "Statistics".into(),
-                    shortcut: None,
-                    disabled: false,
-                    checked: statistics,
-                }],
+                items: vec![
+                    item(MIRROR, "Mirror", mirror),
+                    item(EXTEND, "Extend", !mirror),
+                    MenuItem::Divider,
+                    item(STATISTICS, "Statistics", statistics),
+                ],
             },
         ],
     }

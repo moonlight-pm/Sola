@@ -54,6 +54,10 @@ enum Command {
     },
     /// Print version / platform and exit.
     Version,
+    /// Make a display the main one, in a fresh process (remote view's
+    /// display: the agent's own view of the displays goes stale).
+    #[command(hide = true)]
+    MakeMain { display: u32 },
     /// Pairing by public key (`sola-kvm pair <mac> --remote-bin
     /// sola-kvm-mac` on the server runs `--accept` over ssh). Restart the
     /// agent after.
@@ -96,6 +100,13 @@ fn main() {
             forget,
         }) => {
             pair(*accept, *public, *forget);
+            return;
+        }
+        Some(Command::MakeMain { display }) => {
+            if let Err(why) = view::make_main(*display) {
+                eprintln!("{why}");
+                std::process::exit(1);
+            }
             return;
         }
     };

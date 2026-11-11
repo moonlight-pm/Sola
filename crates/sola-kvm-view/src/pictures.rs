@@ -32,6 +32,9 @@ pub struct Pictures {
     /// The size the window would have the host's screen, said again on
     /// each connection.
     wanted: Mutex<Option<Size>>,
+    /// The host's own screen rather than one of the window's size, said on
+    /// each connection.
+    pub mirror: AtomicBool,
 }
 
 impl Pictures {

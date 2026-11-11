@@ -2,16 +2,18 @@
 //! `CGVirtualDisplay` (as Sidecar, DeskPad and BetterDisplay make theirs),
 //! and the main one while it lives: the menu bar and new windows go there.
 //! Dropped, macOS takes it away, moves its windows back to the laptop's
-//! screen and makes that main again; the arrangement is made for this
-//! process only, so a crash undoes it too.
+//! screen and makes that main again.
 //!
-//! This process's own view of the displays (`CGDisplayBounds`, the online
+//! A process's own view of the displays (`CGDisplayBounds`, the online
 //! list, the main display) stops following once it changes the arrangement:
-//! a resize or a release is seen by every other process and not by this
-//! one. ScreenCaptureKit asks the window server each time, so the displays
-//! come from it.
+//! a resize or a release is seen by every other process and not by the one
+//! that made it, and a display made after is one it cannot arrange. So the
+//! agent arranges in a fresh process of its own (`sola-kvm-mac make-main
+//! <display>`, [`make_main`]), and capture asks ScreenCaptureKit, which asks
+//! the window server each time.
 
 use std::ffi::CStr;
+use std::process::Command;
 use std::ptr;
 use std::sync::Mutex;
 
@@ -19,10 +21,10 @@ use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
 use objc2::msg_send;
 use objc2::rc::{Allocated, Retained, autoreleasepool};
 use objc2::runtime::{AnyClass, AnyObject};
-use objc2_core_foundation::{CGRect, CGSize};
+use objc2_core_foundation::CGSize;
 use objc2_core_graphics::{
     CGBeginDisplayConfiguration, CGCompleteDisplayConfiguration, CGConfigureDisplayOrigin, CGConfigureOption,
-    CGDirectDisplayID, CGError,
+    CGDirectDisplayID, CGDisplayBounds, CGError, CGGetOnlineDisplayList,
 };
 use objc2_foundation::{NSArray, NSString};
 
@@ -85,14 +87,22 @@ impl Virtual {
         self.id
     }
 
-    /// Put it at `shape`, and make it the main display. `displays` are the
-    /// displays and where they are, as ScreenCaptureKit lists them.
-    pub fn fit(&mut self, shape: Shape, displays: &[(CGDirectDisplayID, CGRect)]) -> Result<(), String> {
+    /// Put it at `shape`, and make it the main display.
+    pub fn fit(&mut self, shape: Shape) -> Result<(), String> {
         if self.shape != Some(shape) {
             self.apply(shape)?;
             self.shape = Some(shape);
         }
-        self.make_main(shape, displays)
+        let exe = std::env::current_exe().map_err(|e| format!("this program cannot be found: {e}"))?;
+        let out = Command::new(exe)
+            .args(["make-main", &self.id.to_string()])
+            .output()
+            .map_err(|e| format!("could not arrange the displays: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
     }
 
     fn apply(&self, shape: Shape) -> Result<(), String> {
@@ -111,25 +121,36 @@ impl Virtual {
         })
     }
 
-    /// At (0, 0), which makes it main, with the other displays moved right
-    /// as they were arranged among themselves.
-    fn make_main(&self, shape: Shape, displays: &[(CGDirectDisplayID, CGRect)]) -> Result<(), String> {
-        let others: Vec<_> = displays.iter().filter(|(d, _)| *d != self.id && !gone(*d)).collect();
-        let left = others.iter().map(|(_, frame)| frame.origin.x).fold(f64::INFINITY, f64::min);
-        let shift = if left.is_finite() { f64::from(shape.points.0) - left } else { 0.0 };
-        let mut config = ptr::null_mut();
-        unsafe {
-            check(CGBeginDisplayConfiguration(&mut config), "begin")?;
-            let mut status = CGConfigureDisplayOrigin(config, self.id, 0, 0);
-            for &&(other, frame) in &others {
-                if status == CGError::Success {
-                    let (x, y) = (frame.origin.x + shift, frame.origin.y);
-                    status = CGConfigureDisplayOrigin(config, other, x as i32, y as i32);
-                }
+}
+
+/// `sola-kvm-mac make-main <display>`, in a process of its own: `display` at
+/// (0, 0), which makes it main, and the others moved right as they were
+/// arranged among themselves. For the login session, as this process ends
+/// at once; macOS arranges again when the display goes.
+pub fn make_main(id: CGDirectDisplayID) -> Result<(), String> {
+    let mut ids = [0; 16];
+    let mut count = 0;
+    check(unsafe { CGGetOnlineDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count) }, "read")?;
+    let online = &ids[..count as usize];
+    if !online.contains(&id) {
+        return Err(format!("display {id} is not online"));
+    }
+    let others: Vec<_> = online.iter().copied().filter(|&d| d != id).collect();
+    let left = others.iter().map(|&d| CGDisplayBounds(d).origin.x).fold(f64::INFINITY, f64::min);
+    let width = CGDisplayBounds(id).size.width;
+    let shift = if left.is_finite() { width - left } else { 0.0 };
+    let mut config = ptr::null_mut();
+    unsafe {
+        check(CGBeginDisplayConfiguration(&mut config), "begin")?;
+        let mut status = CGConfigureDisplayOrigin(config, id, 0, 0);
+        for &other in &others {
+            if status == CGError::Success {
+                let origin = CGDisplayBounds(other).origin;
+                status = CGConfigureDisplayOrigin(config, other, (origin.x + shift) as i32, origin.y as i32);
             }
-            check(status, "arrange")?;
-            check(CGCompleteDisplayConfiguration(config, CGConfigureOption::ForAppOnly), "complete")
         }
+        check(status, "arrange")?;
+        check(CGCompleteDisplayConfiguration(config, CGConfigureOption::ForSession), "complete")
     }
 }
 
@@ -143,6 +164,6 @@ fn check(status: CGError, what: &str) -> Result<(), String> {
     if status == CGError::Success {
         Ok(())
     } else {
-        Err(format!("macOS would not {what} the arrangement (status {})", status.0))
+        Err(format!("macOS would not {what} the display arrangement (status {})", status.0))
     }
 }
