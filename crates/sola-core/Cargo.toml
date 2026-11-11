@@ -19,3 +19,4 @@ which = "7"
 [dev-dependencies]
 postcard = { version = "1", features = ["alloc"] }
 serde_yaml_ng = { workspace = true }
+tempfile = "3"

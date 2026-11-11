@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use iced::widget::{Space, canvas, column, container, row, stack, text};
 use iced::{Alignment, Element, Event, Length, Padding, Size, Subscription, Task, Theme, event, keyboard, window};
-use sola_bus::topics::{MenuActionPayload, MenuDefinition, MenuItem, Topic, TopicKind};
+use sola_bus::topics::{MenuActionPayload, MenuDefinition, MenuItem, Topic};
 use sola_core::{KeyChord, KeyCode};
 use sola_kit::app::{BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup};
 use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcome};
@@ -65,7 +65,7 @@ pub fn run() -> iced::Result {
     syntax::warm_up();
 
     let mut setup = BusSetup::new(APP_ID)
-        .subscribe(TopicKind::ALL)
+        .app_kinds(sola_kit::app::TAB_KINDS)
         .app_menu_definition(MenuDefinition {
             label: "Editor".into(),
             // No key: Super is Meta here, and M-w is Copy.

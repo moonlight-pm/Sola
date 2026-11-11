@@ -16,7 +16,7 @@ use crate::topics::TopicKind;
 /// (`next` 83df4558, the Sola in Oath's desk output): a numbered
 /// `$subscribe` carries indices into this list. Frozen: never reorder or
 /// drop a name, and add none. A kind removed since stays, and decodes to
-/// nothing (`CustomTheme`).
+/// nothing ([`REMOVED`]).
 pub const NUMBERED: &[&str] = &[
     "MouseLeft", "Shutdown", "LaunchApp", "LaunchResult", "UserAppExited",
     "CloseApp", "ClientConnected", "ClientDisconnected", "Composition", "Frame",
@@ -32,6 +32,14 @@ pub const NUMBERED: &[&str] = &[
     "TerminalConfig", "MonitorConfig", "TerminalSession", "BrowserConfig",
     "BrowserHistory", "BrowserTab", "PaintSession", "CalendarConfig",
     "TabLayout", "Background", "Appearance", "CalendarAgenda",
+];
+
+/// The names in [`NUMBERED`] whose kinds this build no longer has.
+pub const REMOVED: &[&str] = &[
+    "Zones", "CustomTheme", "TerminalConfig", "MonitorConfig", "BrowserConfig",
+    "BrowserHistory", "BrowserTab", "AppHidden", "FloatGeometry", "SessionApps",
+    "TerminalSession", "PaintSession", "TabLayout", "WindowGeometry", "WindowFloating",
+    "WindowParent", "TabWindow", "WindowChrome", "WindowWorkspace",
 ];
 
 /// The frames that subscribe to `kinds`: the names, then the numbered set
@@ -92,23 +100,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn numbered_is_this_build_with_custom_theme() {
+    fn numbered_is_this_build_with_the_removed_kinds() {
         // The frozen list differs from this build's order only by the
-        // removed CustomTheme. A kind added after the freeze is missing
-        // from it, and a bus from before names never sees it.
+        // removed kinds. A kind added after the freeze is missing from it,
+        // and a bus from before names never sees it.
         let now: Vec<&str> = TopicKind::ALL
             .iter()
             .map(|k| k.as_str())
             .filter(|n| NUMBERED.contains(n))
             .collect();
-        let frozen: Vec<&str> = NUMBERED.iter().copied().filter(|n| *n != "CustomTheme").collect();
+        let frozen: Vec<&str> = NUMBERED.iter().copied().filter(|n| !REMOVED.contains(n)).collect();
         assert_eq!(frozen, now);
-        assert_eq!(NUMBERED.iter().position(|n| *n == "CustomTheme"), Some(50));
+        for name in REMOVED {
+            assert!(NUMBERED.contains(name), "{name} left the frozen list");
+            assert!(TopicKind::from_str(name).is_none(), "{name} is a kind again");
+        }
+        let at = |n: &str| NUMBERED.iter().position(|x| *x == n);
+        assert_eq!(at("Zones"), Some(45));
+        assert_eq!(at("CustomTheme"), Some(50));
+        assert_eq!(at("TerminalConfig"), Some(52));
+        assert_eq!(at("MonitorConfig"), Some(53));
+        assert_eq!(at("BrowserConfig"), Some(55));
+        assert_eq!(at("BrowserHistory"), Some(56));
+        assert_eq!(at("BrowserTab"), Some(57));
+        assert_eq!(at("AppHidden"), Some(27));
+        assert_eq!(at("FloatGeometry"), Some(46));
+        assert_eq!(at("SessionApps"), Some(47));
+        assert_eq!(at("TerminalSession"), Some(54));
+        assert_eq!(at("PaintSession"), Some(58));
+        assert_eq!(at("TabLayout"), Some(60));
+        assert_eq!(at("WindowGeometry"), Some(29));
+        assert_eq!(at("WindowFloating"), Some(30));
+        assert_eq!(at("WindowParent"), Some(34));
+        assert_eq!(at("TabWindow"), Some(36));
+        assert_eq!(at("WindowChrome"), Some(38));
+        assert_eq!(at("WindowWorkspace"), Some(40));
+        assert_eq!(NUMBERED.len(), 64);
     }
 
     #[test]
     fn names_round_trip() {
-        let kinds = [TopicKind::Theme, TopicKind::TabLayout, TopicKind::Application];
+        let kinds = [TopicKind::Theme, TopicKind::MailConfig, TopicKind::Application];
         let [names, _] = frames(&kinds);
         assert_eq!(names.topic, crate::CONTROL_SUBSCRIBE_NAMES);
         assert_eq!(decode_names(&names).unwrap(), kinds);
@@ -116,27 +148,30 @@ mod tests {
 
     #[test]
     fn numbered_uses_the_frozen_numbers() {
-        let kinds = [TopicKind::Theme, TopicKind::Application, TopicKind::TabLayout];
+        let kinds = [TopicKind::Theme, TopicKind::Application, TopicKind::MailConfig];
         let [_, numbered] = frames(&kinds);
         assert_eq!(numbered.topic, crate::CONTROL_SUBSCRIBE);
         let numbers: Vec<u32> = decode_payload(&numbered).unwrap();
-        assert_eq!(numbers, vec![49, 51, 60]);
+        assert_eq!(numbers, vec![49, 51, 48]);
         assert_eq!(decode_numbered(&numbered).unwrap(), kinds);
     }
 
     #[test]
     fn old_build_numbers_read_as_it_meant_them() {
-        // A shell from 83df4558 asking for TabLayout and Application.
-        let msg = Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![60u32, 51]));
-        assert_eq!(decode_numbered(&msg).unwrap(), vec![TopicKind::TabLayout, TopicKind::Application]);
+        // A shell from 83df4558 asking for MailConfig and Application.
+        let msg = Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![48u32, 51]));
+        assert_eq!(decode_numbered(&msg).unwrap(), vec![TopicKind::MailConfig, TopicKind::Application]);
     }
 
     #[test]
     fn unknown_entries_are_skipped() {
-        let msg = Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![50u32, 999, 0]));
+        let msg = Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![50u32, 999, 0, 45]));
         assert_eq!(decode_numbered(&msg).unwrap(), vec![TopicKind::MouseLeft]);
-        let only_removed = Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![50u32]));
+        let only_removed =
+            Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![45u32, 50, 52, 53, 55, 56, 57]));
         assert!(decode_numbered(&only_removed).is_err());
+        let mixed = Message::with_payload(crate::CONTROL_SUBSCRIBE, encode_payload(&vec![57u32, 49]));
+        assert_eq!(decode_numbered(&mixed).unwrap(), vec![TopicKind::Theme]);
         let names = Message::with_payload(
             crate::CONTROL_SUBSCRIBE_NAMES,
             encode_payload(&vec!["Theme".to_string(), "FromTheFuture".to_string()]),

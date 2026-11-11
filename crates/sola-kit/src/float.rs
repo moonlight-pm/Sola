@@ -2,14 +2,14 @@
 //! frame ([`crate::window_frame`]) knows how to draw.
 //!
 //! **Policy:** the shell marks every window without a zone assignment as
-//! floating and emits sticky `Topic::WindowFloating`. Every kit window draws
+//! floating and emits sticky `Topic::WindowPlace`. Every kit window draws
 //! its frame ([`crate::window_frame`]); the float bit picks how: both clear
 //! their corners, a float also resizes from its edges and drags. Size is the client's requested size unless a zone
 //! or restored float geometry applies.
 //!
 //! An app doesn't know its own sola-river `window_id`, so we learn it by
 //! matching `(app_id, title)` from `Topic::Windows`, then track the float bit
-//! from the sticky `Topic::WindowFloating`. Feed [`update`] every bus message
+//! from the sticky `Topic::WindowPlace`. Feed [`update`] every bus message
 //! (from the app's `bus_subscription` fold); read [`is_floating`] /
 //! [`is_floating_any`] in `view`.
 //!
@@ -46,8 +46,11 @@ pub struct FloatState {
     ids_by_title: HashMap<String, u32>,
     /// Currently-floating `window_id`s (all apps; filtered on read).
     floating: HashSet<u32>,
-    /// Windows the shell shows in Cinema (`Topic::WindowChrome`): no frame.
+    /// Windows the shell shows in Cinema (`Topic::WindowPlace`): no frame.
     cinema: HashSet<u32>,
+    /// Each window's last (tiled, floating, cinema, rim), to tell a change
+    /// of its frame from a change of its workspace or whether it is shown.
+    frames: HashMap<u32, (bool, bool, bool, bool)>,
 }
 
 impl FloatState {
@@ -59,7 +62,9 @@ impl FloatState {
     }
 
     /// Fold one bus message. Call from the app's bus-message update arm.
-    pub fn update(&mut self, msg: &Message) {
+    /// Returns true when a window's frame (tiled, floating, Cinema, rim)
+    /// changed, or the window left: a reason to lay the window out again.
+    pub fn update(&mut self, msg: &Message) -> bool {
         match Topic::parse(msg) {
             // Windows is the full list each time — rebuild the title map and
             // prune the float set so closed windows' ids don't linger.
@@ -74,23 +79,29 @@ impl FloatState {
                 }
                 self.floating.retain(|id| live.contains(id));
                 self.cinema.retain(|id| live.contains(id));
+                false
             }
             // A retraction is the same topic, not sticky: the window left.
-            Some(Topic::WindowChrome(c)) => {
-                if msg.sticky && c.cinema {
-                    self.cinema.insert(c.window_id);
+            Some(Topic::WindowPlace(p)) => {
+                if msg.sticky && p.cinema {
+                    self.cinema.insert(p.window_id);
                 } else {
-                    self.cinema.remove(&c.window_id);
+                    self.cinema.remove(&p.window_id);
                 }
-            }
-            Some(Topic::WindowFloating(wf)) => {
-                if wf.floating {
-                    self.floating.insert(wf.window_id);
+                if msg.sticky && p.floating {
+                    self.floating.insert(p.window_id);
                 } else {
-                    self.floating.remove(&wf.window_id);
+                    self.floating.remove(&p.window_id);
                 }
+                let frame = (p.tiled, p.floating, p.cinema, p.rim);
+                let last = if msg.sticky {
+                    self.frames.insert(p.window_id, frame)
+                } else {
+                    self.frames.remove(&p.window_id)
+                };
+                last != msg.sticky.then_some(frame)
             }
-            _ => {}
+            _ => false,
         }
     }
 
@@ -200,7 +211,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sola_bus::topics::{Window, WindowFloating};
+    use sola_bus::topics::{Window, WindowPlace};
 
     fn win(window_id: u32, app_id: &str, title: &str) -> Window {
         Window {
@@ -238,33 +249,21 @@ mod tests {
 
         // our window floats
         fs.update(
-            &Topic::WindowFloating(WindowFloating {
-                window_id: 7,
-                floating: true,
-            })
-            .to_message(),
+            &place(7, true, false, true),
         );
         assert!(fs.is_floating_any());
         assert!(fs.is_floating("Monitor"));
 
         // another app's float does not count as ours
         fs.update(
-            &Topic::WindowFloating(WindowFloating {
-                window_id: 9,
-                floating: true,
-            })
-            .to_message(),
+            &place(9, true, false, true),
         );
         assert!(fs.is_floating("Monitor"));
         assert!(!fs.is_floating("Other")); // "Other" isn't ours
 
         // unfloat clears it
         fs.update(
-            &Topic::WindowFloating(WindowFloating {
-                window_id: 7,
-                floating: false,
-            })
-            .to_message(),
+            &place(7, false, false, true),
         );
         assert!(!fs.is_floating_any());
         assert!(!fs.is_floating("Monitor"));
@@ -275,11 +274,7 @@ mod tests {
         let mut fs = FloatState::new("sola-monitor");
         fs.update(&Topic::Windows(vec![win(7, "sola-monitor", "Monitor")]).to_message());
         fs.update(
-            &Topic::WindowFloating(WindowFloating {
-                window_id: 7,
-                floating: true,
-            })
-            .to_message(),
+            &place(7, true, false, true),
         );
         assert!(fs.is_floating_any());
         // window closes → Windows no longer lists it
@@ -287,16 +282,24 @@ mod tests {
         assert!(!fs.is_floating_any());
     }
 
-    fn chrome_msg(window_id: u32, cinema: bool, sticky: bool) -> Message {
-        let mut msg = Topic::WindowChrome(sola_bus::topics::WindowChrome {
+    fn place(window_id: u32, floating: bool, cinema: bool, sticky: bool) -> Message {
+        let mut msg = Topic::WindowPlace(WindowPlace {
             window_id,
-            tiled: true,
+            tiled: !floating,
+            floating,
             cinema,
             rim: false,
+            workspace: None,
+            tab: None,
+            shown: true,
         })
         .to_message();
         msg.sticky = sticky;
         msg
+    }
+
+    fn chrome_msg(window_id: u32, cinema: bool, sticky: bool) -> Message {
+        place(window_id, false, cinema, sticky)
     }
 
     #[test]

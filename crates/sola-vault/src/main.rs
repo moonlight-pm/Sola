@@ -37,8 +37,7 @@ fn main() -> iced::Result {
             TopicKind::MenuAction,
             TopicKind::CloseApp,
             TopicKind::Windows,
-            TopicKind::WindowFloating,
-            TopicKind::WindowChrome,
+            TopicKind::WindowPlace,
         ])
         .install();
     sola_kit::menu::publish(menus::app_menu(APP_ID, Sort::default()));

@@ -24,6 +24,7 @@ use sola_kit::fonts;
 use sola_kit::tabs::TabWindows;
 use sola_kit::theme::{Atoms, atoms_from_bus_theme, default_theme};
 
+use sola_terminal::sessions::Sessions;
 use sola_terminal::{desk, emulator, extkeys, input, links, perf, pty, state, term_view, tmux};
 
 mod instance;
@@ -44,9 +45,6 @@ const CWD_REFRESH_MS: u64 = 150;
 /// Slightly longer initial delay used when attaching a pane for the first time.
 const CWD_INITIAL_DELAY_MS: u64 = 300;
 
-/// After subscribing, how long to wait for saved tabs before opening a
-/// first one.
-const FIRST_TAB_WAIT: Duration = Duration::from_millis(700);
 
 /// Minimum pane extent (logical px) along a split's main axis. Clamps the
 /// divider drag so neither side collapses below it.
@@ -111,11 +109,8 @@ fn main() -> iced::Result {
     tmux::ensure_server_running();
     tmux::reload_config();
 
-    // Subscribe to chrome topics only here. `TerminalSession` stickies are
-    // expanded in `Msg::SubscribeSessions` *after* the iced bus pump is
-    // live — sticky replay at BusSetup time races the poller handoff and
-    // was dropping every tab on restart (tmux sessions still alive, UI
-    // empty).
+    // Subscribe to chrome topics only here; the rest are expanded in
+    // `Msg::SubscribeSessions` once the iced bus pump is live.
     BusSetup::new(APP_ID)
         .subscribe(&[TopicKind::Theme, TopicKind::MenuAction, TopicKind::CloseApp])
         .install();
@@ -149,9 +144,8 @@ struct App {
     /// Snapshot of live tmux sessions at startup, used to prune persisted
     /// panes whose tmux peer is gone. None means the query failed — admit all.
     live_tmux_at_startup: Option<HashSet<String>>,
-    /// Sticky `TerminalSession` replay is only for our own last run.
-    /// After this instant, an unknown id is not ours to restore.
-    startup_replay_until: Instant,
+    /// Our tabs as the next run restores them (our state file, not the bus).
+    sessions: Sessions,
     theme: Theme,
     palette: term_view::Palette,
     metrics: term_view::CellMetrics,
@@ -234,11 +228,8 @@ enum Msg {
     /// Result of an async tmux cwd query (PaneId, path).
     CwdResult(String, Option<String>),
     BlinkTick,
-    /// Expand bus subscription to TerminalSession so sticky tab replay lands
-    /// after the iced bus pump is attached.
+    /// Expand the bus subscription and restore the saved tabs.
     SubscribeSessions,
-    /// No saved tab came back: open a first one.
-    EnsureTab,
     TitleDrag(window::Id),
     TitleResize(window::Id, window::Direction),
     TitleClose(window::Id),
@@ -254,17 +245,14 @@ enum Msg {
     ),
 }
 
-/// Full topic set once the iced bus pump can receive sticky replay.
+/// Full topic set once the iced bus pump is live.
 const SESSION_TOPICS: &[TopicKind] = &[
     TopicKind::Theme,
     TopicKind::MenuAction,
     TopicKind::CloseApp,
     TopicKind::Windows,
-    TopicKind::WindowFloating,
-    TopicKind::WindowChrome,
-    TopicKind::TabWindow,
+    TopicKind::WindowPlace,
     TopicKind::CloseTab,
-    TopicKind::TerminalSession,
 ];
 
 impl App {
@@ -286,7 +274,7 @@ impl App {
             sizes: HashMap::new(),
             tab_windows: TabWindows::new(APP_ID),
             live_tmux_at_startup,
-            startup_replay_until: Instant::now(),
+            sessions: Sessions::load(),
             theme: default_theme(),
             palette: term_view::Palette::from_kit_theme(&Atoms::default()),
             metrics: term_view::CellMetrics::for_font(15.0, fonts::mono_metrics()),
@@ -301,7 +289,7 @@ impl App {
             desk: desk::PaneMenu::default(),
         };
         // After the first update the bus subscription is live; expand to
-        // session topics so sticky replay is not dropped.
+        // the full topic set and restore the saved tabs.
         (app, Task::done(Msg::SubscribeSessions))
     }
 
@@ -332,7 +320,7 @@ impl App {
     fn subscription(&self) -> Subscription<Msg> {
         // IMPORTANT: keep this recipe **stable**. Toggling optional arms
         // rebuilds the whole batch and restarts `bus_subscription`, which
-        // can drop sticky TerminalSession replay mid-handoff.
+        // can drop bus messages mid-handoff.
         Subscription::batch([
             bus_subscription().map(Msg::Bus),
             emulator::output_subscription().map(Msg::PtyOutput),
@@ -372,24 +360,26 @@ impl App {
                 // With the kit's own kinds (the desk menu's picks).
                 let kinds = sola_kit::app::with_kit_kinds(SESSION_TOPICS);
                 sola_kit::app::set_bus_kinds(kinds);
-                // Stickies replay synchronously on subscribe. Anything
-                // arriving after this window is not our last run's.
-                self.startup_replay_until = Instant::now() + Duration::from_secs(2);
                 if let Ok(mut client) = bus().lock() {
                     if let Err(e) = client.subscribe(kinds) {
                         tracing::warn!("SubscribeSessions failed: {e}");
                     } else {
-                        tracing::info!("subscribed TerminalSession (sticky tab replay)");
+                        tracing::info!("subscribed to the session topics");
                     }
                 }
-                Task::perform(tokio::time::sleep(FIRST_TAB_WAIT), |_| Msg::EnsureTab)
-            }
-            Msg::EnsureTab => {
-                if self.tab_of.is_empty() {
+                // The saved tabs come from our own file, so they are known
+                // now: restore each, and open one if none came back.
+                let mut tasks: Vec<Task<Msg>> = self
+                    .sessions
+                    .all()
+                    .into_iter()
+                    .map(|s| self.restore_tab(s))
+                    .collect();
+                if self.tabs.tab_ids_in_order().is_empty() {
                     tracing::info!("no saved tab came back; opening one");
-                    return self.new_tab();
+                    tasks.push(self.new_tab());
                 }
-                Task::none()
+                Task::batch(tasks)
             }
             Msg::Window(id, event) => self.on_window(id, event),
             Msg::TitleDrag(id) => sola_kit::drag(Some(id)),
@@ -1139,10 +1129,10 @@ impl App {
     }
 
     fn on_bus(&mut self, m: &Message) -> Task<Msg> {
-        self.float.update(m);
+        let framed = self.float.update(m);
         self.tab_windows.update(m);
         // Cinema drops the titlebar: the panes get its rows.
-        if matches!(Topic::parse(m), Some(Topic::WindowChrome(_))) {
+        if framed {
             self.resize_all_panes();
         }
         // The tab bar's stoplight: as the window's own close.
@@ -1174,37 +1164,6 @@ impl App {
 
         // 3. Dispatch by topic.
         match Topic::parse(m) {
-            Some(Topic::TerminalSession(s)) => {
-                if !m.sticky {
-                    // Retraction from elsewhere — drop the tab and its window
-                    // (plain drop preserves tmux).
-                    let leaves = self
-                        .tabs
-                        .get_tab(&s.id)
-                        .map(|t| state::leaves_of(&t.layout))
-                        .unwrap_or_default();
-                    for p in &leaves {
-                        self.tabs.remove_pane(p);
-                        self.titles.remove(p);
-                        self.pane_grids.remove(p);
-                        self.wheel_burst.remove(p);
-                    }
-                    self.tabs.remove_tab(&s.id);
-                    return self.close_window_of(&s.id);
-                }
-
-                if self.tabs.get_tab(&s.id).is_some() {
-                    // Our own echo / re-emit — local state is already current.
-                    return Task::none();
-                }
-                if Instant::now() > self.startup_replay_until {
-                    // Not our last run's tab: restore_tab would prune it
-                    // against our boot snapshot and retract the sticky.
-                    return Task::none();
-                }
-                // First sighting during sticky replay: our last run's tabs.
-                return self.restore_tab(s);
-            }
             Some(Topic::MenuAction(ref p)) if p.app_id == APP_ID => {
                 return self.on_menu_action(&p.action_id);
             }
@@ -1228,11 +1187,9 @@ impl App {
             tracing::info!(
                 id = %s.id,
                 tmux = %s.tmux_session,
-                "retracting stale TerminalSession (all panes gone)"
+                "dropping stale saved tab (all panes gone)"
             );
-            if let Ok(mut client) = bus().lock() {
-                let _ = client.retract(Topic::TerminalSession(s));
-            }
+            self.sessions.remove(&s.id);
             return Task::none();
         };
 
@@ -1510,24 +1467,15 @@ impl App {
             self.wheel_burst.remove(p);
         }
 
-        let ordinal = self.tabs.get_tab(tab_id).map(|t| t.ordinal).unwrap_or(0);
-        if let Ok(mut client) = bus().lock() {
-            let _ = client.retract(Topic::TerminalSession(sola_bus::topics::TerminalSession {
-                id: tab_id.to_string(),
-                tmux_session: String::new(),
-                cwd: None,
-                ordinal,
-                layout: None,
-            }));
-        }
+        self.sessions.remove(tab_id);
 
         self.tabs.remove_tab(tab_id);
         self.close_window_of(tab_id)
     }
 
-    /// Persist a tab as a `TerminalSession`: the pane tree when split, else a
+    /// Save a tab as a `TerminalSession`: the pane tree when split, else a
     /// single-pane record (`layout: None`) for back-compat.
-    fn persist_tab(&self, tab_id: &str) {
+    fn persist_tab(&mut self, tab_id: &str) {
         let Some(tab) = self.tabs.get_tab(tab_id) else {
             return;
         };
@@ -1545,17 +1493,14 @@ impl App {
             self.tabs.layout_of(tab_id)
         };
 
-        if let Ok(mut client) = bus().lock() {
-            if let Err(e) = client.emit(Topic::TerminalSession(sola_bus::topics::TerminalSession {
-                id: tab_id.to_string(),
-                tmux_session,
-                cwd,
-                ordinal: tab.ordinal,
-                layout,
-            })) {
-                tracing::warn!(id = %tab_id, "persist_tab: emit TerminalSession failed: {e:?}");
-            }
-        }
+        let record = sola_bus::topics::TerminalSession {
+            id: tab_id.to_string(),
+            tmux_session,
+            cwd,
+            ordinal: tab.ordinal,
+            layout,
+        };
+        self.sessions.put(record);
     }
 
     fn on_cwd_result(&mut self, pane_id: String, path_opt: Option<String>) -> Task<Msg> {

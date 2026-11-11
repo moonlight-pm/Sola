@@ -29,7 +29,7 @@ use std::sync::Arc;
 use iced::widget::{Space, button, canvas, column, container, row, stack};
 use iced::{Alignment, Element, Length, Padding, Subscription, Task, Theme};
 use sola_bus::Message;
-use sola_bus::topics::{MenuDefinition, MenuItem, Topic, TopicKind};
+use sola_bus::topics::{MenuDefinition, MenuItem, Topic};
 use sola_core::KeyCode;
 use sola_kit::app::{BusSetup, apply_theme_update, bus_subscription, is_self_quit, startup, window_settings_transparent};
 use sola_kit::components::scroll;
@@ -56,7 +56,7 @@ fn item(id: &str, label: &str, shortcut: Option<sola_core::KeyChord>) -> MenuIte
 fn main() -> iced::Result {
     startup(APP_ID);
     BusSetup::new(APP_ID)
-        .subscribe(TopicKind::ALL)
+        .app_kinds(&[])
         .app_menu_definition(MenuDefinition {
             label: "Oath".into(),
             items: vec![

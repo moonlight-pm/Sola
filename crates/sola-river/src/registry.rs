@@ -5,7 +5,7 @@
 //! can be unit-tested without a compositor.
 use std::collections::HashMap;
 
-use sola_bus::topics::{Window, WindowGeometry};
+use sola_bus::topics::{Window, WindowRect};
 use wayland_client::backend::ObjectId;
 
 use crate::protocol::river_xkb_bindings_v1::river_xkb_binding_v1::RiverXkbBindingV1;
@@ -228,12 +228,11 @@ impl WindowRegistry {
 
     /// The window's full rectangle, available once both size and position are
     /// known. `None` while either is still unset.
-    pub fn geometry(&self, id: u32) -> Option<WindowGeometry> {
+    pub fn geometry(&self, id: u32) -> Option<WindowRect> {
         let e = self.by_id.get(&id)?;
         let (width, height) = e.size?;
         let (x, y) = e.position?;
-        Some(WindowGeometry {
-            window_id: id,
+        Some(WindowRect {
             x,
             y,
             width,
@@ -316,8 +315,8 @@ mod tests {
         assert!(r.set_position(id, 10, 20)); // changed
         let g = r.geometry(id).expect("both known now");
         assert_eq!(
-            (g.window_id, g.x, g.y, g.width, g.height),
-            (id, 10, 20, 800, 600)
+            (g.x, g.y, g.width, g.height),
+            (10, 20, 800, 600)
         );
         assert!(!r.set_size(id, 800, 600)); // unchanged → false
         assert!(!r.set_position(id, 10, 20)); // unchanged → false

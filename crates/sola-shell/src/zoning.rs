@@ -2,9 +2,9 @@
 //! zones (see [`crate::stacks`]), and floating windows' rectangles.
 //!
 //! Functions return Frames; the caller (`Shell`) emits them.
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use sola_bus::topics::{FloatGeometry, FrameUpdate, OutputGeometry, WindowGeometry, Zone, ZoneLayout};
+use sola_bus::topics::{FloatGeometry, FrameUpdate, OutputGeometry, WindowRect, Zone, ZoneLayout};
 use tracing::info;
 
 
@@ -401,17 +401,14 @@ pub struct ZoningState {
     /// float in the bar's Floating zone does; a dialog does not).
     floats: HashMap<u32, bool>,
     /// Last known rectangle of each floating app, keyed by app_id. Fed by
-    /// `Topic::WindowGeometry` for floating windows and by `Topic::FloatGeometry`
-    /// replay at startup; restored when the app's window floats again.
+    /// sola-river's `WindowFacts` for floating windows, and from the shell's
+    /// own file at boot (`crate::saved_state`); restored when the app's
+    /// window floats again.
     pub float_geometry: HashMap<String, FloatGeometry>,
     /// Latest on-screen rectangle of every known window, keyed by window_id.
-    /// Fed by `Topic::WindowGeometry` (sola-river) for all windows; a float
+    /// Fed by `WindowFacts.rect` (sola-river) for all windows; a float
     /// made from a tile shrinks from here.
-    pub live_geometry: HashMap<u32, WindowGeometry>,
-    /// Window IDs we last published as floating via `Topic::WindowFloating`.
-    /// Lets `take_floating_changes` emit only on an actual transition
-    /// (float ↔ unfloat), so a non-floating window never emits at all.
-    floating_emitted: HashSet<u32>,
+    pub live_geometry: HashMap<u32, WindowRect>,
 }
 
 impl ZoningState {
@@ -421,7 +418,6 @@ impl ZoningState {
             floats: HashMap::new(),
             float_geometry: HashMap::new(),
             live_geometry: HashMap::new(),
-            floating_emitted: HashSet::new(),
         }
     }
 
@@ -432,40 +428,6 @@ impl ZoningState {
             "cached output geometry"
         );
         self.output_size = Some((geo.width, geo.height));
-    }
-
-    /// Diff each known window's float state against what was last published,
-    /// returning `(window_id, floating)` for every change so the caller can
-    /// emit `Topic::WindowFloating`. A window that has vanished from `known`
-    /// emits `floating = false` once and is then forgotten. Idempotent: a
-    /// second call with no transitions returns an empty vec.
-    pub fn take_floating_changes(&mut self, known: &[u32]) -> Vec<(u32, bool)> {
-        let mut out = Vec::new();
-        let known_set: HashSet<u32> = known.iter().copied().collect();
-        // Windows we'd published as floating that vanished: announce unfloat
-        // once, then drop tracking.
-        let gone: Vec<u32> = self
-            .floating_emitted
-            .iter()
-            .copied()
-            .filter(|w| !known_set.contains(w))
-            .collect();
-        for w in gone {
-            self.floating_emitted.remove(&w);
-            out.push((w, false));
-        }
-        for &w in known {
-            let now = self.is_floating(w);
-            let was = self.floating_emitted.contains(&w);
-            if now && !was {
-                self.floating_emitted.insert(w);
-                out.push((w, true));
-            } else if !now && was {
-                self.floating_emitted.remove(&w);
-                out.push((w, false));
-            }
-        }
-        out
     }
 
     /// Forget per-window state for windows that closed.
@@ -725,19 +687,6 @@ mod tests {
     fn cinema_is_the_whole_output() {
         let f = cinema_frame(1, 1920, 1080);
         assert_eq!((rect(&f), f.fullscreen), ((0, 0, 1920, 1080), true));
-    }
-
-    #[test]
-    fn floating_changes_emit_once_and_track_departures() {
-        let mut s = ZoningState::new();
-        s.float("a", 7, true);
-        assert_eq!(s.take_floating_changes(&[7]), vec![(7, true)]);
-        assert!(s.take_floating_changes(&[7]).is_empty());
-        s.unfloat(7);
-        assert_eq!(s.take_floating_changes(&[7]), vec![(7, false)]);
-        s.float("a", 7, true);
-        assert_eq!(s.take_floating_changes(&[7]), vec![(7, true)]);
-        assert_eq!(s.take_floating_changes(&[]), vec![(7, false)]);
     }
 
     #[test]

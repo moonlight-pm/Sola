@@ -21,6 +21,7 @@ pub mod paths;
 pub mod process;
 pub mod project_sessions;
 pub mod ssh;
+pub mod state_file;
 pub mod theme;
 pub mod watcher;
 pub mod window_label;

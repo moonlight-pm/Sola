@@ -51,6 +51,17 @@ pub fn bus() -> &'static Mutex<BusClient> {
 
 /// Borrow the process-wide bus if [`BusSetup::install`] has run.
 /// Unit tests and optional emit paths use this instead of panicking.
+/// Tell the bus this process has sent its state after starting (a
+/// [`BusSetup::supervised`] service): what an ended process of the same app
+/// still owns, and this one did not send again, is retracted.
+pub fn settled() {
+    if let Some(Ok(mut bus)) = try_bus().map(|b| b.lock()) {
+        if let Err(e) = bus.settled() {
+            tracing::warn!("bus settled failed: {e}");
+        }
+    }
+}
+
 pub fn try_bus() -> Option<&'static Mutex<BusClient>> {
     BUS.get().map(|a| a.as_ref())
 }
@@ -93,6 +104,23 @@ fn bus_kinds() -> Option<&'static [TopicKind]> {
 /// ```
 ///
 /// [`install`]: BusSetup::install
+/// What an app with a kit window reads through the kit's helpers: its
+/// theme ([`apply_theme_update`]), being asked to quit ([`is_self_quit`]),
+/// and its frame, read from where the shell put it
+/// ([`crate::float::FloatState::update`]).
+pub const WINDOW_KINDS: &[TopicKind] = &[
+    TopicKind::Theme,
+    TopicKind::MenuAction,
+    TopicKind::CloseApp,
+    TopicKind::Windows,
+    TopicKind::WindowPlace,
+];
+
+/// What an app with tab windows reads through [`crate::tabs::TabWindows`]:
+/// each tab's window (a `WindowPlace` carrying its tab), and the tab bar
+/// asking one to close.
+pub const TAB_KINDS: &[TopicKind] = &[TopicKind::WindowPlace, TopicKind::CloseTab];
+
 pub struct BusSetup {
     app_id: &'static str,
     subscribe: Option<&'static [TopicKind]>,
@@ -101,6 +129,7 @@ pub struct BusSetup {
     call_owner: Option<String>,
     call_methods: Vec<sola_call::MethodSpec>,
     opens: Option<sola_open::claims::Claim>,
+    supervised: bool,
 }
 
 impl BusSetup {
@@ -113,7 +142,15 @@ impl BusSetup {
             call_owner: None,
             call_methods: Vec::new(),
             opens: None,
+            supervised: false,
         }
+    }
+
+    /// A desk service its supervisor restarts: the bus keeps what it wrote
+    /// across a restart until it calls [`settled`] ([`BusClient::set_supervised`]).
+    pub fn supervised(mut self) -> Self {
+        self.supervised = true;
+        self
     }
 
     /// Claim the link schemes and file types this app opens
@@ -134,12 +171,22 @@ impl BusSetup {
         self
     }
 
-    /// Subscribe the bus client to the given topic kinds before
-    /// installation. Pass `TopicKind::ALL` to mirror sola-monitor's
-    /// audit posture; pass a narrower slice for normal apps.
+    /// Subscribe the bus client to exactly these topic kinds (and the
+    /// kit's own, [`with_kit_kinds`]). An app with a kit window uses
+    /// [`Self::app_kinds`]. On subscribing, the bus replays every record
+    /// of each kind, so name only what the app reads: `TopicKind::ALL` is
+    /// for an audit view (Monitor) and the shell, which read nearly all of it.
     pub fn subscribe(mut self, kinds: &'static [TopicKind]) -> Self {
         self.subscribe = Some(kinds);
         self
+    }
+
+    /// Subscribe an app with a kit window: [`WINDOW_KINDS`], what the kit's
+    /// helpers read for it, and `own`, what the app's code reads.
+    pub fn app_kinds(self, own: &[TopicKind]) -> Self {
+        let mut kinds = WINDOW_KINDS.to_vec();
+        kinds.extend(own.iter().filter(|k| !WINDOW_KINDS.contains(k)));
+        self.subscribe(Box::leak(kinds.into_boxed_slice()))
     }
 
     /// Publish a single-menu app menu before installation. Most apps
@@ -216,6 +263,9 @@ impl BusSetup {
         // Identity tags sticky `source` and re-identifies on bus reconnect
         // so the host roster is restored after a sola-bus restart.
         client.set_app_id(self.app_id);
+        if self.supervised {
+            client.set_supervised();
+        }
         // `connect_blocking` returns `()` and loops until `connect()`
         // succeeds (it already warns once on the first failure). When
         // it returns, the bus is connected — log with app_id for
@@ -587,7 +637,7 @@ fn ensure_bus_poller() {
             match next {
                 Some(msg) => {
                     if crate::keys::observe(&msg) {
-                        crate::menu::republish();
+                        crate::menu::keys_changed();
                     }
                     crate::menu::observe(&msg);
                     crate::desk_menu::observe(&msg);
@@ -596,7 +646,12 @@ fn ensure_bus_poller() {
                     }
                     forward_or_buffer(Arc::new(msg))
                 }
-                None => std::thread::sleep(Duration::from_millis(8)),
+                None => {
+                    // Caught up with the bus: send the menus once for a
+                    // burst of key changes (a replay brings one per app).
+                    crate::menu::publish_stale();
+                    std::thread::sleep(Duration::from_millis(8))
+                }
             }
         }
     });

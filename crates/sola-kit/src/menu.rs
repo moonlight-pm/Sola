@@ -16,8 +16,9 @@
 //! titlebars add it last when an app omits it ([`ensure_window_menu`]).
 
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use sola_bus::topics::{AppMenuPayload, MenuActionPayload, MenuDefinition, MenuItem, Topic, Workspaces, Zone, ZoneLayout};
+use sola_bus::topics::{AppMenuPayload, KeyActions, MenuActionPayload, MenuDefinition, MenuItem, Topic, Workspaces, Zone, ZoneLayout};
 use sola_core::{KeyChord, KeyCode};
 
 /// This process's latest published menus.
@@ -127,9 +128,27 @@ fn send(payload: &AppMenuPayload) {
     }
 }
 
+/// Keys changed since this process last sent its menus.
+static STALE: AtomicBool = AtomicBool::new(false);
+
+/// Keys changed: the titlebars' menus are made again at once, and the
+/// menus are sent again when the poller has caught up with the bus
+/// ([`publish_stale`]), once for a burst.
+pub(crate) fn keys_changed() {
+    forget_current();
+    STALE.store(true, Ordering::Release);
+}
+
+/// Send the menus again if keys changed since they were last sent.
+pub(crate) fn publish_stale() {
+    if STALE.swap(false, Ordering::AcqRel) {
+        republish();
+    }
+}
+
 /// Send every menu this process published again, with its keys now (your
 /// key changes, or the shell's, arrived).
-pub(crate) fn republish() {
+fn republish() {
     forget_current();
     let own = APP_MENU.read().unwrap_or_else(|p| p.into_inner()).clone();
     let hosted = HOSTED.read().unwrap_or_else(|p| p.into_inner()).clone();
@@ -154,6 +173,30 @@ pub fn publish_for(payload: AppMenuPayload) {
         hosted.push(payload.clone());
     }
     send(&payload);
+}
+
+/// An app this process hosted is gone for good (a removed web app): take
+/// back its menus and the keys it declared, which outlive the process
+/// otherwise (`KeyActions` is kept on disk for Settings).
+pub fn forget_for(app_id: &str) {
+    HOSTED
+        .write()
+        .unwrap_or_else(|p| p.into_inner())
+        .retain(|p| p.app_id != app_id);
+    let Some(bus) = crate::app::try_bus() else {
+        return;
+    };
+    if let Ok(mut bus) = bus.lock() {
+        let _ = bus.retract(Topic::SetAppMenu(AppMenuPayload {
+            app_id: app_id.to_string(),
+            menus: Vec::new(),
+        }));
+        let _ = bus.retract(Topic::KeyActions(KeyActions {
+            owner: app_id.to_string(),
+            label: String::new(),
+            actions: Vec::new(),
+        }));
+    }
 }
 
 /// Keep `payload` for the titlebars without sending it.

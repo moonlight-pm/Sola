@@ -8418,6 +8418,7 @@ dependencies = [
 name = "sola-bus"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "postcard",
  "serde",
  "serde_json",
@@ -8477,6 +8478,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "tempfile",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -8721,6 +8723,7 @@ dependencies = [
  "sola-bus",
  "sola-core",
  "sola-kit",
+ "tempfile",
  "tokio",
  "tracing",
 ]

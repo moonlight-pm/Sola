@@ -1,6 +1,6 @@
 //! Apps a restarted sola-session finds already running: the saved session
 //! lists them and they have windows, but this process did not start them,
-//! so it has no process to watch. They stay in `SessionApps` while they have
+//! so it has no process to watch. They stay in the session file while they have
 //! windows; once their windows have been gone for [`GRACE`] they closed, or
 //! (when their compositor changed) went with their display.
 

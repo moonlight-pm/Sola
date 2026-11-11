@@ -68,19 +68,17 @@ pub const SUBSCRIBE: &[TopicKind] = &[
     TopicKind::Theme,
     TopicKind::MenuAction,
     TopicKind::CloseApp,
-    TopicKind::WindowFloating,
-    TopicKind::WindowChrome,
+    TopicKind::WindowPlace,
     TopicKind::OpenUrl,
     TopicKind::Chord,
     TopicKind::ChordReleased,
     TopicKind::NotificationActivate,
-    // Which window each page is, and whether it is on screen (Next).
-    TopicKind::TabWindow,
+    // Which window each page is, whether it is on screen, and which
+    // workspace it is on (`WindowPlace`; Next).
     TopicKind::CloseTab,
     // Which workspace shows and where each window is: a page runs its
     // workspace's profile (Next slice 5).
     TopicKind::Workspaces,
-    TopicKind::WindowWorkspace,
     // The catalog: web apps this process hosts.
     TopicKind::Application,
     // The output's size: the shape Use as Desktop Background cuts to.

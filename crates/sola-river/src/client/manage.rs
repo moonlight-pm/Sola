@@ -14,7 +14,7 @@ use crate::pending::FocusAction;
 /// The rim around a window whose app draws no frame: premultiplied white at
 /// 7%, 18% while focused (the kit frame's rim, board 02).
 
-/// Tell each window whether it is tiled (`WindowChrome.tiled`), so clients
+/// Tell each window whether it is tiled (`WindowPlace.tiled`), so clients
 /// that draw shadows or round corners drop them. Manage sequence. Sent only
 /// on change: each `set_tiled` schedules a configure.
 fn apply_tiled(state: &mut AppData) {
@@ -420,7 +420,7 @@ pub fn handle_render_start(state: &mut AppData) {
     let positions_len = state.pending.render_positions.len();
 
     // A hairline around windows whose app draws no frame (the shell's
-    // `WindowChrome.rim`), lit while focused; none for the rest (kit apps
+    // `WindowPlace.rim`), lit while focused; none for the rest (kit apps
     // draw their own rim). Drawn outside the content, so it sits in the gap.
     // A tiled one gets rounded corners with the rim along them instead
     // (`corners.rs`), so no square border. Cheap to send repeatedly — River
@@ -518,6 +518,14 @@ pub fn handle_render_start(state: &mut AppData) {
     state.pending.render_dirty = false;
     wm.render_finish();
     debug!(composition_len, positions_len, "render_finish sent");
+
+    // By the end of the first render sequence every window River had is
+    // told, with its size: what an earlier sola-river wrote and this one
+    // did not can go.
+    if state.windows_known && !state.bus_settled {
+        state.bus_settled = true;
+        state.bus.settled();
+    }
 }
 
 fn apply_composition_visibility(state: &AppData, order: &[u32], restack: bool) {

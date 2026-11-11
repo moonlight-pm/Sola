@@ -101,8 +101,8 @@ manager that stops answering for more than 3 s.
 | Keyboard focus | Shell (`Focus`) | Moves the seat's focus to that window |
 | Size and position of tiles, of a window in Cinema, and of the shell's own windows | Shell (`Frame`) | Proposes the size, sets the position |
 | Size of a floating window | The application, unless the shell gives it a rectangle (a remembered one, a tile floated in place, gamescope's nest size) | Lets it choose; centers it once if nothing placed it |
-| Floating | Shell (`WindowFloating`) | Allows move and resize, draws the shadow |
-| Tiled state and the rim | Shell (`WindowChrome`) | Tells tiled windows they are tiled; rims windows whose app draws no frame ([Frames, rims, and corners](#frames-rims-and-corners)) |
+| Floating | Shell (`WindowPlace`) | Allows move and resize, draws the shadow |
+| Tiled state and the rim | Shell (`WindowPlace`) | Tells tiled windows they are tiled; rims windows whose app draws no frame ([Frames, rims, and corners](#frames-rims-and-corners)) |
 | Key bindings | Shell (`RegisteredChords`; your changes in `Keybindings`) | Registers them with the compositor, reports presses; registers none while Settings waits for a key (`KeyCapture`) |
 | Fullscreen | The application, or Cinema | Grants it, and tells the shell (`FullscreenRequest`); ends it when focus moves away |
 | The background picture | Whoever sets `Background` | Draws it behind everything ([The background picture](#the-background-picture)) |
@@ -131,8 +131,8 @@ protocol marks that pid unreliable; Sola uses it to find a window's
 process and to notice when the process is gone.
 
 When the compositor reports that a window belongs to another (a dialog or
-a file picker), `sola-river` publishes `WindowParent` for it, and retracts
-it when the window closes or loses its parent. The shell gives such a
+a file picker), `sola-river` puts the parent in the window's `WindowFacts`, and drops it
+when the window loses its parent. The shell gives such a
 window no row in the bar and stacks it above its parent.
 
 Gamescope's window often reports an empty app id. When a window's app id
@@ -219,7 +219,7 @@ half the output clamped between 800×600 and 1600×1000 when it has none;
 the window keeps its own size.
 
 Once a window has both a size and a position, `sola-river` publishes its
-rectangle as `WindowGeometry`, and again whenever it changes. The shell
+rectangle in its `WindowFacts`, and again whenever it changes. The shell
 uses it to remember where floating windows were.
 
 Gamescope host windows are sized differently. Before gamescope's first
@@ -257,8 +257,9 @@ needs no resize; the tabs a zone is not showing are left out of
 rest of Cinema's tabs keep the output's size. Floating windows (Scope,
 Preview, gamescope, and windows moved there with `Super+KP_*`) all show,
 above the tiles; a dialog floats above its parent. The shell remembers a
-floating app's rectangle (`FloatGeometry`) and restores it when the app
-floats again.
+floating app's rectangle and restores it when the app
+floats again. It keeps the rectangles in `~/.local/state/sola/shell/floats.json`;
+the copy the bus held is read once, until the shell has saved its own.
 
 The keypad keys work with NumLock on or off: the shell registers the
 keysyms of both states. Each kit window's titlebar **Window** menu offers
@@ -279,7 +280,7 @@ an edge or corner (`xdg_toplevel.resize`). `sola-river` then runs the
 compositor's pointer operation. The window follows the pointer; a resize
 keeps the opposite edges in place; the pointer shows a move or resize
 cursor. A window's top edge cannot go above the top row (y 38), and a
-resize stops at 100×100. `WindowGeometry` is published once, when the
+resize stops at 100×100. The rectangle in `WindowFacts` is published once, when the
 button is released. Move and resize requests from windows that are not
 floating are ignored.
 
@@ -317,7 +318,7 @@ client draws its own (the protocol's default). Sola's applications draw a
 frame: a titlebar with the app's menus, 12 px rounded corners, and a lit
 rim. In Cinema they drop it.
 
-The shell publishes each window's `WindowChrome`. `sola-river` tells a
+The shell publishes each window's `WindowPlace`, which carries whether it is tiled, in Cinema, or rimmed. `sola-river` tells a
 window in a tiled zone (not in Cinema) that it is tiled on every edge, so
 clients that draw shadows outside their window drop them. A window whose
 app published no menu is not a Sola app and draws no Sola frame
@@ -361,7 +362,8 @@ invisible behind its dead predecessor's surfaces.
 ### Hide
 
 Super+H hides the focused application without closing it. The shell
-records it (`AppHidden`) and leaves its windows out of `Composition`, so
+records it in its runtime file, `$XDG_RUNTIME_DIR/sola/shell/hidden.json` (kept while
+you are logged in, gone at reboot), and leaves its windows out of `Composition`, so
 `sola-river` hides them; in a tiled zone, another of the zone's tabs shows
 instead. [Shell § Hide](sola-shell.md#hide) describes how to bring them
 back.
@@ -420,7 +422,7 @@ as raising the picture over them. The surface takes no input.
 While the fade runs, `sola-river` publishes `IdleFade` with `fading`:
 Projects then shows the island of a session whose tab has the keyboard,
 since nobody is looking at it. Once the fade is full, it adds `out`: the
-shell reports every tab window off screen (`TabWindow`), so the Browser
+shell reports every tab window off screen (`shown` in `WindowPlace`), so the Browser
 rests its pages, until input brings the windows back.
 
 Nothing is drawn over a window that fills the screen ([Fullscreen](#fullscreen)),
@@ -569,15 +571,13 @@ rules. Payload fields are listed here.
 |---|---|---|---|
 | `Windows` | sticky | List of `{window_id, app_id, title, pid}`, ordered by id | A window's app id, title, or pid arrives or changes; a window closes or is pruned |
 | `OutputGeometry` | sticky | `{width, height}` | The output reports its size |
-| `WindowGeometry` | sticky, one per `window_id` | `{window_id, x, y, width, height}` | The window's size or position changes; retracted when it closes |
-| `WindowParent` | sticky, one per `window_id` | `{window_id, parent}` | The compositor reports the window's parent; retracted when it closes or has none |
+| `WindowFacts` | sticky, one per `window_id` | `{window_id, rect, tab, parent}`: the rectangle `{x, y, width, height}`, the tab token its app id carries, and its parent window; each may be empty | Any of them changes, sent whole; retracted when the window closes |
 | `MouseEntered` | event | `{window_id, still}` | The pointer enters a window, or moves again after a still enter or a focus change |
 | `MouseLeft` | event | none | The pointer leaves a window |
 | `MouseClicked` | event | `{window_id}` | A window is clicked or touched |
 | `Chord` | event | `{keysym, modifiers}` | A registered chord is pressed |
 | `ChordReleased` | event | `{keysym, modifiers}` | A registered chord is released |
 | `IdleFade` | sticky | `{fading, out}` | The fade starts, becomes full, or ends |
-| `WindowFloating` | sticky, one per `window_id` | `{window_id, floating}` | Only after the bus restarts, to restore the floating windows it knows |
 
 ### Read by sola-river
 
@@ -586,8 +586,7 @@ rules. Payload fields are listed here.
 | `Composition` | Shell | List of `{window_id}`, bottom to top: the stack |
 | `Frame` | Shell | `{window_id, x, y, width, height, fullscreen}`: one window's rectangle |
 | `Focus` | Shell | `{window_id}`: keyboard focus |
-| `WindowFloating` | Shell | `{window_id, floating}`: allows move and resize, adds the shadow |
-| `WindowChrome` | Shell | `{window_id, tiled, cinema, rim}`: tiled state, the rim, rounded corners |
+| `WindowPlace` | Shell | `{window_id, tiled, floating, cinema, rim, workspace, tab, shown}`, one per window: floating allows move and resize and adds the shadow; tiled, cinema and rim give the tiled state, the rim, rounded corners |
 | `RegisteredChords` | Shell | List of `{keysym, modifiers}`: the key bindings |
 | `CloseApp` | Shell, kit applications | An app id: close request to its windows |
 | `CloseWindow` | Shell | A window id: close request to that window |
@@ -714,8 +713,8 @@ works.
 | What restarts | What happens |
 |---|---|
 | The compositor | `sola-river`'s connection ends with it, and `sola-river` exits with status 1 so that PID 1 starts it again; it then waits up to 15 s for a live Wayland socket. |
-| `sola-river` | PID 1 starts it again. The compositor keeps the application windows. The new `sola-river` numbers them from 1, publishes `Windows`, and gets the shell's chords, the chrome and floating records, the picture, the appearance, and the theme again from the bus; the shell sends frames and the stack for the new list. While `sola-river` is down, new windows do not appear and the shell's chords do nothing. |
-| `sola-bus` | `sola-river` reconnects at its next read, subscribes again, and publishes `OutputGeometry`, `Windows`, every `WindowGeometry`, and the floating windows it knows, because the bus lost them. |
+| `sola-river` | PID 1 starts it again. The compositor keeps the application windows. The new `sola-river` numbers them from 1, publishes `Windows`, and gets the shell's chords, the window records, the picture, the appearance, and the theme again from the bus; the shell sends frames and the stack for the new list. While `sola-river` is down, new windows do not appear and the shell's chords do nothing. |
+| `sola-bus` | `sola-river` reconnects at its next read, subscribes again, and publishes `OutputGeometry`, `Windows`, and every window's `WindowFacts`, because the bus lost them. The shell sends its `WindowPlace` records again itself. |
 | `sola-shell` | The old shell's surfaces are pruned once its process is gone; the stack keeps its order (see [Stacking and visibility](#stacking-and-visibility)). |
 
 On `Shutdown` (Exit Sola), `sola-river` exits with status 0.

@@ -14,7 +14,7 @@ pub mod bluetooth;
 mod builtins;
 mod handlers;
 pub mod calendar;
-pub mod chrome;
+pub mod place;
 pub mod components;
 pub mod desk_menu;
 pub mod keys;
@@ -28,6 +28,7 @@ pub mod bindings;
 pub mod notify;
 pub mod pairing;
 mod pictures;
+mod saved_state;
 mod power;
 mod screenshot;
 pub mod selection;
@@ -49,6 +50,7 @@ fn main() -> iced::Result {
     // ask logind to reboot or power off. "Launch Application…" opens
     // the launcher overlay.
     BusSetup::new(APP_ID)
+        .supervised()
         .subscribe(TopicKind::ALL)
         .app_menu_definition(menu::state::system_menu())
         .install();

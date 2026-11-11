@@ -115,7 +115,7 @@ impl PaintWindows {
         self.wins.is_empty()
     }
 
-    /// Fold a bus message (`TabWindow`: paired ids, shown changes).
+    /// Fold a bus message (`WindowPlace`: paired ids, shown changes).
     pub fn update(&mut self, msg: &sola_bus::Message) {
         self.tabs.update(msg);
     }

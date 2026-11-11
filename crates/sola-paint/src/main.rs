@@ -31,9 +31,6 @@ enum Msg {
     At(iced::window::Id, Box<Msg>),
     /// A window's focus and close events.
     Window(iced::window::Id, iced::window::Event),
-    /// Boot has waited for the saved session; open the empty window if
-    /// nothing opened.
-    BootSettled,
     OpenDialog,
     SaveAsDialog,
     Picker(sola_kit::components::file_picker::Message),

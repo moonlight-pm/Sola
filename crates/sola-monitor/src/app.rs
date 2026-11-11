@@ -114,6 +114,8 @@ pub struct App {
     plane: Plane,
     bus_log: Vec<BusEntry>,
     bus_pause: Vec<BusEntry>,
+    /// The bus's records as this process has seen them, by topic and keys
+    /// ([`record_id`]): one per window for a topic kept per window.
     sticky: BTreeMap<String, BusEntry>,
     call_log: Vec<CallEntry>,
     call_pause: Vec<CallEntry>,
@@ -348,8 +350,13 @@ impl App {
         self.next_seq += 1;
         let entry = BusEntry::from_message(message, seq);
         if entry.is_sticky {
-            self.sticky
-                .insert(entry.topic.clone(), BusEntry::from_message(message, seq));
+            let id = record_id(message);
+            if message.sticky {
+                self.sticky.insert(id, BusEntry::from_message(message, seq));
+            } else {
+                // A retraction: the bus no longer holds the record.
+                self.sticky.remove(&id);
+            }
         }
         if self.paused {
             self.bus_pause.push(entry);
@@ -803,9 +810,9 @@ impl App {
                     ),
                 }
             }
-            Selection::Sticky(topic) => match self.sticky.get(topic) {
+            Selection::Sticky(id) => match self.sticky.get(id) {
                 Some(e) => (
-                    format!("{} · last known", e.topic),
+                    format!("{id} · last known"),
                     json_pretty(&e.payload_pretty, &self.theme),
                 ),
                 None => (
@@ -860,16 +867,13 @@ impl App {
             Plane::Bus => {
                 let items: Vec<_> = self
                     .sticky
-                    .values()
-                    .map(|e| {
-                        let sel = matches!(&self.selection, Selection::Sticky(t) if t == &e.topic);
-                        SidebarItem::new(
-                            e.topic.clone(),
-                            Msg::Select(Selection::Sticky(e.topic.clone())),
-                        )
-                        .subtitle(e.source.clone())
-                        .active(sel)
-                        .id(e.topic.clone())
+                    .iter()
+                    .map(|(id, e)| {
+                        let sel = matches!(&self.selection, Selection::Sticky(t) if t == id);
+                        SidebarItem::new(id.clone(), Msg::Select(Selection::Sticky(id.clone())))
+                            .subtitle(e.source.clone())
+                            .active(sel)
+                            .id(id.clone())
                     })
                     .collect();
                 let empty = items.is_empty();
@@ -925,6 +929,16 @@ impl App {
                 }
             }
         }
+    }
+}
+
+/// A record's name in the list: its topic, and its keys for a topic kept
+/// per key (`WindowPlace · 42`).
+fn record_id(message: &Message) -> String {
+    if message.keys.is_empty() {
+        message.topic.clone()
+    } else {
+        format!("{} · {}", message.topic, message.keys.join(", "))
     }
 }
 

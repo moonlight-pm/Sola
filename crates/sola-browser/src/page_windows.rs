@@ -241,7 +241,7 @@ impl<E: Engine> PageWindows<E> {
         self.pages.is_empty()
     }
 
-    /// Fold a bus message (`TabWindow`: paired ids, shown changes).
+    /// Fold a bus message (`WindowPlace`: paired ids, shown changes).
     pub fn update(&mut self, msg: &sola_bus::Message) -> bool {
         self.tabs.update(msg)
     }

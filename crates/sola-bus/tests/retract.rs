@@ -7,7 +7,7 @@ use sola_bus::topics::{AppMenuPayload, Topic};
 
 #[test]
 fn unkeyed_topic_emits_empty_keys() {
-    let topic = Topic::Zones(std::collections::HashMap::new());
+    let topic = Topic::ZoneLayout(sola_bus::topics::ZoneLayout::default());
     let msg = topic.to_message();
     assert!(msg.keys.is_empty());
 }

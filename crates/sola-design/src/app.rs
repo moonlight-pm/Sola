@@ -162,10 +162,8 @@ pub fn run() -> iced::Result {
             TopicKind::MenuAction,
             TopicKind::CloseApp,
             TopicKind::Windows,
-            TopicKind::WindowFloating,
-            TopicKind::WindowChrome,
+            TopicKind::WindowPlace,
             // Which project window the shell paired and shows.
-            TopicKind::TabWindow,
             TopicKind::CloseTab,
             // River delivers a bare Super press as a chord: Super+click.
             TopicKind::Chord,
@@ -594,7 +592,7 @@ impl App {
         if is_self_quit(message, APP_ID) {
             return iced::exit();
         }
-        if matches!(Topic::parse(message), Some(Topic::TabWindow(_))) {
+        if matches!(Topic::parse(message), Some(Topic::WindowPlace(_))) {
             self.touch_in_view();
             self.windows.update(message);
             self.wake_windows();

@@ -7,6 +7,12 @@ use uuid::Uuid;
 pub const CONTROL_SUBSCRIBE: &str = "$subscribe";
 pub const CONTROL_SUBSCRIBE_NAMES: &str = "$subscribe-names";
 pub const CONTROL_IDENTIFY: &str = "$identify";
+/// The sending process is restarted by its supervisor when it ends: the bus
+/// keeps the records it wrote until it is back and [`CONTROL_SETTLED`].
+pub const CONTROL_SUPERVISED: &str = "$supervised";
+/// The sending process has sent its current state: the bus retracts the
+/// records an ended process of the same app still owns.
+pub const CONTROL_SETTLED: &str = "$settled";
 
 /// A single message on the Sola Bus.
 ///

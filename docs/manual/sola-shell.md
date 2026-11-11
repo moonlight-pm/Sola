@@ -332,7 +332,7 @@ The group keeps its place on that workspace, unseen, and comes back there
 when the app has two windows again.
 
 The bar's layout (the workspaces, each window's place and zone, and the
-places of empty groups) is saved in `~/.config/sola/shell/tabs.yaml`. Windows that come back within
+places of empty groups) is saved in `~/.local/state/sola/shell/tabs.json`. Windows that come back within
 two minutes of the Shell starting take their saved places, and a window
 whose app restarts within 30 seconds takes the place it left.
 
