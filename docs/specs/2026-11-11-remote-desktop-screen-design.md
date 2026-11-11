@@ -1,8 +1,8 @@
 # Remote Desktop: a screen of its own, the size of the window
 
 **Status:** decided and built 2026-11-11 on branch `remote-desktop-screen`;
-applied on novus (`pkg:sola-kvm` 5d06e2819665 from next@ca6c9d27) and the
-agent on ember (from next@81bdd88c); not merged.
+applied on novus (`pkg:sola-kvm` 34dec613f386) and the agent on ember, both
+from next@fe55a91e; not merged.
 
 **Decided by Joshua (2026-11-11):** "weren't you going to make it so the mac
 changes its resolution to match what the content size is?" and "is it
@@ -21,6 +21,13 @@ Builds on [Remote Desktop](2026-11-09-sola-kvm-view-design.md) and
   drives it instead of the laptop's screen.
 - Resizing the window resizes it: no bars, one picture pixel to one window
   pixel.
+- **View → Mirror or Extend** (Joshua: "we might as well make this
+  switchable in the menu"; "that's usually 'mirror' or 'extend'"): Mirror
+  shows the other machine's own screen, as before; Extend (the default) is
+  the screen of its own. The choice is kept in the viewer's state file
+  (`~/.local/state/sola/sola-kvm-view/mirror.json`) and sent on each
+  connection (`Up::Mirror`, additive); switching restarts capture, and Mirror
+  lets the made display go.
 - When the viewer goes, the display goes with it: macOS moves its windows back
   to the laptop's screen, which is main again.
 - The laptop's screen keeps its own mode throughout; someone at ember sees the
@@ -73,7 +80,12 @@ and not by the one that made it. The agent first waited on its own view and
 gave up on the first resize; it now takes the displays from ScreenCaptureKit,
 which asks the window server each time (where each display is, when the made
 one has its size, which is main: the one at 0,0), and keeps the ids it let
-go, which ScreenCaptureKit may list for a moment after.
+go, which ScreenCaptureKit may list for a moment after. A display made
+after the arrangement changed is one the agent cannot arrange at all
+(status 1001: Joshua's first session after the install showed the laptop's
+screen), so it arranges in a fresh process of its own, `sola-kvm-mac
+make-main <display>`, for the login session (that process ends at once;
+macOS arranges again when the display goes).
 
 ## Built (2026-11-11)
 
@@ -91,6 +103,11 @@ connects only once it knows it.
   pointer left out, the Mac's menu bar, Dock and windows on it, and resized
   with the window (1010×624, 640×624, back); after, ember had its one screen
   again.
+- Joshua's own window, after the agent from next@fe55a91e and the viewer: a
+  display made main at 3634×2064, and again for a second session in the same
+  agent (the case that failed before). A window just opened says the size
+  it starts at (1512×972) before the shell places it, so the display is
+  resized once at once.
 
 ## Not in this
 
