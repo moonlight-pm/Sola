@@ -44,6 +44,10 @@ pub struct WebApps {
     published: HashSet<String>,
     /// The start URL the engine has for each app page (`Cmd::AppSite`).
     sites_sent: HashMap<TabId, String>,
+    /// Browser pages an app's page sent off its site (a sign-in, a popup):
+    /// page → app id. Each joins the app when it comes back to the app's
+    /// site ([`App::join_returning_pages`]).
+    away: HashMap<TabId, String>,
     /// Each page's latest favicon (PNG): a wrapped app's icon.
     pub favicons: HashMap<TabId, Vec<u8>>,
     /// The Wrap This Page sheet.
@@ -170,6 +174,21 @@ fn host(url: &str) -> Option<String> {
 /// `url` is on the same site as `start` (another subdomain counts).
 pub fn same_site(start: &str, url: &str) -> bool {
     crate::popup::same_site(start, url)
+}
+
+/// The pages in `away` whose URL (`url_of`) is on their app's site now.
+fn back_on_site<'a>(
+    away: &HashMap<TabId, String>,
+    apps: &HashMap<String, Application>,
+    url_of: impl Fn(TabId) -> Option<&'a str>,
+) -> Vec<(TabId, String)> {
+    away.iter()
+        .filter(|(tab, app_id)| {
+            let start = apps.get(*app_id).and_then(|a| a.url.as_deref());
+            matches!((start, url_of(**tab)), (Some(start), Some(url)) if same_site(start, url))
+        })
+        .map(|(tab, app_id)| (*tab, app_id.clone()))
+        .collect()
 }
 
 /// A popup is the app's while it has no address yet (a huddle's window opens
@@ -403,7 +422,11 @@ impl<E: Engine> App<E> {
     pub(crate) fn open_link(&mut self, opener: TabId, url: String, activate: bool, profile: &str) {
         let Some(app) = self.webapps.app_for_link(opener, &url).cloned() else {
             tracing::info!(%url, activate, "link → browser page");
-            self.open_tab_beside(url, activate, profile);
+            let tab = self.open_tab_beside(url, activate, profile);
+            // Off an app's site: it joins the app if it comes back.
+            if let Some(app_id) = self.webapps.tabs.get(&opener).cloned() {
+                self.webapps.away.insert(tab, app_id);
+            }
             return;
         };
         tracing::info!(%url, activate, app = %app.app_id, "link → its app");
@@ -550,8 +573,37 @@ impl<E: Engine> App<E> {
                 self.webapps.tabs.insert(*tab, app.app_id.clone());
             } else {
                 tracing::info!(tab = tab.0, %url, "popup off the app's site: a browser page");
+                self.webapps.away.insert(*tab, app.app_id.clone());
             }
         }
+    }
+
+    /// Browser pages an app's page sent off its site that are back on it (a
+    /// sign-in's round trip) join the app in place, as Wrap does: their
+    /// windows reopen as the app's on this sync.
+    pub(crate) fn join_returning_pages(&mut self) -> Task<Msg> {
+        let tabs = &self.cached_tabs;
+        let apps = &self.webapps.apps;
+        self.webapps
+            .away
+            .retain(|tab, app_id| apps.contains_key(app_id) && tabs.iter().any(|t| t.id == *tab));
+        let back = back_on_site(&self.webapps.away, apps, |tab| {
+            tabs.iter().find(|t| t.id == tab).map(|t| t.url.as_str())
+        });
+        if back.is_empty() {
+            return Task::none();
+        }
+        let tasks: Vec<Task<Msg>> = back
+            .into_iter()
+            .map(|(tab, app_id)| {
+                tracing::info!(tab = tab.0, app = %app_id, "back on its app's site: joins the app");
+                self.webapps.away.remove(&tab);
+                self.webapps.tabs.insert(tab, app_id);
+                self.windows.close(tab).discard()
+            })
+            .collect();
+        self.persist_session();
+        Task::batch(tasks)
     }
 
     /// A notification from page `show.tab_id`: under its app when it is
@@ -906,6 +958,22 @@ mod tests {
         let other = web_app("board", "Board", "https://app.shortcut.com/other");
         web.apps.insert(other.app_id.clone(), other);
         assert_eq!(home(&web, 9, "https://app.shortcut.com/x").as_deref(), Some("board"));
+    }
+
+    /// A sign-in that left the app's site joins the app once it is back on
+    /// it (any subdomain), not while it is away.
+    #[test]
+    fn a_page_sent_off_the_site_is_back_on_its_site() {
+        let apps = HashMap::from([(
+            "web-1".to_string(),
+            web_app("web-1", "Claude", "https://claude.ai/artifact/x"),
+        )]);
+        let away = HashMap::from([(TabId(5), "web-1".to_string())]);
+        let at = |url: &'static str| back_on_site(&away, &apps, move |_| Some(url));
+        assert!(at("https://api.workos.com/sso/authorize?x=1").is_empty());
+        assert_eq!(at("https://claude.ai/sso-callback"), [(TabId(5), "web-1".to_string())]);
+        assert_eq!(at("https://www.claude.ai/new").len(), 1);
+        assert!(back_on_site(&away, &HashMap::new(), |_| Some("https://claude.ai/")).is_empty());
     }
 
     #[test]

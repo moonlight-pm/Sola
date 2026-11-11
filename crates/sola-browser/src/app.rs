@@ -782,7 +782,7 @@ impl<E: Engine> App<E> {
     /// windows of pages gone, tell the engine which pages are on screen,
     /// and show the active page when it changed from outside its window.
     fn sync_windows(&mut self) -> Task<Msg> {
-        let mut tasks = Vec::new();
+        let mut tasks = vec![self.join_returning_pages()];
         let ids: Vec<TabId> = self.cached_tabs.iter().map(|t| t.id).collect();
         let bus_up = sola_kit::app::bus().lock().is_ok_and(|b| b.is_connected());
         let replaying = !self.replayed && bus_up;

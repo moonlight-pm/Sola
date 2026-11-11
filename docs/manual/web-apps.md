@@ -70,6 +70,12 @@ the page opens with `window.open` (a call's window, say) is the app's while
 it is blank or on the app's site; on another site it is a Browser page, with
 its address in sight.
 
+A Browser page the app sent to another site (a link you clicked, or such a
+popup) becomes a window of the app once it is back on the app's site: the
+same window, page and sign-in, now under the app's name and in its group.
+So a sign-in that leaves the site ("Continue with SSO", "Sign in with
+Google") shows its own address while it is away, and ends in the app.
+
 ## Launch
 
 Choose the app's name in the launcher. Its command is
@@ -141,8 +147,9 @@ sign-in stays).
   profile the app was wrapped from; only a window moves to another, by
   Adopt Workspace (and ⌘N from it keeps it).
 - Clicking a sign-in button that leaves the site ("Sign in with Google")
-  opens the sign-in as a Browser page. Signing in there signs the app in
-  too, since it is the same profile; reload the app afterwards.
+  opens the sign-in as a Browser page, which joins the app when it comes
+  back ([above](#the-apps-window)). The window you clicked it in still shows
+  the sign-in: reload it, or close it.
 - No per-app zoom, no badge counts on the icon, no way to change an app's
   name, start page, or icon, and no way to wrap a page into an app that
   already exists.
