@@ -4,36 +4,36 @@
 //! Dropped, macOS takes it away, moves its windows back to the laptop's
 //! screen and makes that main again; the arrangement is made for this
 //! process only, so a crash undoes it too.
+//!
+//! This process's own view of the displays (`CGDisplayBounds`, the online
+//! list, the main display) stops following once it changes the arrangement:
+//! a resize or a release is seen by every other process and not by this
+//! one. ScreenCaptureKit asks the window server each time, so the displays
+//! come from it.
 
 use std::ffi::CStr;
 use std::ptr;
 use std::sync::Mutex;
-use std::thread;
-use std::time::{Duration, Instant};
 
 use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
 use objc2::msg_send;
 use objc2::rc::{Allocated, Retained, autoreleasepool};
 use objc2::runtime::{AnyClass, AnyObject};
-use objc2_core_foundation::CGSize;
+use objc2_core_foundation::{CGRect, CGSize};
 use objc2_core_graphics::{
     CGBeginDisplayConfiguration, CGCompleteDisplayConfiguration, CGConfigureDisplayOrigin, CGConfigureOption,
-    CGDirectDisplayID, CGDisplayBounds, CGError, CGGetOnlineDisplayList,
+    CGDirectDisplayID, CGError,
 };
 use objc2_foundation::{NSArray, NSString};
 
 use super::shape::{MAX_PIXELS, Shape};
 
-/// How long macOS may take to put a display at a new size. It tells no one
-/// in this process, so this looks every [`LOOK`]; nothing is ordered by it.
-const SETTLE: Duration = Duration::from_secs(2);
-const LOOK: Duration = Duration::from_millis(20);
 /// Points per inch, for the size the display says it is.
 const PPI: f64 = 110.0;
 const VENDOR: u32 = 0x5301;
 
-/// Displays this process made and let go. macOS took them away, but this
-/// process's own display list keeps them.
+/// Displays this process made and let go: macOS takes them away, but
+/// ScreenCaptureKit may list one for a moment after.
 static GONE: Mutex<Vec<CGDirectDisplayID>> = Mutex::new(Vec::new());
 
 pub fn gone(id: CGDirectDisplayID) -> bool {
@@ -85,14 +85,14 @@ impl Virtual {
         self.id
     }
 
-    /// Put it at `shape`, and make it the main display.
-    pub fn fit(&mut self, shape: Shape) -> Result<(), String> {
+    /// Put it at `shape`, and make it the main display. `displays` are the
+    /// displays and where they are, as ScreenCaptureKit lists them.
+    pub fn fit(&mut self, shape: Shape, displays: &[(CGDirectDisplayID, CGRect)]) -> Result<(), String> {
         if self.shape != Some(shape) {
             self.apply(shape)?;
             self.shape = Some(shape);
-            self.settle(shape)?;
         }
-        self.make_main(shape)
+        self.make_main(shape, displays)
     }
 
     fn apply(&self, shape: Shape) -> Result<(), String> {
@@ -111,35 +111,20 @@ impl Virtual {
         })
     }
 
-    /// Until macOS has it online at `shape`.
-    fn settle(&self, shape: Shape) -> Result<(), String> {
-        let started = Instant::now();
-        loop {
-            let size = CGDisplayBounds(self.id).size;
-            if online().contains(&self.id) && (size.width, size.height) == (f64::from(shape.points.0), f64::from(shape.points.1)) {
-                return Ok(());
-            }
-            if started.elapsed() > SETTLE {
-                return Err(format!("macOS did not bring the display online at {shape:?}"));
-            }
-            thread::sleep(LOOK);
-        }
-    }
-
     /// At (0, 0), which makes it main, with the other displays moved right
     /// as they were arranged among themselves.
-    fn make_main(&self, shape: Shape) -> Result<(), String> {
-        let others: Vec<_> = online().into_iter().filter(|&d| d != self.id && !gone(d)).collect();
-        let left = others.iter().map(|&d| CGDisplayBounds(d).origin.x).fold(f64::INFINITY, f64::min);
+    fn make_main(&self, shape: Shape, displays: &[(CGDirectDisplayID, CGRect)]) -> Result<(), String> {
+        let others: Vec<_> = displays.iter().filter(|(d, _)| *d != self.id && !gone(*d)).collect();
+        let left = others.iter().map(|(_, frame)| frame.origin.x).fold(f64::INFINITY, f64::min);
         let shift = if left.is_finite() { f64::from(shape.points.0) - left } else { 0.0 };
         let mut config = ptr::null_mut();
         unsafe {
             check(CGBeginDisplayConfiguration(&mut config), "begin")?;
             let mut status = CGConfigureDisplayOrigin(config, self.id, 0, 0);
-            for &other in &others {
-                let origin = CGDisplayBounds(other).origin;
+            for &&(other, frame) in &others {
                 if status == CGError::Success {
-                    status = CGConfigureDisplayOrigin(config, other, (origin.x + shift) as i32, origin.y as i32);
+                    let (x, y) = (frame.origin.x + shift, frame.origin.y);
+                    status = CGConfigureDisplayOrigin(config, other, x as i32, y as i32);
                 }
             }
             check(status, "arrange")?;
@@ -160,15 +145,4 @@ fn check(status: CGError, what: &str) -> Result<(), String> {
     } else {
         Err(format!("macOS would not {what} the arrangement (status {})", status.0))
     }
-}
-
-/// This process's view of the displays online.
-fn online() -> Vec<CGDirectDisplayID> {
-    let mut ids = [0; 16];
-    let mut count = 0;
-    let status = unsafe { CGGetOnlineDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count) };
-    if status != CGError::Success {
-        return Vec::new();
-    }
-    ids[..count as usize].to_vec()
 }

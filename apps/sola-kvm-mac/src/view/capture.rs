@@ -14,8 +14,9 @@ use dispatch2::{DispatchQueue, DispatchQueueAttr};
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{AnyThread, DefinedClass, define_class, msg_send};
+use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_graphics::{
-    CGDisplayCopyDisplayMode, CGDisplayMode, CGMainDisplayID, CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess,
+    CGDisplayCopyDisplayMode, CGDisplayMode, CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess,
     kCGColorSpaceSRGB, kCGDisplayStreamYCbCrMatrix_ITU_R_709_2,
 };
 use objc2_core_media::{CMSampleBuffer, CMTime};
@@ -117,7 +118,8 @@ pub struct Screen {
 
 impl Screen {
     /// The made display at `shape`, and main; `None` for the main display.
-    fn fit(&mut self, shape: Shape) -> Option<(u32, Shape)> {
+    /// `displays`: where each is, as ScreenCaptureKit lists them.
+    fn fit(&mut self, shape: Shape, displays: &[(u32, CGRect)]) -> Option<(u32, Shape)> {
         if self.refused {
             return None;
         }
@@ -125,7 +127,7 @@ impl Screen {
             Some(made) => Ok(made),
             None => Virtual::new(shape),
         };
-        match made.and_then(|mut made| made.fit(shape).map(|()| made)) {
+        match made.and_then(|mut made| made.fit(shape, displays).map(|()| made)) {
             Ok(made) => {
                 let id = made.id();
                 self.made = Some(made);
@@ -210,28 +212,27 @@ fn test_pattern(feed: Feed, shape: Shape) -> Result<(Down, Running), String> {
     Ok((display, running))
 }
 
-/// The main display: this process's main, unless it is a display this
-/// process made and let go, which its own list still has.
+/// The main display, at (0, 0), and not one this process made and let go.
 fn main_display(content: &SCShareableContent) -> Result<Retained<SCDisplay>, String> {
-    let displays = unsafe { content.displays() };
-    let main = CGMainDisplayID();
-    let listed = |id| displays.iter().find(|d| unsafe { d.displayID() } == id);
-    listed(main)
-        .filter(|_| !display::gone(main))
-        .or_else(|| displays.iter().find(|d| !display::gone(unsafe { d.displayID() })))
-        .ok_or_else(|| "ScreenCaptureKit does not list the main display".to_string())
+    let kept: Vec<Retained<SCDisplay>> =
+        unsafe { content.displays() }.iter().filter(|d| !display::gone(unsafe { d.displayID() })).collect();
+    let main = kept.iter().position(|d| unsafe { d.frame() }.origin == CGPoint::ZERO).unwrap_or(0);
+    kept.into_iter().nth(main).ok_or_else(|| "ScreenCaptureKit does not list the main display".to_string())
 }
 
-/// The display made with `id`, once ScreenCaptureKit lists it.
-fn made_display(id: u32) -> Result<Retained<SCDisplay>, String> {
+/// The display made with `id`, once ScreenCaptureKit lists it at `shape`.
+fn made_display(id: u32, shape: Shape) -> Result<Retained<SCDisplay>, String> {
     let started = Instant::now();
     loop {
         let content = shareable_content()?;
-        if let Some(display) = unsafe { content.displays() }.iter().find(|d| unsafe { d.displayID() } == id) {
+        let listed = unsafe { content.displays() }.iter().find(|d| {
+            unsafe { d.displayID() == id && (d.width(), d.height()) == (shape.points.0 as isize, shape.points.1 as isize) }
+        });
+        if let Some(display) = listed {
             return Ok(display);
         }
         if started.elapsed() > LISTED {
-            return Err("ScreenCaptureKit does not list the display made for the window".into());
+            return Err(format!("ScreenCaptureKit does not list the display made for the window at {shape:?}"));
         }
         thread::sleep(LOOK);
     }
@@ -250,7 +251,9 @@ fn capture_screen(feed: Feed, screen: &mut Screen, shape: Option<Shape>) -> Resu
                 .into(),
         );
     }
-    let made = shape.and_then(|shape| screen.fit(shape)).and_then(|(id, shape)| match made_display(id) {
+    let content = shareable_content()?;
+    let displays: Vec<_> = unsafe { content.displays() }.iter().map(|d| unsafe { (d.displayID(), d.frame()) }).collect();
+    let made = shape.and_then(|shape| screen.fit(shape, &displays)).and_then(|(id, shape)| match made_display(id, shape) {
         Ok(display) => Some((display, shape)),
         Err(why) => {
             warn!(%why, "remote view: the main display");
@@ -261,7 +264,6 @@ fn capture_screen(feed: Feed, screen: &mut Screen, shape: Option<Shape>) -> Resu
     let (display, (width, height), (points_w, points_h)) = match made {
         Some((display, shape)) => (display, shape.pixels(), shape.points),
         None => {
-            let content = shareable_content()?;
             let display = main_display(&content)?;
             let id = unsafe { display.displayID() };
             let mode = CGDisplayCopyDisplayMode(id).ok_or_else(|| "the main display has no mode".to_string())?;
