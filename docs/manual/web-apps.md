@@ -3,7 +3,8 @@
 A web app is a website that Browser runs as an application of its own: a
 launcher entry, a window with the app's name and menus, and no location
 bar. It runs on the Browser profile it was made from, so it is signed in
-wherever that profile is. Web apps take the place of the separate Wrapper
+wherever that profile is; one window can run another workspace's instead
+([below](#another-workspaces-sign-in)). Web apps take the place of the separate Wrapper
 application, which is gone. The examples below use Slack.
 
 ## Make one
@@ -36,7 +37,7 @@ The titlebar shows the app's name and its menus:
 
 | Menu | Items |
 |---|---|
-| *App name* | Open in Browser · Copy Link · Reload (⌘R) · Close Window (⌘W) · Remove Web App… · Quit *name* (⌘Q) |
+| *App name* | New Window (⌘N) · Adopt Workspace (only on a workspace whose profile the window does not run) · Open in Browser · Copy Link · Reload (⌘R) · Close Window (⌘W) · Remove Web App… · Quit *name* (⌘Q) |
 | Edit | Cut · Copy · Paste · Select All (⌘X / ⌘C / ⌘V / ⌘A) |
 | Window | The Window menu every Sola application has |
 
@@ -45,7 +46,7 @@ The titlebar shows the app's name and its menus:
 - **Copy Link** copies the address of the page in this window, since a web
   app has no location bar.
 - **Close Window** closes this window of the app; **Quit** *name* closes
-  all of them. Browser itself ends only when those were its last windows. Opening the app again brings back every window it had when you quit it, at the pages they showed.
+  all of them. Browser itself ends only when those were its last windows. Opening the app again brings back every window it had when you quit it, at the pages they showed, each on the profile it ran.
 
 The page's own dialogs open in the app's window: JavaScript dialogs,
 HTTP sign-in, camera and microphone, notifications, and file uploads. Its
@@ -96,6 +97,26 @@ as you like.
 - A link to its site from another app or a Browser page opens here
   ([above](#the-apps-window)).
 
+## Another workspace's sign-in
+
+Each workspace has a Browser profile of its own
+([Profiles](sola-browser.md#profiles)), and each window of a web app runs
+one. A new window (the launcher, ⌘N) runs the profile the app was made
+from. On a workspace whose profile the window does not run, the app's menu
+has **Adopt Workspace**:
+
+- The window reloads at its page under the profile of the workspace
+  showing: signed in as whoever is signed in to the site there, else at
+  the site's sign-in.
+- It keeps that profile wherever it goes, through a restart and a Quit,
+  until another workspace's Adopt Workspace.
+- Its links on the app's site, and its popups, stay on that profile.
+- The item is not there while the window runs the profile of the workspace
+  showing.
+
+So one app signs in as two people on two workspaces: on the second, open
+the app, choose **Adopt Workspace**, and sign in.
+
 ## Remove
 
 **Remove Web App…** in the app's menu asks once (**Remove** / **Cancel**),
@@ -114,8 +135,9 @@ sign-in stays).
   those. A right-click opens the page's right-click menu
   ([Browser](sola-browser.md#page-menu)) without **Wrap This Page…**,
   **Inspect Element**, or **Developer Tools**.
-- The app always runs on the profile it was wrapped from; it cannot move
-  to another.
+- A new window always starts on the profile the app was wrapped from, and
+  a link from another app goes to a window on that profile; only a window
+  moves to another, by Adopt Workspace.
 - Clicking a sign-in button that leaves the site ("Sign in with Google")
   opens the sign-in as a Browser page. Signing in there signs the app in
   too, since it is the same profile; reload the app afterwards.

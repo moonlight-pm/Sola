@@ -27,6 +27,11 @@ pub struct SessionTab {
     /// back as the app's window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app: Option<String>,
+    /// The profile it ran under, where its file does not say: a quit web
+    /// app's windows (`quit-apps.json` holds every profile's), each on its
+    /// own since Adopt Workspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 impl Default for SessionTab {
@@ -38,6 +43,7 @@ impl Default for SessionTab {
             history: Vec::new(),
             history_index: 0,
             app: None,
+            profile: None,
         }
     }
 }
@@ -257,6 +263,7 @@ pub fn session_from_tabs(
                 .collect(),
             history_index: t.history_index,
             app: apps.get(&t.id).cloned(),
+            profile: None,
         })
         .collect();
     let active_index = tabs

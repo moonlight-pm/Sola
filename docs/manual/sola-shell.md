@@ -421,12 +421,15 @@ Each workspace's places for its pinned windows are saved with the rest of the
 bar, so they come back pinned after a restart. A Browser page keeps the profile
 it has while pinned, so it stays signed in; unpinned, it runs the profile of
 the workspace it stays on, like a page sent there (see
-[Profiles](sola-browser.md#profiles)). A web app keeps its own.
+[Profiles](sola-browser.md#profiles)); **Adopt Workspace** in its Browser
+menu gives it the profile of the workspace showing. A web app's window keeps
+its own, until its Adopt Workspace.
 
 Each workspace has a browser profile of its own, which goes by the
 workspace, not its name. Browser pages on a workspace share its
 sign-ins, and a page sent to another workspace reopens there under that
-workspace's profile. A web app keeps its own profile wherever it is
+workspace's profile. A web app's window keeps its own profile wherever it
+is, until **Adopt Workspace** in its menu
 ([Browser](sola-browser.md#profiles)).
 
 ## Zones

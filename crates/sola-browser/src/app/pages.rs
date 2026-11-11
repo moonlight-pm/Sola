@@ -3,7 +3,9 @@
 //! profile's helper. A page opens under the showing workspace's profile
 //! (or its opener's); a page whose window lands on another workspace
 //! reopens there at the same URL under that workspace's profile, in the
-//! same window. Sessions are saved per profile.
+//! same window. A web app's page, and a pinned page, keep theirs wherever
+//! they go, until Adopt Workspace gives one the showing workspace's.
+//! Sessions are saved per profile.
 
 use std::collections::HashMap;
 
@@ -32,6 +34,22 @@ impl<E: Engine> App<E> {
             .map(|t| t.profile.clone())
             .filter(|p| !p.is_empty())
             .unwrap_or_else(crate::profiles::showing_profile)
+    }
+
+    /// The showing workspace's profile, when page `tab` runs another (a web
+    /// app's, a pinned page's): its window's menu offers Adopt Workspace.
+    pub(crate) fn adoptable(&self, tab: TabId) -> Option<String> {
+        let showing = crate::profiles::showing_workspace()?;
+        let want = crate::profiles::profile_for_workspace(&showing);
+        (self.profile_of(tab) != want).then_some(want)
+    }
+
+    /// Adopt Workspace: page `tab` reopens in its window under the showing
+    /// workspace's profile, and keeps it wherever the window goes.
+    pub(crate) fn adopt_workspace(&mut self, tab: TabId) {
+        if let Some(profile) = self.adoptable(tab) {
+            self.reopen_in(tab, &profile);
+        }
     }
 
     /// Fold `Workspaces` / `WindowPlace`. Pages whose workspace wants
@@ -94,8 +112,8 @@ impl<E: Engine> App<E> {
     }
 
     /// Reopen page `old` at its URL under `profile`, in the same window:
-    /// its key (the shell's tab) and place stay; its back history and form
-    /// state do not.
+    /// its key (the shell's tab), place and app (a web app's) stay; its
+    /// back history and form state do not.
     pub(super) fn reopen_in(&mut self, old: TabId, profile: &str) {
         let Some(at) = self.cached_tabs.iter().position(|t| t.id == old) else {
             return;
@@ -113,10 +131,13 @@ impl<E: Engine> App<E> {
             from = %info.profile,
             to = %profile,
             %url,
-            "page reopens under its workspace's profile"
+            "page reopens under another profile"
         );
         if let Some(page_id) = self.page_ids.remove(&old) {
             self.page_ids.insert(new, page_id);
+        }
+        if let Some(app) = self.webapps.tabs.remove(&old) {
+            self.webapps.tabs.insert(new, app);
         }
         self.cached_tabs[at] = TabInfo {
             is_loading: url != BLANK_URL,

@@ -1631,6 +1631,7 @@ impl<E: Engine> App<E> {
             history: closed.history,
             history_index: closed.history_index,
             app: None,
+            profile: None,
         };
         self.page_ids.insert(id, session_tab.id.clone());
         let (history, history_index) = session::history_from_session(&session_tab);
@@ -1835,14 +1836,30 @@ impl<E: Engine> App<E> {
             .width(Length::Fill)
             .height(Length::Fill)
             .into();
-        sola_kit::window_frame(
-            self.window_chrome(window),
-            info.map(|t| t.title.clone()).unwrap_or_default(),
-            Msg::TitleDrag,
-            Some(Msg::TitleClose),
-            Msg::TitleResize,
-            content,
-        )
+        let title = info.map(|t| t.title.clone()).unwrap_or_default();
+        self.page_frame(window, tab, title, content)
+    }
+
+    /// Page `tab`'s window: the Browser's menus in its titlebar, with Adopt
+    /// Workspace while the page runs another workspace's profile (pinned).
+    fn page_frame<'a>(
+        &self,
+        window: iced::window::Id,
+        tab: TabId,
+        title: String,
+        content: Element<'a, Msg>,
+    ) -> Element<'a, Msg> {
+        let frame = sola_kit::components::WindowFrame::new(self.window_chrome(window), content)
+            .title(title)
+            .on_drag(Msg::TitleDrag)
+            .on_resize(Msg::TitleResize)
+            .on_close(Msg::TitleClose);
+        let frame = if self.adoptable(tab).is_some() {
+            frame.menus(crate::integration::browser_app_menu(self.app_id, true))
+        } else {
+            frame
+        };
+        frame.into()
     }
 
     /// How to frame `window`: tiled, floating, or bare in Cinema.
@@ -1971,14 +1988,7 @@ impl<E: Engine> App<E> {
             content
         };
 
-        sola_kit::window_frame(
-            self.window_chrome(window),
-            self.title(window),
-            Msg::TitleDrag,
-            Some(Msg::TitleClose),
-            Msg::TitleResize,
-            content,
-        )
+        self.page_frame(window, self.cached_active, self.title(window), content)
     }
 
     /// The page's own dialog, if one is up (sign-in, JS dialog, camera /

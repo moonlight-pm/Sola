@@ -104,12 +104,16 @@ so renaming a workspace changes nothing about its profile.
   under its profile.
 - A new workspace starts with a new, empty profile.
 - A [pinned](sola-shell.md#pinned-windows) page keeps the profile it has, on
-  every workspace. Unpinned, it reopens under the profile of the workspace it
+  every workspace. On a workspace whose profile is another, its Browser
+  menu has **Adopt Workspace**: the page reopens in its window, at its
+  address, under the profile of the workspace showing, and keeps that one
+  while pinned. The item is not there while the page runs that profile. Unpinned, it reopens under the profile of the workspace it
   stays on, if that is another.
 - A deleted workspace's profile stays on disk with its sign-ins and saved
   pages, but nothing opens it.
-- A web app keeps the profile it was wrapped from, wherever its window
-  goes.
+- A web app's window keeps its profile wherever it goes: the one the app
+  was wrapped from, until **Adopt Workspace** gives it the profile of the
+  workspace showing ([Web apps](web-apps.md#another-workspaces-sign-in)).
 
 Each profile runs in its own headless engine process, all at once: pages
 on every workspace stay live, and showing a workspace shows its pages
@@ -554,7 +558,7 @@ the desk's theme, light or dark.
 | ⌘F / ⌘G / ⌘⇧G | Edit → **Find** / **Find Next** / **Find Previous** |
 | Escape | Stop the load |
 
-Browser → **Wrap This Page…** has no key.
+Browser → **Wrap This Page…** and **Adopt Workspace** have no key.
 
 ## Limits
 

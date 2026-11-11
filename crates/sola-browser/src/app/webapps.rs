@@ -110,8 +110,9 @@ impl WebApps {
     }
 }
 
-/// Web app `app`'s menus: its own, then Edit.
-pub fn app_menu(app: &Application) -> AppMenuPayload {
+/// Web app `app`'s menus: its own, then Edit. `adopt` adds Adopt
+/// Workspace, for a window that runs another workspace's profile.
+pub fn app_menu(app: &Application, adopt: bool) -> AppMenuPayload {
     let action = |id: &str, label: String, shortcut| MenuItem::Action {
         id: id.into(),
         label,
@@ -119,8 +120,11 @@ pub fn app_menu(app: &Application) -> AppMenuPayload {
         disabled: false,
         checked: false,
     };
-    let own = vec![
-        action(ACTION_NEW_WINDOW, "New Window".into(), Some(KeyCode::N.meta())),
+    let mut own = vec![action(ACTION_NEW_WINDOW, "New Window".into(), Some(KeyCode::N.meta()))];
+    if adopt {
+        own.push(integration::adopt_workspace_item());
+    }
+    own.extend([
         MenuItem::Divider,
         action(ACTION_OPEN_IN_BROWSER, "Open in Browser".into(), None),
         action(ACTION_COPY_LINK, "Copy Link".into(), None),
@@ -130,7 +134,7 @@ pub fn app_menu(app: &Application) -> AppMenuPayload {
         action(ACTION_REMOVE, "Remove Web App…".into(), None),
         MenuItem::Divider,
         action(ACTION_QUIT, format!("Quit {}", app.label), Some(KeyCode::Q.meta())),
-    ];
+    ]);
     // Undo through Select All: a web app has no find bar.
     let edit = EDIT_MENU_ITEMS
         .iter()
@@ -179,8 +183,12 @@ fn popup_is_the_apps(start: &str, url: &str) -> bool {
 fn app_profile(app: &Application) -> String {
     app.profile
         .clone()
-        .filter(|p| crate::profiles::list().iter().any(|q| q.id == *p))
+        .filter(|p| profile_exists(p))
         .unwrap_or_else(crate::profiles::showing_profile)
+}
+
+fn profile_exists(id: &str) -> bool {
+    crate::profiles::list().iter().any(|q| q.id == id)
 }
 
 /// A page's title as an app's name: the site's part of it (titles end
@@ -226,7 +234,7 @@ impl<E: Engine> App<E> {
                         .get(&id)
                         .is_some_and(|old| old.label != app.label);
                     if renamed && !self.webapps.tabs_of(&id).is_empty() {
-                        sola_kit::menu::publish_for(app_menu(&app));
+                        sola_kit::menu::publish_for(app_menu(&app, false));
                         self.webapps.published.insert(id.clone());
                     }
                     self.webapps.apps.insert(id.clone(), app);
@@ -301,11 +309,14 @@ impl<E: Engine> App<E> {
             .iter()
             .filter_map(|t| self.page_ids.get(t).cloned())
             .collect();
-        let profile = app_profile(app);
         let back: Vec<TabId> = pages
             .iter()
             .filter(|p| !up.contains(&p.id))
-            .map(|p| self.open_saved_page(&app.app_id, &profile, p))
+            .map(|p| {
+                let profile = p.profile.clone().filter(|id| profile_exists(id));
+                let profile = profile.unwrap_or_else(|| app_profile(app));
+                self.open_saved_page(&app.app_id, &profile, p)
+            })
             .collect();
         tracing::info!(app = %app.app_id, windows = back.len(), "web app's windows back");
         self.persist_session();
@@ -436,6 +447,12 @@ impl<E: Engine> App<E> {
                 Some(t) => self.update(Msg::CloseTab(t)),
                 None => Task::none(),
             },
+            integration::ACTION_ADOPT_WORKSPACE => {
+                if let Some(t) = tab {
+                    self.adopt_workspace(t);
+                }
+                Task::none()
+            }
             ACTION_REMOVE => {
                 self.webapps.removing = Some(app_id.to_string());
                 Task::none()
@@ -455,7 +472,11 @@ impl<E: Engine> App<E> {
             self.page_snapshot().into_iter().filter(|t| tabs.contains(&t.id)).collect();
         pages.sort_by_key(|t| t.id.0);
         if let Some(first) = pages.first().map(|t| t.id) {
-            let saved = crate::session::session_from_tabs(&pages, first, &[], &self.page_ids, &self.webapps.tabs);
+            let mut saved = crate::session::session_from_tabs(&pages, first, &[], &self.page_ids, &self.webapps.tabs);
+            // Each window comes back on its own profile (Adopt Workspace).
+            for (tab, page) in saved.tabs.iter_mut().zip(&pages) {
+                tab.profile = Some(self.profile_of(page.id));
+            }
             tracing::info!(app = %app_id, windows = saved.tabs.len(), "web app quit: its windows remembered");
             self.quit_apps.remember(app_id, saved.tabs);
         }
@@ -491,7 +512,7 @@ impl<E: Engine> App<E> {
             return self.app_id.to_string();
         };
         if self.webapps.published.insert(app.app_id.clone()) {
-            sola_kit::menu::publish_for(app_menu(&app));
+            sola_kit::menu::publish_for(app_menu(&app, false));
         }
         app.app_id
     }
@@ -680,7 +701,7 @@ impl<E: Engine> App<E> {
             .title(app.label.clone())
             .on_drag(Msg::WindowDrag(window))
             .on_resize(move |dir| Msg::WindowResize(window, dir))
-            .menus(app_menu(app));
+            .menus(app_menu(app, self.adoptable(tab).is_some()));
         frame.on_close(Msg::WindowClose(window)).into()
     }
 
@@ -787,7 +808,7 @@ mod tests {
 
     #[test]
     fn a_web_app_s_menu_copies_the_link_of_its_page() {
-        let menu = app_menu(&web_app("shortcut", "Shortcut", "https://app.shortcut.com"));
+        let menu = app_menu(&web_app("shortcut", "Shortcut", "https://app.shortcut.com"), false);
         let own = &menu.menus[0];
         assert_eq!(own.label, "Shortcut");
         assert!(own.items.iter().any(|i| matches!(
@@ -896,8 +917,27 @@ mod tests {
     #[test]
     fn a_web_app_s_menu_opens_another_window() {
         let app = web_app("web-1", "Shortcut", "https://app.shortcut.com");
-        let first = app_menu(&app).menus[0].items.first().cloned();
+        let first = app_menu(&app, false).menus[0].items.first().cloned();
         assert!(matches!(first, Some(MenuItem::Action { id, .. }) if id == ACTION_NEW_WINDOW));
+    }
+
+    /// A window on another workspace's profile offers Adopt Workspace,
+    /// under New Window; one on the showing workspace's does not.
+    #[test]
+    fn adopt_workspace_is_under_new_window_when_asked_for() {
+        let app = web_app("web-1", "Shortcut", "https://app.shortcut.com");
+        let ids = |adopt| -> Vec<String> {
+            app_menu(&app, adopt).menus[0]
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    MenuItem::Action { id, .. } => Some(id.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert!(!ids(false).iter().any(|id| id == integration::ACTION_ADOPT_WORKSPACE));
+        assert_eq!(ids(true)[..2], [ACTION_NEW_WINDOW, integration::ACTION_ADOPT_WORKSPACE]);
     }
 
     #[test]
@@ -908,7 +948,7 @@ mod tests {
             kind: AppKind::Web,
             ..Default::default()
         };
-        let menu = app_menu(&app);
+        let menu = app_menu(&app, true);
         assert_eq!(menu.app_id, "web-1");
         assert_eq!(menu.menus[0].label, "Slack");
         let ids: Vec<&str> = menu.menus[1]
