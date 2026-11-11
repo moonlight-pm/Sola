@@ -1,8 +1,9 @@
 //! The picture source: ScreenCaptureKit on the main display (or the test
-//! card), into the encoder.
+//! card), into the encoder. The pointer is left out of the picture when
+//! the viewer can draw it ([`cursor`](super::cursor)).
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::Duration;
@@ -23,15 +24,17 @@ use objc2_screen_capture_kit::{
     SCContentFilter, SCDisplay, SCShareableContent, SCStream, SCStreamConfiguration, SCStreamDelegate, SCStreamOutput,
     SCStreamOutputType,
 };
-use tracing::warn;
+use tracing::{info, warn};
 
+use super::cursor::Watch;
 use super::encode::{Encoder, FPS};
+use super::flow::{Gate, now_us};
+use super::rate::CEILING_KBPS;
 use super::pattern;
 use super::server::{Feed, Msg, Source};
 use crate::view_wire::Down;
 
-/// Pictures allowed out at once; past this, frames are skipped.
-const MAX_IN_FLIGHT: usize = 3;
+const FRAME_US: u32 = 1_000_000 / FPS as u32;
 /// A guard against an Apple callback that never comes, not a wait on order.
 const CALLBACK: Duration = Duration::from_secs(10);
 const QUEUE_DEPTH: isize = 5;
@@ -39,26 +42,39 @@ const QUEUE_DEPTH: isize = 5;
 /// Frames on their way to the encoder.
 pub struct Frames {
     encoder: Encoder,
-    in_flight: Arc<AtomicUsize>,
+    gate: Arc<Gate>,
+    skipped: Arc<AtomicU32>,
     force_key: Arc<AtomicBool>,
+    /// The bitrate the encoder has.
+    kbps: AtomicU32,
 }
 
 impl Frames {
     pub fn offer(&self, image: &CVImageBuffer, pts: CMTime) {
-        if self.in_flight.load(Ordering::Relaxed) >= MAX_IN_FLIGHT {
+        let captured_us = now_us();
+        if !self.gate.admit(captured_us, FRAME_US) {
+            self.skipped.fetch_add(1, Ordering::Relaxed);
             return;
         }
-        self.in_flight.fetch_add(1, Ordering::Relaxed);
+        let kbps = self.gate.kbps();
+        if self.kbps.swap(kbps, Ordering::Relaxed) != kbps {
+            self.encoder.set_kbps(kbps);
+        }
         let key = self.force_key.swap(false, Ordering::Relaxed);
-        if let Err(status) = self.encoder.encode(image, pts, key) {
+        if let Err(status) = self.encoder.encode(image, pts, key, captured_us) {
             warn!(status, "remote view: the encoder would not take a frame");
-            self.in_flight.fetch_sub(1, Ordering::Relaxed);
+            self.gate.dropped();
         }
     }
 }
 
-/// Stops the source when dropped.
-pub enum Running {
+/// Stops the source, and the pointer's watch, when dropped.
+pub struct Running {
+    _capture: Capture,
+    _pointer: Option<Watch>,
+}
+
+enum Capture {
     Screen {
         stream: Retained<SCStream>,
         _output: Retained<Output>,
@@ -67,9 +83,9 @@ pub enum Running {
 }
 
 // Held by the session's thread alone; SCStream may be stopped from any thread.
-unsafe impl Send for Running {}
+unsafe impl Send for Capture {}
 
-impl Drop for Running {
+impl Drop for Capture {
     fn drop(&mut self) {
         match self {
             Self::Screen { stream, .. } => unsafe { stream.stopCaptureWithCompletionHandler(None) },
@@ -86,27 +102,56 @@ pub fn start(source: Source, feed: Feed) -> Result<(Down, Running), String> {
 }
 
 fn frames(width: usize, height: usize, feed: Feed) -> Result<(Arc<Frames>, Sender<Msg>), String> {
-    let Feed { tx, in_flight, force_key } = feed;
-    let encoder = Encoder::new(width as i32, height as i32, tx.clone(), Arc::clone(&in_flight))?;
-    Ok((Arc::new(Frames { encoder, in_flight, force_key }), tx))
+    let Feed {
+        tx,
+        gate,
+        skipped,
+        force_key,
+    } = feed;
+    let encoder = Encoder::new(width as i32, height as i32, tx.clone(), Arc::clone(&gate))?;
+    Ok((
+        Arc::new(Frames {
+            encoder,
+            gate,
+            skipped,
+            force_key,
+            kbps: AtomicU32::new(CEILING_KBPS),
+        }),
+        tx,
+    ))
+}
+
+/// The pointer's watch, for a picture `width` pixels across that input
+/// reaches as `points_w` points.
+fn pointer(tx: Sender<Msg>, width: usize, points_w: u32) -> Option<Watch> {
+    let watch = Watch::start(tx, width as f64 / f64::from(points_w.max(1)));
+    info!(drawn_by_the_viewer = watch.is_some(), "remote view: the pointer");
+    watch
 }
 
 fn test_pattern(feed: Feed) -> Result<(Down, Running), String> {
     let (width, height) = (pattern::WIDTH, pattern::HEIGHT);
-    let (frames, _) = frames(width, height, feed)?;
+    let (frames, tx) = frames(width, height, feed)?;
     let stop = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&stop);
     thread::Builder::new()
         .name("kvm-view-pattern".into())
         .spawn(move || pattern::run(frames, flag))
         .map_err(|e| format!("could not start the test pattern: {e}"))?;
+    let (points_w, points_h) = (width as u32 / 2, height as u32 / 2);
+    // The card has no pointer of its own: this Mac's is drawn over it, so
+    // the viewer's half can be tried without moving anyone's.
+    let running = Running {
+        _capture: Capture::Pattern(stop),
+        _pointer: pointer(tx, width, points_w),
+    };
     let display = Down::Display {
         width: width as u32,
         height: height as u32,
-        points_w: width as u32 / 2,
-        points_h: height as u32 / 2,
+        points_w,
+        points_h,
     };
-    Ok((display, Running::Pattern(stop)))
+    Ok((display, running))
 }
 
 fn screen(feed: Feed) -> Result<(Down, Running), String> {
@@ -130,6 +175,8 @@ fn screen(feed: Feed) -> Result<(Down, Running), String> {
     let mode = CGDisplayCopyDisplayMode(id).ok_or_else(|| "the main display has no mode".to_string())?;
     let (width, height) = (CGDisplayMode::pixel_width(Some(&mode)), CGDisplayMode::pixel_height(Some(&mode)));
     let (points_w, points_h) = unsafe { (display.width() as u32, display.height() as u32) };
+    let (frames, tx) = frames(width, height, feed)?;
+    let pointer = pointer(tx.clone(), width, points_w);
 
     let config = unsafe { SCStreamConfiguration::new() };
     unsafe {
@@ -139,14 +186,13 @@ fn screen(feed: Feed) -> Result<(Down, Running), String> {
         config.setPixelFormat(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
         config.setColorMatrix(kCGDisplayStreamYCbCrMatrix_ITU_R_709_2);
         config.setColorSpaceName(kCGColorSpaceSRGB);
-        config.setShowsCursor(true);
+        config.setShowsCursor(pointer.is_none());
         config.setQueueDepth(QUEUE_DEPTH);
     }
     let filter = unsafe {
         SCContentFilter::initWithDisplay_excludingWindows(SCContentFilter::alloc(), &display, &NSArray::new())
     };
 
-    let (frames, tx) = frames(width, height, feed)?;
     let output = Output::new(frames, tx);
     let delegate = ProtocolObject::from_ref(&*output);
     let stream =
@@ -167,7 +213,11 @@ fn screen(feed: Feed) -> Result<(Down, Running), String> {
         points_w,
         points_h,
     };
-    Ok((display, Running::Screen { stream, _output: output }))
+    let running = Running {
+        _capture: Capture::Screen { stream, _output: output },
+        _pointer: pointer,
+    };
+    Ok((display, running))
 }
 
 struct Sendable<T>(T);

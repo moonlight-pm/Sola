@@ -4,7 +4,6 @@
 use std::ffi::{c_char, c_void};
 use std::ptr::{self, NonNull};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
 use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, kCFBooleanTrue};
@@ -16,7 +15,7 @@ use objc2_core_video::CVImageBuffer;
 use objc2_video_toolbox::{
     VTCompressionSession, VTEncodeInfoFlags, VTSessionSetProperty, kVTCompressionPropertyKey_AllowFrameReordering,
     kVTCompressionPropertyKey_AverageBitRate, kVTCompressionPropertyKey_ExpectedFrameRate,
-    kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
+    kVTCompressionPropertyKey_MaxAllowedFrameQP, kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
     kVTCompressionPropertyKey_ProfileLevel, kVTCompressionPropertyKey_RealTime, kVTEncodeFrameOptionKey_ForceKeyFrame,
     kVTProfileLevel_HEVC_Main_AutoLevel, kVTVideoEncoderSpecification_EnableLowLatencyRateControl,
     kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
@@ -24,17 +23,21 @@ use objc2_video_toolbox::{
 use tracing::{info, warn};
 
 use super::annexb;
-use super::server::Msg;
-use crate::view_wire::Down;
+use super::flow::Gate;
+use super::rate::CEILING_KBPS;
+use super::server::{Encoded, Msg};
 
 pub const FPS: i32 = 60;
-const BITS_PER_SECOND: i32 = 50_000_000;
 /// A key picture this often even when none is asked for.
 const KEY_INTERVAL_SECONDS: i32 = 10;
+/// HEVC's coarsest. Left to itself the encoder stops short of it and drops
+/// frames instead when the bitrate is tight: at 2 Mbps the test card came
+/// once a second, and with this at 60 a second, coarser.
+const MAX_QP: i32 = 51;
 
 struct Out {
     tx: Sender<Msg>,
-    in_flight: Arc<AtomicUsize>,
+    gate: Arc<Gate>,
 }
 
 pub struct Encoder {
@@ -49,8 +52,8 @@ unsafe impl Send for Encoder {}
 unsafe impl Sync for Encoder {}
 
 impl Encoder {
-    pub fn new(width: i32, height: i32, tx: Sender<Msg>, in_flight: Arc<AtomicUsize>) -> Result<Self, String> {
-        let out = Box::into_raw(Box::new(Out { tx, in_flight }));
+    pub fn new(width: i32, height: i32, tx: Sender<Msg>, gate: Arc<Gate>) -> Result<Self, String> {
+        let out = Box::into_raw(Box::new(Out { tx, gate }));
         let session = create(width, height, out, true)
             .or_else(|status| {
                 info!(status, "remote view: no low-latency rate control for HEVC here; using the default");
@@ -64,7 +67,8 @@ impl Encoder {
         Ok(Self { session, out })
     }
 
-    pub fn encode(&self, image: &CVImageBuffer, pts: CMTime, force_key: bool) -> Result<(), i32> {
+    /// `captured_us` comes back with the picture ([`Encoded`]).
+    pub fn encode(&self, image: &CVImageBuffer, pts: CMTime, force_key: bool, captured_us: u64) -> Result<(), i32> {
         let force: Option<CFRetained<CFDictionary<CFString, CFBoolean>>> = force_key.then(|| {
             let t = unsafe { kCFBooleanTrue }.expect("kCFBooleanTrue");
             CFDictionary::from_slices(&[unsafe { kVTEncodeFrameOptionKey_ForceKeyFrame }], &[t])
@@ -76,11 +80,22 @@ impl Encoder {
                 pts,
                 kCMTimeInvalid,
                 props,
-                ptr::null_mut(),
+                captured_us as usize as *mut c_void,
                 ptr::null_mut(),
             )
         };
         if status == 0 { Ok(()) } else { Err(status) }
+    }
+
+    /// Encode at `kbps` from the next frame, as WebRTC's Apple encoder
+    /// changes it during a session.
+    pub fn set_kbps(&self, kbps: u32) {
+        let rate = CFNumber::new_i32(i32::try_from(u64::from(kbps) * 1000).unwrap_or(i32::MAX));
+        let value: &CFType = &rate;
+        let status = unsafe { VTSessionSetProperty(&self.session, kVTCompressionPropertyKey_AverageBitRate, Some(value)) };
+        if status != 0 {
+            warn!(kbps, status, "remote view: the encoder refused a bitrate");
+        }
     }
 }
 
@@ -124,10 +139,11 @@ fn create(width: i32, height: i32, out: *mut Out, low_latency: bool) -> Result<C
 fn configure(session: &VTCompressionSession) {
     let t: &CFType = unsafe { kCFBooleanTrue }.expect("kCFBooleanTrue");
     let f: &CFType = unsafe { objc2_core_foundation::kCFBooleanFalse }.expect("kCFBooleanFalse");
-    let rate = CFNumber::new_i32(BITS_PER_SECOND);
+    let rate = CFNumber::new_i32(CEILING_KBPS as i32 * 1000);
     let fps = CFNumber::new_i32(FPS);
     let key_interval = CFNumber::new_i32(KEY_INTERVAL_SECONDS);
-    let properties: [(&str, &CFString, &CFType); 6] = unsafe {
+    let max_qp = CFNumber::new_i32(MAX_QP);
+    let properties: [(&str, &CFString, &CFType); 7] = unsafe {
         [
             ("RealTime", kVTCompressionPropertyKey_RealTime, t),
             ("AllowFrameReordering", kVTCompressionPropertyKey_AllowFrameReordering, f),
@@ -135,6 +151,7 @@ fn configure(session: &VTCompressionSession) {
             ("AverageBitRate", kVTCompressionPropertyKey_AverageBitRate, &rate),
             ("ExpectedFrameRate", kVTCompressionPropertyKey_ExpectedFrameRate, &fps),
             ("MaxKeyFrameIntervalDuration", kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, &key_interval),
+            ("MaxAllowedFrameQP", kVTCompressionPropertyKey_MaxAllowedFrameQP, &max_qp),
         ]
     };
     for (name, key, value) in properties {
@@ -151,14 +168,14 @@ fn configure(session: &VTCompressionSession) {
 
 unsafe extern "C-unwind" fn on_encoded(
     refcon: *mut c_void,
-    _source: *mut c_void,
+    source: *mut c_void,
     status: i32,
     _flags: VTEncodeInfoFlags,
     sample: *mut CMSampleBuffer,
 ) {
     let out = unsafe { &*refcon.cast::<Out>() };
     let picture = match unsafe { sample.as_ref() } {
-        Some(sample) if status == 0 => unsafe { picture(sample) },
+        Some(sample) if status == 0 => unsafe { picture(sample, source as usize as u64) },
         // A dropped frame comes here with no sample.
         _ => None,
     };
@@ -170,12 +187,12 @@ unsafe extern "C-unwind" fn on_encoded(
             if status != 0 {
                 warn!(status, "remote view: the encoder failed a frame");
             }
-            out.in_flight.fetch_sub(1, Ordering::Relaxed);
+            out.gate.dropped();
         }
     }
 }
 
-unsafe fn picture(sample: &CMSampleBuffer) -> Option<Down> {
+unsafe fn picture(sample: &CMSampleBuffer, captured_us: u64) -> Option<Encoded> {
     let key = unsafe { is_key(sample) };
     let pts = unsafe { sample.presentation_time_stamp() };
     let pts_us = (pts.value as i128 * 1_000_000 / i128::from(pts.timescale.max(1))) as u64;
@@ -184,7 +201,12 @@ unsafe fn picture(sample: &CMSampleBuffer) -> Option<Down> {
     let mut data = Vec::new();
     let header = unsafe { parameter_sets(&format, key.then_some(&mut data)) }?;
     annexb::push_sample(&mut data, unsafe { contiguous(&block) }?, header)?;
-    Some(Down::Picture { key, pts_us, data })
+    Some(Encoded {
+        key,
+        pts_us,
+        captured_us,
+        data,
+    })
 }
 
 unsafe fn is_key(sample: &CMSampleBuffer) -> bool {
