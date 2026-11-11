@@ -16,7 +16,7 @@ use super::flow::{self, Flow, now_us};
 use crate::inject::{CgInjector, Injector};
 use crate::link::{Conn, Keys};
 use crate::protocol::{self, Packet};
-use crate::view_wire::{Down, MAX_CLIPBOARD, PORT_OFFSET, Picture, Stream, Up};
+use crate::view_wire::{Cursor, Down, MAX_CLIPBOARD, PORT_OFFSET, Picture, Stream, Up};
 
 /// How long a connection has to prove it is the paired machine. These run
 /// one at a time on the accept thread, so a stranger cannot pile up threads.
@@ -52,6 +52,8 @@ pub enum Msg {
         at_us: u64,
     },
     Clipboard(String),
+    /// The pointer changed, for the viewer to draw.
+    Cursor(Cursor),
     Closed,
 }
 
@@ -193,6 +195,7 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
             }
             Ok(Msg::Ack { seq, held_us, at_us }) => flow.acked(seq, held_us, at_us),
             Ok(Msg::Clipboard(text)) => conn.write_frame(&mut tcp, &Down::Clipboard(text).encode())?,
+            Ok(Msg::Cursor(cursor)) => conn.write_frame(&mut tcp, &Down::Cursor(cursor).encode())?,
             Ok(Msg::Closed) | Err(_) => break,
         }
     }

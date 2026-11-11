@@ -13,6 +13,7 @@ mod net;
 mod nvdec_sys;
 mod picture;
 mod pictures;
+mod pointer;
 mod stats;
 
 use sola_kit::app::{BusSetup, startup, window_settings_transparent};

@@ -44,6 +44,8 @@ pub enum Event {
     Connected(Display),
     /// A new picture waits in [`Pictures`].
     Picture,
+    /// The host's pointer changed; it waits in [`Pictures`].
+    Cursor,
     Lost(String),
     /// The host will not send a picture; trying again will not help.
     Refused(String),
@@ -158,6 +160,8 @@ fn session(
         };
         match down {
             Down::Display { points_w, points_h, .. } => {
+                // A host that sends no pointer keeps it in the picture.
+                pictures.set_cursor(None);
                 events(Event::Connected(Display {
                     points: (points_w, points_h),
                 }));
@@ -168,6 +172,17 @@ fn session(
             }
             Down::Clipboard(text) => {
                 let _ = clip.send(ClipJob::Apply(text));
+            }
+            Down::Cursor(cursor) => {
+                debug!(
+                    width = cursor.width,
+                    height = cursor.height,
+                    hot_x = cursor.hot_x,
+                    hot_y = cursor.hot_y,
+                    "remote view: the host's pointer"
+                );
+                pictures.set_cursor(Some(cursor));
+                events(Event::Cursor);
             }
             Down::Picture(picture) => {
                 let arrived = Instant::now();

@@ -6,7 +6,8 @@
 //! frame. One stream carries one direction, so input never waits behind the
 //! picture and neither side shares a Noise state between threads:
 //!
-//! - `Video`, host to viewer: [`Down`]. `Display` first, then `Picture`s.
+//! - `Video`, host to viewer: [`Down`]. `Display` first, then `Picture`s,
+//!   and a `Cursor` whenever the host's pointer changes.
 //! - `Input`, viewer to host: [`Up`]. Events are KVM1 packets, the same
 //!   bytes the UDP input path carries.
 //!
@@ -30,6 +31,7 @@ const DISPLAY: u8 = 1;
 const PICTURE: u8 = 2;
 const REFUSED: u8 = 3;
 const CLIPBOARD: u8 = 4;
+const CURSOR: u8 = 5;
 const KEYFRAME: u8 = 1;
 const EVENT: u8 = 2;
 const CLIPBOARD_SET: u8 = 3;
@@ -37,6 +39,10 @@ const CLIPBOARD_GET: u8 = 4;
 const ACK: u8 = 5;
 /// A picture's fields before its data.
 const PICTURE_HEADER: usize = 27;
+/// A pointer image's fields before its pixels.
+const CURSOR_HEADER: usize = 8;
+/// The largest pointer image, in pixels a side.
+pub const MAX_CURSOR: u16 = 256;
 
 /// Which direction a connection is; its first frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +92,18 @@ pub struct Picture {
     pub data: Vec<u8>,
 }
 
+/// The host's pointer, for the viewer to draw at its own: the image in the
+/// picture's pixels, premultiplied RGBA with the top row first, and the
+/// pixel in it that points.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Cursor {
+    pub width: u16,
+    pub height: u16,
+    pub hot_x: u16,
+    pub hot_y: u16,
+    pub rgba: Vec<u8>,
+}
+
 /// Host to viewer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Down {
@@ -104,6 +122,9 @@ pub enum Down {
     Refused(String),
     /// The host's clipboard text, answering [`Up::ClipboardGet`].
     Clipboard(String),
+    /// The host's pointer changed. Sent only when the picture leaves the
+    /// pointer out; until one comes, the picture has it.
+    Cursor(Cursor),
 }
 
 impl Down {
@@ -144,6 +165,15 @@ impl Down {
                 out.extend_from_slice(text.as_bytes());
                 out
             }
+            Self::Cursor(c) => {
+                let mut out = Vec::with_capacity(1 + CURSOR_HEADER + c.rgba.len());
+                out.push(CURSOR);
+                for v in [c.width, c.height, c.hot_x, c.hot_y] {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+                out.extend_from_slice(&c.rgba);
+                out
+            }
         }
     }
 
@@ -168,7 +198,26 @@ impl Down {
                 skipped: u16::from_le_bytes(rest[25..27].try_into().expect("2")),
                 data: rest[PICTURE_HEADER..].to_vec(),
             }),
-            DISPLAY | PICTURE => return Err(short()),
+            CURSOR if rest.len() >= CURSOR_HEADER => {
+                let cursor = Cursor {
+                    width: u16_at(rest, 0),
+                    height: u16_at(rest, 2),
+                    hot_x: u16_at(rest, 4),
+                    hot_y: u16_at(rest, 6),
+                    rgba: rest[CURSOR_HEADER..].to_vec(),
+                };
+                let pixels = usize::from(cursor.width) * usize::from(cursor.height);
+                if cursor.width > MAX_CURSOR || cursor.height > MAX_CURSOR || cursor.rgba.len() != pixels * 4 {
+                    return Err(bad(format!(
+                        "a pointer image that does not add up ({}x{}, {} bytes)",
+                        cursor.width,
+                        cursor.height,
+                        cursor.rgba.len()
+                    )));
+                }
+                Self::Cursor(cursor)
+            }
+            DISPLAY | PICTURE | CURSOR => return Err(short()),
             REFUSED => Self::Refused(String::from_utf8_lossy(rest).into_owned()),
             CLIPBOARD => Self::Clipboard(String::from_utf8_lossy(rest).into_owned()),
             _ => return Ok(None),
@@ -236,6 +285,10 @@ impl Up {
     }
 }
 
+fn u16_at(bytes: &[u8], at: usize) -> u16 {
+    u16::from_le_bytes(bytes[at..at + 2].try_into().expect("2"))
+}
+
 fn u32_at(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(bytes[at..at + 4].try_into().expect("4"))
 }
@@ -283,6 +336,14 @@ mod tests {
             }),
             Down::Refused("Screen Recording is off".into()),
             Down::Clipboard("copied on the host".into()),
+            Down::Cursor(Cursor {
+                width: 2,
+                height: 1,
+                hot_x: 1,
+                hot_y: 0,
+                rgba: vec![0, 0, 0, 255, 255, 255, 255, 255],
+            }),
+            Down::Cursor(Cursor::default()),
         ] {
             assert_eq!(Down::decode(&msg.encode()).unwrap(), Some(msg));
         }
@@ -311,11 +372,28 @@ mod tests {
     }
 
     #[test]
+    fn a_pointer_image_must_be_its_size() {
+        let mut cursor = Cursor {
+            width: 2,
+            height: 2,
+            rgba: vec![0; 2 * 2 * 4],
+            ..Cursor::default()
+        };
+        assert!(Down::decode(&Down::Cursor(cursor.clone()).encode()).is_ok());
+        cursor.rgba.pop();
+        assert!(Down::decode(&Down::Cursor(cursor.clone()).encode()).is_err());
+        cursor.width = MAX_CURSOR + 1;
+        cursor.rgba = vec![0; usize::from(cursor.width) * 2 * 4];
+        assert!(Down::decode(&Down::Cursor(cursor).encode()).is_err());
+    }
+
+    #[test]
     fn short_frames_are_errors_not_panics() {
         assert!(Down::decode(&[]).is_err());
         assert!(Down::decode(&[DISPLAY, 1, 2]).is_err());
         assert!(Down::decode(&[PICTURE, 1]).is_err());
         assert!(Down::decode(&[PICTURE; PICTURE_HEADER]).is_err());
+        assert!(Down::decode(&[CURSOR, 1, 0, 1]).is_err());
         assert!(Up::decode(&[]).is_err());
         assert!(Up::decode(&[KEYFRAME, 9]).is_err());
         assert!(Up::decode(&[ACK, 1, 2, 3]).is_err());

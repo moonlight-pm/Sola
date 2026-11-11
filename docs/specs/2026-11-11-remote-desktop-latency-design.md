@@ -1,8 +1,8 @@
 # Remote Desktop: measured, a pointer drawn here, a stream that keeps up
 
-**Status:** decided 2026-11-11; step 1 built and measured on branch
-`remote-desktop-latency` (not merged, the agent on ember not reinstalled);
-steps 2 and 3 to build.
+**Status:** decided 2026-11-11; steps 1 (measured) and 2 (the pointer)
+built on branch `remote-desktop-latency` (not merged, the agent on ember not
+reinstalled); step 3 to build.
 
 **Decided by Joshua (2026-11-11):** after a look at voxl (Tembo's remote
 desktop, [tembo/voxl](https://github.com/tembo/voxl)), take three of its ideas,
@@ -35,8 +35,8 @@ changed message still does.
   since the last picture).
 - **`Ack { seq, held_us }`**, viewer to host on the input stream, once a picture
   is decoded: `held_us` is from its last byte read to the ack.
-- **`Cursor`** (step 2): the host's pointer image, straight RGBA, with its
-  hotspot.
+- **`Cursor`** (step 2): the host's pointer image in the picture's pixels
+  (at most 256 a side), premultiplied RGBA, with its hot spot.
 
 No clock is shared. The round trip is from starting to send a picture to its
 ack, less `held_us`, all on the host's clock. The acks are small, so the queue
@@ -90,14 +90,30 @@ skipped; the scrolling band takes about 11 Mbps of the 50.
   stays in the picture and nothing is sent. The 30 Hz read is the one timer:
   macOS says nothing when another app changes the cursor, and it orders
   nothing.
-- **Viewer:** the shader that draws the picture draws the image at the local
-  pointer, scaled as the picture is; the local pointer stays hidden over it. It
-  moves with the window's own redraw, which pointer motion already brings,
-  without the trip to the Mac. Until a `Cursor` comes, nothing changes.
+- **Viewer:** the shader that draws the picture draws the image where the
+  pointer was last sent, scaled as the picture is and cut to it; the local
+  pointer stays hidden over it. It moves with the window's own redraw, which
+  pointer motion already brings, without the trip to the Mac. Until a `Cursor`
+  comes, nothing changes; after one, nothing is drawn until the first move
+  since connecting, since where the Mac's pointer is is not known before.
+- **The test card** sends this Mac's pointer too: the card has none of its
+  own, and the viewer's half can be tried without moving anyone's.
 - **Not in this step:** the compositor drawing it as a cursor surface (iced has
   no custom cursor; it would go in our `iced_winit` patch); a pointer the Mac
   hides (typing, full-screen video), which the viewer keeps drawing; the Mac's
   own mouse moving its pointer.
+
+### Built (2026-11-11)
+
+`apps/sola-kvm-mac/src/view/cursor.rs` reads it; `crates/sola-kvm-view/src/pointer.rs`
+draws it, in the picture's render pass. ember (macOS 26.5.2) still answers
+`currentSystemCursor`, though Apple marks it deprecated and says it will be
+`nil` one day; the agent then keeps the pointer in the picture, as before.
+Its arrow comes as 56×80 pixels with the hot spot at (10, 10). Over the test
+card in a window on a private desk on novus, it is drawn black with its white
+edge, within a pixel of where the pointer was sent. The stream is unchanged:
+60 fps, 22 ms from capture to shown. The real screen leaving its pointer out
+is unseen: the scratch agent has no Screen Recording grant.
 
 ## Step 3: a stream that keeps up
 

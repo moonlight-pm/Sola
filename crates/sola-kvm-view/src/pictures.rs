@@ -1,9 +1,11 @@
-//! The newest decoded picture, between the decoder's thread and the GPU.
-//! Only the newest is kept: a frame the screen did not have time for is one
-//! nobody needs.
+//! The newest decoded picture, and the host's pointer, between the network's
+//! thread and the GPU. Only the newest is kept: a frame the screen did not
+//! have time for is one nobody needs.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+
+use sola_kvm::view_wire::Cursor;
 
 use crate::stats::{Stamp, Stats};
 
@@ -25,6 +27,8 @@ pub struct Pictures {
     size: AtomicU64,
     /// The window has been told about a picture it has not drawn.
     told: AtomicBool,
+    /// The host's pointer, when it sends one instead of drawing it in.
+    cursor: Mutex<Option<Arc<Cursor>>>,
 }
 
 impl Pictures {
@@ -62,6 +66,15 @@ impl Pictures {
     /// The window is about to draw: pictures from here on need a new word.
     pub fn drawn(&self) {
         self.told.store(false, Ordering::Release);
+    }
+
+    pub fn set_cursor(&self, cursor: Option<Cursor>) {
+        *lock(&self.cursor) = cursor.map(Arc::new);
+    }
+
+    /// The host's pointer; a new one is a new `Arc`.
+    pub fn cursor(&self) -> Option<Arc<Cursor>> {
+        lock(&self.cursor).clone()
     }
 
     pub fn size(&self) -> (u32, u32) {

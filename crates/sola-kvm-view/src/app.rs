@@ -47,6 +47,9 @@ pub struct App {
     held: BTreeSet<u32>,
     /// False once Ctrl+Alt+Esc has handed keyboard and pointer back.
     captured: bool,
+    /// Where the other machine's pointer was sent, in its points; `None`
+    /// until a move since connecting.
+    pointer: Option<(i32, i32)>,
     focused: bool,
     /// View → Statistics: the window's corner says how the pictures come.
     statistics: bool,
@@ -93,6 +96,7 @@ impl App {
                 outgoing: None,
                 held: BTreeSet::new(),
                 captured: true,
+                pointer: None,
                 focused: false,
                 statistics: false,
                 inhibitor: None,
@@ -182,7 +186,12 @@ impl App {
                 repeat,
                 modifiers,
             } => return self.on_key(&physical, pressed, repeat, modifiers),
-            Msg::Pointer(packet) => self.send(packet),
+            Msg::Pointer(packet) => {
+                if let Packet::Motion { x, y } = packet {
+                    self.pointer = Some((x, y));
+                }
+                self.send(packet);
+            }
             Msg::Capture => {
                 self.captured = true;
                 self.clipboard_to_host();
@@ -219,11 +228,13 @@ impl App {
             net::Event::Ready(outgoing) => self.outgoing = Some(outgoing),
             net::Event::Connected(display) => {
                 self.display = Some(display);
+                self.pointer = None;
                 self.status = Status::Showing;
                 self.clipboard_to_host();
             }
             // The message alone brings the redraw that uploads it.
             net::Event::Picture => self.pictures.drawn(),
+            net::Event::Cursor => {}
             net::Event::Lost(why) => {
                 self.status = Status::Lost(why);
                 self.held.clear();
@@ -320,6 +331,7 @@ impl App {
                 let picture = shader(Picture {
                     pictures: Arc::clone(&self.pictures),
                     points: self.display.map(|d| d.points),
+                    pointer: self.pointer,
                     captured: self.captured,
                 })
                 .width(Length::Fill)

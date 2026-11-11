@@ -9,6 +9,8 @@ mod annexb;
 #[cfg(target_os = "macos")]
 mod capture;
 #[cfg(target_os = "macos")]
+mod cursor;
+#[cfg(target_os = "macos")]
 mod encode;
 mod flow;
 #[cfg(target_os = "macos")]

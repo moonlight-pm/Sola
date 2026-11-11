@@ -1,4 +1,5 @@
-// One NV12 picture, BT.709 limited range, on a quad.
+// One NV12 picture, BT.709 limited range, on a quad; and the other
+// machine's pointer, premultiplied RGBA, on a quad over it.
 
 struct Uniforms {
     // The quad in clip space: left, top, right, bottom.
@@ -11,6 +12,8 @@ struct Uniforms {
 @group(0) @binding(1) var luma: texture_2d<f32>;
 @group(0) @binding(2) var chroma: texture_2d<f32>;
 @group(0) @binding(3) var picture_sampler: sampler;
+// The pointer's pipeline binds this and the uniforms, not the planes.
+@group(0) @binding(4) var pointer_image: texture_2d<f32>;
 
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
@@ -49,4 +52,17 @@ fn fs(in: VertexOut) -> @location(0) vec4<f32> {
         rgb = to_linear(rgb);
     }
     return vec4(rgb, 1.0);
+}
+
+@fragment
+fn fs_pointer(in: VertexOut) -> @location(0) vec4<f32> {
+    let c = textureSample(pointer_image, picture_sampler, in.uv);
+    if c.a <= 0.0 {
+        return vec4(0.0);
+    }
+    var rgb = c.rgb / c.a;
+    if u.srgb_target != 0u {
+        rgb = to_linear(rgb);
+    }
+    return vec4(rgb * c.a, c.a);
 }
