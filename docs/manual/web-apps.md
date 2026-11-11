@@ -151,5 +151,5 @@ sign-in stays).
   back ([above](#the-apps-window)). The window you clicked it in still shows
   the sign-in: reload it, or close it.
 - No per-app zoom, no badge counts on the icon, no way to change an app's
-  name, start page, or icon, and no way to wrap a page into an app that
-  already exists.
+  start page or icon (its name changes in Settings, [above](#remove)), and
+  no way to wrap a page into an app that already exists.
