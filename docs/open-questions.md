@@ -251,8 +251,8 @@ branding, app functionality and minimum scopes, and failed the privacy policy: i
 did not say which Google data Sola accesses, how it uses it, or how it protects
 it, and Google asked about AI. `/privacy` now has a section for each
 (`#data-accessed`, `#data-use`, `#data-protection`, `#ai`; live 2026-11-11). The
-console has nothing to resubmit: the review goes on when the email thread is
-answered.
+console has nothing to resubmit: the review goes on from the email thread,
+answered 2026-11-11. Waiting on Google.
 
 **Related:** `calendar` capability.
 
