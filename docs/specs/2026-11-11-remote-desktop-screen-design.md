@@ -1,8 +1,8 @@
 # Remote Desktop: a screen of its own, the size of the window
 
-**Status:** decided and built 2026-11-11 on branch `remote-desktop-screen`;
-applied on novus (`pkg:sola-kvm` a0342f809818) and the agent on ember, both
-from next@ded2a58e; not merged.
+**Status:** decided and built 2026-11-11; merged (39a2f27d); applied on novus
+(`pkg:sola-kvm` a0342f809818) and the agent on ember, both from
+next@ded2a58e (Joshua: "everything thing running perfect").
 
 **Decided by Joshua (2026-11-11):** "weren't you going to make it so the mac
 changes its resolution to match what the content size is?" and "is it
