@@ -423,7 +423,10 @@ While the fade runs, `sola-river` publishes `IdleFade` with `fading`:
 Projects then shows the island of a session whose tab has the keyboard,
 since nobody is looking at it. Once the fade is full, it adds `out`: the
 shell reports every tab window off screen (`shown` in `WindowPlace`), so the Browser
-rests its pages, until input brings the windows back.
+rests its pages, until input brings the windows back. Once the dim has
+gone all the way (with the dim off, once the fade is full), it adds
+`done`: the idle has run its course, and with *Then sleep* on the Shell
+puts the machine to sleep.
 
 Nothing is drawn over a window that fills the screen ([Fullscreen](#fullscreen)),
 at rest or idle: it is fully opaque whatever *Opacity* says. While one does
@@ -577,7 +580,7 @@ rules. Payload fields are listed here.
 | `MouseClicked` | event | `{window_id}` | A window is clicked or touched |
 | `Chord` | event | `{keysym, modifiers}` | A registered chord is pressed |
 | `ChordReleased` | event | `{keysym, modifiers}` | A registered chord is released |
-| `IdleFade` | sticky | `{fading, out}` | The fade starts, becomes full, or ends |
+| `IdleFade` | sticky | `{fading, out, done}` | The fade starts, becomes full, the dim finishes, or it ends |
 
 ### Read by sola-river
 

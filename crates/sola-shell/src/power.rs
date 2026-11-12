@@ -1,15 +1,19 @@
-//! Machine power from the flower menu (reboot / poweroff).
+//! Machine power from the flower menu (sleep / reboot / poweroff), the
+//! quick launch's Sleep and the idle's end (`Appearance.sleep_idle`).
 //!
 //! NixOS: logind via `loginctl` / `systemctl`. Sola has no polkit agent, so
 //! the call is non-interactive (`sudo -n` as a last try).
 //!
 //! Oath (`/oath/INDEX.md`): catalog `host:local` power through `sudo oath`.
-//! The menu click is the owner's confirm (`oath apply --confirm`).
+//! The menu click is the owner's confirm (`oath apply --confirm`). Oath has
+//! no sleep yet: asked of the Oath session, Sleep fails there until then.
 
 use std::process::{Command, ExitStatus};
 
 use sola_core::env::on_oath;
 
+/// Flower-menu action id: put the machine to sleep.
+pub const ACTION_SLEEP: &str = "sleep";
 /// Flower-menu action id: reboot the machine (not Exit Sola).
 pub const ACTION_RESTART_COMPUTER: &str = "restart-computer";
 /// Flower-menu action id: power off the machine.
@@ -17,6 +21,7 @@ pub const ACTION_SHUT_DOWN: &str = "shut-down";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
+    Sleep,
     Reboot,
     PowerOff,
 }
@@ -24,33 +29,38 @@ pub enum Kind {
 impl Kind {
     pub fn verb(self) -> &'static str {
         match self {
+            Self::Sleep => "suspend",
             Self::Reboot => "reboot",
             Self::PowerOff => "poweroff",
         }
     }
 
-    /// Catalog `host:local.power` value (`halt`, not logind `poweroff`).
-    fn oath_power(self) -> &'static str {
+    /// Catalog `host:local.power` value (`halt`, not logind `poweroff`);
+    /// `None`: Oath has none.
+    fn oath_power(self) -> Option<&'static str> {
         match self {
-            Self::Reboot => "reboot",
-            Self::PowerOff => "halt",
+            Self::Sleep => None,
+            Self::Reboot => Some("reboot"),
+            Self::PowerOff => Some("halt"),
         }
     }
 
     pub fn fail_toast(self) -> &'static str {
         match self {
+            Self::Sleep => "Could not sleep",
             Self::Reboot => "Could not restart the computer",
             Self::PowerOff => "Could not shut down",
         }
     }
 }
 
-/// Request reboot or poweroff. Returns `Err` with a toast string if every
-/// attempt failed. Does not emit `Topic::Shutdown` — the supervisor SIGTERMs
-/// sola as the machine goes down, same graceful path as Exit Sola.
+/// Request sleep, reboot or poweroff. Returns `Err` with a toast string if
+/// every attempt failed. Does not emit `Topic::Shutdown` — the supervisor
+/// SIGTERMs sola as the machine goes down, same graceful path as Exit Sola;
+/// from sleep the desk comes back as it was.
 pub fn request(kind: Kind) -> Result<(), &'static str> {
     let verb = kind.verb();
-    tracing::info!(verb, "machine power requested via menu");
+    tracing::info!(verb, "machine power requested");
     if on_oath() {
         return request_oath(kind);
     }
@@ -58,22 +68,18 @@ pub fn request(kind: Kind) -> Result<(), &'static str> {
 }
 
 fn request_oath(kind: Kind) -> Result<(), &'static str> {
-    let set = run(Command::new("/bin/sudo").args(oath_set_args(kind)));
+    let Some(power) = kind.oath_power() else {
+        tracing::warn!(verb = kind.verb(), "this Oath has no way to do that yet");
+        return Err(kind.fail_toast());
+    };
+    let set = run(Command::new("/bin/sudo").args(oath_set_args(power)));
     if !matches!(set, Ok(st) if st.success()) {
-        tracing::warn!(
-            ?set,
-            power = kind.oath_power(),
-            "oath set host power failed"
-        );
+        tracing::warn!(?set, power, "oath set host power failed");
         return Err(kind.fail_toast());
     }
     let apply = run(Command::new("/bin/sudo").args(oath_apply_args()));
     if !matches!(apply, Ok(st) if st.success()) {
-        tracing::warn!(
-            ?apply,
-            power = kind.oath_power(),
-            "oath apply host power failed"
-        );
+        tracing::warn!(?apply, power, "oath apply host power failed");
         return Err(kind.fail_toast());
     }
     Ok(())
@@ -131,11 +137,12 @@ fn logind_commands(verb: &str) -> Vec<Command> {
     out
 }
 
-fn oath_set_args(kind: Kind) -> Vec<&'static str> {
-    match kind {
-        Kind::Reboot => vec!["/bin/oath", "set", "host:local", "power=reboot"],
-        Kind::PowerOff => vec!["/bin/oath", "set", "host:local", "power=halt"],
-    }
+fn oath_set_args(power: &str) -> Vec<String> {
+    ["/bin/oath", "set", "host:local"]
+        .into_iter()
+        .map(String::from)
+        .chain([format!("power={power}")])
+        .collect()
 }
 
 fn oath_apply_args() -> &'static [&'static str] {
@@ -148,10 +155,12 @@ mod tests {
 
     #[test]
     fn verbs_match_logind() {
+        assert_eq!(Kind::Sleep.verb(), "suspend");
         assert_eq!(Kind::Reboot.verb(), "reboot");
         assert_eq!(Kind::PowerOff.verb(), "poweroff");
-        assert_eq!(Kind::Reboot.oath_power(), "reboot");
-        assert_eq!(Kind::PowerOff.oath_power(), "halt");
+        assert_eq!(Kind::Sleep.oath_power(), None);
+        assert_eq!(Kind::Reboot.oath_power(), Some("reboot"));
+        assert_eq!(Kind::PowerOff.oath_power(), Some("halt"));
     }
 
     #[test]
@@ -183,11 +192,11 @@ mod tests {
     #[test]
     fn oath_set_uses_catalog_power() {
         assert_eq!(
-            oath_set_args(Kind::Reboot),
+            oath_set_args("reboot"),
             ["/bin/oath", "set", "host:local", "power=reboot"]
         );
         assert_eq!(
-            oath_set_args(Kind::PowerOff),
+            oath_set_args("halt"),
             ["/bin/oath", "set", "host:local", "power=halt"]
         );
         assert_eq!(

@@ -2,9 +2,11 @@
 //! per group").
 //!
 //! Layout (left-to-right), a gap in from every edge, the ground between:
-//!   (✿) (1 Main) (2 Mail ◆)       (toast)        (✉ 🔔 ᛒ) (spectrum)
+//!   (✿) (1 Main) (2 Mail ◆)   (quick launch)   (✉ 🔔 ᛒ) (spectrum)
 //!                                       (CPU GPU VRAM MEM) (RX TX) (clock)
 //!
+//! The middle is the quick launch ([`super::quick`]), or a toast while one
+//! shows.
 //! The workspaces are here only when set to be islands ([`super::workspaces`]).
 //!
 //! Each group is one island: [`ISLAND_H`] tall, a pill, [`ISLAND_GAP`]
@@ -167,9 +169,14 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let mut islands: Vec<Element<'_, Msg>> = Vec::new();
 
     let mut extras: Vec<Element<'_, Msg>> = Vec::new();
+    // Their widths, for where the right-hand islands begin.
+    let text_w = |s: &str| fonts::line_width(s, CHROME_SIZE, fonts::chrome());
+    let glyph_and = |label: &str| f32::from(ICON_SIZE) + STAT_INNER_SPACING + text_w(label);
+    let mut extras_w: Vec<f32> = Vec::new();
     if let Some(unread) = shell.mail_unread_badge() {
         let accent = shell.theme.extended_palette().primary.base.color;
         extras.push(item(extra_badge("lucide/mail", unread, accent), Msg::RaiseMail));
+        extras_w.push(glyph_and(&sola_kit::components::count_label(unread)));
     }
     if shell.notify.pile_count() > 0 {
         let tint = if shell.notify.unseen {
@@ -181,15 +188,18 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
             extra_badge("lucide/bell", shell.notify.pile_count(), tint),
             Msg::ToggleNotifyPile,
         ));
+        extras_w.push(glyph_and(&sola_kit::components::count_label(shell.notify.pile_count())));
     }
     // Left of Bluetooth: panel anchors walk right-to-left, so nothing
     // anchored moves when this comes and goes.
     if let Some(chip) = crate::mouse::bar_chip(&shell.mouse) {
+        extras_w.push(glyph_and(&chip.label));
         extras.push(mouse_chip(chip, fg, muted, &shell.theme));
     }
     if let Some(icon) = crate::bluetooth::bar_icon(&shell.bluetooth.snapshot) {
         let tint = if icon.muted { muted } else { fg };
         extras.push(item(extra_icon(icon.name, tint), Msg::ToggleBluetooth));
+        extras_w.push(f32::from(ICON_SIZE));
     }
     let extras_open = panel_active(shell, crate::app::Panel::Bluetooth)
         || panel_active(shell, crate::app::Panel::NotifyPile);
@@ -263,19 +273,45 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     .align_y(Alignment::Center)
     .into();
 
-    // The toast is the one live thing, an island in the true center of the
-    // row (layered over it, so uneven sides do not pull it off center).
-    let bar: Element<'_, Msg> = if mb.toast.is_some() {
-        let toast = container(island(toast_widget(mb.toast.as_deref()), false, ISLAND_PAD_H))
-            .width(Length::Fill)
-            .height(Length::Fixed(ISLAND_H))
-            .center_x(Length::Fill);
-        stack![base, toast]
-            .width(Length::Fill)
-            .height(Length::Fixed(ISLAND_H))
-            .into()
-    } else {
-        base
+    // The middle (layered over the row, so uneven sides do not pull it off
+    // center): the toast, the one live thing, or else the quick launch.
+    // Centred, unless that runs into the right-hand islands.
+    let middle: Option<(Element<'_, Msg>, f32)> = match mb.toast.as_deref() {
+        Some(message) => Some((
+            island(toast_widget(Some(message)), false, ISLAND_PAD_H),
+            text_w(message) + 2.0 * ISLAND_PAD_H,
+        )),
+        None => crate::menubar::quick::island_of(shell),
+    };
+    let middle = middle.map(|(island, w)| {
+        // The extras island's right edge, from the items to its right.
+        let extras_right = shell.right_edges().bluetooth + ISLAND_PAD_H + f32::from(ICON_SIZE);
+        let right_start = if extras_w.is_empty() {
+            extras_right + ISLAND_GAP
+        } else {
+            let items: f32 = extras_w.iter().sum();
+            extras_right - 2.0 * ISLAND_PAD_H - items - ITEM_GAP * (extras_w.len() - 1) as f32
+        };
+        let output_w = shell.output_size.map_or(1920.0, |(w, _)| w as f32);
+        let left_end = crate::agents::view::left_group_end(shell);
+        let x = crate::menubar::quick::place(output_w, w, left_end, right_start);
+        let pad = Padding {
+            left: (x - EDGE).max(0.0),
+            ..Padding::ZERO
+        };
+        container(island).padding(pad).width(Length::Fill)
+    });
+    let bar: Element<'_, Msg> = match middle {
+        Some(middle) => {
+            let middle = container(middle)
+                .width(Length::Fill)
+                .height(Length::Fixed(ISLAND_H));
+            stack![base, middle]
+                .width(Length::Fill)
+                .height(Length::Fixed(ISLAND_H))
+                .into()
+        }
+        None => base,
     };
 
     container(bar)

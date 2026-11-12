@@ -14,11 +14,15 @@
 //! to live only on Super+numpad / Super+H / Super+`. Apps publish it via
 //! [`window_menu`] / [`BusSetup::window_menu`](crate::app::BusSetup::window_menu);
 //! titlebars add it last when an app omits it ([`ensure_window_menu`]).
+//!
+//! Titlebars also give the app's own menu (the first, under its name)
+//! **Add to Quick Launch** or **Remove from Quick Launch**
+//! ([`fill_quick_launch`]); the shell carries it out.
 
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use sola_bus::topics::{AppMenuPayload, KeyActions, MenuActionPayload, MenuDefinition, MenuItem, Topic, Workspaces, Zone, ZoneLayout};
+use sola_bus::topics::{AppMenuPayload, KeyActions, MenuActionPayload, MenuDefinition, MenuItem, QuickLaunch, Topic, Workspaces, Zone, ZoneLayout};
 use sola_core::{KeyChord, KeyCode};
 
 /// This process's latest published menus.
@@ -36,13 +40,17 @@ static LAYOUT: RwLock<Option<ZoneLayout>> = RwLock::new(None);
 /// items. `None`: not said yet.
 static WORKSPACES: RwLock<Option<Workspaces>> = RwLock::new(None);
 
+/// The quick launch (`Topic::QuickLaunch`), for the app menu's Add to /
+/// Remove from Quick Launch. `None`: not said yet (empty).
+static QUICK: RwLock<Option<QuickLaunch>> = RwLock::new(None);
+
 /// [`current`]'s answer until something it reads changes.
 static CURRENT: RwLock<Option<AppMenuPayload>> = RwLock::new(None);
 
-/// Learn the zone layout and the workspaces from a bus message (the kit's
-/// poller shows it every one).
+/// Learn the zone layout, the workspaces and the quick launch from a bus
+/// message (the kit's poller shows it every one).
 pub(crate) fn observe(message: &sola_bus::Message) {
-    if message.topic != "ZoneLayout" && message.topic != "Workspaces" {
+    if !matches!(message.topic.as_str(), "ZoneLayout" | "Workspaces" | "QuickLaunch") {
         return;
     }
     match Topic::parse(message) {
@@ -52,6 +60,10 @@ pub(crate) fn observe(message: &sola_bus::Message) {
         }
         Some(Topic::Workspaces(w)) => {
             *WORKSPACES.write().unwrap_or_else(|p| p.into_inner()) = message.sticky.then_some(w);
+            forget_current();
+        }
+        Some(Topic::QuickLaunch(q)) => {
+            *QUICK.write().unwrap_or_else(|p| p.into_inner()) = message.sticky.then_some(q);
             forget_current();
         }
         _ => {}
@@ -218,9 +230,17 @@ pub fn current() -> Option<AppMenuPayload> {
 }
 
 /// What a titlebar shows of `payload`: the Window menu (added when it has
-/// none) with the layout's grid zones, and every item's key now.
+/// none) with the layout's grid zones, the app menu's quick launch item,
+/// and every item's key now.
 pub fn prepare(payload: AppMenuPayload) -> AppMenuPayload {
     let mut payload = ensure_window_menu(payload);
+    {
+        let quick = QUICK.read().unwrap_or_else(|p| p.into_inner());
+        let on = quick.as_ref().is_some_and(|q| {
+            q.apps.iter().any(|a| a.eq_ignore_ascii_case(&payload.app_id))
+        });
+        fill_quick_launch(&mut payload, on);
+    }
     let layout = LAYOUT
         .read()
         .unwrap_or_else(|p| p.into_inner())
@@ -467,7 +487,80 @@ pub fn quit_menu_item(label: &str) -> MenuItem {
 
 /// A menu action the shell carries out rather than the app.
 fn is_shell_action(id: &str) -> bool {
-    id == ACTION_CLOSE_WINDOW || parse_window_action(id).is_some()
+    id == ACTION_CLOSE_WINDOW
+        || parse_window_action(id).is_some()
+        || parse_quick_launch_action(id).is_some()
+}
+
+/// The app menu's item that puts the app on the quick launch (the shell's
+/// row of apps in the middle of the top row).
+pub const ACTION_QUICK_LAUNCH_ADD: &str = "quick_launch.add";
+/// ...and the one that takes it off.
+pub const ACTION_QUICK_LAUNCH_REMOVE: &str = "quick_launch.remove";
+
+/// What an app menu's quick launch item asks of the shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuickLaunchAction {
+    Add,
+    Remove,
+}
+
+/// The quick launch item `id` names, if it is one.
+pub fn parse_quick_launch_action(id: &str) -> Option<QuickLaunchAction> {
+    match id {
+        ACTION_QUICK_LAUNCH_ADD => Some(QuickLaunchAction::Add),
+        ACTION_QUICK_LAUNCH_REMOVE => Some(QuickLaunchAction::Remove),
+        _ => None,
+    }
+}
+
+/// Give the app's own menu (the first, under its name) Add to Quick
+/// Launch, or Remove from Quick Launch when it is `on` it: before Close
+/// Window and Quit, set apart by a divider; at the end when it has
+/// neither.
+pub fn fill_quick_launch(payload: &mut AppMenuPayload, on: bool) {
+    let Some(menu) = payload.menus.first_mut().filter(|m| m.label != WINDOW_MENU_LABEL) else {
+        return;
+    };
+    // Made again: the item there goes, with the divider after it.
+    if let Some(at) = menu.items.iter().position(|item| {
+        matches!(item, MenuItem::Action { id, .. } if parse_quick_launch_action(id).is_some())
+    }) {
+        let divider = matches!(menu.items.get(at + 1), Some(MenuItem::Divider));
+        menu.items.drain(at..at + 1 + usize::from(divider));
+    }
+    let (id, label) = if on {
+        (ACTION_QUICK_LAUNCH_REMOVE, "Remove from Quick Launch")
+    } else {
+        (ACTION_QUICK_LAUNCH_ADD, "Add to Quick Launch")
+    };
+    let item = MenuItem::Action {
+        id: id.into(),
+        label: label.into(),
+        shortcut: None,
+        disabled: false,
+        checked: false,
+    };
+    let closing = |i: &MenuItem| {
+        matches!(i, MenuItem::Action { id, .. }
+            if id == ACTION_CLOSE_WINDOW || id == crate::app::QUIT_ACTION_ID)
+    };
+    match menu.items.iter().position(closing) {
+        Some(at) => {
+            let divided = at == 0 || matches!(menu.items[at - 1], MenuItem::Divider);
+            let mut block = vec![item, MenuItem::Divider];
+            if !divided {
+                block.insert(0, MenuItem::Divider);
+            }
+            menu.items.splice(at..at, block);
+        }
+        None => {
+            if !menu.items.is_empty() {
+                menu.items.push(MenuItem::Divider);
+            }
+            menu.items.push(item);
+        }
+    }
 }
 
 /// Default Window menu for [`crate::app::BusSetup::app_menu_definition`].
@@ -622,6 +715,73 @@ mod tests {
         assert_eq!(parse_window_action(ACTION_CYCLE), Some(WindowAction::Cycle));
         assert_eq!(parse_window_action("quit"), None);
         assert_eq!(parse_window_action("window.new"), None);
+    }
+
+    fn ids(menu: &MenuDefinition) -> Vec<&str> {
+        menu.items
+            .iter()
+            .map(|i| match i {
+                MenuItem::Action { id, .. } => id.as_str(),
+                MenuItem::Divider => "-",
+                _ => "?",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_app_menu_offers_the_quick_launch_before_close_and_quit() {
+        let mail = |items: Vec<MenuItem>| AppMenuPayload {
+            app_id: "sola-mail".into(),
+            menus: vec![
+                MenuDefinition {
+                    label: "Mail".into(),
+                    items,
+                },
+                window_menu(),
+            ],
+        };
+        let refresh = MenuItem::Action {
+            id: "refresh".into(),
+            label: "Get New Mail".into(),
+            shortcut: None,
+            disabled: false,
+            checked: false,
+        };
+        let mut p = mail(vec![
+            refresh.clone(),
+            MenuItem::Divider,
+            close_window_menu_item(),
+            quit_menu_item("Quit Mail"),
+        ]);
+        fill_quick_launch(&mut p, false);
+        assert_eq!(
+            ids(&p.menus[0]),
+            ["refresh", "-", ACTION_QUICK_LAUNCH_ADD, "-", ACTION_CLOSE_WINDOW, "quit"]
+        );
+        // Made again: the one item, now Remove.
+        fill_quick_launch(&mut p, true);
+        assert_eq!(
+            ids(&p.menus[0]),
+            ["refresh", "-", ACTION_QUICK_LAUNCH_REMOVE, "-", ACTION_CLOSE_WINDOW, "quit"]
+        );
+        let mut p = mail(vec![refresh.clone(), quit_menu_item("Quit Mail")]);
+        fill_quick_launch(&mut p, false);
+        assert_eq!(ids(&p.menus[0]), ["refresh", "-", ACTION_QUICK_LAUNCH_ADD, "-", "quit"]);
+        let mut p = mail(vec![refresh]);
+        fill_quick_launch(&mut p, false);
+        assert_eq!(ids(&p.menus[0]), ["refresh", "-", ACTION_QUICK_LAUNCH_ADD]);
+        // The Window menu alone is left as it is.
+        let mut p = AppMenuPayload {
+            app_id: "x".into(),
+            menus: vec![window_menu()],
+        };
+        fill_quick_launch(&mut p, false);
+        assert_eq!(ids(&p.menus[0]), ids(&window_menu()));
+        assert!(is_shell_action(ACTION_QUICK_LAUNCH_ADD));
+        assert_eq!(
+            parse_quick_launch_action(ACTION_QUICK_LAUNCH_REMOVE),
+            Some(QuickLaunchAction::Remove)
+        );
     }
 
     #[test]

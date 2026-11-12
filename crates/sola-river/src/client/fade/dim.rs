@@ -86,6 +86,12 @@ fn level(full: Duration, t: Times) -> u32 {
     (f * (1.0 - LEFT) * f64::from(u32::MAX)) as u32
 }
 
+/// Whether the dim has gone all the way, `full` after the fade became
+/// full: the idle's last step is done.
+pub(super) fn done(full: Duration, t: Times) -> bool {
+    full >= t.after + t.over
+}
+
 /// Where the dim should be now: 0 when off, not full yet, or returning.
 fn target(state: &AppData) -> u32 {
     let fade = &state.fade;
@@ -221,8 +227,10 @@ mod tests {
         assert_eq!(level(t.after, t), 0);
         let half = level(t.after + t.over / 2, t) as f64 / f64::from(u32::MAX);
         assert!((half - 0.45).abs() < 0.001, "{half}");
-        let done = level(t.after + t.over * 3, t) as f64 / f64::from(u32::MAX);
-        assert!((done - 0.9).abs() < 0.001, "{done}");
+        let gone = level(t.after + t.over * 3, t) as f64 / f64::from(u32::MAX);
+        assert!((gone - 0.9).abs() < 0.001, "{gone}");
+        assert!(!done(t.after + t.over / 2, t));
+        assert!(done(t.after + t.over, t));
         let off = Appearance {
             dim_idle: false,
             ..Appearance::default()

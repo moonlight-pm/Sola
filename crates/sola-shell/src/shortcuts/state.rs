@@ -140,6 +140,7 @@ fn catalog(focused: Option<&AppMenuPayload>, keys: &Bindings) -> Vec<ShortcutRow
 fn omit_from_cheatsheet(id: &str) -> bool {
     id == "quit"
         || id == "_close"
+        || id == crate::power::ACTION_SLEEP
         || id == crate::power::ACTION_RESTART_COMPUTER
         || id == crate::power::ACTION_SHUT_DOWN
 }

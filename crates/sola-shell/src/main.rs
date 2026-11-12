@@ -46,8 +46,8 @@ fn main() -> iced::Result {
     lock::at_start();
 
     // Flower / system menu (and the shell's own app menu when focused).
-    // "Exit Sola" shuts the whole session down via `Topic::Shutdown`. "Restart Computer" / "Shut Down"
-    // ask logind to reboot or power off. "Launch Application…" opens
+    // "Exit Sola" shuts the whole session down via `Topic::Shutdown`. "Sleep" / "Restart Computer" /
+    // "Shut Down" ask logind (or Oath) to sleep, reboot or power off. "Launch Application…" opens
     // the launcher overlay.
     BusSetup::new(APP_ID)
         .supervised()

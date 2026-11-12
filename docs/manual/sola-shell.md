@@ -105,8 +105,8 @@ every shortcut: the Shell's (groups Shell, Workspaces, Capture and
 Window), then the focused app's menu items (in groups named after its
 menus). Type to filter by name, group or chord; ↑ and ↓ move, Enter or a
 click runs the item. Escape or Super+K closes it, and so does a click on
-the pad around the card. **Exit Sola**, **Restart Computer** and **Shut Down**
-are left out, so a filter and Enter cannot end the session.
+the pad around the card. **Exit Sola**, **Sleep**, **Restart Computer** and
+**Shut Down** are left out, so a filter and Enter cannot end the session.
 
 ## The top row
 
@@ -117,10 +117,12 @@ Left to right:
   ([Theme](theme.md#shell-tokens)).
 - **Agent islands**, one per Projects session that asks you something or
   has finished ([below](#agent-islands)).
-- A **message** in the middle of the row, for five seconds, when there is
-  one: a launch that failed ("Failed to launch …"), an app that exited
-  with an error ("… exited (code N)", "… killed (signal N)"),
-  "Screenshot copied".
+- **The quick launch** in the middle of the row, when it has anything
+  on it ([below](#quick-launch)).
+- A **message** in its place, for five seconds, when there is one: a
+  launch that failed ("Failed to launch …"), an app that exited with an
+  error ("… exited (code N)", "… killed (signal N)"), "Screenshot
+  copied".
 - On the right, an island per group: mail, the bell, the mouse battery
   and Bluetooth; the volume spectrum; CPU, GPU, VRAM and MEM; RX and TX;
   the clock.
@@ -138,15 +140,35 @@ Click it again, press Escape, or click a window to close the panel.
 | Lock Screen | Locks the screen (Super+L; [Security](security.md#locking)) |
 | Lock Vault | Locks the vault at once ([Vault](sola-vault.md#locking)); there only while the vault is unlocked |
 | Exit Sola | Ends the desktop session (`Shutdown` on the bus); on Oath the console then has the screen, and `oath desk` brings the desk back |
+| Sleep | Puts the machine to sleep; a key or the mouse wakes it |
 | Restart Computer | Restarts the machine |
 | Shut Down | Powers the machine off |
 
-Restart Computer and Shut Down have no confirmation and no shortcut. On
-Oath they run `sudo /bin/oath set host:local power=reboot` (or
-`power=halt`), then `sudo /bin/oath apply --confirm host:local`. Sola has
-no password prompt, so they work only when sudo lets you run those
-commands without one. A failure shows **Could not restart the computer**
-or **Could not shut down**.
+Sleep, Restart Computer and Shut Down have no confirmation and no
+shortcut. On Oath, Restart Computer and Shut Down run `sudo /bin/oath set
+host:local power=reboot` (or `power=halt`), then `sudo /bin/oath apply
+--confirm host:local`. Oath has no sleep yet, so there Sleep shows **Could
+not sleep**; elsewhere it asks logind (`loginctl suspend`). Sola has no
+password prompt, so these work only when sudo (or logind) lets you run
+them without one. A failure shows **Could not sleep**, **Could not restart
+the computer** or **Could not shut down**.
+
+### Quick launch
+
+An island in the middle of the top row holds the apps you put there, an
+icon each, and **Sleep** (a moon) at the end when it is on. A click on an
+app brings its window forward, or starts it, as its row in the launcher
+does; a click on the moon puts the machine to sleep, as the flower's
+**Sleep** does. With nothing on it the island is not there, and a message
+takes its place while one shows.
+
+An app goes on it from its own menu (the first menu in its titlebar,
+under its name): **Add to Quick Launch**, and **Remove from Quick Launch**
+to take it off. An app with no menu of its own (Steam, a game) goes on it
+from Settings → Applications, where the **Quick Launch** section lists
+what is on it in order (↑ and ↓ move one, × takes it off) and has the
+**Sleep** switch; each app's editor there has **On the quick launch**. The
+quick launch travels as the persistent topic `QuickLaunch`.
 
 ### Clock and calendar
 
@@ -772,9 +794,13 @@ Appearance → Idle, and both are on at first:
 - **Then dim the background**: once only the picture shows, it dims after
   **Dim after** minutes (60 at first, up to 240) over **Dim over**
   minutes (30 at first, up to 120), to a tenth of its light.
+- **Then sleep** (off at first): once the dim is done (or, with the dim
+  off, once the windows have faded), the machine goes to sleep, as the
+  flower's **Sleep** does.
 
 Any input brings it all back within a second. The compositor draws both
-([Compositor](compositor.md)).
+([Compositor](compositor.md)) and says on the bus when the last step is
+done (`IdleFade.done`); the Shell puts the machine to sleep then.
 
 The flower and the agent islands stay at the desk's opacity while
 everything else fades, so a session waiting on you can still be seen and

@@ -67,6 +67,7 @@ fn main() -> iced::Result {
             TopicKind::Keybindings,
             TopicKind::ZoneLayout,
             TopicKind::OutputGeometry,
+            TopicKind::QuickLaunch,
         ])
         .app_menu(
             "Settings",
@@ -266,6 +267,9 @@ impl App {
                     Some(Topic::WorkspacePrefs(p)) => {
                         self.appearance.workspaces = if message.sticky { p } else { Default::default() };
                     }
+                    Some(Topic::QuickLaunch(q)) => {
+                        self.apps_ui.quick = if message.sticky { q } else { Default::default() };
+                    }
                     Some(Topic::Theme(t)) => {
                         self.appearance.theme = Some(t);
                     }
@@ -455,7 +459,8 @@ impl App {
         let main_inner: Element<'_, Msg> = match self.panel {
             Panel::Applications => column![
                 kit_text::heading(title_text),
-                applications::view(&self.applications, &self.running, &self.apps_ui).map(Msg::Apps),
+                applications::view(&self.applications, &self.running, &self.apps_ui, &self.keys.decls)
+                    .map(Msg::Apps),
             ]
             .spacing(page_pad)
             .padding(Padding::new(page_pad))

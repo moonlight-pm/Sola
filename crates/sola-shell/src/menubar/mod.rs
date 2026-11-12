@@ -3,7 +3,8 @@
 //! The top row of the desk (Next board 03, "a bubble per group"): the
 //! shell's islands on the ground, a gap in from every edge, no band behind
 //! them. Left: the flower (system menu; the workspaces are the tab bar's
-//! head, or islands here, [`workspaces`]). Center: a toast while one shows. Right, an island per group:
+//! head, or islands here, [`workspaces`]). Center: the quick launch
+//! ([`quick`]), a toast in its place while one shows. Right, an island per group:
 //! extras (mail / bell / mouse battery / bluetooth), the spectrum, the
 //! meters (CPU / GPU / VRAM / MEM), the network (RX / TX), the clock. Only the
 //! look of the islands is here; the surfaces that grow out of them come
@@ -14,6 +15,7 @@
 
 pub mod anchors;
 mod island_row;
+pub mod quick;
 pub mod view;
 pub mod workspaces;
 

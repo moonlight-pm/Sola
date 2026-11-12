@@ -58,6 +58,10 @@ impl Shell {
                 self.on_workspace_prefs(message.sticky.then_some(p));
                 Task::none()
             }
+            Topic::QuickLaunch(q) => {
+                self.on_quick_launch(message.sticky.then_some(q));
+                Task::none()
+            }
             Topic::FullscreenRequest(r) => {
                 self.on_fullscreen_request(r);
                 Task::none()
@@ -189,6 +193,14 @@ impl Shell {
                         }
                     }
                 }
+                let done = message.sticky && f.done;
+                if done != self.idle_done {
+                    self.idle_done = done;
+                    if done && self.sleep_idle {
+                        tracing::info!("idle: done, the computer sleeps");
+                        return self.request_machine_power(crate::power::Kind::Sleep);
+                    }
+                }
                 Task::none()
             }
             // All other topics are not consumed by sola-shell; ignore quietly.
@@ -204,6 +216,9 @@ impl Shell {
     /// click focused that app's window, so act on the focused window as the
     /// shortcut would. Other actions are the app's own and never reach here.
     fn on_titlebar_menu_action(&mut self, a: MenuActionPayload) -> Task<Msg> {
+        if let Some(action) = sola_kit::menu::parse_quick_launch_action(&a.action_id) {
+            return self.on_quick_launch_menu(&a.app_id, action);
+        }
         let close = a.action_id == sola_kit::menu::ACTION_CLOSE_WINDOW;
         let action = sola_kit::parse_window_action(&a.action_id);
         if !close && action.is_none() {

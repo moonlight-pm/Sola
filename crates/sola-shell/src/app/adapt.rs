@@ -44,6 +44,7 @@ impl Shell {
         self.adapt.variation = look.variation as usize;
         self.adapt.colors = look.colors;
         self.lock_idle = look.lock_idle;
+        self.sleep_idle = look.sleep_idle;
         if restrength {
             self.publish_variations();
         }

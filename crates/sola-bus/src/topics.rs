@@ -593,6 +593,10 @@ pub struct Appearance {
     /// keeps the outgoing one's here and puts the incoming one's back.
     #[serde(default)]
     pub pictures: std::collections::BTreeMap<String, PictureLook>,
+    /// Put the computer to sleep once the idle has run its course
+    /// (`IdleFade.done`: the dim is full, or the fade with the dim off).
+    #[serde(default)]
+    pub sleep_idle: bool,
 }
 
 /// What makes the theme's colors with a picture: the parts of
@@ -685,6 +689,7 @@ impl Default for Appearance {
             light: false,
             lock_idle: false,
             pictures: Default::default(),
+            sleep_idle: false,
         }
     }
 }
@@ -761,6 +766,21 @@ pub struct IdleFade {
     /// rests its pages) until input brings them back.
     #[serde(default)]
     pub out: bool,
+    /// The idle has run its course: the background has dimmed all it
+    /// will, or, with the dim off, the fade is full. The shell puts the
+    /// computer to sleep then (`Appearance.sleep_idle`).
+    #[serde(default)]
+    pub done: bool,
+}
+
+/// The apps in the middle of the top row, to start with a click (Settings,
+/// an app's own menu → the shell; `Topic::QuickLaunch`, persistent).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct QuickLaunch {
+    /// Launcher app ids, in order.
+    pub apps: Vec<String>,
+    /// Sleep at the end of the row.
+    pub sleep: bool,
 }
 
 /// The videos a window shows (an app → sola-river,
@@ -2286,6 +2306,11 @@ define_topics! {
     // when it closes.
     #[sticky(keys = [window_id])]
     WindowPlace(WindowPlace),
+
+    // The apps in the middle of the top row (Settings, an app's menu →
+    // the shell). Persistent. Appended last.
+    #[persistent]
+    QuickLaunch(QuickLaunch),
 }
 
 #[cfg(test)]
@@ -2589,12 +2614,43 @@ mod tests {
             other => panic!("expected IdleKeep, got {other:?}"),
         }
         assert!(TopicKind::IdleKeep.behavior().is_sticky());
-        let fade = IdleFade { fading: true, out: true };
+        let fade = IdleFade {
+            fading: true,
+            out: true,
+            done: true,
+        };
         match Topic::parse(&Topic::IdleFade(fade).to_message()) {
             Some(Topic::IdleFade(back)) => assert_eq!(back, fade),
             other => panic!("expected IdleFade, got {other:?}"),
         }
         assert!(TopicKind::IdleFade.behavior().is_sticky());
+        assert!(!old.sleep_idle);
+        let sleepy = Appearance {
+            sleep_idle: true,
+            ..Appearance::default()
+        };
+        match Topic::parse(&Topic::Appearance(sleepy.clone()).to_message()) {
+            Some(Topic::Appearance(back)) => assert_eq!(back, sleepy),
+            other => panic!("expected Appearance, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_quick_launch_is_persistent_and_reads_back() {
+        let quick = QuickLaunch {
+            apps: vec!["steam".into(), "sola-browser".into()],
+            sleep: true,
+        };
+        assert!(TopicKind::QuickLaunch.behavior().is_persistent());
+        match Topic::parse(&Topic::QuickLaunch(quick.clone()).to_message()) {
+            Some(Topic::QuickLaunch(back)) => assert_eq!(back, quick),
+            other => panic!("expected QuickLaunch, got {other:?}"),
+        }
+        let value = Topic::QuickLaunch(quick.clone()).to_yaml_value().unwrap();
+        match Topic::from_yaml_section(TopicKind::QuickLaunch, value) {
+            Some(Topic::QuickLaunch(back)) => assert_eq!(back, quick),
+            other => panic!("expected QuickLaunch, got {other:?}"),
+        }
     }
 
     #[test]

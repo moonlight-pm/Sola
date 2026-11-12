@@ -55,6 +55,7 @@ pub fn system_menu() -> MenuDefinition {
             action(crate::lock::ACTION_LOCK, "Lock Screen", Some(KeyCode::L.meta())),
             action("quit", "Exit Sola", None),
             MenuItem::Divider,
+            action(crate::power::ACTION_SLEEP, "Sleep", None),
             action(
                 crate::power::ACTION_RESTART_COMPUTER,
                 "Restart Computer",
@@ -264,6 +265,7 @@ mod tests {
                 "Lock Screen",
                 "Exit Sola",
                 "---",
+                "Sleep",
                 "Restart Computer",
                 "Shut Down",
             ]
@@ -285,6 +287,7 @@ mod tests {
                 "shortcuts",
                 crate::lock::ACTION_LOCK,
                 "quit",
+                crate::power::ACTION_SLEEP,
                 crate::power::ACTION_RESTART_COMPUTER,
                 crate::power::ACTION_SHUT_DOWN,
             ]
@@ -293,6 +296,7 @@ mod tests {
         for item in &menu.items {
             if let MenuItem::Action { id, shortcut, .. } = item {
                 if id == "quit"
+                    || id == crate::power::ACTION_SLEEP
                     || id == crate::power::ACTION_RESTART_COMPUTER
                     || id == crate::power::ACTION_SHUT_DOWN
                 {

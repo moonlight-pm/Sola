@@ -29,6 +29,7 @@ pub mod bus;
 pub mod cycle;
 pub mod desk;
 pub mod projects;
+pub mod quick;
 pub mod vault;
 pub mod web;
 pub mod workspaces;
@@ -181,6 +182,10 @@ pub enum Msg {
     ShortcutsPick(usize),
     /// Menubar unread chip: raise (and unhide) sola-mail.
     RaiseMail,
+    /// The quick launch: one of its apps clicked.
+    QuickLaunch(String),
+    /// The quick launch's Sleep.
+    QuickSleep,
     /// Expire a live notification banner (`NotifyState` generation).
     NotifyExpire(u64),
     /// Animation tick while a banner is entering or leaving.
@@ -401,6 +406,12 @@ pub struct Shell {
     pub desk_out: bool,
     /// Lock when the idle fade is complete (`Appearance.lock_idle`).
     pub lock_idle: bool,
+    /// Sleep when the idle is done (`Appearance.sleep_idle`).
+    pub sleep_idle: bool,
+    /// The idle has run its course (`IdleFade.done`).
+    pub idle_done: bool,
+    /// The apps in the middle of the top row (`Topic::QuickLaunch`).
+    pub quick_launch: sola_bus::topics::QuickLaunch,
     pub tabbar: crate::tabbar::TabBarState,
     /// Each window's last published `Topic::WindowPlace`.
     pub places: crate::place::PlaceState,
@@ -602,6 +613,9 @@ impl Shell {
             pictures: Default::default(),
             desk_out: false,
             lock_idle: false,
+            sleep_idle: false,
+            idle_done: false,
+            quick_launch: Default::default(),
             tabbar: crate::tabbar::TabBarState::default(),
             places: crate::place::PlaceState::default(),
             workspace: workspaces::WorkspaceState::default(),
@@ -2037,7 +2051,7 @@ impl Shell {
     }
 
     /// Where the top row's right-hand items sit ([`crate::menubar::anchors`]).
-    fn right_edges(&self) -> crate::menubar::anchors::Edges {
+    pub(crate) fn right_edges(&self) -> crate::menubar::anchors::Edges {
         let clock = crate::components::clock::format_clock(&self.menubar.clock_now);
         crate::menubar::anchors::edges(&crate::menubar::anchors::Right {
             output_w: self.output_size.map(|(w, _)| w as f32).unwrap_or(1920.0),
@@ -2582,6 +2596,9 @@ impl Shell {
                 if app_id == Self::APP_ID && action_id == crate::menu::state::ACTION_LOCK_VAULT {
                     return self.lock_vault();
                 }
+                if app_id == Self::APP_ID && action_id == crate::power::ACTION_SLEEP {
+                    return self.request_machine_power(crate::power::Kind::Sleep);
+                }
                 if app_id == Self::APP_ID && action_id == crate::power::ACTION_RESTART_COMPUTER {
                     return self.request_machine_power(crate::power::Kind::Reboot);
                 }
@@ -2848,6 +2865,8 @@ impl Shell {
                 self.activate_mail();
                 iced::Task::none()
             }
+            Msg::QuickLaunch(app_id) => self.quick_launch_app(&app_id),
+            Msg::QuickSleep => self.request_machine_power(crate::power::Kind::Sleep),
             Msg::NotifyExpire(generation) => {
                 let now = std::time::Instant::now();
                 if self.notify.begin_leave(generation, now) {
@@ -3250,6 +3269,9 @@ mod pending_launch_tests {
             pictures: Default::default(),
             desk_out: false,
             lock_idle: false,
+            sleep_idle: false,
+            idle_done: false,
+            quick_launch: Default::default(),
             tabbar: crate::tabbar::TabBarState::default(),
             places: crate::place::PlaceState::default(),
             workspace: workspaces::WorkspaceState::default(),
@@ -3649,6 +3671,48 @@ mod hide_tests {
         assert_eq!(shell.tabs.parent_of(6), None, "its parent taken back with the rest");
     }
 
+    /// An app's menu → Add to Quick Launch puts the launcher's app on it,
+    /// once; Remove takes it off; an app the launcher lacks stays off.
+    /// Settings' word replaces it; retracted, it is empty.
+    #[test]
+    fn an_apps_own_menu_puts_it_on_the_quick_launch_and_takes_it_off() {
+        use sola_bus::topics::{MenuActionPayload, QuickLaunch, Topic};
+        use sola_kit::menu::{ACTION_QUICK_LAUNCH_ADD as ADD, ACTION_QUICK_LAUNCH_REMOVE as REMOVE};
+        let deliver = |shell: &mut Shell, t: Topic, sticky: bool| {
+            let mut m = t.to_message();
+            m.sticky = sticky;
+            let _ = shell.handle_bus(&m);
+        };
+        let choose = |shell: &mut Shell, app_id: &str, action_id: &str| {
+            let a = MenuActionPayload {
+                app_id: app_id.into(),
+                action_id: action_id.into(),
+            };
+            deliver(shell, Topic::MenuAction(a), false);
+        };
+        // The toast for an app the launcher lacks times itself out.
+        let rt = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        let _rt = rt.enter();
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        choose(&mut shell, "sola-mail", ADD);
+        choose(&mut shell, "sola-terminal", ADD);
+        choose(&mut shell, "sola-mail", ADD);
+        assert_eq!(shell.quick_launch.apps, ["sola-mail", "sola-terminal"]);
+        choose(&mut shell, "sola-mail", REMOVE);
+        assert_eq!(shell.quick_launch.apps, ["sola-terminal"]);
+        choose(&mut shell, "not-an-app", ADD);
+        assert_eq!(shell.quick_launch.apps, ["sola-terminal"]);
+        assert_eq!(shell.menubar.toast.as_deref(), Some("not-an-app is not in the launcher"));
+        let mine = QuickLaunch {
+            apps: vec!["sola-browser".into()],
+            sleep: true,
+        };
+        deliver(&mut shell, Topic::QuickLaunch(mine.clone()), true);
+        assert_eq!(shell.quick_launch, mine);
+        deliver(&mut shell, Topic::QuickLaunch(mine), false);
+        assert_eq!(shell.quick_launch, QuickLaunch::default());
+    }
+
     /// Window → Pin to All Workspaces, and again. No app hears a pinned window
     /// is on a workspace, so a browser page keeps its profile and stays signed
     /// in; unpinned, it is on the one showing. The row's close stays, there
@@ -3835,6 +3899,9 @@ mod hide_tests {
             pictures: Default::default(),
             desk_out: false,
             lock_idle: false,
+            sleep_idle: false,
+            idle_done: false,
+            quick_launch: Default::default(),
             tabbar: crate::tabbar::TabBarState::default(),
             places: crate::place::PlaceState::default(),
             workspace: workspaces::WorkspaceState::default(),

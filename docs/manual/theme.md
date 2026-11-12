@@ -232,7 +232,7 @@ Settings' **Appearance** page holds, top to bottom:
 | Colors | **Adapt colors to the background**, **Strength**, and a card for each look |
 | Your colors | **Window**, **Panels**, **Highlight**, **Accent** |
 | Desk | **Opacity** of the windows, the bar and the top row over the background: 50–100%, 90% at first |
-| Idle | **Fade the windows when idle**, **Start after**, **Fade over**, **Then dim the background**, **Dim after**, **Dim over**, **Lock when the windows have faded** ([Security](security.md#locking)) |
+| Idle | **Fade the windows when idle**, **Start after**, **Fade over**, **Lock when the windows have faded** ([Security](security.md#locking)), **Then dim the background**, **Dim after**, **Dim over**, **Then sleep** ([Shell § The idle fade](sola-shell.md#the-idle-fade)) |
 
 The settings travel as the persistent topic `Appearance`, saved in
 `~/.config/sola/state.yaml`. The Shell acts on the colours, rewriting

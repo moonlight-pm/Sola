@@ -59,6 +59,8 @@ pub enum AppearanceMsg {
     Dim(bool),
     /// Lock the screen once the fade is full on / off.
     LockIdle(bool),
+    /// Sleep once the idle is done on / off.
+    SleepIdle(bool),
     /// The dim's delay and length sliders moved (shown, not yet sent).
     DimAfter(u16),
     DimOver(u16),
@@ -153,6 +155,7 @@ pub fn update(msg: AppearanceMsg, state: &mut AppearanceState) -> Task<Appearanc
         }
         AppearanceMsg::Dim(on) => look.dim_idle = on,
         AppearanceMsg::LockIdle(on) => look.lock_idle = on,
+        AppearanceMsg::SleepIdle(on) => look.sleep_idle = on,
         AppearanceMsg::DimAfter(m) => {
             look.dim_after_min = m;
             return Task::none();
@@ -346,14 +349,21 @@ fn idle(state: &AppearanceState) -> Element<'_, AppearanceMsg> {
                     format!("{} min", look.dim_over_min),
                 ),
             ),
+            page::setting(
+                "Then sleep",
+                toggler(look.sleep_idle)
+                    .on_toggle(AppearanceMsg::SleepIdle)
+                    .style(toggle_style),
+            ),
         ]),
         Some(
             "After the first time with no input, the windows fade into the \
              background over the second. Once only the background shows, it \
-             dims after the third, over the fourth, to a tenth of its light. \
-             Any input brings them back. Not while a window is fullscreen or an \
-             app keeps the screen awake (a video). Locking needs a password \
-             (Settings → Login)."
+             dims after the third, over the fourth, to a tenth of its light, \
+             and then the computer sleeps (with the dim off, once the windows \
+             have faded). Any input brings them back; a key or the mouse wakes \
+             the computer. Not while a window is fullscreen or an app keeps the \
+             screen awake (a video). Locking needs a password (Settings → Login)."
                 .into(),
         ),
     )

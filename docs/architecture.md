@@ -377,8 +377,15 @@ them by window position less the windows above; at rest every video is
 left out, while fading only a watched one in sight, which holds the
 fade (`fade::hold`). Sticky `Topic::IdleFade`
 says it is fading and, once full, `out`: the shell then reports every tab
-window off screen (`WindowPlace.shown`), so the browser's pages rest. The menubar carries no
-app menus. The shell publishes sticky
+window off screen (`WindowPlace.shown`), so the browser's pages rest. Once
+the dim is full (at full with the dim off) it says `done`, and the shell,
+with `Appearance.sleep_idle`, puts the machine to sleep (`power.rs`; Oath
+has no sleep yet). The menubar carries no
+app menus; its middle is the quick launch (persistent `Topic::QuickLaunch`,
+`menubar/quick.rs`: launcher app ids and Sleep), edited by Settings →
+Applications and by every kit app's own menu, whose Add to / Remove from
+Quick Launch the kit adds (`menu::fill_quick_launch`) and the shell carries
+out. The shell publishes sticky
 `Topic::WindowPlace` (window id → tiled, floating, Cinema, rim, and the rest; `place.rs`):
 sola-river sends `set_tiled` on change and a 1 px border on windows whose
 app published no menu (foreign apps) — tiled ones get rounded corners
