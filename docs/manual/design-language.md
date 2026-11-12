@@ -27,7 +27,7 @@ or the graphite brand requires it.
 | Palette | System greys | **Graphite on neutral greys** (`#0b0b0b` / `#151515` / …; no blue since 2026-10-23) |
 | Window layout | Freeform windows | **Zones**: Full, or Left and Right halves, on a 10 px gap grid; any window can float |
 | Menus | One global menu bar | **Each window's titlebar** carries its app's menus; the top row holds only the shell's islands |
-| Title bars | Title bar + three traffic lights | A 38 px titlebar on every kit window: the three lights, the menus, the title. Yellow **hides the app**; green **picks a zone** |
+| Title bars | Title bar + three traffic lights | A 38 px titlebar on every kit window: the three lights, the menus, the title. Yellow **hides that window**; green **picks a zone** |
 | Primary controls | Flat system blue | Soft accent fill, **dark label**, optional glow |
 | Hairlines | Solid system separator | Soft white edges, baked **opaque** on their surface (7% / 12%) |
 | Everything else | HIG dark mode density | Follow density; prefer graphite tokens |
@@ -205,8 +205,9 @@ This is the main intentional break from macOS chrome.
 ### Implications for visual design
 
 - The stoplight is close (red), hide (yellow) and zone (green), 12 px
-  lights 8 px apart, 13 px in. Yellow hides the whole app, as Super+H
-  does (there is no minimise); green opens the zone picker under it.
+  lights 8 px apart, 13 px in. Yellow hides that window alone (its row
+  stays in the tab bar; Super+H hides the whole app); green opens the
+  zone picker under it.
 - Kit apps get the titlebar from the kit's window frame; they publish their
   menus and do not draw their own title row.
 - The tab bar (its focused row is the highlight pill) and the focused

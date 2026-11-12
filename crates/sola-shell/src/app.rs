@@ -927,6 +927,10 @@ impl Shell {
                 self.hide_focused_app();
                 iced::Task::none()
             }
+            sola_kit::WindowAction::HideWindow => {
+                self.hide_focused_window();
+                iced::Task::none()
+            }
             sola_kit::WindowAction::Cycle => iced::Task::done(Msg::CycleApp { back: false }),
             sola_kit::WindowAction::Pin => {
                 self.toggle_pin_focused();
@@ -987,6 +991,43 @@ impl Shell {
             self.emit_registered_chords();
             self.emit_composition();
         }
+    }
+
+    /// The titlebar's yellow light: take the focused window off screen
+    /// alone. Its row stays in the bar, marked hidden, until it is shown
+    /// again (its row, Super+\`, its app from the launcher). Its zone shows
+    /// its next tab, or gives way; focus goes to what shows there.
+    pub fn hide_focused_window(&mut self) {
+        let Some(wid) = self.focused_window_id else {
+            return;
+        };
+        let wid = self.tabs.parent_of(wid).unwrap_or(wid);
+        let zone = self.tabs.zone_of(wid);
+        if !self.tabs.hide(wid) {
+            return;
+        }
+        tracing::info!(window_id = wid, app_id = ?self.focused_app_id, ?zone, "hide window");
+        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
+        if self
+            .pointer_window_id
+            .is_some_and(|p| self.tabs.parent_of(p).unwrap_or(p) == wid)
+        {
+            self.pointer_window_id = None;
+        }
+        let next = self
+            .next_focus(zone)
+            .and_then(|w| Some((w, self.app_id_for_window(w)?)));
+        match next {
+            Some((next, app_id)) => self.focus_window(next, &app_id),
+            None => {
+                // Nothing left to focus: the keyboard must not stay in it.
+                self.emit_focus(sola_bus::topics::FocusTarget::NO_WINDOW, Some(wid));
+                self.focused_app_id = None;
+                self.focused_window_id = None;
+                self.emit_registered_chords();
+            }
+        }
+        self.emit_composition();
     }
 
     /// Catalog / window app_id of a composition-hidden mapped app matching
@@ -1589,7 +1630,7 @@ impl Shell {
             }
         }
         for &wid in self.tabs.float_order() {
-            if !self.window_app_hidden(wid) {
+            if !self.window_hidden(wid) {
                 self.push_with_dialogs(order, wid);
             }
         }
@@ -1611,14 +1652,14 @@ impl Shell {
         }
     }
 
-    /// `wid`, then its dialogs, unless its app is hidden.
+    /// `wid`, then its dialogs, unless it is hidden.
     fn push_with_dialogs(&self, order: &mut Vec<u32>, wid: u32) {
-        if self.window_app_hidden(wid) {
+        if self.window_hidden(wid) {
             return;
         }
         order.push(wid);
         for child in self.tabs.children_of(wid) {
-            if !self.window_app_hidden(child)
+            if !self.window_hidden(child)
                 && self.known_windows.iter().any(|w| w.window_id == child)
             {
                 order.push(child);
@@ -1626,11 +1667,14 @@ impl Shell {
         }
     }
 
-    fn window_app_hidden(&self, wid: u32) -> bool {
-        self.known_windows
-            .iter()
-            .find(|w| w.window_id == wid)
-            .is_some_and(|w| self.is_app_hidden(&w.app_id))
+    /// Hidden alone (its yellow light), or with its app (Hide).
+    fn window_hidden(&self, wid: u32) -> bool {
+        self.tabs.is_hidden(wid)
+            || self
+                .known_windows
+                .iter()
+                .find(|w| w.window_id == wid)
+                .is_some_and(|w| self.is_app_hidden(&w.app_id))
     }
 
     /// Build the composition list (bottom to top) and emit Topic::Composition.
@@ -4134,6 +4178,47 @@ mod hide_tests {
             shell.mapped_hidden_app_id("sola-terminal").as_deref(),
             Some("sola-terminal")
         );
+    }
+
+    #[test]
+    fn hide_window_takes_that_window_alone() {
+        let mut shell = test_shell(
+            vec![
+                win(1, Shell::APP_ID, "menubar"),
+                win(2, "sola-terminal", "Terminal"),
+                win(3, "sola-browser", "Browser"),
+                win(4, "sola-terminal", "Terminal 2"),
+            ],
+            Some("sola-terminal"),
+            &["sola-terminal", "sola-browser"],
+        );
+        assert_eq!(composed_apps(&shell), vec![1, 2, 3]);
+
+        shell.hide_focused_window();
+
+        assert!(shell.tabs.is_hidden(2));
+        assert!(!shell.is_app_hidden("sola-terminal"));
+        assert_eq!(shell.focused_window_id, Some(4), "its zone's other tab");
+        assert_eq!(composed_apps(&shell), vec![1, 4, 3]);
+
+        // The press that hid it, come in after, leaves it hidden.
+        shell.on_mouse_clicked(sola_bus::topics::MouseClickedPayload { window_id: 2 });
+        assert!(shell.tabs.is_hidden(2));
+
+        // Its row brings it back.
+        shell.activate_window(2);
+        assert!(!shell.tabs.is_hidden(2));
+        assert_eq!(shell.focused_window_id, Some(2));
+        assert_eq!(composed_apps(&shell), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn hide_a_zones_last_window_focuses_what_shows() {
+        let mut shell = desktop();
+        shell.hide_focused_window();
+        assert!(shell.tabs.is_hidden(2));
+        assert_eq!(shell.focused_window_id, Some(3));
+        assert_eq!(composed_apps(&shell), vec![1, 3]);
     }
 
     #[test]

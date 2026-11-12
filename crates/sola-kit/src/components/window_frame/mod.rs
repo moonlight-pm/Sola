@@ -15,9 +15,9 @@
 //! menu, then the window's title in tertiary ink, right-aligned. Menus come
 //! from [`crate::menu::current`]; a choice goes through
 //! [`crate::menu::choose`]. A menu's dropdown hangs under its title inside
-//! the window; the green light's zone picker hangs under it. Yellow and
-//! green are the Window menu's Hide and zone items, so the shell carries
-//! them out. Spec: `docs/specs/2026-10-21-next-tab-bar-design.md`, slice 6.
+//! the window; the green light's zone picker hangs under it. Yellow hides
+//! the window alone ([`crate::menu::ACTION_HIDE_WINDOW`]) and green's picks
+//! are the Window menu's zone items, so the shell carries them out. Spec: `docs/specs/2026-10-21-next-tab-bar-design.md`, slice 6.
 
 mod bar;
 mod dropdown;

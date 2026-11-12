@@ -29,8 +29,8 @@ const TITLE_SIZE: f32 = 12.5;
 /// Narrower than this and the title is left out rather than squeezed.
 const TITLE_MIN: f32 = 32.0;
 
-/// A light of the stoplight, left to right: close the window, hide its
-/// app, pick its zone.
+/// A light of the stoplight, left to right: close the window, hide it,
+/// pick its zone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Dot {
     Close,

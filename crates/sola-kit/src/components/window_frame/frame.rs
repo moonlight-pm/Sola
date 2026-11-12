@@ -127,8 +127,8 @@ impl<'a, Message> WindowFrame<'a, Message> {
         self.definitions().iter().map(|m| m.label.clone()).collect()
     }
 
-    /// The app the menus are for: the shell hides it, or moves its focused
-    /// window, for the yellow and green lights.
+    /// The app the menus are for: the shell hides or moves its focused
+    /// window for the yellow and green lights.
     fn app_id(&self) -> Option<&str> {
         self.menus.as_ref().map(|m| m.app_id.as_str())
     }
@@ -453,7 +453,7 @@ impl<Message: Clone> WindowFrame<'_, Message> {
                             Hit::Dot(Dot::Hide) => {
                                 state.close_menu();
                                 if let Some(app_id) = self.app_id() {
-                                    crate::menu::choose(app_id, crate::menu::ACTION_HIDE);
+                                    crate::menu::choose(app_id, crate::menu::ACTION_HIDE_WINDOW);
                                 }
                             }
                             Hit::Dot(Dot::Zone) => {
