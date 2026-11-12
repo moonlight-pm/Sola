@@ -24,8 +24,17 @@ fn item(id: &str, label: &str, checked: bool) -> MenuItem {
 }
 
 /// The menus, with Mirror or Extend checked, and Statistics while they
-/// show.
-pub fn app_menu(statistics: bool, mirror: bool) -> AppMenuPayload {
+/// show. Mirror is greyed out while the other machine has no screen of its
+/// own on (a laptop's lid closed), and it shows extended meanwhile.
+pub fn app_menu(statistics: bool, mirror: bool, can_mirror: bool) -> AppMenuPayload {
+    let mirrored = mirror && can_mirror;
+    let mirror_item = MenuItem::Action {
+        id: MIRROR.into(),
+        label: "Mirror".into(),
+        shortcut: None,
+        disabled: !can_mirror,
+        checked: mirrored,
+    };
     AppMenuPayload {
         app_id: APP_ID.into(),
         menus: vec![
@@ -39,8 +48,8 @@ pub fn app_menu(statistics: bool, mirror: bool) -> AppMenuPayload {
             MenuDefinition {
                 label: "View".into(),
                 items: vec![
-                    item(MIRROR, "Mirror", mirror),
-                    item(EXTEND, "Extend", !mirror),
+                    mirror_item,
+                    item(EXTEND, "Extend", !mirrored),
                     MenuItem::Divider,
                     item(STATISTICS, "Statistics", statistics),
                 ],

@@ -28,6 +28,16 @@ Builds on [Remote Desktop](2026-11-09-sola-kvm-view-design.md) and
   (`~/.local/state/sola/sola-kvm-view/mirror.json`) and sent on each
   connection (`Up::Mirror`, additive); switching restarts capture, and Mirror
   lets the made display go.
+- **A closed lid** (Joshua, 2026-11-11: with the lid closed, Extend kept
+  working, but Mirror failed, "the main display has no mode", and the window
+  stuck: "disable the option if the lid is closed"): the agent watches the
+  lid (IOKit's clamshell message from the power root domain) and tells the
+  viewer whether there is a screen to mirror (`Down::CanMirror`, additive):
+  the laptop's with its lid open, or another display. ScreenCaptureKit lists
+  the laptop's screen with its lid closed too, with no mode, so the lid says
+  for that one. Mirror is greyed out meanwhile and it shows extended; the
+  choice is kept, and it mirrors again when the lid opens. A switch that will
+  not start extends instead of ending the stream.
 - When the viewer goes, the display goes with it: macOS moves its windows back
   to the laptop's screen, which is main again.
 - The laptop's screen keeps its own mode throughout; someone at ember sees the

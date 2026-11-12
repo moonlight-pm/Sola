@@ -16,7 +16,8 @@ use objc2::runtime::ProtocolObject;
 use objc2::{AnyThread, DefinedClass, define_class, msg_send};
 use objc2_core_foundation::CGPoint;
 use objc2_core_graphics::{
-    CGDisplayCopyDisplayMode, CGDisplayMode, CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess,
+    CGDisplayCopyDisplayMode, CGDisplayIsBuiltin, CGDisplayMode, CGPreflightScreenCaptureAccess,
+    CGRequestScreenCaptureAccess,
     kCGColorSpaceSRGB, kCGDisplayStreamYCbCrMatrix_ITU_R_709_2,
 };
 use objc2_core_media::{CMSampleBuffer, CMTime};
@@ -31,6 +32,7 @@ use tracing::{info, warn};
 use super::cursor::Watch;
 use super::display::{self, Virtual};
 use super::encode::{Encoder, FPS};
+use super::lid;
 use super::flow::{Gate, now_us};
 use super::rate::CEILING_KBPS;
 use super::pattern;
@@ -148,6 +150,22 @@ impl Screen {
     }
 }
 
+/// Whether this Mac has a screen of its own on to mirror: the laptop's with
+/// its lid open, or another display. ScreenCaptureKit lists the laptop's
+/// screen with its lid closed too, so the lid says for that one.
+pub fn can_mirror(screen: &Screen) -> bool {
+    if !lid::closed() {
+        return true;
+    }
+    let ours = screen.made.as_ref().map(Virtual::id);
+    shareable_content().is_ok_and(|content| {
+        unsafe { content.displays() }.iter().any(|d| {
+            let id = unsafe { d.displayID() };
+            Some(id) != ours && !display::gone(id) && !CGDisplayIsBuiltin(id)
+        })
+    })
+}
+
 /// Start sending: a screen at the viewer's `size` when it said one, else
 /// the main screen (mirrored), and any display made before goes.
 pub fn start(source: Source, size: Option<Size>, screen: &mut Screen, feed: Feed) -> Result<(Down, Running), String> {
@@ -215,12 +233,30 @@ fn test_pattern(feed: Feed, shape: Shape) -> Result<(Down, Running), String> {
     Ok((display, running))
 }
 
-/// The main display, at (0, 0), and not one this process made and let go.
+/// The main display, at (0, 0), on (it has a mode: a closed lid's has
+/// none), and not one this process made and let go.
 fn main_display(content: &SCShareableContent) -> Result<Retained<SCDisplay>, String> {
-    let kept: Vec<Retained<SCDisplay>> =
-        unsafe { content.displays() }.iter().filter(|d| !display::gone(unsafe { d.displayID() })).collect();
+    let on = |d: &Retained<SCDisplay>| {
+        let id = unsafe { d.displayID() };
+        !display::gone(id) && CGDisplayCopyDisplayMode(id).is_some()
+    };
+    let kept: Vec<Retained<SCDisplay>> = unsafe { content.displays() }.iter().filter(on).collect();
     let main = kept.iter().position(|d| unsafe { d.frame() }.origin == CGPoint::ZERO).unwrap_or(0);
     kept.into_iter().nth(main).ok_or_else(|| "ScreenCaptureKit does not list the main display".to_string())
+}
+
+/// The main display, once ScreenCaptureKit lists one on: a screen whose lid
+/// just opened comes a moment later.
+fn listed_main() -> Result<Retained<SCDisplay>, String> {
+    let started = Instant::now();
+    loop {
+        let content = shareable_content()?;
+        match main_display(&content) {
+            Ok(display) => return Ok(display),
+            Err(why) if started.elapsed() > LISTED => return Err(why),
+            Err(_) => thread::sleep(LOOK),
+        }
+    }
 }
 
 /// The display made with `id`, once ScreenCaptureKit lists it at `shape`.
@@ -265,8 +301,7 @@ fn capture_screen(feed: Feed, screen: &mut Screen, shape: Option<Shape>) -> Resu
     let (display, (width, height), (points_w, points_h)) = match made {
         Some((display, shape)) => (display, shape.pixels(), shape.points),
         None => {
-            let content = shareable_content()?;
-            let display = main_display(&content)?;
+            let display = listed_main()?;
             let id = unsafe { display.displayID() };
             let mode = CGDisplayCopyDisplayMode(id).ok_or_else(|| "the main display has no mode".to_string())?;
             let pixels = (CGDisplayMode::pixel_width(Some(&mode)), CGDisplayMode::pixel_height(Some(&mode)));

@@ -47,6 +47,8 @@ pub enum Event {
     Picture,
     /// The host's pointer changed; it waits in [`Pictures`].
     Cursor,
+    /// Whether the host has a screen of its own on to mirror.
+    CanMirror(bool),
     Lost(String),
     /// The host will not send a picture; trying again will not help.
     Refused(String),
@@ -213,6 +215,7 @@ fn session(
             Down::Clipboard(text) => {
                 let _ = clip.send(ClipJob::Apply(text));
             }
+            Down::CanMirror(can) => events(Event::CanMirror(can)),
             Down::Cursor(cursor) => {
                 debug!(
                     width = cursor.width,

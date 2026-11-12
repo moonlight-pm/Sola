@@ -14,6 +14,8 @@ mod cursor;
 mod display;
 #[cfg(target_os = "macos")]
 mod encode;
+#[cfg(target_os = "macos")]
+mod lid;
 mod flow;
 #[cfg(target_os = "macos")]
 mod pattern;
@@ -32,6 +34,12 @@ pub fn make_main(_display: u32) -> Result<(), String> {
     Err("arranging displays needs macOS".into())
 }
 
+/// Stub off macOS: no lid.
+#[cfg(not(target_os = "macos"))]
+mod lid {
+    pub fn watch(_changed: impl Fn() + Send + Sync + 'static) {}
+}
+
 /// Stub for tests off macOS: there is no screen to send.
 #[cfg(not(target_os = "macos"))]
 mod capture {
@@ -42,6 +50,10 @@ mod capture {
 
     #[derive(Default)]
     pub struct Screen;
+
+    pub fn can_mirror(_screen: &Screen) -> bool {
+        true
+    }
 
     pub fn start(_source: Source, _size: Option<Size>, _screen: &mut Screen, _feed: Feed) -> Result<(Down, Running), String> {
         Err("remote view needs macOS".into())

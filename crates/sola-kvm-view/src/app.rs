@@ -63,6 +63,8 @@ pub struct App {
     /// View → Mirror: the other machine's own screen, not one of the
     /// window's size. Kept across starts.
     mirror: bool,
+    /// The other machine has a screen of its own on to mirror.
+    can_mirror: bool,
     inhibitor: Option<Arc<Inhibitor>>,
     window_id: Option<window::Id>,
     theme: Theme,
@@ -118,6 +120,7 @@ impl App {
                 focused: false,
                 statistics: false,
                 mirror: saved_mirror(),
+                can_mirror: true,
                 inhibitor: None,
                 window_id: None,
                 theme: default_theme(),
@@ -196,7 +199,7 @@ impl App {
                     }
                     if p.app_id == APP_ID && p.action_id == menu::STATISTICS {
                         self.statistics = !self.statistics;
-                        sola_kit::menu::publish(menu::app_menu(self.statistics, self.mirror));
+                        self.publish_menu();
                     }
                     if p.app_id == APP_ID && [menu::MIRROR, menu::EXTEND].contains(&p.action_id.as_str()) {
                         self.set_mirror(p.action_id == menu::MIRROR);
@@ -268,6 +271,10 @@ impl App {
             // The message alone brings the redraw that uploads it.
             net::Event::Picture => self.pictures.drawn(),
             net::Event::Cursor => {}
+            net::Event::CanMirror(can) => {
+                self.can_mirror = can;
+                self.publish_menu();
+            }
             net::Event::Lost(why) => {
                 self.status = Status::Lost(why);
                 self.held.clear();
@@ -333,8 +340,12 @@ impl App {
         self.mirror = mirror;
         mirror_file().save(&mirror);
         self.pictures.mirror.store(mirror, Ordering::Relaxed);
-        sola_kit::menu::publish(menu::app_menu(self.statistics, mirror));
+        self.publish_menu();
         self.send_out(Outgoing::Mirror(mirror));
+    }
+
+    fn publish_menu(&self) {
+        sola_kit::menu::publish(menu::app_menu(self.statistics, self.mirror, self.can_mirror));
     }
 
     /// The host's screen at the picture's area, when it can.

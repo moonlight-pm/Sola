@@ -32,6 +32,7 @@ const PICTURE: u8 = 2;
 const REFUSED: u8 = 3;
 const CLIPBOARD: u8 = 4;
 const CURSOR: u8 = 5;
+const CAN_MIRROR: u8 = 6;
 const KEYFRAME: u8 = 1;
 const EVENT: u8 = 2;
 const CLIPBOARD_SET: u8 = 3;
@@ -127,6 +128,10 @@ pub enum Down {
     /// The host's pointer changed. Sent only when the picture leaves the
     /// pointer out; until one comes, the picture has it.
     Cursor(Cursor),
+    /// Whether the host has a screen of its own on to mirror (a laptop's
+    /// with its lid open, or another): with each `Display`, and when it
+    /// changes. Until one comes, it has.
+    CanMirror(bool),
 }
 
 impl Down {
@@ -176,6 +181,7 @@ impl Down {
                 out.extend_from_slice(&c.rgba);
                 out
             }
+            Self::CanMirror(can) => vec![CAN_MIRROR, u8::from(*can)],
         }
     }
 
@@ -219,7 +225,8 @@ impl Down {
                 }
                 Self::Cursor(cursor)
             }
-            DISPLAY | PICTURE | CURSOR => return Err(short()),
+            CAN_MIRROR if rest.len() == 1 => Self::CanMirror(rest[0] != 0),
+            DISPLAY | PICTURE | CURSOR | CAN_MIRROR => return Err(short()),
             REFUSED => Self::Refused(String::from_utf8_lossy(rest).into_owned()),
             CLIPBOARD => Self::Clipboard(String::from_utf8_lossy(rest).into_owned()),
             _ => return Ok(None),
@@ -374,6 +381,8 @@ mod tests {
                 rgba: vec![0, 0, 0, 255, 255, 255, 255, 255],
             }),
             Down::Cursor(Cursor::default()),
+            Down::CanMirror(false),
+            Down::CanMirror(true),
         ] {
             assert_eq!(Down::decode(&msg.encode()).unwrap(), Some(msg));
         }

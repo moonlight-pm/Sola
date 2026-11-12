@@ -13,6 +13,7 @@ use tracing::{debug, info, warn};
 
 use super::capture;
 use super::flow::{Flow, Gate, now_us};
+use super::lid;
 use super::rate::Rate;
 use crate::inject::{CgInjector, Injector};
 use crate::link::{Conn, Keys};
@@ -58,7 +59,7 @@ pub enum Msg {
     /// The pointer changed, for the viewer to draw.
     Cursor(Cursor),
     /// The viewer said a new size or Mirror ([`Shared::size`],
-    /// [`Shared::mirror`]).
+    /// [`Shared::mirror`]), or a lid opened or closed.
     Resize,
     /// A capture stopped on its own.
     Stopped(u32),
@@ -123,6 +124,9 @@ pub fn spawn(bind: &str, keys: Keys, source: Source) -> io::Result<()> {
     info!(%addr, ?source, "remote view listening (TCP)");
     thread::Builder::new().name("kvm-view".into()).spawn(move || {
         let shared = Arc::new(Shared::default());
+        // A lid opened or closed: whether there is a screen to mirror.
+        let watching = Arc::clone(&shared);
+        lid::watch(move || watching.resize());
         for tcp in listener.incoming() {
             let opened = tcp.and_then(|mut tcp| {
                 let (conn, stream) = open(&mut tcp, &keys)?;
@@ -199,6 +203,30 @@ impl Captures {
         let (display, running) = capture::start(self.source, size, &mut self.screen, feed)?;
         Ok((display, gate, running))
     }
+
+    /// [`Self::start`] at `want`, and when mirroring (`None`) will not
+    /// start, extended at `size` instead: a switch never ends the stream.
+    /// What it started at, with it.
+    fn start_or_extend(
+        &mut self,
+        want: Option<Size>,
+        size: Option<Size>,
+    ) -> Result<(Down, Arc<Gate>, capture::Running, Option<Size>), String> {
+        match self.start(want) {
+            Ok((display, gate, running)) => Ok((display, gate, running, want)),
+            Err(why) if want.is_none() && size.is_some() => {
+                warn!(%why, "remote view: no screen to mirror; extended");
+                let (display, gate, running) = self.start(size)?;
+                Ok((display, gate, running, size))
+            }
+            Err(why) => Err(why),
+        }
+    }
+
+    /// The test card always can.
+    fn can_mirror(&self) -> bool {
+        self.source == Source::TestPattern || capture::can_mirror(&self.screen)
+    }
 }
 
 fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source) -> io::Result<()> {
@@ -216,19 +244,22 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
         generation: 0,
     };
     // The viewer says its size and Mirror before it opens this stream. A
-    // screen of the window's size unless it mirrors.
+    // screen of the window's size, unless it mirrors and this Mac can.
     let mut size = lock(&shared.size).take();
     let mut mirror = shared.mirror.load(Ordering::Relaxed);
-    let wanted = |size: Option<Size>, mirror: bool| size.filter(|_| !mirror);
-    let (screen, mut gate, running) = match captures.start(wanted(size, mirror)) {
-        Ok(v) => v,
-        Err(why) => {
-            warn!(%why, "remote view: no picture to send");
-            return conn.write_frame(&mut tcp, &Down::Refused(why).encode());
-        }
-    };
-    info!(?screen, "remote view: sending");
+    let mut can_mirror = captures.can_mirror();
+    let wanted = |size: Option<Size>, mirror: bool, can: bool| size.filter(|_| !(mirror && can));
+    let (screen, mut gate, running, mut showing) =
+        match captures.start_or_extend(wanted(size, mirror, can_mirror), size) {
+            Ok(v) => v,
+            Err(why) => {
+                warn!(%why, "remote view: no picture to send");
+                return conn.write_frame(&mut tcp, &Down::Refused(why).encode());
+            }
+        };
+    info!(?screen, mirror, can_mirror, "remote view: sending");
     conn.write_frame(&mut tcp, &screen.encode())?;
+    conn.write_frame(&mut tcp, &Down::CanMirror(can_mirror).encode())?;
     let mut running = Some(running);
     let (mut flow, mut rate, mut seq) = (Flow::default(), Rate::default(), 0u32);
     loop {
@@ -265,17 +296,23 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
             Ok(Msg::Cursor(cursor)) => conn.write_frame(&mut tcp, &Down::Cursor(cursor).encode())?,
             Ok(Msg::Resize) => {
                 // What came while the last was applied: the newest wins.
-                let was = wanted(size, mirror);
                 size = lock(&shared.size).take().or(size);
                 mirror = shared.mirror.load(Ordering::Relaxed);
-                if wanted(size, mirror) == was {
+                let could = can_mirror;
+                can_mirror = captures.can_mirror();
+                if can_mirror != could {
+                    info!(can_mirror, "remote view: a screen to mirror");
+                    conn.write_frame(&mut tcp, &Down::CanMirror(can_mirror).encode())?;
+                }
+                let want = wanted(size, mirror, can_mirror);
+                if want == showing {
                     continue;
                 }
                 running = None;
-                match captures.start(wanted(size, mirror)) {
-                    Ok((screen, new_gate, new_running)) => {
-                        info!(?screen, "remote view: sending, at the window's new size");
-                        (gate, running) = (new_gate, Some(new_running));
+                match captures.start_or_extend(want, size) {
+                    Ok((screen, new_gate, new_running, started)) => {
+                        info!(?screen, "remote view: sending, at the window's new size or mode");
+                        (gate, running, showing) = (new_gate, Some(new_running), started);
                         conn.write_frame(&mut tcp, &screen.encode())?;
                     }
                     Err(why) => {
