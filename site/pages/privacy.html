@@ -4,28 +4,94 @@
 <p class="lede">
 Sola is a desktop environment that runs on your own computer. Its
 Calendar application can connect to your Google account. This page
-says what it does with that data. Calendar sends no analytics or
-telemetry.
+says which Google user data Sola accesses, how it uses that data, and
+how it protects it. Calendar sends no analytics or telemetry.
 </p>
 </header>
 
-<section id="google">
-<h2>Google Calendar</h2>
+<section id="data-accessed">
+<h2>Google user data Sola accesses</h2>
 <p>
-When you connect a Google account in Settings → Calendar, Sola asks Google for
-two permissions:
+When you connect a Google account in Settings → Calendar, you sign in on
+Google's own page in your browser, and Sola asks Google for two permissions:
 </p>
 <ul>
 <li>See and edit events on your calendars (<code>calendar.events</code>).</li>
 <li>See the list of calendars you subscribe to (<code>calendar.calendarlist.readonly</code>).</li>
 </ul>
+<p>With them, Sola reads:</p>
+<ul>
+<li>From your list of calendars: each calendar's ID, name and colour, and
+whether you may change its events. Your primary calendar's ID is your Google
+address, which Sola uses as the account's name.</li>
+<li>From each calendar's events, for the weeks around the dates you are
+looking at: each event's ID, title, description, location, Google Meet link,
+status, and start and end times.</li>
+</ul>
 <p>
-It uses them to show your calendars and reminders in Calendar and in the
-menubar clock's panel, and to create, change, or delete an event when you do
-that in Calendar. Your computer talks to Google directly. Nothing passes
-through a server of ours, and we never see your calendars, your events, or
-your sign-in.
+Sola writes only what you do in Calendar: an event you create, change, or
+delete. It does not ask for or read anything else in your Google account, such
+as your mail, contacts, files, or profile, and it never sees your Google
+password.
 </p>
+</section>
+
+<section id="data-use">
+<h2>How Sola uses Google user data</h2>
+<p>
+Only to show you your calendars and events: in Calendar, in the menubar
+clock's panel (the coming week), and in the reminders Sola shows before an
+event. And to create, change, or delete an event at Google when you do that
+in Calendar.
+</p>
+<p>
+Your computer talks to Google directly. Nothing passes through a server of
+ours, and we never see your calendars, your events, or your sign-in. No person
+reads your data. Sola does not sell it, share it, use it for advertising, or
+build a profile from it. It sends your Google data to no one but Google.
+</p>
+<p>
+Sola's use and transfer to any other app of information received from Google
+APIs will adhere to the
+<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+including the Limited Use requirements.
+</p>
+</section>
+
+<section id="ai">
+<h2>AI and machine learning</h2>
+<p>
+Sola sends no Google user data to any AI or machine learning model or service,
+and none of it is used to create, train, or improve a model, ours or anyone
+else's.
+</p>
+<p>
+Other parts of Sola work with AI: Bots talks to Grok, Claude, or Gab AI on
+your own account with each, and Projects and Design run coding agents you
+start. Sola gives none of them your Google data. Calendar offers no command or
+tool through which an agent could ask for it.
+</p>
+</section>
+
+<section id="data-protection">
+<h2>How Google user data is protected</h2>
+<ul>
+<li><strong>Sign-in.</strong> You sign in on Google's page, never in Sola.
+Sola uses Google's OAuth 2.0 with PKCE, and Google returns the sign-in to
+Sola at an address on your own computer (<code>127.0.0.1</code>).</li>
+<li><strong>In transit.</strong> Sola talks to Google only over HTTPS (TLS),
+directly from your computer, and checks Google's certificates.</li>
+<li><strong>At rest.</strong> Sign-in tokens are encrypted on disk with
+<a href="https://age-encryption.org">age</a> (X25519), using a key in
+<code>~/.config/sola/key</code> that only your account can read. Calendar's
+copy of your calendars and events, and your reminders, are in files only
+your account can read.</li>
+<li><strong>Nothing of ours to break into.</strong> We run no server that
+holds your data, so there is no copy anywhere but your computer and
+Google.</li>
+<li><strong>Least access.</strong> Sola asks for the two permissions above
+and no more.</li>
+</ul>
 </section>
 
 <section id="stored">
@@ -33,28 +99,14 @@ your sign-in.
 <p>
 On your computer, in your home directory. <code>~/.local/state/sola/calendar/</code>
 holds the calendars and events Sola last fetched, and your reminders.
-<code>~/.config/sola/state.yaml</code> holds your connected accounts and how
-each calendar is shown, and <code>~/.config/sola/calendar/agenda.yaml</code> the
-coming days for the clock's panel.
+<code>~/.config/sola/state.yaml</code> holds your connected accounts, with
+their tokens encrypted, and how each calendar is shown.
+<code>~/.config/sola/calendar/agenda.yaml</code> holds the coming week for the
+clock's panel. Each refresh brings Sola's copy up to date with Google.
 </p>
 <p>
-Sign-in tokens and passwords are encrypted on disk with a key in
-<code>~/.config/sola/key</code>. Other programs running under your account can
-read these files, as with anything in your home directory.
-</p>
-</section>
-
-<section id="sharing">
-<h2>Sharing</h2>
-<p>
-Sola does not sell your data, use it for advertising, or use it to train AI
-models. It sends your Google data to no one but Google.
-</p>
-<p>
-Sola's use and transfer to any other app of information received from Google
-APIs will adhere to the
-<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
-including the Limited Use requirements.
+Other programs running under your account can read these files, as with
+anything in your home directory.
 </p>
 </section>
 
@@ -96,7 +148,7 @@ request logs.
 Open an issue at
 <a href="https://github.com/moonlight-pm/Sola/issues">github.com/moonlight-pm/Sola/issues</a>.
 Changes to this page are in the repository's history. Last changed
-November 4, 2026.
+November 11, 2026.
 </p>
 </section>
 </main>
