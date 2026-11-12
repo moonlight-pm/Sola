@@ -3,7 +3,7 @@
 
 use std::io::{self, Read};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -95,9 +95,36 @@ struct Shared {
     size: Mutex<Option<Size>>,
     /// The viewer would see this Mac's own screen, not one of its own.
     mirror: AtomicBool,
+    /// The display made for the viewer, kept across video streams.
+    screen: Mutex<capture::Screen>,
+    /// The video stream running, by number; `None` between them.
+    live: Mutex<Option<u64>>,
+    streams: AtomicU64,
 }
 
 impl Shared {
+    /// Video stream `me` ended. Its display goes, unless another took over,
+    /// or the lid is closed: a Mac with its lid closed and no screen sleeps,
+    /// and no viewer could come back.
+    fn ended(&self, me: u64) {
+        let mut live = lock(&self.live);
+        if *live == Some(me) {
+            *live = None;
+            if !lid::closed() {
+                lock(&self.screen).release();
+            }
+        }
+    }
+
+    /// The lid opened or closed: with no viewer and the lid open, the
+    /// display kept for one goes; with one, its stream looks again.
+    fn lid_changed(&self) {
+        if lock(&self.live).is_none() && !lid::closed() {
+            lock(&self.screen).release();
+        }
+        self.resize();
+    }
+
     /// Tell the video stream the viewer's size or Mirror changed.
     fn resize(&self) {
         if let Some(tx) = &*lock(&self.to_viewer) {
@@ -126,7 +153,7 @@ pub fn spawn(bind: &str, keys: Keys, source: Source) -> io::Result<()> {
         let shared = Arc::new(Shared::default());
         // A lid opened or closed: whether there is a screen to mirror.
         let watching = Arc::clone(&shared);
-        lid::watch(move || watching.resize());
+        lid::watch(move || watching.lid_changed());
         for tcp in listener.incoming() {
             let opened = tcp.and_then(|mut tcp| {
                 let (conn, stream) = open(&mut tcp, &keys)?;
@@ -177,11 +204,33 @@ fn open(tcp: &mut TcpStream, keys: &Keys) -> io::Result<(Conn, Stream)> {
     Ok((conn, stream))
 }
 
+/// While a video stream runs: when it ends, [`Shared::ended`].
+struct Live {
+    shared: Arc<Shared>,
+    me: u64,
+}
+
+impl Live {
+    fn begin(shared: &Arc<Shared>) -> Self {
+        let me = shared.streams.fetch_add(1, Ordering::Relaxed) + 1;
+        *lock(&shared.live) = Some(me);
+        Self {
+            shared: Arc::clone(shared),
+            me,
+        }
+    }
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        self.shared.ended(self.me);
+    }
+}
+
 /// What a video stream starts its captures with.
 struct Captures {
     source: Source,
-    /// The display made for the viewer, which goes with the stream.
-    screen: capture::Screen,
+    shared: Arc<Shared>,
     tx: Sender<Msg>,
     skipped: Arc<AtomicU32>,
     force_key: Arc<AtomicBool>,
@@ -200,7 +249,7 @@ impl Captures {
             force_key: Arc::clone(&self.force_key),
             generation: self.generation,
         };
-        let (display, running) = capture::start(self.source, size, &mut self.screen, feed)?;
+        let (display, running) = capture::start(self.source, size, &mut lock(&self.shared.screen), feed)?;
         Ok((display, gate, running))
     }
 
@@ -225,19 +274,27 @@ impl Captures {
 
     /// The test card always can.
     fn can_mirror(&self) -> bool {
-        self.source == Source::TestPattern || capture::can_mirror(&self.screen)
+        self.source == Source::TestPattern || capture::can_mirror(&lock(&self.shared.screen))
+    }
+
+    /// Nothing to send until this Mac allows recording: a viewer is told,
+    /// and does not try again. Anything else it tries again.
+    fn lasting(&self) -> bool {
+        self.source == Source::Screen && !capture::allowed()
     }
 }
 
 fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source) -> io::Result<()> {
     Shared::take_over(&shared.video, &tcp)?;
+    // Dropped last: the capture stops before its display goes.
+    let _live = Live::begin(&shared);
     let (tx, rx) = mpsc::channel();
     watch_for_close(&tcp, tx.clone())?;
     *lock(&shared.to_viewer) = Some(tx.clone());
     let skipped = Arc::new(AtomicU32::new(0));
     let mut captures = Captures {
         source,
-        screen: capture::Screen::default(),
+        shared: Arc::clone(&shared),
         tx,
         skipped: Arc::clone(&skipped),
         force_key: Arc::clone(&shared.force_key),
@@ -252,9 +309,13 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
     let (screen, mut gate, running, mut showing) =
         match captures.start_or_extend(wanted(size, mirror, can_mirror), size) {
             Ok(v) => v,
-            Err(why) => {
+            Err(why) if captures.lasting() => {
                 warn!(%why, "remote view: no picture to send");
                 return conn.write_frame(&mut tcp, &Down::Refused(why).encode());
+            }
+            Err(why) => {
+                warn!(%why, "remote view: no picture to send yet; the viewer comes back");
+                return Ok(());
             }
         };
     info!(?screen, mirror, can_mirror, "remote view: sending");
@@ -316,8 +377,10 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
                         conn.write_frame(&mut tcp, &screen.encode())?;
                     }
                     Err(why) => {
-                        warn!(%why, "remote view: no picture to send at the new size");
-                        conn.write_frame(&mut tcp, &Down::Refused(why).encode())?;
+                        warn!(%why, "remote view: no picture to send at the new size or mode");
+                        if captures.lasting() {
+                            conn.write_frame(&mut tcp, &Down::Refused(why).encode())?;
+                        }
                         break;
                     }
                 }
@@ -326,7 +389,7 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
             Ok(Msg::Stopped(_) | Msg::Closed) | Err(_) => break,
         }
     }
-    // The capture first, then the display made for it, with `captures`.
+    // The capture first, then (with `_live`) the display made for it.
     drop(running);
     Ok(())
 }

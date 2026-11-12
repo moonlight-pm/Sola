@@ -109,21 +109,16 @@ impl Drop for Capture {
     }
 }
 
-/// A session's display: one made the viewer's size when it says a size and
-/// this Mac can, else the main one. Dropped with the session.
+/// The display remote view made, the viewer's size, kept by the agent
+/// across video streams (the server says when it goes).
 #[derive(Default)]
 pub struct Screen {
     made: Option<Virtual>,
-    /// This Mac would not make one: the main display from then on.
-    refused: bool,
 }
 
 impl Screen {
     /// The made display at `shape`, and main; `None` for the main display.
     fn fit(&mut self, shape: Shape) -> Option<(u32, Shape)> {
-        if self.refused {
-            return None;
-        }
         let made = match self.made.take() {
             Some(made) => Ok(made),
             None => Virtual::new(shape),
@@ -137,17 +132,24 @@ impl Screen {
             }
             Err(why) => {
                 warn!(%why, "remote view: no display of the window's size; the main display");
-                self.give_up();
                 None
             }
         }
     }
 
-    /// The main display from now on: the made one goes.
-    fn give_up(&mut self) {
-        self.made = None;
-        self.refused = true;
+    /// Let the made display go: macOS moves its windows back to the
+    /// laptop's screen.
+    pub fn release(&mut self) {
+        if let Some(made) = self.made.take() {
+            info!(id = made.id(), "remote view: the display made for the window goes");
+        }
     }
+}
+
+/// This Mac lets this agent record its screen: without it, trying again
+/// does not help.
+pub fn allowed() -> bool {
+    CGPreflightScreenCaptureAccess()
 }
 
 /// Whether this Mac has a screen of its own on to mirror: the laptop's with
@@ -294,7 +296,7 @@ fn capture_screen(feed: Feed, screen: &mut Screen, shape: Option<Shape>) -> Resu
         Ok(display) => Some((display, shape)),
         Err(why) => {
             warn!(%why, "remote view: the main display");
-            screen.give_up();
+            screen.release();
             None
         }
     });

@@ -16,6 +16,7 @@ use std::ffi::CStr;
 use std::process::Command;
 use std::ptr;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
 use objc2::msg_send;
@@ -34,6 +35,10 @@ use super::shape::{MAX_PIXELS, Shape};
 const PPI: f64 = 110.0;
 const VENDOR: u32 = 0x5301;
 
+/// Displays made, so each takes the serial the one before did not: macOS
+/// will not make a display while one with the same serial is going away.
+static MADE: AtomicU32 = AtomicU32::new(0);
+
 /// Displays this process made and let go: macOS takes them away, but
 /// ScreenCaptureKit may list one for a moment after.
 static GONE: Mutex<Vec<CGDirectDisplayID>> = Mutex::new(Vec::new());
@@ -48,6 +53,10 @@ pub struct Virtual {
     id: CGDirectDisplayID,
     shape: Option<Shape>,
 }
+
+// Kept by the agent across video streams, and used by one at a time under
+// its lock: the object is only retained, released and sent messages.
+unsafe impl Send for Virtual {}
 
 fn class(name: &CStr) -> Result<&'static AnyClass, String> {
     AnyClass::get(name).ok_or_else(|| format!("this macOS has no {}", name.to_string_lossy()))
@@ -69,7 +78,8 @@ impl Virtual {
             let _: () = msg_send![&descriptor, setSizeInMillimeters: size];
             let _: () = msg_send![&descriptor, setVendorID: VENDOR];
             let _: () = msg_send![&descriptor, setProductID: VENDOR];
-            let _: () = msg_send![&descriptor, setSerialNum: 1u32];
+            let serial = 1 + MADE.fetch_add(1, Ordering::Relaxed) % 2;
+            let _: () = msg_send![&descriptor, setSerialNum: serial];
             let made: Allocated<AnyObject> = msg_send![class(c"CGVirtualDisplay")?, alloc];
             let display: Option<Retained<AnyObject>> = msg_send![made, initWithDescriptor: &*descriptor];
             let display = display.ok_or_else(|| "macOS would not make a display".to_string())?;
