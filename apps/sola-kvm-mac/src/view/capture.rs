@@ -121,7 +121,8 @@ impl Screen {
     fn fit(&mut self, shape: Shape) -> Option<(u32, Shape)> {
         let made = match self.made.take() {
             Some(made) => Ok(made),
-            None => Virtual::new(shape),
+            // A display going away keeps its serial a moment: then the other.
+            None => Virtual::new(shape).or_else(|_| Virtual::new(shape)),
         };
         match made.and_then(|mut made| made.fit(shape).map(|()| made)) {
             Ok(made) => {
@@ -169,15 +170,25 @@ pub fn can_mirror(screen: &Screen) -> bool {
 }
 
 /// Start sending: a screen at the viewer's `size` when it said one, else
-/// the main screen (mirrored), and any display made before goes.
-pub fn start(source: Source, size: Option<Size>, screen: &mut Screen, feed: Feed) -> Result<(Down, Running), String> {
+/// the main screen (mirrored), and any display made before goes. With
+/// whether it extended: a screen of that size could not be made, and it
+/// mirrors.
+pub fn start(
+    source: Source,
+    size: Option<Size>,
+    screen: &mut Screen,
+    feed: Feed,
+) -> Result<(Down, Running, bool), String> {
     let shape = size.map(Shape::of);
     if shape.is_none() {
         screen.made = None;
     }
     match source {
         Source::Screen => capture_screen(feed, screen, shape),
-        Source::TestPattern => test_pattern(feed, shape.map_or(CARD, |shape| Shape { scale: 1, ..shape })),
+        Source::TestPattern => {
+            let (display, running) = test_pattern(feed, shape.map_or(CARD, |shape| Shape { scale: 1, ..shape }))?;
+            Ok((display, running, shape.is_some()))
+        }
     }
 }
 
@@ -281,7 +292,7 @@ fn made_display(id: u32, shape: Shape) -> Result<Retained<SCDisplay>, String> {
 
 /// The display made at `shape` when there is one and ScreenCaptureKit lists
 /// it; else the main display.
-fn capture_screen(feed: Feed, screen: &mut Screen, shape: Option<Shape>) -> Result<(Down, Running), String> {
+fn capture_screen(feed: Feed, screen: &mut Screen, shape: Option<Shape>) -> Result<(Down, Running, bool), String> {
     if !CGPreflightScreenCaptureAccess() {
         // Puts this app in the list in System Settings; the answer takes
         // effect the next time the agent starts.
@@ -300,6 +311,7 @@ fn capture_screen(feed: Feed, screen: &mut Screen, shape: Option<Shape>) -> Resu
             None
         }
     });
+    let extended = made.is_some();
     let (display, (width, height), (points_w, points_h)) = match made {
         Some((display, shape)) => (display, shape.pixels(), shape.points),
         None => {
@@ -354,7 +366,7 @@ fn capture_screen(feed: Feed, screen: &mut Screen, shape: Option<Shape>) -> Resu
         _capture: Capture::Screen { stream, _output: output },
         _pointer: pointer,
     };
-    Ok((display, running))
+    Ok((display, running, extended))
 }
 
 struct Sendable<T>(T);

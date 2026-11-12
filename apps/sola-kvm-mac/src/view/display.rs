@@ -17,6 +17,8 @@ use std::process::Command;
 use std::ptr;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
 use objc2::msg_send;
@@ -31,6 +33,11 @@ use objc2_foundation::{NSArray, NSString};
 
 use super::shape::{MAX_PIXELS, Shape};
 
+/// How long to keep arranging: a display going away meanwhile fails the
+/// arrangement (status 1001), and macOS says nothing when it has gone, so
+/// this tries again every [`LOOK`]; nothing is ordered by it.
+const ARRANGING: Duration = Duration::from_secs(1);
+const LOOK: Duration = Duration::from_millis(50);
 /// Points per inch, for the size the display says it is.
 const PPI: f64 = 110.0;
 const VENDOR: u32 = 0x5301;
@@ -138,6 +145,17 @@ impl Virtual {
 /// arranged among themselves. For the login session, as this process ends
 /// at once; macOS arranges again when the display goes.
 pub fn make_main(id: CGDirectDisplayID) -> Result<(), String> {
+    let started = Instant::now();
+    loop {
+        match arrange(id) {
+            Ok(()) => return Ok(()),
+            Err(why) if started.elapsed() > ARRANGING => return Err(why),
+            Err(_) => thread::sleep(LOOK),
+        }
+    }
+}
+
+fn arrange(id: CGDirectDisplayID) -> Result<(), String> {
     let mut ids = [0; 16];
     let mut count = 0;
     check(unsafe { CGGetOnlineDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count) }, "read")?;

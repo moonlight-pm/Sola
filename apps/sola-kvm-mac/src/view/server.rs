@@ -238,8 +238,8 @@ struct Captures {
 }
 
 impl Captures {
-    /// A new capture at `size`, with its own gate.
-    fn start(&mut self, size: Option<Size>) -> Result<(Down, Arc<Gate>, capture::Running), String> {
+    /// A new capture at `size`, with its own gate, and whether it extended.
+    fn start(&mut self, size: Option<Size>) -> Result<(Down, Arc<Gate>, capture::Running, bool), String> {
         self.generation += 1;
         let gate = Arc::new(Gate::default());
         let feed = Feed {
@@ -249,24 +249,24 @@ impl Captures {
             force_key: Arc::clone(&self.force_key),
             generation: self.generation,
         };
-        let (display, running) = capture::start(self.source, size, &mut lock(&self.shared.screen), feed)?;
-        Ok((display, gate, running))
+        let (display, running, extended) = capture::start(self.source, size, &mut lock(&self.shared.screen), feed)?;
+        Ok((display, gate, running, extended))
     }
 
     /// [`Self::start`] at `want`, and when mirroring (`None`) will not
     /// start, extended at `size` instead: a switch never ends the stream.
-    /// What it started at, with it.
+    /// What it started at, with it: `None` when it mirrors, asked to or not.
     fn start_or_extend(
         &mut self,
         want: Option<Size>,
         size: Option<Size>,
     ) -> Result<(Down, Arc<Gate>, capture::Running, Option<Size>), String> {
         match self.start(want) {
-            Ok((display, gate, running)) => Ok((display, gate, running, want)),
+            Ok((display, gate, running, extended)) => Ok((display, gate, running, want.filter(|_| extended))),
             Err(why) if want.is_none() && size.is_some() => {
                 warn!(%why, "remote view: no screen to mirror; extended");
-                let (display, gate, running) = self.start(size)?;
-                Ok((display, gate, running, size))
+                let (display, gate, running, extended) = self.start(size)?;
+                Ok((display, gate, running, size.filter(|_| extended)))
             }
             Err(why) => Err(why),
         }
@@ -321,6 +321,7 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
     info!(?screen, mirror, can_mirror, "remote view: sending");
     conn.write_frame(&mut tcp, &screen.encode())?;
     conn.write_frame(&mut tcp, &Down::CanMirror(can_mirror).encode())?;
+    conn.write_frame(&mut tcp, &Down::Mirroring(showing.is_none()).encode())?;
     let mut running = Some(running);
     let (mut flow, mut rate, mut seq) = (Flow::default(), Rate::default(), 0u32);
     loop {
@@ -375,6 +376,7 @@ fn video(mut tcp: TcpStream, mut conn: Conn, shared: Arc<Shared>, source: Source
                         info!(?screen, "remote view: sending, at the window's new size or mode");
                         (gate, running, showing) = (new_gate, Some(new_running), started);
                         conn.write_frame(&mut tcp, &screen.encode())?;
+                        conn.write_frame(&mut tcp, &Down::Mirroring(showing.is_none()).encode())?;
                     }
                     Err(why) => {
                         warn!(%why, "remote view: no picture to send at the new size or mode");

@@ -67,7 +67,12 @@ mod capture {
         true
     }
 
-    pub fn start(_source: Source, _size: Option<Size>, _screen: &mut Screen, _feed: Feed) -> Result<(Down, Running), String> {
+    pub fn start(
+        _source: Source,
+        _size: Option<Size>,
+        _screen: &mut Screen,
+        _feed: Feed,
+    ) -> Result<(Down, Running, bool), String> {
         Err("remote view needs macOS".into())
     }
 }
