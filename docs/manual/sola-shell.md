@@ -144,14 +144,18 @@ Click it again, press Escape, or click a window to close the panel.
 | Shut Down | Powers the machine off |
 
 Sleep (and the bar's [Sleep button](#kept-apps-and-sleep)), Restart
-Computer and Shut Down have no confirmation and no
-shortcut. On Oath, Restart Computer and Shut Down run `sudo /bin/oath set
-host:local power=reboot` (or `power=halt`), then `sudo /bin/oath apply
---confirm host:local`. Oath has no sleep yet, so there Sleep shows **Could
-not sleep**; elsewhere it asks logind (`loginctl suspend`). Sola has no
-password prompt, so these work only when sudo (or logind) lets you run
-them without one. A failure shows **Could not sleep**, **Could not restart
-the computer** or **Could not shut down**.
+Computer and Shut Down have no confirmation and no shortcut. On Oath they
+run `sudo /bin/oath set host:local power=sleep` (or `power=reboot`,
+`power=halt`), then `sudo /bin/oath apply --confirm host:local`; a sleep's
+apply returns when the machine wakes (Oath R84 or later; an older Oath
+refuses `sleep`). A key, the mouse, the power button, or with wake-on-LAN
+on (`net:net0 wake=true`) a magic packet wakes it (`oath wake <MAC>` from
+another Oath machine sends one); the desk comes back as it was. Off Oath
+they ask logind (`loginctl suspend`, `reboot`, `poweroff`). Sola has no
+password prompt, so they work only when sudo (or logind) lets you run them
+without one. A failure shows **Could not sleep**, **Could not restart
+the computer** or **Could not shut down**, and on Oath puts the catalog's
+`power` back to `run`.
 
 ### Clock and calendar
 

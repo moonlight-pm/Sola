@@ -184,6 +184,9 @@ pub enum Msg {
     RaiseMail,
     /// The bar's Sleep button.
     SleepButton,
+    /// A sleep, restart or shut down came back: from sleep, the machine is
+    /// awake again.
+    PowerDone(Result<(), &'static str>),
     /// Expire a live notification banner (`NotifyState` generation).
     NotifyExpire(u64),
     /// Animation tick while a banner is entering or leaving.
@@ -406,6 +409,8 @@ pub struct Shell {
     pub lock_idle: bool,
     /// Sleep when the idle is done (`Appearance.sleep_idle`).
     pub sleep_idle: bool,
+    /// A sleep, restart or shut down is under way.
+    pub power_busy: bool,
     /// The idle has run its course (`IdleFade.done`).
     pub idle_done: bool,
     /// The apps kept in the sidebar, and its Sleep button
@@ -613,6 +618,7 @@ impl Shell {
             desk_out: false,
             lock_idle: false,
             sleep_idle: false,
+            power_busy: false,
             idle_done: false,
             kept: Default::default(),
             tabbar: crate::tabbar::TabBarState::default(),
@@ -1198,19 +1204,40 @@ impl Shell {
         iced::Task::none()
     }
 
+    /// Sleep, restart or shut down, off the UI thread (on Oath a sleep
+    /// returns when the machine wakes). One at a time: a second click, or
+    /// the idle's end, while one runs does nothing.
     fn request_machine_power(&mut self, kind: crate::power::Kind) -> iced::Task<Msg> {
         let _ = self.dismiss_open_menu();
         self.emit_overlay_frames();
         self.emit_composition();
         self.emit_registered_chords();
-        if let Err(msg) = crate::power::request(kind) {
-            self.menubar.push_toast(msg);
-            let toast_gen = self.menubar.toast_generation;
-            return iced::Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
-                Msg::ToastExpire(toast_gen)
-            });
+        if self.power_busy {
+            tracing::info!(verb = kind.verb(), "machine power: one is under way");
+            return iced::Task::none();
         }
-        iced::Task::none()
+        self.power_busy = true;
+        iced::Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || crate::power::request(kind))
+                    .await
+                    .unwrap_or(Err(kind.fail_toast()))
+            },
+            Msg::PowerDone,
+        )
+    }
+
+    /// A power request came back (from sleep: the machine is awake).
+    fn power_done(&mut self, result: Result<(), &'static str>) -> iced::Task<Msg> {
+        self.power_busy = false;
+        let Err(msg) = result else {
+            return iced::Task::none();
+        };
+        self.menubar.push_toast(msg);
+        let toast_gen = self.menubar.toast_generation;
+        iced::Task::perform(tokio::time::sleep(Duration::from_secs(5)), move |_| {
+            Msg::ToastExpire(toast_gen)
+        })
     }
 
     /// Close the menubar dropdown / chip panel. Chip highlight is
@@ -2868,6 +2895,7 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::SleepButton => self.request_machine_power(crate::power::Kind::Sleep),
+            Msg::PowerDone(result) => self.power_done(result),
             Msg::NotifyExpire(generation) => {
                 let now = std::time::Instant::now();
                 if self.notify.begin_leave(generation, now) {
@@ -3271,6 +3299,7 @@ mod pending_launch_tests {
             desk_out: false,
             lock_idle: false,
             sleep_idle: false,
+            power_busy: false,
             idle_done: false,
             kept: Default::default(),
             tabbar: crate::tabbar::TabBarState::default(),
@@ -3906,6 +3935,7 @@ mod hide_tests {
             desk_out: false,
             lock_idle: false,
             sleep_idle: false,
+            power_busy: false,
             idle_done: false,
             kept: Default::default(),
             tabbar: crate::tabbar::TabBarState::default(),

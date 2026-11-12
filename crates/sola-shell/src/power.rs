@@ -5,8 +5,11 @@
 //! the call is non-interactive (`sudo -n` as a last try).
 //!
 //! Oath (`/oath/INDEX.md`): catalog `host:local` power through `sudo oath`.
-//! The menu click is the owner's confirm (`oath apply --confirm`). Oath has
-//! no sleep yet: asked of the Oath session, Sleep fails there until then.
+//! The menu click is the owner's confirm (`oath apply --confirm`). Sleep is
+//! `power=sleep` (Oath R84, 2026-11-11): the apply blocks until the machine
+//! wakes, so the shell runs every request off its UI thread. An apply
+//! refused before it acts leaves the catalog's power where it was set; it
+//! is put back to `run`, or a later apply would do it.
 
 use std::process::{Command, ExitStatus};
 
@@ -35,13 +38,12 @@ impl Kind {
         }
     }
 
-    /// Catalog `host:local.power` value (`halt`, not logind `poweroff`);
-    /// `None`: Oath has none.
-    fn oath_power(self) -> Option<&'static str> {
+    /// Catalog `host:local.power` value (`halt`, not logind `poweroff`).
+    fn oath_power(self) -> &'static str {
         match self {
-            Self::Sleep => None,
-            Self::Reboot => Some("reboot"),
-            Self::PowerOff => Some("halt"),
+            Self::Sleep => "sleep",
+            Self::Reboot => "reboot",
+            Self::PowerOff => "halt",
         }
     }
 
@@ -57,7 +59,8 @@ impl Kind {
 /// Request sleep, reboot or poweroff. Returns `Err` with a toast string if
 /// every attempt failed. Does not emit `Topic::Shutdown` — the supervisor
 /// SIGTERMs sola as the machine goes down, same graceful path as Exit Sola;
-/// from sleep the desk comes back as it was.
+/// from sleep the desk comes back as it was. Blocking: on Oath a sleep
+/// returns once the machine wakes.
 pub fn request(kind: Kind) -> Result<(), &'static str> {
     let verb = kind.verb();
     tracing::info!(verb, "machine power requested");
@@ -68,20 +71,25 @@ pub fn request(kind: Kind) -> Result<(), &'static str> {
 }
 
 fn request_oath(kind: Kind) -> Result<(), &'static str> {
-    let Some(power) = kind.oath_power() else {
-        tracing::warn!(verb = kind.verb(), "this Oath has no way to do that yet");
-        return Err(kind.fail_toast());
-    };
+    let power = kind.oath_power();
     let set = run(Command::new("/bin/sudo").args(oath_set_args(power)));
     if !matches!(set, Ok(st) if st.success()) {
+        // An Oath from before `sleep` refuses the value: nothing was set.
         tracing::warn!(?set, power, "oath set host power failed");
         return Err(kind.fail_toast());
     }
     let apply = run(Command::new("/bin/sudo").args(oath_apply_args()));
     if !matches!(apply, Ok(st) if st.success()) {
         tracing::warn!(?apply, power, "oath apply host power failed");
+        // Refused before it acted, the catalog still says `power`: back to
+        // `run`, so no later apply carries it out.
+        let back = run(Command::new("/bin/sudo").args(oath_set_args("run")));
+        if !matches!(back, Ok(st) if st.success()) {
+            tracing::warn!(?back, "oath set host power=run failed");
+        }
         return Err(kind.fail_toast());
     }
+    tracing::info!(power, "machine power done");
     Ok(())
 }
 
@@ -158,9 +166,9 @@ mod tests {
         assert_eq!(Kind::Sleep.verb(), "suspend");
         assert_eq!(Kind::Reboot.verb(), "reboot");
         assert_eq!(Kind::PowerOff.verb(), "poweroff");
-        assert_eq!(Kind::Sleep.oath_power(), None);
-        assert_eq!(Kind::Reboot.oath_power(), Some("reboot"));
-        assert_eq!(Kind::PowerOff.oath_power(), Some("halt"));
+        assert_eq!(Kind::Sleep.oath_power(), "sleep");
+        assert_eq!(Kind::Reboot.oath_power(), "reboot");
+        assert_eq!(Kind::PowerOff.oath_power(), "halt");
     }
 
     #[test]
