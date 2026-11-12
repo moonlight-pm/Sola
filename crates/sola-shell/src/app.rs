@@ -186,7 +186,7 @@ pub enum Msg {
     SleepButton,
     /// A sleep, restart or shut down came back: from sleep, the machine is
     /// awake again.
-    PowerDone(Result<(), &'static str>),
+    PowerDone(crate::power::Kind, Result<(), &'static str>),
     /// Expire a live notification banner (`NotifyState` generation).
     NotifyExpire(u64),
     /// Animation tick while a banner is entering or leaving.
@@ -411,6 +411,8 @@ pub struct Shell {
     pub sleep_idle: bool,
     /// A sleep, restart or shut down is under way.
     pub power_busy: bool,
+    /// A sleep waits for the screen to go black (`Topic::BlackedOut`).
+    pub sleep_waiting: bool,
     /// The idle has run its course (`IdleFade.done`).
     pub idle_done: bool,
     /// The apps kept in the sidebar, and its Sleep button
@@ -619,6 +621,7 @@ impl Shell {
             lock_idle: false,
             sleep_idle: false,
             power_busy: false,
+            sleep_waiting: false,
             idle_done: false,
             kept: Default::default(),
             tabbar: crate::tabbar::TabBarState::default(),
@@ -1205,31 +1208,50 @@ impl Shell {
     }
 
     /// Sleep, restart or shut down, off the UI thread (on Oath a sleep
-    /// returns when the machine wakes). One at a time: a second click, or
-    /// the idle's end, while one runs does nothing.
+    /// returns when the machine wakes). A sleep waits for the screen to go
+    /// black: sola-river says so (`Topic::BlackedOut`, [`Self::on_blacked_out`]).
+    /// One at a time: a second click, or the idle's end, while one runs
+    /// does nothing (a second Sleep asks for the black again).
     fn request_machine_power(&mut self, kind: crate::power::Kind) -> iced::Task<Msg> {
         let _ = self.dismiss_open_menu();
         self.emit_overlay_frames();
         self.emit_composition();
         self.emit_registered_chords();
-        if self.power_busy {
+        let sleep = kind == crate::power::Kind::Sleep;
+        if self.power_busy && !(sleep && self.sleep_waiting) {
             tracing::info!(verb = kind.verb(), "machine power: one is under way");
             return iced::Task::none();
         }
         self.power_busy = true;
-        iced::Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || crate::power::request(kind))
-                    .await
-                    .unwrap_or(Err(kind.fail_toast()))
-            },
-            Msg::PowerDone,
-        )
+        if sleep {
+            tracing::info!("sleep: the screen goes black first");
+            self.sleep_waiting = true;
+            emit_topic(Topic::Blackout(true));
+            return iced::Task::none();
+        }
+        run_power(kind)
     }
 
-    /// A power request came back (from sleep: the machine is awake).
-    fn power_done(&mut self, result: Result<(), &'static str>) -> iced::Task<Msg> {
+    /// The screen is black (sola-river): the sleep it was waiting for.
+    pub(crate) fn on_blacked_out(&mut self) -> iced::Task<Msg> {
+        if !self.sleep_waiting {
+            return iced::Task::none();
+        }
+        self.sleep_waiting = false;
+        run_power(crate::power::Kind::Sleep)
+    }
+
+    /// A power request came back (from sleep: the machine is awake, and the
+    /// screen comes back).
+    fn power_done(
+        &mut self,
+        kind: crate::power::Kind,
+        result: Result<(), &'static str>,
+    ) -> iced::Task<Msg> {
         self.power_busy = false;
+        if kind == crate::power::Kind::Sleep {
+            emit_topic(Topic::Blackout(false));
+        }
         let Err(msg) = result else {
             return iced::Task::none();
         };
@@ -2895,7 +2917,7 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::SleepButton => self.request_machine_power(crate::power::Kind::Sleep),
-            Msg::PowerDone(result) => self.power_done(result),
+            Msg::PowerDone(kind, result) => self.power_done(kind, result),
             Msg::NotifyExpire(generation) => {
                 let now = std::time::Instant::now();
                 if self.notify.begin_leave(generation, now) {
@@ -3254,6 +3276,27 @@ impl Shell {
     }
 }
 
+/// Run a power request off the UI thread; its answer comes back as
+/// `Msg::PowerDone`.
+fn run_power(kind: crate::power::Kind) -> iced::Task<Msg> {
+    iced::Task::perform(
+        async move {
+            tokio::task::spawn_blocking(move || crate::power::request(kind))
+                .await
+                .unwrap_or(Err(kind.fail_toast()))
+        },
+        move |result| Msg::PowerDone(kind, result),
+    )
+}
+
+fn emit_topic(topic: Topic) {
+    if let Some(Ok(mut bus)) = sola_kit::app::try_bus().map(|b| b.lock()) {
+        if let Err(e) = bus.emit(topic) {
+            tracing::warn!("emit failed: {e}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod pending_launch_tests {
     use super::*;
@@ -3300,6 +3343,7 @@ mod pending_launch_tests {
             lock_idle: false,
             sleep_idle: false,
             power_busy: false,
+            sleep_waiting: false,
             idle_done: false,
             kept: Default::default(),
             tabbar: crate::tabbar::TabBarState::default(),
@@ -3748,6 +3792,25 @@ mod hide_tests {
         assert!(!shell.tabs.has_kept_row("sola-browser"));
     }
 
+    /// A sleep waits for the black: asked, it waits (sola-river answers
+    /// `BlackedOut`); a `BlackedOut` nobody waits for does nothing. (The
+    /// answer itself is not delivered here: it would ask the machine to
+    /// sleep.)
+    #[test]
+    fn a_sleep_waits_for_the_screen_to_go_black() {
+        use sola_bus::topics::Topic;
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        let _ = shell.handle_bus(&Topic::BlackedOut.to_message());
+        assert!(!shell.power_busy && !shell.sleep_waiting);
+        let _ = shell.request_machine_power(crate::power::Kind::Sleep);
+        assert!(shell.power_busy && shell.sleep_waiting);
+        // Asked again while it waits: still waiting, nothing else.
+        let _ = shell.request_machine_power(crate::power::Kind::Sleep);
+        assert!(shell.sleep_waiting);
+        let _ = shell.request_machine_power(crate::power::Kind::Reboot);
+        assert!(shell.sleep_waiting, "a restart waits its turn");
+    }
+
     /// Window → Pin to All Workspaces, and again. No app hears a pinned window
     /// is on a workspace, so a browser page keeps its profile and stays signed
     /// in; unpinned, it is on the one showing. The row's close stays, there
@@ -3936,6 +3999,7 @@ mod hide_tests {
             lock_idle: false,
             sleep_idle: false,
             power_busy: false,
+            sleep_waiting: false,
             idle_done: false,
             kept: Default::default(),
             tabbar: crate::tabbar::TabBarState::default(),

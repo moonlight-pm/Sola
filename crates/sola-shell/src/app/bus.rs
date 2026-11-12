@@ -58,6 +58,7 @@ impl Shell {
                 self.on_workspace_prefs(message.sticky.then_some(p));
                 Task::none()
             }
+            Topic::BlackedOut => self.on_blacked_out(),
             Topic::KeptApps(k) => {
                 self.on_kept_apps(message.sticky.then_some(k));
                 Task::none()

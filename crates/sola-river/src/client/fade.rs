@@ -36,10 +36,14 @@
 //! stops or leaves sight; the others fade with their windows.
 //!
 //! Once the fade is full, the picture itself dims after a while ([`dim`]).
+//! Before the machine sleeps, the screen goes black ([`blackout`]).
 
+mod blackout;
 mod cut;
 mod dim;
 mod videos;
+
+pub use blackout::set as blackout;
 
 pub use videos::{forget as forget_videos, set as set_videos};
 
@@ -104,6 +108,8 @@ pub struct FadeState {
     dimmer: Option<dim::Dimmer>,
     /// Making the dim's layer failed this idle.
     dim_failed: bool,
+    /// The black before the machine sleeps.
+    blackout: blackout::Blackout,
 }
 
 impl Default for FadeState {
@@ -132,6 +138,7 @@ impl Default for FadeState {
             full_since: None,
             dimmer: None,
             dim_failed: false,
+            blackout: blackout::Blackout::default(),
         }
     }
 }
@@ -240,6 +247,7 @@ pub fn keep(state: &mut AppData, keep: Option<IdleKeep>) {
 /// Run every bus tick: ask for the idle notification, raise the overlay's
 /// opacity as the fade goes, and lower it as the windows return.
 pub fn tick(state: &mut AppData) {
+    blackout::tick(state);
     ensure(state);
     let floor = state.fade.floor;
     if let Some((from, at)) = state.fade.returning {
@@ -326,10 +334,11 @@ fn hold(state: &mut AppData, since: Instant) -> bool {
 
 /// Run during every render sequence, last: make the overlay when the rest
 /// or the fade needs it (again when what it keeps moved), and keep it on
-/// top, with the dim's black over it.
+/// top, with the dim's black over it and the blackout's over both.
 pub fn sync_on_render(state: &mut AppData) {
     sync_overlay(state);
     dim::sync(state);
+    blackout::sync(state);
 }
 
 fn sync_overlay(state: &mut AppData) {

@@ -34,6 +34,8 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     // What the idle fade keeps in sight (the top row's left islands).
     // Sticky.
     TopicKind::IdleKeep,
+    // Black over the screen before the machine sleeps, and off after.
+    TopicKind::Blackout,
     // The videos each window shows: no overlay over them. Sticky.
     TopicKind::WindowVideos,
 ];

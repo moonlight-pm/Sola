@@ -2340,6 +2340,14 @@ define_topics! {
     // last.
     #[sticky]
     BuiltinApps(BuiltinApps),
+    // Black over the whole screen now, or off again (shell → sola-river):
+    // the screen goes black before the machine sleeps, and comes back
+    // after. Appended last.
+    Blackout(bool),
+
+    // The black is over the whole screen (sola-river → shell): the shell
+    // asks for the sleep now. Appended last.
+    BlackedOut,
 }
 
 #[cfg(test)]
@@ -2662,6 +2670,17 @@ mod tests {
             Some(Topic::Appearance(back)) => assert_eq!(back, sleepy),
             other => panic!("expected Appearance, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_blackout_and_its_answer_read_back_and_are_not_kept() {
+        match Topic::parse(&Topic::Blackout(true).to_message()) {
+            Some(Topic::Blackout(on)) => assert!(on),
+            other => panic!("expected Blackout, got {other:?}"),
+        }
+        assert!(matches!(Topic::parse(&Topic::BlackedOut.to_message()), Some(Topic::BlackedOut)));
+        assert!(!TopicKind::Blackout.behavior().is_sticky());
+        assert!(!TopicKind::BlackedOut.behavior().is_sticky());
     }
 
     #[test]

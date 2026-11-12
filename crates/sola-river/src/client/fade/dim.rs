@@ -40,24 +40,24 @@ pub fn times(look: &Appearance) -> Option<Times> {
     })
 }
 
-/// The black over the picture.
+/// The black over the picture (and the blackout's, [`super::blackout`]).
 pub struct Dimmer {
     surface: wl_surface::WlSurface,
     shell_surface: RiverShellSurfaceV1,
-    node: RiverNodeV1,
+    pub(super) node: RiverNodeV1,
     opacity: WpAlphaModifierSurfaceV1,
     buffer: wl_buffer::WlBuffer,
     /// The buffer's memory (zeros: black).
     pool: (OwnedFd, wl_shm_pool::WlShmPool),
-    size: (i32, i32),
-    level: u32,
+    pub(super) size: (i32, i32),
+    pub(super) level: u32,
     set_at: Instant,
     /// Input came back: the level the return started from.
     from: u32,
 }
 
 impl Dimmer {
-    fn set(&mut self, level: u32) {
+    pub(super) fn set(&mut self, level: u32) {
         self.opacity.set_multiplier(level);
         self.surface.commit();
         self.level = level;
@@ -173,7 +173,8 @@ pub(super) fn sync(state: &mut AppData) {
     }
 }
 
-fn make(state: &mut AppData, level: u32) -> Result<Dimmer, String> {
+/// A black output-sized layer on top at `level`, its input region empty.
+pub(super) fn make(state: &mut AppData, level: u32) -> Result<Dimmer, String> {
     let wm = state.wm.clone().ok_or("window manager not bound")?;
     let alpha = state.fade.alpha.clone().ok_or("wp_alpha_modifier_v1 not bound")?;
     let compositor = state

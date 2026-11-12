@@ -428,6 +428,14 @@ gone all the way (with the dim off, once the fade is full), it adds
 `done`: the idle has run its course, and with *Then sleep* on the Shell
 puts the machine to sleep.
 
+**Before a sleep.** The Shell asks for black (`Blackout` true): a black
+surface over everything, the fade's and the dim's included, rises to full
+over 0.6 s, and `sola-river` says `BlackedOut`; only then does the Shell
+ask for the sleep (NVIDIA's driver holds the last picture for a second or
+two while it saves its memory). When the machine is back, or the sleep
+failed, the Shell sends `Blackout` false and the black comes down over a
+second. Its input region is empty.
+
 Nothing is drawn over a window that fills the screen ([Fullscreen](#fullscreen)),
 at rest or idle: it is fully opaque whatever *Opacity* says. While one does
 the fade does not run; it starts over once none does. Idle
@@ -581,6 +589,7 @@ rules. Payload fields are listed here.
 | `Chord` | event | `{keysym, modifiers}` | A registered chord is pressed |
 | `ChordReleased` | event | `{keysym, modifiers}` | A registered chord is released |
 | `IdleFade` | sticky | `{fading, out, done}` | The fade starts, becomes full, the dim finishes, or it ends |
+| `BlackedOut` | ephemeral | — | The black asked for with `Blackout` is over the whole screen |
 
 ### Read by sola-river
 

@@ -150,7 +150,9 @@ run `sudo /bin/oath set host:local power=sleep` (or `power=reboot`,
 apply returns when the machine wakes (Oath R84 or later; an older Oath
 refuses `sleep`). A key, the mouse, the power button, or with wake-on-LAN
 on (`net:net0 wake=true`) a magic packet wakes it (`oath wake <MAC>` from
-another Oath machine sends one); the desk comes back as it was. Off Oath
+another Oath machine sends one); the desk comes back as it was. Before a
+sleep the screen goes black over about half a second (the compositor's
+black over everything), and comes back when the machine wakes. Off Oath
 they ask logind (`loginctl suspend`, `reboot`, `poweroff`). Sola has no
 password prompt, so they work only when sudo (or logind) lets you run them
 without one. A failure shows **Could not sleep**, **Could not restart

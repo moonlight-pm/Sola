@@ -379,8 +379,11 @@ fade (`fade::hold`). Sticky `Topic::IdleFade`
 says it is fading and, once full, `out`: the shell then reports every tab
 window off screen (`WindowPlace.shown`), so the browser's pages rest. Once
 the dim is full (at full with the dim off) it says `done`, and the shell,
-with `Appearance.sleep_idle`, puts the machine to sleep (`power.rs`; Oath
-has no sleep yet). The menubar carries no
+with `Appearance.sleep_idle`, puts the machine to sleep (`power.rs`,
+Oath's `power=sleep`). Every sleep first asks sola-river for black
+(`Topic::Blackout`, `client/fade/blackout.rs`: the dim's black layer, on
+top) and waits for its `BlackedOut`; the request runs off the shell's UI
+thread and, when it returns at wake, `Blackout` false lifts it. The menubar carries no
 app menus. Kept apps (persistent `Topic::KeptApps`): `stacks` holds a
 `Block::Kept` among a workspace's loose rows for each kept app with no
 window — where its last window was, saved in the tab layout

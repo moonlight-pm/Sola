@@ -542,6 +542,7 @@ pub fn bus_tick(state: &mut AppData) {
             sola_bus::topics::Topic::IdleKeep(keep) => {
                 fade::keep(state, msg.sticky.then_some(keep));
             }
+            sola_bus::topics::Topic::Blackout(on) => fade::blackout(state, on),
             sola_bus::topics::Topic::WindowVideos(v) => {
                 fade::set_videos(state, v.window_id, msg.sticky.then_some(v.videos));
             }

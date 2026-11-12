@@ -19,7 +19,7 @@ sits among Sola's processes is in [Architecture](architecture.md).
 | Process | `sola-bus`. On Oath, PID 1 runs it as the service `svc:sola-bus` |
 | Socket | `$SOLA_BUS_PATH`, else `sola-bus` in the runtime directory: `$XDG_RUNTIME_DIR`, else `/run/user/<uid>` when that directory exists, else `/tmp` |
 | Framing | 4-byte little-endian length, then one postcard-encoded message |
-| Topics | 65 kinds, fixed when Sola is built: 33 ephemeral, 20 sticky, 12 persistent ([`topics.rs`](../../crates/sola-bus/src/topics.rs)) |
+| Topics | 67 kinds, fixed when Sola is built: 35 ephemeral, 20 sticky, 12 persistent ([`topics.rs`](../../crates/sola-bus/src/topics.rs)) |
 | Disk | `~/.config/sola/state.yaml` and per-topic YAML files |
 | Rust client | `sola_bus::BusClient`; kit apps use `sola_kit::app` |
 | Log | `sola.log` in Sola's log directory, lines tagged `[bus]`. On Oath that is `~/.local/state/sola/` (`$XDG_STATE_HOME/sola`; `SOLA_LOG_DIR` overrides it) |
@@ -293,6 +293,8 @@ titlebar; the kit draws them from the app's own copy, not from the bus.
 | `ThemeVariations` | `path` (the picture), `choices` (per scheme: `name`, and `base`, `raised`, `accent`, and `source`, the picture's color it comes from, or for a complement the turned color itself) | Shell | Settings (the scheme cards) | Sticky |
 | `IdleKeep` | `x`, `y`, `w`, `h`: output-local logical pixels, the top row's flower and agent islands | Shell | `sola-river` (that part stays at the desk's rest during the fade) | Sticky |
 | `IdleFade` | `fading` (no input for the fade's delay), `out` (the fade is full: the windows are out of sight), `done` (the idle has run its course: the dim is full, or the fade with the dim off) | `sola-river` | Projects (a focused session's island shows); Shell (on `out`, reports every tab window off screen in its `WindowPlace`; on `done`, sleeps with `sleep_idle`); `sola-vaultd` (the vault's idle lock counts from it) | Sticky |
+| `Blackout` | `true`: black over the whole screen, before the machine sleeps; `false`: take it off | Shell | `sola-river` (the black rises, then it says `BlackedOut`) | Ephemeral |
+| `BlackedOut` | — | `sola-river`, once the black is full | Shell (asks for the sleep) | Ephemeral |
 | `WindowVideos` | `window_id`, `videos` (each `x`, `y`, `w`, `h`, window-local logical pixels, the part in view, and `watched`: playing with sound) | Browser (per page window; retracted when it shows none) | `sola-river` (no overlay over them; a watched one in sight holds the fade; retracts a closed window's) | Sticky, one per `window_id` |
 
 The fade and the dim are described in [Compositor § The idle fade](compositor.md#the-idle-fade).
