@@ -33,6 +33,7 @@ const REFUSED: u8 = 3;
 const CLIPBOARD: u8 = 4;
 const CURSOR: u8 = 5;
 const CAN_MIRROR: u8 = 6;
+const MIRRORING: u8 = 7;
 const KEYFRAME: u8 = 1;
 const EVENT: u8 = 2;
 const CLIPBOARD_SET: u8 = 3;
@@ -132,6 +133,10 @@ pub enum Down {
     /// with its lid open, or another): with each `Display`, and when it
     /// changes. Until one comes, it has.
     CanMirror(bool),
+    /// What the pictures from here on are: the host's own screen (`true`)
+    /// or one of the window's size; with each `Display`. It can mirror when
+    /// asked to extend and could not.
+    Mirroring(bool),
 }
 
 impl Down {
@@ -182,6 +187,7 @@ impl Down {
                 out
             }
             Self::CanMirror(can) => vec![CAN_MIRROR, u8::from(*can)],
+            Self::Mirroring(mirroring) => vec![MIRRORING, u8::from(*mirroring)],
         }
     }
 
@@ -226,7 +232,8 @@ impl Down {
                 Self::Cursor(cursor)
             }
             CAN_MIRROR if rest.len() == 1 => Self::CanMirror(rest[0] != 0),
-            DISPLAY | PICTURE | CURSOR | CAN_MIRROR => return Err(short()),
+            MIRRORING if rest.len() == 1 => Self::Mirroring(rest[0] != 0),
+            DISPLAY | PICTURE | CURSOR | CAN_MIRROR | MIRRORING => return Err(short()),
             REFUSED => Self::Refused(String::from_utf8_lossy(rest).into_owned()),
             CLIPBOARD => Self::Clipboard(String::from_utf8_lossy(rest).into_owned()),
             _ => return Ok(None),
@@ -383,6 +390,7 @@ mod tests {
             Down::Cursor(Cursor::default()),
             Down::CanMirror(false),
             Down::CanMirror(true),
+            Down::Mirroring(true),
         ] {
             assert_eq!(Down::decode(&msg.encode()).unwrap(), Some(msg));
         }

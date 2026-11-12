@@ -65,6 +65,9 @@ pub struct App {
     mirror: bool,
     /// The other machine has a screen of its own on to mirror.
     can_mirror: bool,
+    /// The pictures are its own screen, as it says: it mirrors when it
+    /// could not extend. `None` until it says.
+    mirroring: Option<bool>,
     inhibitor: Option<Arc<Inhibitor>>,
     window_id: Option<window::Id>,
     theme: Theme,
@@ -121,6 +124,7 @@ impl App {
                 statistics: false,
                 mirror: saved_mirror(),
                 can_mirror: true,
+                mirroring: None,
                 inhibitor: None,
                 window_id: None,
                 theme: default_theme(),
@@ -265,6 +269,8 @@ impl App {
             net::Event::Connected(display) => {
                 self.display = Some(display);
                 self.pointer = None;
+                // Said again after each Display.
+                self.mirroring = None;
                 self.status = Status::Showing;
                 self.clipboard_to_host();
             }
@@ -273,6 +279,10 @@ impl App {
             net::Event::Cursor => {}
             net::Event::CanMirror(can) => {
                 self.can_mirror = can;
+                self.publish_menu();
+            }
+            net::Event::Mirroring(mirroring) => {
+                self.mirroring = Some(mirroring);
                 self.publish_menu();
             }
             net::Event::Lost(why) => {
@@ -345,7 +355,8 @@ impl App {
     }
 
     fn publish_menu(&self) {
-        sola_kit::menu::publish(menu::app_menu(self.statistics, self.mirror, self.can_mirror));
+        let mirrored = self.mirroring.unwrap_or(self.mirror && self.can_mirror);
+        sola_kit::menu::publish(menu::app_menu(self.statistics, mirrored, self.can_mirror));
     }
 
     /// The host's screen at the picture's area, when it can.

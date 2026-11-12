@@ -49,6 +49,8 @@ pub enum Event {
     Cursor,
     /// Whether the host has a screen of its own on to mirror.
     CanMirror(bool),
+    /// Whether the pictures from here on are the host's own screen.
+    Mirroring(bool),
     Lost(String),
     /// The host will not send a picture; trying again will not help.
     Refused(String),
@@ -216,6 +218,7 @@ fn session(
                 let _ = clip.send(ClipJob::Apply(text));
             }
             Down::CanMirror(can) => events(Event::CanMirror(can)),
+            Down::Mirroring(mirroring) => events(Event::Mirroring(mirroring)),
             Down::Cursor(cursor) => {
                 debug!(
                     width = cursor.width,

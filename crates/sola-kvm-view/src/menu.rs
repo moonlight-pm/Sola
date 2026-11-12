@@ -23,11 +23,11 @@ fn item(id: &str, label: &str, checked: bool) -> MenuItem {
     }
 }
 
-/// The menus, with Mirror or Extend checked, and Statistics while they
-/// show. Mirror is greyed out while the other machine has no screen of its
-/// own on (a laptop's lid closed), and it shows extended meanwhile.
-pub fn app_menu(statistics: bool, mirror: bool, can_mirror: bool) -> AppMenuPayload {
-    let mirrored = mirror && can_mirror;
+/// The menus, with Mirror or Extend checked as `mirrored` (what the window
+/// shows, not only what was chosen), and Statistics while they show. Mirror
+/// is greyed out while the other machine has no screen of its own on (a
+/// laptop's lid closed).
+pub fn app_menu(statistics: bool, mirrored: bool, can_mirror: bool) -> AppMenuPayload {
     let mirror_item = MenuItem::Action {
         id: MIRROR.into(),
         label: "Mirror".into(),
