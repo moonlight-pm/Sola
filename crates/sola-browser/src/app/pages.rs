@@ -81,7 +81,7 @@ impl<E: Engine> App<E> {
             .cached_tabs
             .iter()
             .filter(|t| !t.profile.is_empty())
-            // A web app runs on its own profile, whatever the workspace's.
+            // A web app's window keeps its profile wherever it goes.
             .filter(|t| !self.webapps.tabs.contains_key(&t.id))
             .filter_map(|t| {
                 let window = self.windows.window_of(t.id)?;

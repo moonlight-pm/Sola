@@ -1,7 +1,9 @@
 //! Web apps (`docs/specs/2026-10-23-web-apps-design.md`): a page the
 //! browser hosts as its own app — the app's Wayland app id, name and menus,
-//! no location bar — on the browser profile it was wrapped from, so it is
-//! already signed in. Browser → Wrap This Page… makes the page one in place;
+//! no location bar. Each window runs a browser profile of its own: the
+//! showing workspace's when the launcher opens it, its opener's when a
+//! window opens it, and keeps it wherever it goes (until Adopt Workspace).
+//! Browser → Wrap This Page… makes the page one in place;
 //! the app's own menu removes it. Each app is an entry in the catalog
 //! (`Topic::Application`, kind `web`), which this process both reads and
 //! writes.
@@ -198,7 +200,8 @@ fn popup_is_the_apps(start: &str, url: &str) -> bool {
     crate::popup::is_blank_popup_url(url) || same_site(start, url)
 }
 
-/// The profile an app runs on: its own, else (gone) the one showing.
+/// The profile an app was wrapped on, else (gone) the one showing: where a
+/// window quit before each kept its own ran.
 fn app_profile(app: &Application) -> String {
     app.profile
         .clone()
@@ -288,7 +291,8 @@ impl<E: Engine> App<E> {
     }
 
     /// Open web app `app_id` (`--app`, a handoff, the launcher): bring up
-    /// its window, or open its page at its start URL on its profile. Waits
+    /// its window, or open its page at its start URL on the showing
+    /// workspace's profile. Waits
     /// for its catalog entry and the session's pages (its page may be among
     /// them).
     pub(crate) fn open_app(&mut self, app_id: &str) {
@@ -375,13 +379,13 @@ impl<E: Engine> App<E> {
     }
 
     /// A new window of app `app_id`, at its start page on `profile`, else
-    /// the app's own.
+    /// the showing workspace's.
     fn open_app_window(&mut self, app_id: &str, profile: Option<String>) {
         let Some(app) = self.webapps.apps.get(app_id).cloned() else {
             return;
         };
         let url = app.url.clone().unwrap_or_default();
-        let profile = profile.unwrap_or_else(|| app_profile(&app));
+        let profile = profile.unwrap_or_else(crate::profiles::showing_profile);
         tracing::info!(app = %app_id, %url, %profile, "web app opens a window");
         let tab = self.open_tab_beside(url, true, &profile);
         self.webapps.tabs.insert(tab, app_id.to_string());
@@ -389,8 +393,8 @@ impl<E: Engine> App<E> {
     }
 
     /// A link from outside the browser (Mail, a terminal, Projects, `solactl open`):
-    /// to the web app its site belongs to, on that app's profile, else a
-    /// Browser page. Waits for the catalog, when the browser has just
+    /// to the web app its site belongs to, on the showing workspace's
+    /// profile, else a Browser page. Waits for the catalog, when the browser has just
     /// started for it.
     pub(crate) fn open_outside_link(&mut self, url: String, activate: bool) {
         let bus_up = sola_kit::app::bus().lock().is_ok_and(|b| b.is_connected());
@@ -403,7 +407,7 @@ impl<E: Engine> App<E> {
             return;
         };
         tracing::info!(%url, activate, app = %app.app_id, "outside link → its app");
-        let tab = self.open_tab_beside(url, activate, &app_profile(&app));
+        let tab = self.open_tab_beside(url, activate, &crate::profiles::showing_profile());
         self.webapps.tabs.insert(tab, app.app_id);
         self.persist_session();
     }
@@ -417,8 +421,8 @@ impl<E: Engine> App<E> {
 
     /// A link from page `opener` opening a window of its own (⌘-click,
     /// `target=_blank`, a web app's link off its site): in the app its site
-    /// belongs to ([`WebApps::app_for_link`]), on that app's profile, else
-    /// a browser page on the opener's.
+    /// belongs to ([`WebApps::app_for_link`]), else a browser page; either
+    /// on the opener's profile, `profile`.
     pub(crate) fn open_link(&mut self, opener: TabId, url: String, activate: bool, profile: &str) {
         let Some(app) = self.webapps.app_for_link(opener, &url).cloned() else {
             tracing::info!(%url, activate, "link → browser page");
@@ -429,11 +433,8 @@ impl<E: Engine> App<E> {
             }
             return;
         };
-        tracing::info!(%url, activate, app = %app.app_id, "link → its app");
-        // A link within the app is on the page's own profile.
-        let own = self.webapps.tabs.get(&opener) == Some(&app.app_id);
-        let profile = if own { profile.to_string() } else { app_profile(&app) };
-        let tab = self.open_tab_beside(url, activate, &profile);
+        tracing::info!(%url, activate, app = %app.app_id, %profile, "link → its app");
+        let tab = self.open_tab_beside(url, activate, profile);
         self.webapps.tabs.insert(tab, app.app_id);
         self.persist_session();
     }
