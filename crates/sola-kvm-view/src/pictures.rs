@@ -5,7 +5,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use sola_kvm::view_wire::Cursor;
+use sola_kvm::view_wire::{Cursor, Size};
 
 use crate::stats::{Stamp, Stats};
 
@@ -29,6 +29,12 @@ pub struct Pictures {
     told: AtomicBool,
     /// The host's pointer, when it sends one instead of drawing it in.
     cursor: Mutex<Option<Arc<Cursor>>>,
+    /// The size the window would have the host's screen, said again on
+    /// each connection.
+    wanted: Mutex<Option<Size>>,
+    /// The host's own screen rather than one of the window's size, said on
+    /// each connection.
+    pub mirror: AtomicBool,
 }
 
 impl Pictures {
@@ -75,6 +81,15 @@ impl Pictures {
     /// The host's pointer; a new one is a new `Arc`.
     pub fn cursor(&self) -> Option<Arc<Cursor>> {
         lock(&self.cursor).clone()
+    }
+
+    /// Want `size`; false when it was wanted already.
+    pub fn want(&self, size: Size) -> bool {
+        lock(&self.wanted).replace(size) != Some(size)
+    }
+
+    pub fn wanted(&self) -> Option<Size> {
+        *lock(&self.wanted)
     }
 
     pub fn size(&self) -> (u32, u32) {

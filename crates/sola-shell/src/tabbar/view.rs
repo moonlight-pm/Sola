@@ -163,7 +163,8 @@ struct Now {
     focused: Option<u32>,
 }
 
-/// A window's row. A grouped one leaves "hidden" to its group's header.
+/// A window's row. A grouped one leaves its app's "hidden" to its group's
+/// header; a window hidden alone says so on its own row.
 fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab, in_group: bool) -> SidebarItem<'a, Msg> {
     let hidden = |app: &str| shell.is_app_hidden(app);
     let title = shell
@@ -218,7 +219,7 @@ fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab, in_group: bool) -> SidebarI
             item = item.detail(session);
         }
     }
-    if hidden(&t.app_id) && !in_group {
+    if (hidden(&t.app_id) && !in_group) || shell.tabs.is_hidden(t.window_id) {
         item = item.secondary("hidden");
     }
     item

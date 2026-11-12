@@ -304,7 +304,8 @@ computer as a chip in its prompt color.
   halves are up, or the halves while Full is).
 - **Windows behind** are muted.
 - **An app hidden** with Super+H says *hidden* on its rows (beside its
-  group's name, for a group).
+  group's name, for a group); a window hidden alone (its yellow light)
+  says so on its own row.
 - **Activity**: a window that is working shows a turning ring in place of
   its icon, and one waiting on a decision a diamond, so the title does not
   move. Projects marks each session's window by its session, and Design
@@ -312,7 +313,7 @@ computer as a chip in its prompt color.
   in one of its canvases.
 
 Click a row to show its window in its zone and focus it (its workspace
-and zone come on screen with it, and a hidden app comes back). Hovering a
+and zone come on screen with it, and a hidden app or window comes back). Hovering a
 row shows a red close dot: it closes that window as the window's own
 close dot would. Drag a row to move it in the list; the window stays in
 its zone and nothing on screen changes. A row in a group moves only
@@ -538,11 +539,23 @@ a drawing it is named by its place ("Column 1", "Row 2").
 
 ## Titlebars
 
-Every Sola window draws its own frame: a titlebar with the red close dot,
-the app's menus (the first under the app's name in bold), the **Window**
-menu, and the window's title at the right. A menu that does not fit is
-left out. The top row has no app menus. A focused window's frame has a
-lit rim.
+Every Sola window draws its own frame: a titlebar with three lights, the
+app's menus (the first under the app's name in bold), the **Window** menu,
+and the window's title at the right. The lights are coloured on the focused
+window and grey on the others:
+
+- **Red** closes the window.
+- **Yellow** hides that window alone. Its row stays in the tab bar, marked
+  *hidden*; its zone shows its next window. Click the row (or step to it
+  with Super+Backtick, or open its app from the launcher) and it comes
+  back. **Hide** (Super+H) still hides the whole app.
+- **Green** opens a sheet under it with a little drawing of the screen for
+  each zone of your layout ([Zones](#zones)), then Full, Cinema and Float.
+  Pick one, by mouse or with the arrows and Return, and the window moves
+  there. Esc or a click elsewhere closes it.
+
+A menu that does not fit is left out. The top row has no app menus. A
+focused window's frame has a lit rim.
 
 Windows of other programs (XWayland, other Wayland apps) have no Sola
 titlebar. The compositor gives them the same rim, and rounded corners

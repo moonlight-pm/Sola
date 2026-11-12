@@ -519,13 +519,7 @@ impl Shell {
                 self.raise_window_from_click(wid);
             }
         } else if focused_closed {
-            let hidden = |app: &str| self.is_app_hidden(app);
-            let tiled = focused_zone.filter(|z| *z != Zone::Float);
-            let next = tiled
-                .filter(|z| self.tabs.on_screen(&hidden).contains(z))
-                .and_then(|z| self.tabs.visible_shown(z, &hidden))
-                .or_else(|| tiled.and_then(|_| self.tabs.front(&hidden)))
-                .or_else(|| self.mru_window_on_showing(None));
+            let next = self.next_focus(focused_zone);
             let next_app = next.and_then(|w| self.app_id_for_window(w));
             match (next, next_app) {
                 (Some(wid), Some(app_id)) => self.focus_window(wid, &app_id),
@@ -568,7 +562,20 @@ impl Shell {
     }
 
     /// Give `wid` keyboard focus and bump its app in MRU (no stack change).
-    fn focus_window(&mut self, wid: u32, app_id: &str) {
+    /// Where focus goes when the focused tab left the screen from `zone`:
+    /// what that tiled zone shows now, else the tab focus belongs on, else
+    /// the showing workspace's most recently used window.
+    pub(super) fn next_focus(&self, zone: Option<Zone>) -> Option<u32> {
+        let hidden = |app: &str| self.is_app_hidden(app);
+        let tiled = zone.filter(|z| *z != Zone::Float);
+        tiled
+            .filter(|z| self.tabs.on_screen(&hidden).contains(z))
+            .and_then(|z| self.tabs.visible_shown(z, &hidden))
+            .or_else(|| tiled.and_then(|_| self.tabs.front(&hidden)))
+            .or_else(|| self.mru_window_on_showing(None))
+    }
+
+    pub(super) fn focus_window(&mut self, wid: u32, app_id: &str) {
         self.bus_set_focus(app_id);
         self.focused_window_id = Some(wid);
         self.tabs.focus(wid);
@@ -1331,9 +1338,10 @@ impl Shell {
         }
 
         // Composition-hidden surfaces are River-hidden; ignore stray enter.
-        if self
-            .app_id_for_window(e.window_id)
-            .is_some_and(|id| self.is_app_hidden(&id))
+        if self.tabs.is_hidden(e.window_id)
+            || self
+                .app_id_for_window(e.window_id)
+                .is_some_and(|id| self.is_app_hidden(&id))
         {
             return Task::none();
         }
@@ -1366,7 +1374,7 @@ impl Shell {
     ///
     /// Any click on an app window raises it to the front (and focuses it).
     /// Also dismisses an open menubar dropdown when the click is outside shell.
-    fn on_mouse_clicked(&mut self, e: MouseClickedPayload) {
+    pub(super) fn on_mouse_clicked(&mut self, e: MouseClickedPayload) {
         // known_windows includes shell surfaces (sola-river reports them in
         // Topic::Windows), so we must exclude clicks on our own surfaces —
         // otherwise clicking a menubar label races OpenMenu with dismiss/raise.
@@ -1385,6 +1393,10 @@ impl Shell {
             .iter()
             .any(|w| w.window_id == e.window_id);
         if !is_app_window {
+            return;
+        }
+        // The press that hid it (its yellow light), come in after the hide.
+        if self.tabs.is_hidden(e.window_id) {
             return;
         }
         self.last_clicked_window = Some(e.window_id);

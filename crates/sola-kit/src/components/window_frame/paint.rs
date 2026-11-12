@@ -12,6 +12,12 @@ use crate::components::style::{alpha, ink as soft_ink, is_light, lift_in_hue};
 /// Classic close light (`#FF5F57`), lit only on the focused window.
 pub(crate) const CLOSE_RED: Color = Color::from_rgb(1.0, 0.372_5, 0.341_2);
 pub(crate) const CLOSE_HOVER: Color = Color::from_rgb(1.0, 0.45, 0.42);
+/// The hide light (`#FEBC2E`).
+const HIDE_YELLOW: Color = Color::from_rgb(0.996, 0.737, 0.180);
+const HIDE_HOVER: Color = Color::from_rgb(1.0, 0.8, 0.32);
+/// The zone light (`#28C840`).
+const ZONE_GREEN: Color = Color::from_rgb(0.157, 0.784, 0.251);
+const ZONE_HOVER: Color = Color::from_rgb(0.27, 0.85, 0.36);
 
 /// The frame's colours for one focus state, from the live theme.
 pub(super) struct Colors {
@@ -23,8 +29,8 @@ pub(super) struct Colors {
     pub ink_faint: Color,
     pub pill: Color,
     pub rim: Color,
-    pub close: Color,
-    pub close_hover: Color,
+    /// The stoplight, close, hide and zone, and each one hovered.
+    pub dots: [(Color, Color); 3],
     pub sheet: Color,
     pub sheet_edge: Color,
     pub hot: Color,
@@ -65,8 +71,11 @@ pub(super) fn colors(theme: &Theme, focused: bool) -> Colors {
             // the background picture show there.
             lift_in_hue(face, 0.07)
         },
-        close: if focused { CLOSE_RED } else { soft_ink(0.12) },
-        close_hover: if focused { CLOSE_HOVER } else { soft_ink(0.2) },
+        dots: if focused {
+            [(CLOSE_RED, CLOSE_HOVER), (HIDE_YELLOW, HIDE_HOVER), (ZONE_GREEN, ZONE_HOVER)]
+        } else {
+            [(soft_ink(0.12), soft_ink(0.2)); 3]
+        },
         sheet: sheet.sheet,
         sheet_edge: sheet.edge,
         hot: sheet.hot,

@@ -72,7 +72,7 @@ fn main() -> std::process::ExitCode {
     startup(APP_ID);
 
     BusSetup::new(APP_ID).app_kinds(&[]).install();
-    sola_kit::menu::publish(menu::app_menu(false));
+    sola_kit::menu::publish(menu::app_menu(false, app::saved_mirror(), true));
 
     let mut settings = window_settings_transparent(APP_ID);
     settings.size = iced::Size::new(1512.0, 1010.0);
