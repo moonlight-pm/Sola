@@ -339,7 +339,11 @@ between tiles. Every kit window draws its own frame (`sola-kit`
 keeps the app's latest `AppMenuPayload` from `BusSetup` / `menu::publish`;
 a dropdown is an overlay inside the window; a Window item goes on the bus as
 `MenuAction` and the shell acts on its focused window, any other item is
-handed back to the app's own bus stream), 12 px corners, a lit rim. Tiles
+handed back to the app's own bus stream), 12 px corners, a lit rim. Its
+stoplight: red is the app's close; yellow sends `window.hide-window` and
+the shell takes that window off screen alone (`Stacks.hidden`, its row
+kept); green opens the zone picker (`window_frame/zones.rs`), whose picks
+are the Window menu's zone items. Tiles
 and floats alike clear their corners (`theme_for(chrome)`: a clear fill
 unless Cinema), so the ground shows there. The ground is the background
 picture when one is set (persistent `Topic::Background`, Sola's copy under

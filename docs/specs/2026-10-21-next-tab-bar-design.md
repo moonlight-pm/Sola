@@ -439,7 +439,8 @@ islands of board 03 come later.
   **Floating** windows stay transparent there, keep the edge resize grips,
   and the titlebar drags them.
 - **Titlebar row:** the close dot (12 px, 13 px in; red only when
-  focused), the app's first menu under its name in bold, the other menus
+  focused; since 2026-11-11 three lights — yellow hides the window, green
+  picks a zone, see `docs/manual/sola-shell.md` § Titlebars), the app's first menu under its name in bold, the other menus
   (13 px, 8 px pad, 24 px pills; the open one is a pill), the Window menu
   last (the kit's `ensure_window_menu`), then the window title in tertiary
   ink, right-aligned, truncated first. A title equal to the app name is
