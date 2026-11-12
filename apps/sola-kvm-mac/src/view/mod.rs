@@ -38,6 +38,10 @@ pub fn make_main(_display: u32) -> Result<(), String> {
 #[cfg(not(target_os = "macos"))]
 mod lid {
     pub fn watch(_changed: impl Fn() + Send + Sync + 'static) {}
+
+    pub fn closed() -> bool {
+        false
+    }
 }
 
 /// Stub for tests off macOS: there is no screen to send.
@@ -51,7 +55,15 @@ mod capture {
     #[derive(Default)]
     pub struct Screen;
 
+    impl Screen {
+        pub fn release(&mut self) {}
+    }
+
     pub fn can_mirror(_screen: &Screen) -> bool {
+        true
+    }
+
+    pub fn allowed() -> bool {
         true
     }
 
