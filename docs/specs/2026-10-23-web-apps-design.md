@@ -40,7 +40,9 @@ make *that* the app.
   menus — the titlebar shows the app's name and its menus.
 - It runs under its own profile whatever the workspace's profile (the one
   exception to slice 5's rule). Since 2026-11-11 a window can take the
-  showing workspace's instead, by Adopt Workspace
+  showing workspace's instead, by Adopt Workspace; since 2026-11-12 each
+  window has its own: the launcher's opens on the workspace's, one opened
+  from a window on that window's, and a window keeps it wherever it goes
   ([decision log](../open-questions.md#decision-log)).
 
 ## Wrap This Page… (proposed)

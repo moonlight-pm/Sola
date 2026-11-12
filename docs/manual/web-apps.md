@@ -2,9 +2,9 @@
 
 A web app is a website that Browser runs as an application of its own: a
 launcher entry, a window with the app's name and menus, and no location
-bar. It runs on the Browser profile it was made from, so it is signed in
-wherever that profile is; one window can run another workspace's instead
-([below](#another-workspaces-sign-in)). Web apps take the place of the separate Wrapper
+bar. Each of its windows runs a Browser profile: the workspace's it
+opened on, or that of the window it was opened from, kept wherever the
+window goes ([below](#sign-ins-and-workspaces)). Web apps take the place of the separate Wrapper
 application, which is gone. The examples below use Slack.
 
 ## Make one
@@ -60,9 +60,10 @@ site is the apex domain, the name registered under its public suffix, so
 
 A link you click to another site opens as a Browser page instead, unless
 another web app starts on that site: then it opens as a window of that app,
-on that app's profile, with its other windows in the bar. The same goes for a link that opens a new window (`target=_blank`,
+on the profile of the window you clicked in, with its other windows in the bar. The same goes for a link that opens a new window (`target=_blank`,
 ⌘-click) from any page, a Browser page included, and for a link from outside
-Browser: Mail, a terminal, Projects, `solactl open`. **Open in Browser** and the
+Browser: Mail, a terminal, Projects, `solactl open` (these on the profile of
+the workspace showing). **Open in Browser** and the
 launcher's Browser field always open a Browser page.
 
 Redirects, such as the round trip of a sign-in, stay in the window. A popup
@@ -96,7 +97,7 @@ as you like.
 - The launcher opens another window instead of bringing one forward, and
   **New Window** (⌘N) in the app's menu does too. A new window starts at the
   app's start page: ⌘N's signed in as the window it was pressed in, the
-  launcher's as the app ([below](#another-workspaces-sign-in)).
+  launcher's as the workspace showing ([below](#sign-ins-and-workspaces)).
 - One window is a row of its own, named for the app. With two or more on a
   workspace they group in the bar under the app's name, each named by its
   page's title. Super+Backtick steps through them.
@@ -104,13 +105,25 @@ as you like.
 - A link to its site from another app or a Browser page opens here
   ([above](#the-apps-window)).
 
-## Another workspace's sign-in
+## Sign-ins and workspaces
 
 Each workspace has a Browser profile of its own
 ([Profiles](sola-browser.md#profiles)), and each window of a web app runs
-one. A window the launcher opens runs the profile the app was made from;
-one ⌘N opens runs the profile of the window it was pressed in. On a
-workspace whose profile the window does not run, the app's menu has
+one:
+
+| The window | Its profile |
+|---|---|
+| Opened from the launcher | The workspace's it opens on |
+| Opened from another window (⌘N, a link, a popup) | That window's |
+| Opened by a link from outside Browser | The workspace showing's |
+| Sent to another workspace | Its own, kept |
+| Back after a restart or a Quit | Its own, kept |
+
+So one app signs in as two people on two workspaces: open it from the
+launcher on each, and sign in on each.
+
+On a workspace whose profile the window does not run (it was sent there,
+or opened from a window that runs another), the app's menu has
 **Adopt Workspace**:
 
 - The window reloads at its page under the profile of the workspace
@@ -118,12 +131,8 @@ workspace whose profile the window does not run, the app's menu has
   the site's sign-in.
 - It keeps that profile wherever it goes, through a restart and a Quit,
   until another workspace's Adopt Workspace.
-- Its links on the app's site, and its popups, stay on that profile.
 - The item is not there while the window runs the profile of the workspace
   showing.
-
-So one app signs in as two people on two workspaces: on the second, open
-the app, choose **Adopt Workspace**, and sign in.
 
 ## Remove
 

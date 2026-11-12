@@ -111,9 +111,10 @@ so renaming a workspace changes nothing about its profile.
   stays on, if that is another.
 - A deleted workspace's profile stays on disk with its sign-ins and saved
   pages, but nothing opens it.
-- A web app's window keeps its profile wherever it goes: the one the app
-  was wrapped from, until **Adopt Workspace** gives it the profile of the
-  workspace showing ([Web apps](web-apps.md#another-workspaces-sign-in)).
+- A web app's window opens on the profile of the workspace it opens on
+  (from the launcher) or of the window that opened it, and keeps it
+  wherever it goes, until **Adopt Workspace** gives it the profile of the
+  workspace showing ([Web apps](web-apps.md#sign-ins-and-workspaces)).
 
 Each profile runs in its own headless engine process, all at once: pages
 on every workspace stay live, and showing a workspace shows its pages
