@@ -2,11 +2,8 @@
 //! per group").
 //!
 //! Layout (left-to-right), a gap in from every edge, the ground between:
-//!   (✿) (1 Main) (2 Mail ◆)   (quick launch)   (✉ 🔔 ᛒ) (spectrum)
+//!   (✿) (1 Main) (2 Mail ◆)       (toast)        (✉ 🔔 ᛒ) (spectrum)
 //!                                       (CPU GPU VRAM MEM) (RX TX) (clock)
-//!
-//! The middle is the quick launch ([`super::quick`]), or a toast while one
-//! shows.
 //! The workspaces are here only when set to be islands ([`super::workspaces`]).
 //!
 //! Each group is one island: [`ISLAND_H`] tall, a pill, [`ISLAND_GAP`]
@@ -273,17 +270,12 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     .align_y(Alignment::Center)
     .into();
 
-    // The middle (layered over the row, so uneven sides do not pull it off
-    // center): the toast, the one live thing, or else the quick launch.
-    // Centred, unless that runs into the right-hand islands.
-    let middle: Option<(Element<'_, Msg>, f32)> = match mb.toast.as_deref() {
-        Some(message) => Some((
-            island(toast_widget(Some(message)), false, ISLAND_PAD_H),
-            text_w(message) + 2.0 * ISLAND_PAD_H,
-        )),
-        None => crate::menubar::quick::island_of(shell),
-    };
-    let middle = middle.map(|(island, w)| {
+    // The toast is the one live thing, an island in the middle of the row
+    // (layered over it, so uneven sides do not pull it off center): centred,
+    // unless that runs into the right-hand islands.
+    let middle = mb.toast.as_deref().map(|message| {
+        let w = text_w(message) + 2.0 * ISLAND_PAD_H;
+        let toast = island(toast_widget(Some(message)), false, ISLAND_PAD_H);
         // The extras island's right edge, from the items to its right.
         let extras_right = shell.right_edges().bluetooth + ISLAND_PAD_H + f32::from(ICON_SIZE);
         let right_start = if extras_w.is_empty() {
@@ -294,12 +286,12 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
         };
         let output_w = shell.output_size.map_or(1920.0, |(w, _)| w as f32);
         let left_end = crate::agents::view::left_group_end(shell);
-        let x = crate::menubar::quick::place(output_w, w, left_end, right_start);
+        let x = place(output_w, w, left_end, right_start);
         let pad = Padding {
             left: (x - EDGE).max(0.0),
             ..Padding::ZERO
         };
-        container(island).padding(pad).width(Length::Fill)
+        container(toast).padding(pad).width(Length::Fill)
     });
     let bar: Element<'_, Msg> = match middle {
         Some(middle) => {
@@ -329,6 +321,17 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// The middle island's left edge on an output `output_w` wide: centred,
+/// unless that comes within a gap of the right-hand islands (from
+/// `right_start`, a narrow output); then just left of them, though never
+/// over the left group (to `left_end`).
+fn place(output_w: f32, width: f32, left_end: f32, right_start: f32) -> f32 {
+    let centred = (output_w - width) / 2.0;
+    centred
+        .min(right_start - ISLAND_GAP - width)
+        .max(left_end + ISLAND_GAP)
+}
 
 /// An island's items, [`ITEM_GAP`] apart.
 fn items(items: Vec<Element<'_, Msg>>) -> Element<'_, Msg> {
@@ -434,4 +437,19 @@ fn mouse_chip(
     .height(Length::Fill)
     .align_y(Alignment::Center)
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_toast_is_centred_unless_the_right_hand_islands_are_in_the_way() {
+        // A wide output: the middle.
+        assert_eq!(place(1920.0, 100.0, 40.0, 1200.0), 910.0);
+        // A narrow one: just left of the meters.
+        assert_eq!(place(1280.0, 100.0, 40.0, 600.0), 600.0 - ISLAND_GAP - 100.0);
+        // No room at all: it keeps off the flower.
+        assert_eq!(place(400.0, 100.0, 40.0, 100.0), 40.0 + ISLAND_GAP);
+    }
 }

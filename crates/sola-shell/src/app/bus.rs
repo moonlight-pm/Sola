@@ -58,8 +58,8 @@ impl Shell {
                 self.on_workspace_prefs(message.sticky.then_some(p));
                 Task::none()
             }
-            Topic::QuickLaunch(q) => {
-                self.on_quick_launch(message.sticky.then_some(q));
+            Topic::KeptApps(k) => {
+                self.on_kept_apps(message.sticky.then_some(k));
                 Task::none()
             }
             Topic::FullscreenRequest(r) => {
@@ -216,8 +216,8 @@ impl Shell {
     /// click focused that app's window, so act on the focused window as the
     /// shortcut would. Other actions are the app's own and never reach here.
     fn on_titlebar_menu_action(&mut self, a: MenuActionPayload) -> Task<Msg> {
-        if let Some(action) = sola_kit::menu::parse_quick_launch_action(&a.action_id) {
-            return self.on_quick_launch_menu(&a.app_id, action);
+        if let Some(action) = sola_kit::menu::parse_keep_action(&a.action_id) {
+            return self.on_keep_menu(&a.app_id, action);
         }
         let close = a.action_id == sola_kit::menu::ACTION_CLOSE_WINDOW;
         let action = sola_kit::parse_window_action(&a.action_id);
@@ -295,6 +295,7 @@ impl Shell {
         self.emit_composition();
         self.emit_registered_chords();
         self.emit_idle_keep(true);
+        self.publish_builtins();
     }
 
     /// A window list, once the bus has replayed (`Topic::Replayed`).

@@ -381,11 +381,15 @@ window off screen (`WindowPlace.shown`), so the browser's pages rest. Once
 the dim is full (at full with the dim off) it says `done`, and the shell,
 with `Appearance.sleep_idle`, puts the machine to sleep (`power.rs`; Oath
 has no sleep yet). The menubar carries no
-app menus; its middle is the quick launch (persistent `Topic::QuickLaunch`,
-`menubar/quick.rs`: launcher app ids and Sleep), edited by Settings →
-Applications and by every kit app's own menu, whose Add to / Remove from
-Quick Launch the kit adds (`menu::fill_quick_launch`) and the shell carries
-out. The shell publishes sticky
+app menus. Kept apps (persistent `Topic::KeptApps`): `stacks` holds a
+`Block::Kept` among a workspace's loose rows for each kept app with no
+window — where its last window was, saved in the tab layout
+(`TabLayout.kept`) — which its next window takes; the bar draws it quiet,
+and with `sleep_button` a round moon at its foot. Settings →
+Applications keeps any app (Sola's own from the shell's sticky
+`Topic::BuiltinApps`), and every kit app's first menu has Keep in Sidebar /
+Remove from Sidebar, which the kit adds (`menu::fill_keep`) and the shell
+carries out. The shell publishes sticky
 `Topic::WindowPlace` (window id → tiled, floating, Cinema, rim, and the rest; `place.rs`):
 sola-river sends `set_tiled` on change and a 1 px border on windows whose
 app published no menu (foreign apps) — tiled ones get rounded corners

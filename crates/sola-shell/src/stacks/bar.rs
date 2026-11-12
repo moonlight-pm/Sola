@@ -8,6 +8,11 @@
 //! the top"). The flat order, every row top to bottom, is what the zones,
 //! the keys and the saved layout read. A group down to one window or none
 //! stays as an empty block: its place, for when the app has two again.
+//!
+//! A kept app (`Topic::KeptApps`) with no window keeps a row of its own
+//! among the loose rows, [`Block::Kept`]: its place, which its next window
+//! takes (Joshua, 2026-11-11: "it keeps a sidebar entry open for the app --
+//! even when the app isn't running").
 
 use std::collections::BTreeSet;
 
@@ -45,6 +50,13 @@ pub enum Block {
         /// rows restored around it line up as saved.
         rank: Option<usize>,
     },
+    /// A kept app with no window: its row, among the loose rows, no tab.
+    Kept {
+        /// Its launcher app id.
+        app: String,
+        /// As a group's: its index in the saved bar.
+        rank: Option<usize>,
+    },
 }
 
 /// A block, by what it holds.
@@ -53,6 +65,8 @@ pub enum BlockId {
     /// A loose row's window; given a grouped window, its group.
     Window(u32),
     Group(String),
+    /// A kept app's row.
+    Kept(String),
 }
 
 impl Block {
@@ -61,7 +75,13 @@ impl Block {
         match self {
             Block::Loose(t) => std::slice::from_ref(t),
             Block::Group { tabs, .. } => tabs,
+            Block::Kept { .. } => &[],
         }
+    }
+
+    /// A loose row, or a kept app's: the run before the groups.
+    fn is_loose(&self) -> bool {
+        matches!(self, Block::Loose(_) | Block::Kept { .. })
     }
 
     fn holds(&self, window_id: u32) -> bool {
@@ -71,6 +91,7 @@ impl Block {
     fn is(&self, id: &BlockId) -> bool {
         match (self, id) {
             (Block::Group { app, .. }, BlockId::Group(g)) => app == g,
+            (Block::Kept { app, .. }, BlockId::Kept(k)) => app == k,
             (_, BlockId::Window(w)) => self.holds(*w),
             _ => false,
         }
@@ -134,6 +155,7 @@ impl Bar {
         self.blocks.iter_mut().flat_map(|b| match b {
             Block::Loose(t) => std::slice::from_mut(t),
             Block::Group { tabs, .. } => tabs.as_mut_slice(),
+            Block::Kept { .. } => &mut [],
         })
     }
 
@@ -164,12 +186,16 @@ impl Bar {
         self.blocks.iter().position(|b| b.is(id))
     }
 
-    /// How many loose rows there are: they are the first blocks.
+    /// How many loose rows there are (kept apps' among them): they are the
+    /// first blocks.
     pub fn loose_len(&self) -> usize {
-        self.blocks
-            .iter()
-            .take_while(|b| matches!(b, Block::Loose(_)))
-            .count()
+        self.blocks.iter().take_while(|b| b.is_loose()).count()
+    }
+
+    /// How many rows the loose blocks hold (a kept app's holds none): where
+    /// the groups start in the flat order.
+    pub fn loose_rows(&self) -> usize {
+        self.start_of(self.loose_len())
     }
 
     /// `app`'s group: where its rows start and end in the flat order
@@ -257,7 +283,7 @@ impl Bar {
         let lone = self.blocks[..self.loose_len()]
             .iter()
             .position(|b| matches!(b, Block::Loose(t) if t.app_id == app));
-        let past_lone = lone.is_some_and(|l| l < at);
+        let past_lone = lone.is_some_and(|l| self.start_of(l) < at);
         let at_after = at - usize::from(past_lone);
         let b = self.gather(&app, |bar| bar.boundary(at_after.min(bar.len()), false));
         let start = self.start_of(b);
@@ -300,6 +326,7 @@ impl Bar {
                 Some(r) => *r > rank,
                 None => tabs.iter().all(|t| later(t.window_id)),
             },
+            Block::Kept { rank: r, .. } => r.is_none_or(|r| r > rank),
         };
         let first_group = self.loose_len();
         let (from, to) = if loose {
@@ -323,8 +350,9 @@ impl Bar {
         let tab = match &mut self.blocks[b] {
             Block::Loose(_) => match self.blocks.remove(b) {
                 Block::Loose(t) => t,
-                Block::Group { .. } => unreachable!("matched a loose block"),
+                _ => unreachable!("matched a loose block"),
             },
+            Block::Kept { .. } => return None,
             Block::Group { tabs, .. } => {
                 let i = tabs.iter().position(|t| t.window_id == window_id)?;
                 let tab = tabs.remove(i);
@@ -382,22 +410,71 @@ impl Bar {
             .and_then(|b| self.block_index(b))
             .unwrap_or(self.blocks.len());
         let first_group = self.loose_len();
-        let to = match block {
-            Block::Loose(_) => to.min(first_group),
-            Block::Group { .. } => to.max(first_group),
-        };
+        let to = if block.is_loose() { to.min(first_group) } else { to.max(first_group) };
         self.blocks.insert(to, block);
         to != from
     }
 
-    /// Forget every row; groups stay, empty, in their places.
+    /// Forget every row; groups stay, empty, in their places, and kept
+    /// apps' rows in theirs.
     pub fn clear(&mut self) {
-        self.blocks.retain(|b| matches!(b, Block::Group { .. }));
+        self.blocks.retain(|b| !matches!(b, Block::Loose(_)));
         for b in &mut self.blocks {
             if let Block::Group { tabs, .. } = b {
                 tabs.clear();
             }
         }
+    }
+
+    /// The kept apps with a row here.
+    pub fn kept(&self) -> impl Iterator<Item = &str> {
+        self.blocks.iter().filter_map(|b| match b {
+            Block::Kept { app, .. } => Some(app.as_str()),
+            _ => None,
+        })
+    }
+
+    /// The block holding `window_id`.
+    pub fn block_of(&self, window_id: u32) -> Option<usize> {
+        self.blocks.iter().position(|b| b.holds(window_id))
+    }
+
+    /// Give kept `app` its row as block `b`, among the loose rows (`rank`:
+    /// where the saved bar had it). Nothing when it has one.
+    pub fn keep_block(&mut self, app: &str, b: usize, rank: Option<usize>) {
+        if self.kept().any(|k| k == app) {
+            return;
+        }
+        let b = b.min(self.loose_len());
+        self.blocks.insert(
+            b,
+            Block::Kept {
+                app: app.to_string(),
+                rank,
+            },
+        );
+    }
+
+    /// Take kept `app`'s row away. Whether it had one.
+    pub fn unkeep(&mut self, app: &str) -> bool {
+        let before = self.blocks.len();
+        self.blocks
+            .retain(|b| !matches!(b, Block::Kept { app: a, .. } if a == app));
+        self.blocks.len() != before
+    }
+
+    /// Put `tab` in its kept app's row, `app`: the window takes that place.
+    /// Whether there was one.
+    pub fn fill_kept(&mut self, app: &str, tab: Tab) -> bool {
+        let Some(b) = self
+            .blocks
+            .iter()
+            .position(|b| matches!(b, Block::Kept { app: a, .. } if a == app))
+        else {
+            return false;
+        };
+        self.blocks[b] = Block::Loose(tab);
+        true
     }
 }
 

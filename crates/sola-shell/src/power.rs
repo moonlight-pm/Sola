@@ -1,5 +1,5 @@
 //! Machine power from the flower menu (sleep / reboot / poweroff), the
-//! quick launch's Sleep and the idle's end (`Appearance.sleep_idle`).
+//! bar's Sleep button and the idle's end (`Appearance.sleep_idle`).
 //!
 //! NixOS: logind via `loginctl` / `systemctl`. Sola has no polkit agent, so
 //! the call is non-interactive (`sudo -n` as a last try).

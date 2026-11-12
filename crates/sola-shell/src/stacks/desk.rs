@@ -197,6 +197,16 @@ impl Desk {
         self.placed(window_id, zone, show)
     }
 
+    /// Put `tab` in kept `app`'s row ([`Bar::fill_kept`]), in its zone; a
+    /// tiled zone shows it when `show` (or when it showed nothing). `None`
+    /// when the app has no row here; else whether its zone shows it.
+    pub fn fill_kept(&mut self, app: &str, tab: Tab, show: bool) -> Option<bool> {
+        let (window_id, zone) = (tab.window_id, tab.zone);
+        self.bar
+            .fill_kept(app, tab)
+            .then(|| self.placed(window_id, zone, show))
+    }
+
     /// Put back `tab`, saved at index `rank` of the bar, among the windows
     /// already back ([`Bar::insert_ranked`]).
     pub fn insert_ranked(&mut self, tab: Tab, rank: usize, show: bool) -> bool {

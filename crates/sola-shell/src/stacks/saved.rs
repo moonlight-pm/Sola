@@ -154,6 +154,17 @@ impl Stacks {
             });
             d.bar = Bar::of_groups(ws_groups.into_iter().map(|(at, _, app)| (app, at)).collect());
             d.bar.fold(layout.folded.iter().filter(|f| f.workspace == d.id).map(|f| f.app.clone()));
+            // The kept apps' rows, in order: the bar has no rows yet, and
+            // windows coming back line up around them by their index.
+            let mut kept: Vec<_> = layout.kept.iter().filter(|k| k.workspace == d.id).collect();
+            kept.sort_by_key(|k| k.at);
+            for k in kept {
+                let end = d.bar.loose_len();
+                d.bar.keep_block(&k.app, end, Some(k.at as usize));
+            }
+        }
+        if self.kept_known {
+            self.settle_kept();
         }
         self.restore_until = Some(now + RESTORE_GRACE);
     }
@@ -164,16 +175,22 @@ impl Stacks {
     pub fn layout(&self, now: Instant) -> TabLayout {
         let mut zones: Vec<TabLayoutZone> = Vec::new();
         let mut groups: Vec<TabLayoutGroup> = Vec::new();
+        let mut kept: Vec<TabLayoutGroup> = Vec::new();
         for desk in &self.desks {
             // The bar: its tabs (zone, key, the zone shows it), and the
             // empty groups between them.
             let mut bar: Vec<Row> = Vec::new();
             for block in desk.bar.blocks() {
-                if let Block::Group { app, tabs, .. } = block {
-                    if tabs.is_empty() {
+                match block {
+                    Block::Group { app, tabs, .. } if tabs.is_empty() => {
                         bar.push(Row::Empty(app.clone()));
                         continue;
                     }
+                    Block::Kept { app, .. } => {
+                        bar.push(Row::Kept(app.clone()));
+                        continue;
+                    }
+                    _ => {}
                 }
                 for t in block.tabs() {
                     let shown = desk.column(t.zone).shown == Some(t.window_id);
@@ -208,6 +225,14 @@ impl Stacks {
                     Row::Tab(zone, key, shown) => (zone, key, shown),
                     Row::Empty(app) => {
                         groups.push(TabLayoutGroup {
+                            workspace: desk.id.clone(),
+                            app,
+                            at: index,
+                        });
+                        continue;
+                    }
+                    Row::Kept(app) => {
+                        kept.push(TabLayoutGroup {
                             workspace: desk.id.clone(),
                             app,
                             at: index,
@@ -283,6 +308,7 @@ impl Stacks {
                 })
                 .collect(),
             groups,
+            kept,
             folded: self
                 .desks
                 .iter()
@@ -384,6 +410,8 @@ impl Stacks {
 enum Row {
     Tab(Zone, String, bool),
     Empty(String),
+    /// A kept app's row, by its app.
+    Kept(String),
 }
 
 /// Where the tab at index `at` of the bar (counting tabs only) sits among

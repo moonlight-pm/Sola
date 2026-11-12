@@ -28,7 +28,7 @@ fn blocks(s: &Stacks) -> Vec<(Option<String>, Vec<u32>)> {
         .map(|b| {
             let app = match b {
                 Block::Group { app, .. } => Some(app.clone()),
-                Block::Loose(_) => None,
+                Block::Loose(_) | Block::Kept { .. } => None,
             };
             (app, b.tabs().iter().map(|t| t.window_id).collect())
         })

@@ -24,6 +24,8 @@ mod pin_tests;
 mod desk;
 #[cfg(test)]
 mod group_tests;
+#[cfg(test)]
+mod kept_tests;
 mod saved;
 #[cfg(test)]
 mod tests;
@@ -106,6 +108,13 @@ pub struct Stacks {
     /// The zone a tab in Cinema came from: an app leaving fullscreen goes
     /// back there.
     cinema_from: HashMap<u32, Zone>,
+    /// The apps kept in the sidebar (`Topic::KeptApps`, launcher app ids):
+    /// one with no window has a row of its own on one workspace
+    /// ([`Block::Kept`]), which its next window takes.
+    kept: Vec<String>,
+    /// The kept apps have been said (the saved layout's kept rows wait for
+    /// them before any is dropped).
+    kept_known: bool,
 }
 
 impl Default for Stacks {
@@ -130,6 +139,8 @@ impl Stacks {
             focused: None,
             opened: None,
             cinema_from: HashMap::new(),
+            kept: Vec::new(),
+            kept_known: false,
         }
     }
 
@@ -217,6 +228,12 @@ impl Stacks {
             self.pinned.insert(window_id);
             self.spread(window_id);
         }
+        // A kept app with a window has no row of its own.
+        if let Some(app) = self.kept_as(app_id) {
+            for desk in &mut self.desks {
+                desk.bar.unkeep(&app);
+            }
+        }
         placed
     }
 
@@ -266,7 +283,23 @@ impl Stacks {
             None => (self.showing, self.focused),
         };
         let (zone, mut at, opener) = self.landing_on(d, from, app_id, floats);
+        let kept = self.kept_as(app_id);
         let desk = &mut self.desks[d];
+        // A kept app's row here: its window takes that place.
+        if let Some(app) = kept {
+            let show = !(returning && desk.column(zone).shown.is_some());
+            if let Some(shown) = desk.fill_kept(&app, tab(zone), show) {
+                if shown {
+                    desk.pick(zone);
+                }
+                self.opened = None;
+                return Placed {
+                    zone,
+                    shown,
+                    returning,
+                };
+            }
+        }
         let opener_is_kin = opener.is_some_and(|o| kin.contains(&o));
         if !opener_is_kin {
             if let Some(end) = kin.iter().filter_map(|&w| desk.bar.index_of(w)).max() {
@@ -319,7 +352,7 @@ impl Stacks {
             }
             _ => opener,
         };
-        let loose_len = bar.loose_len();
+        let loose_len = bar.loose_rows();
         let after_end = after.and_then(|a| bar.block_end(a));
         let in_group = |w: u32| bar.tab(w).is_some_and(|t| t.app_id == app_id);
         // The app's first window here is a loose row; its second makes the
@@ -492,7 +525,12 @@ impl Stacks {
         let pinned = self.pinned.remove(&window_id);
         let restoring = self.restore_until.is_some_and(|until| now < until);
         let mut left = None;
-        for desk in &mut self.desks {
+        // Where it was (the showing workspace's row of a pinned one), by
+        // workspace and block: a kept app's row goes back there when this
+        // was its last window.
+        let mut was: Option<(usize, usize, String)> = None;
+        let showing = self.showing;
+        for (d, desk) in self.desks.iter_mut().enumerate() {
             let others_away = self
                 .ghosts
                 .iter()
@@ -502,8 +540,12 @@ impl Stacks {
             }
             let rank = desk.rank_of(window_id).filter(|_| restoring);
             let at = rank.unwrap_or_else(|| desk.number_of(window_id));
+            let block = desk.bar.block_of(window_id);
             if let Some((zone, _, tab, shown)) = desk.take(window_id) {
                 left = Some(zone);
+                if was.is_none() || d == showing {
+                    was = block.map(|b| (d, b, tab.app_id.clone()));
+                }
                 if leaves_a_place {
                     self.ghosts.push((
                         Slot {
@@ -520,7 +562,74 @@ impl Stacks {
                 }
             }
         }
+        if let Some((d, block, app_id)) = was {
+            if let Some(app) = self.kept_as(&app_id).filter(|a| !self.has_window(a)) {
+                self.desks[d].bar.keep_block(&app, block, None);
+            }
+        }
         left
+    }
+
+    // ---------------------------------------------------------------------
+    // Kept apps
+    // ---------------------------------------------------------------------
+
+    /// Take the kept apps (`Topic::KeptApps`). An app no longer kept loses
+    /// its row; one newly kept with no window gets one at the end of the
+    /// showing workspace's loose rows. Returns whether the bar changed.
+    pub fn set_kept(&mut self, apps: &[String]) -> bool {
+        self.kept = apps.to_vec();
+        self.kept_known = true;
+        self.settle_kept()
+    }
+
+    /// Every kept app has a window or one row of its own; nothing else
+    /// has such a row.
+    fn settle_kept(&mut self) -> bool {
+        let mut changed = false;
+        let mut seen: Vec<String> = Vec::new();
+        for d in 0..self.desks.len() {
+            let rows: Vec<String> = self.desks[d].bar.kept().map(str::to_string).collect();
+            for app in rows {
+                let stays = self.kept.contains(&app) && !self.has_window(&app) && !seen.contains(&app);
+                if stays {
+                    seen.push(app);
+                } else {
+                    changed |= self.desks[d].bar.unkeep(&app);
+                }
+            }
+        }
+        let missing: Vec<String> = self
+            .kept
+            .iter()
+            .filter(|a| !seen.contains(a) && !self.has_window(a))
+            .cloned()
+            .collect();
+        let bar = &mut self.desks[self.showing].bar;
+        for app in missing {
+            let end = bar.loose_len();
+            bar.keep_block(&app, end, None);
+            changed = true;
+        }
+        changed
+    }
+
+    /// The kept app a window of `app_id` belongs to (a window's id is its
+    /// launcher id, but for case).
+    fn kept_as(&self, app_id: &str) -> Option<String> {
+        self.kept.iter().find(|k| k.eq_ignore_ascii_case(app_id)).cloned()
+    }
+
+    /// Whether launcher app `app` has a window on any workspace.
+    fn has_window(&self, app: &str) -> bool {
+        self.desks
+            .iter()
+            .any(|d| d.bar.tabs().any(|t| t.app_id.eq_ignore_ascii_case(app)))
+    }
+
+    /// Whether kept `app` has its row on the showing workspace.
+    pub fn has_kept_row(&self, app: &str) -> bool {
+        self.desks[self.showing].bar.kept().any(|k| k == app)
     }
 
     /// Take a window off every workspace it is on, without leaving a ghost

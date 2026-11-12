@@ -52,16 +52,23 @@ pub fn group_row_id(workspace: &str, app: &str) -> String {
     format!("g:{workspace}:{app}")
 }
 
+/// A kept app's row's id (it has no window): its workspace and its app.
+pub fn kept_row_id(workspace: &str, app: &str) -> String {
+    format!("k:{workspace}:{app}")
+}
+
 /// The block a row or a group header stands for.
 pub fn block_of_row(id: &str) -> Option<crate::stacks::BlockId> {
     use crate::stacks::BlockId;
-    match id.strip_prefix("g:") {
-        Some(group) => {
-            let (_, app) = group.split_once(':')?;
-            Some(BlockId::Group(app.to_string()))
-        }
-        None => window_of_row(id).map(BlockId::Window),
+    if let Some(group) = id.strip_prefix("g:") {
+        let (_, app) = group.split_once(':')?;
+        return Some(BlockId::Group(app.to_string()));
     }
+    if let Some(kept) = id.strip_prefix("k:") {
+        let (_, app) = kept.split_once(':')?;
+        return Some(BlockId::Kept(app.to_string()));
+    }
+    window_of_row(id).map(BlockId::Window)
 }
 
 #[cfg(test)]

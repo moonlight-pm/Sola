@@ -117,12 +117,11 @@ Left to right:
   ([Theme](theme.md#shell-tokens)).
 - **Agent islands**, one per Projects session that asks you something or
   has finished ([below](#agent-islands)).
-- **The quick launch** in the middle of the row, when it has anything
-  on it ([below](#quick-launch)).
-- A **message** in its place, for five seconds, when there is one: a
-  launch that failed ("Failed to launch …"), an app that exited with an
-  error ("… exited (code N)", "… killed (signal N)"), "Screenshot
-  copied".
+- A **message** in the middle of the row, for five seconds, when there is
+  one: a launch that failed ("Failed to launch …"), an app that exited
+  with an error ("… exited (code N)", "… killed (signal N)"),
+  "Screenshot copied". On a narrow screen it sits just left of the
+  right-hand islands rather than over them.
 - On the right, an island per group: mail, the bell, the mouse battery
   and Bluetooth; the volume spectrum; CPU, GPU, VRAM and MEM; RX and TX;
   the clock.
@@ -144,7 +143,8 @@ Click it again, press Escape, or click a window to close the panel.
 | Restart Computer | Restarts the machine |
 | Shut Down | Powers the machine off |
 
-Sleep, Restart Computer and Shut Down have no confirmation and no
+Sleep (and the bar's [Sleep button](#kept-apps-and-sleep)), Restart
+Computer and Shut Down have no confirmation and no
 shortcut. On Oath, Restart Computer and Shut Down run `sudo /bin/oath set
 host:local power=reboot` (or `power=halt`), then `sudo /bin/oath apply
 --confirm host:local`. Oath has no sleep yet, so there Sleep shows **Could
@@ -152,23 +152,6 @@ not sleep**; elsewhere it asks logind (`loginctl suspend`). Sola has no
 password prompt, so these work only when sudo (or logind) lets you run
 them without one. A failure shows **Could not sleep**, **Could not restart
 the computer** or **Could not shut down**.
-
-### Quick launch
-
-An island in the middle of the top row holds the apps you put there, an
-icon each, and **Sleep** (a moon) at the end when it is on. A click on an
-app brings its window forward, or starts it, as its row in the launcher
-does; a click on the moon puts the machine to sleep, as the flower's
-**Sleep** does. With nothing on it the island is not there, and a message
-takes its place while one shows.
-
-An app goes on it from its own menu (the first menu in its titlebar,
-under its name): **Add to Quick Launch**, and **Remove from Quick Launch**
-to take it off. An app with no menu of its own (Steam, a game) goes on it
-from Settings → Applications, where the **Quick Launch** section lists
-what is on it in order (↑ and ↓ move one, × takes it off) and has the
-**Sleep** switch; each app's editor there has **On the quick launch**. The
-quick launch travels as the persistent topic `QuickLaunch`.
 
 ### Clock and calendar
 
@@ -353,8 +336,30 @@ When a group is down to one window, that window becomes a row of its own.
 The group keeps its place on that workspace, unseen, and comes back there
 when the app has two windows again.
 
-The bar's layout (the workspaces, each window's place and zone, and the
-places of empty groups) is saved in `~/.local/state/sola/shell/tabs.json`. Windows that come back within
+### Kept apps and Sleep
+
+An app can be **kept** in the sidebar: when its last window closes, its
+row stays where that window was, quiet (its icon and name faint, no close
+dot), and a click on it starts the app. A turning ring takes the icon's
+place while it starts, and the new window takes the row. While the app has
+windows they are its rows, as for any app; an app that groups its windows
+(Browser, Paint) keeps one row once they are all closed. A kept row is a
+row of its own like any other: drag it among those rows, and it stays
+where you put it. It is on the workspace its last window was on.
+
+Keep an app with the switch on its row in Settings → Applications (every
+app is there: Sola's own, the ones added to the launcher, Steam and games
+among them, and web apps), or from its own menu (the first in its
+titlebar, under its name): **Keep in Sidebar**, and **Remove from
+Sidebar** to let it go. Which apps are kept travels as the persistent topic
+`KeptApps`; where each quiet row sits is saved with the bar's layout.
+
+With Settings → Applications → Sidebar → **Sleep button** on, a round
+moon sits centred at the foot of the bar, in the theme's colours: a click
+puts the machine to sleep, as the flower's **Sleep** does.
+
+The bar's layout (the workspaces, each window's place and zone, the
+places of empty groups and of kept apps' rows) is saved in `~/.local/state/sola/shell/tabs.json`. Windows that come back within
 two minutes of the Shell starting take their saved places, and a window
 whose app restarts within 30 seconds takes the place it left.
 

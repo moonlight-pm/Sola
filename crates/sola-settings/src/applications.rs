@@ -16,10 +16,10 @@
 //! the browser makes them (Wrap This Page…); here one can be renamed or
 //! removed.
 //!
-//! The quick launch (`Topic::QuickLaunch`, the apps in the middle of the
-//! top row) heads the page: its apps in order, and Sleep. An app goes on
-//! it from its editor here, or from its own menu (Sola's own apps, which
-//! are not listed here, are named by the keys they declared).
+//! Every app here, Sola's own (`Topic::BuiltinApps`, from the shell) among
+//! them, has a switch that keeps it in the sidebar (`Topic::KeptApps`): its
+//! row stays in the bar while it is not running, to start it from. The
+//! Sidebar section heads the page, with the bar's Sleep button.
 
 use iced::widget::{column, row, toggler};
 use iced::{Element, Length, Task};
@@ -27,7 +27,7 @@ use sola_kit::components::form::toggle_style;
 use sola_kit::components::text_input::text_input;
 
 use sola_bus::topics::{
-    AppKind, Application, ApplicationsConfig, KeyActions, QuickLaunch, Topic, Window as BusWindow,
+    AppKind, Application, ApplicationsConfig, BuiltinApp, KeptApps, Topic, Window as BusWindow,
 };
 use sola_kit::app::try_bus;
 use sola_kit::components::style::{SPACE_LG, SPACE_MD};
@@ -98,8 +98,10 @@ pub enum Detail {
 pub struct AppsState {
     pub detail: Detail,
     pub error: Option<String>,
-    /// The quick launch, replayed from `Topic::QuickLaunch`.
-    pub quick: QuickLaunch,
+    /// The apps kept in the sidebar, replayed from `Topic::KeptApps`.
+    pub kept: KeptApps,
+    /// Sola's own apps, from the shell (`Topic::BuiltinApps`).
+    pub builtins: Vec<BuiltinApp>,
 }
 
 /// Label if non-empty after trim, otherwise `app_id`.
@@ -204,12 +206,10 @@ pub enum AppsMsg {
     Discard,
     CloseDetail,
     Remove(String),
-    /// Put an app on the quick launch, or take it off.
-    Quick(String, bool),
-    /// Move the quick launch's app at an index up (or down) one place.
-    QuickMove(usize, bool),
-    /// Sleep at the end of the quick launch, or not.
-    QuickSleep(bool),
+    /// Keep an app in the sidebar, or let it go.
+    Keep(String, bool),
+    /// The bar's Sleep button on or off.
+    SleepButton(bool),
 }
 
 pub fn update(msg: AppsMsg, apps: &mut ApplicationsConfig, ui: &mut AppsState) -> Task<AppsMsg> {
@@ -277,13 +277,13 @@ pub fn update(msg: AppsMsg, apps: &mut ApplicationsConfig, ui: &mut AppsState) -
                     Ok(()) => {
                         if id_changed && let Some(old) = prev {
                             retract(Topic::Application(old));
-                            let mut quick = ui.quick.clone();
-                            for id in &mut quick.apps {
+                            let mut kept = ui.kept.clone();
+                            for id in &mut kept.apps {
                                 if *id == orig {
                                     id.clone_from(&new_app.app_id);
                                 }
                             }
-                            set_quick(ui, quick);
+                            set_kept(ui, kept);
                         }
                         emit(Topic::Application(new_app.clone()));
                         ui.detail = Detail::Edit {
@@ -357,55 +357,46 @@ pub fn update(msg: AppsMsg, apps: &mut ApplicationsConfig, ui: &mut AppsState) -
                     ui.error = None;
                 }
                 retract(Topic::Application(removed));
-                let mut quick = ui.quick.clone();
-                quick.apps.retain(|a| a != &app_id);
-                set_quick(ui, quick);
+                let mut kept = ui.kept.clone();
+                kept.apps.retain(|a| a != &app_id);
+                set_kept(ui, kept);
             }
         }
-        AppsMsg::Quick(app_id, on) => {
-            let mut quick = ui.quick.clone();
-            quick.apps.retain(|a| a != &app_id);
+        AppsMsg::Keep(app_id, on) => {
+            let mut kept = ui.kept.clone();
+            kept.apps.retain(|a| a != &app_id);
             if on {
-                quick.apps.push(app_id);
+                kept.apps.push(app_id);
             }
-            set_quick(ui, quick);
+            set_kept(ui, kept);
         }
-        AppsMsg::QuickMove(at, up) => {
-            let mut quick = ui.quick.clone();
-            let to = if up { at.checked_sub(1) } else { Some(at + 1) };
-            if let Some(to) = to.filter(|to| *to < quick.apps.len() && at < quick.apps.len()) {
-                quick.apps.swap(at, to);
-                set_quick(ui, quick);
-            }
-        }
-        AppsMsg::QuickSleep(on) => {
-            let quick = QuickLaunch {
-                sleep: on,
-                ..ui.quick.clone()
+        AppsMsg::SleepButton(on) => {
+            let kept = KeptApps {
+                sleep_button: on,
+                ..ui.kept.clone()
             };
-            set_quick(ui, quick);
+            set_kept(ui, kept);
         }
     }
     Task::none()
 }
 
-/// Send the quick launch when it changed (the shell shows it; the replay
-/// confirms it here).
-fn set_quick(ui: &mut AppsState, quick: QuickLaunch) {
-    if quick == ui.quick {
+/// Send the kept apps when they changed (the shell keeps their rows; the
+/// replay confirms it here).
+fn set_kept(ui: &mut AppsState, kept: KeptApps) {
+    if kept == ui.kept {
         return;
     }
-    ui.quick = quick.clone();
-    emit(Topic::QuickLaunch(quick));
+    ui.kept = kept.clone();
+    emit(Topic::KeptApps(kept));
 }
 
 pub fn view<'a>(
     apps: &'a ApplicationsConfig,
     running: &'a [BusWindow],
     ui: &'a AppsState,
-    declared: &'a [KeyActions],
 ) -> Element<'a, AppsMsg> {
-    let mut sections = vec![quick_launch(apps, ui, declared), catalog(apps, ui), web_apps(apps, ui)];
+    let mut sections = vec![sidebar(ui), builtins(ui), catalog(apps, ui), web_apps(apps, ui)];
     let candidates = collect_candidates(apps, running);
     if !candidates.is_empty() {
         sections.push(candidates_section(candidates));
@@ -415,78 +406,61 @@ pub fn view<'a>(
 
 // ── view helpers ───────────────────────────────────────────────────
 
-/// The quick launch: its apps in order, each to move or take off, then
-/// Sleep.
-fn quick_launch<'a>(
-    apps: &'a ApplicationsConfig,
-    ui: &'a AppsState,
-    declared: &'a [KeyActions],
-) -> Element<'a, AppsMsg> {
-    use sola_kit::components::toolbar::toolbar_icon_tip;
-    let count = ui.quick.apps.len();
-    let mut rows: Vec<Element<'a, AppsMsg>> = Vec::new();
-    for (at, id) in ui.quick.apps.iter().enumerate() {
-        let (name, leading) = match apps.get(id) {
-            Some(app) => (display_title(app).to_string(), app_icon(app)),
-            // Sola's own: its name from the keys it declared.
-            None => (
-                declared
-                    .iter()
-                    .find(|d| d.owner == *id)
-                    .map_or_else(|| id.clone(), |d| d.label.clone()),
-                page::glyph(page::icon("lucide/app-window"), 18, 0.7),
-            ),
-        };
-        let tools = row![
-            toolbar_icon_tip(
-                page::icon("lucide/arrow-up"),
-                "Move up",
-                (at > 0).then(|| AppsMsg::QuickMove(at, true)),
-            ),
-            toolbar_icon_tip(
-                page::icon("lucide/arrow-down"),
-                "Move down",
-                (at + 1 < count).then(|| AppsMsg::QuickMove(at, false)),
-            ),
-            toolbar_icon_tip(
-                page::icon("lucide/x"),
-                "Take off the quick launch",
-                Some(AppsMsg::Quick(id.clone(), false)),
-            ),
-        ]
-        .spacing(2);
-        rows.push(page::item(name).leading(leading).trailing(tools).into());
-    }
-    rows.push(page::setting(
-        "Sleep",
-        toggler(ui.quick.sleep)
-            .on_toggle(AppsMsg::QuickSleep)
-            .style(toggle_style),
-    ));
+/// The Sidebar: the bar's Sleep button, and what the switches below do.
+fn sidebar(ui: &AppsState) -> Element<'_, AppsMsg> {
     page::section(
-        "Quick Launch",
+        "Sidebar",
         None,
-        page::group(rows),
+        page::group(vec![page::setting(
+            "Sleep button",
+            toggler(ui.kept.sleep_button)
+                .on_toggle(AppsMsg::SleepButton)
+                .style(toggle_style),
+        )]),
         Some(
-            "The apps in the middle of the top row: a click starts one, or \
-             brings it forward. Put one there from its row below, or from its \
-             own menu (Mail → Add to Quick Launch). Sleep puts the computer to \
-             sleep; a key or the mouse wakes it."
+            "A round moon at the foot of the sidebar puts the computer to sleep; \
+             a key or the mouse wakes it. The switch on each app below keeps it \
+             in the sidebar: its row stays where it was while the app is not \
+             running, and a tap on the row starts it. An app's own menu has Keep \
+             in Sidebar too."
                 .into(),
         ),
     )
 }
 
-/// An editor's quick launch switch: on at once, not with Save.
-fn quick_switch<'a>(ui: &'a AppsState, app_id: &'a str) -> Element<'a, AppsMsg> {
-    let on = ui.quick.apps.iter().any(|a| a == app_id);
+/// An app's Keep in Sidebar switch, for its row: on at once.
+fn keep_switch<'a>(ui: &AppsState, app_id: &str) -> Element<'a, AppsMsg> {
+    let on = ui.kept.apps.iter().any(|a| a == app_id);
     let id = app_id.to_string();
-    page::setting(
-        "On the quick launch",
+    row![
+        kit_text::caption("In sidebar").style(kit_text::muted),
         toggler(on)
-            .on_toggle(move |on| AppsMsg::Quick(id.clone(), on))
+            .on_toggle(move |on| AppsMsg::Keep(id.clone(), on))
             .style(toggle_style),
-    )
+    ]
+    .spacing(SPACE_MD)
+    .align_y(iced::Alignment::Center)
+    .into()
+}
+
+/// Sola's own apps (the shell's launcher has them; nothing to edit here),
+/// each with its switch.
+fn builtins(ui: &AppsState) -> Element<'_, AppsMsg> {
+    let mut apps: Vec<&BuiltinApp> = ui.builtins.iter().collect();
+    apps.sort_by_key(|a| a.label.to_lowercase());
+    let mut rows: Vec<Element<'_, AppsMsg>> = apps
+        .into_iter()
+        .map(|a| {
+            page::item(a.label.clone())
+                .leading(sola_kit::components::icon::icon(&a.icon, 18))
+                .trailing(keep_switch(ui, &a.app_id))
+                .into()
+        })
+        .collect();
+    if rows.is_empty() {
+        rows.push(page::empty("The Shell lists them while it runs."));
+    }
+    page::section("Sola's apps", None, page::group(rows), None)
 }
 
 /// The launcher's apps, A→Z, the open one with its editor under it.
@@ -505,18 +479,20 @@ fn catalog<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, A
     }
     for app in sorted_apps(apps, false) {
         let open = matches!(&ui.detail, Detail::Edit { orig, .. } if orig == &app.app_id);
-        let mut row = page::item(display_title(app))
+        let mut trailing = row![].spacing(SPACE_MD).align_y(iced::Alignment::Center);
+        if !sola_core::applications::command_exists(&app.command) {
+            trailing = trailing.push(badge("not found", Tone::Warning));
+        }
+        let row = page::item(display_title(app))
             .subtitle(format!("{} · {}", app.app_id, app.command))
             .leading(app_icon(app))
+            .trailing(trailing.push(keep_switch(ui, &app.app_id)))
             .open(open)
             .on_press(if open {
                 AppsMsg::CloseDetail
             } else {
                 AppsMsg::Select(app.app_id.clone())
             });
-        if !sola_core::applications::command_exists(&app.command) {
-            row = row.trailing(badge("not found", Tone::Warning));
-        }
         rows.push(row.into());
         if let (true, Detail::Edit { orig, buffer }) = (open, &ui.detail) {
             rows.push(page::editor(edit_editor(apps, ui, orig, buffer)));
@@ -546,6 +522,7 @@ fn web_apps<'a>(apps: &'a ApplicationsConfig, ui: &'a AppsState) -> Element<'a, 
             page::item(display_title(app))
                 .subtitle(app.url.as_deref().map_or("", site).to_string())
                 .leading(app_icon(app))
+                .trailing(keep_switch(ui, &app.app_id))
                 .open(open)
                 .on_press(if open {
                     AppsMsg::CloseDetail
@@ -595,7 +572,6 @@ fn web_editor<'a>(
     let mut col = column![
         field_input("Name", &buffer.label, "", AppField::Label),
         field("Starts at", start, None, None),
-        quick_switch(ui, orig),
     ]
     .spacing(SPACE_MD);
     if let Some(err) = ui.error.as_deref() {
@@ -649,11 +625,7 @@ fn edit_editor<'a>(
             .on_press(AppsMsg::Remove(orig.to_string()))
             .into(),
     ];
-    let mut col = column![
-        detail_fields(buffer, /* draft placeholders */ false),
-        quick_switch(ui, orig),
-    ]
-    .spacing(SPACE_LG);
+    let mut col = column![detail_fields(buffer, /* draft placeholders */ false)].spacing(SPACE_LG);
     if let Some(err) = ui.error.as_deref() {
         col = col.push(kit_text::caption(err).style(kit_text::danger));
     }
@@ -974,25 +946,21 @@ mod tests {
     }
 
     #[test]
-    fn the_quick_launch_takes_apps_in_order_moves_them_and_drops_a_removed_one() {
+    fn a_switch_keeps_an_app_and_a_removed_app_is_let_go() {
         let mut cfg = ApplicationsConfig::default();
         cfg.apps.push(app("steam", "Steam"));
         cfg.apps.push(app("chrome", "Chrome"));
         let mut ui = AppsState::default();
-        let _ = update(AppsMsg::Quick("steam".into(), true), &mut cfg, &mut ui);
-        let _ = update(AppsMsg::Quick("chrome".into(), true), &mut cfg, &mut ui);
-        let _ = update(AppsMsg::Quick("steam".into(), true), &mut cfg, &mut ui);
-        assert_eq!(ui.quick.apps, ["chrome", "steam"], "on again goes to the end");
-        let _ = update(AppsMsg::QuickMove(1, true), &mut cfg, &mut ui);
-        assert_eq!(ui.quick.apps, ["steam", "chrome"]);
-        let _ = update(AppsMsg::QuickMove(1, false), &mut cfg, &mut ui);
-        assert_eq!(ui.quick.apps, ["steam", "chrome"], "the last stays last");
-        let _ = update(AppsMsg::QuickSleep(true), &mut cfg, &mut ui);
-        assert!(ui.quick.sleep);
+        let _ = update(AppsMsg::Keep("steam".into(), true), &mut cfg, &mut ui);
+        let _ = update(AppsMsg::Keep("sola-browser".into(), true), &mut cfg, &mut ui);
+        let _ = update(AppsMsg::Keep("steam".into(), true), &mut cfg, &mut ui);
+        assert_eq!(ui.kept.apps, ["sola-browser", "steam"], "once each");
+        let _ = update(AppsMsg::SleepButton(true), &mut cfg, &mut ui);
+        assert!(ui.kept.sleep_button);
         let _ = update(AppsMsg::Remove("steam".into()), &mut cfg, &mut ui);
-        assert_eq!(ui.quick.apps, ["chrome"], "out of the launcher, off the quick launch");
-        let _ = update(AppsMsg::Quick("chrome".into(), false), &mut cfg, &mut ui);
-        assert!(ui.quick.apps.is_empty());
+        assert_eq!(ui.kept.apps, ["sola-browser"], "out of the launcher, not kept");
+        let _ = update(AppsMsg::Keep("sola-browser".into(), false), &mut cfg, &mut ui);
+        assert!(ui.kept.apps.is_empty());
     }
 
     #[test]

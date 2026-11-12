@@ -29,7 +29,7 @@ pub mod bus;
 pub mod cycle;
 pub mod desk;
 pub mod projects;
-pub mod quick;
+pub mod kept;
 pub mod vault;
 pub mod web;
 pub mod workspaces;
@@ -182,10 +182,8 @@ pub enum Msg {
     ShortcutsPick(usize),
     /// Menubar unread chip: raise (and unhide) sola-mail.
     RaiseMail,
-    /// The quick launch: one of its apps clicked.
-    QuickLaunch(String),
-    /// The quick launch's Sleep.
-    QuickSleep,
+    /// The bar's Sleep button.
+    SleepButton,
     /// Expire a live notification banner (`NotifyState` generation).
     NotifyExpire(u64),
     /// Animation tick while a banner is entering or leaving.
@@ -410,8 +408,9 @@ pub struct Shell {
     pub sleep_idle: bool,
     /// The idle has run its course (`IdleFade.done`).
     pub idle_done: bool,
-    /// The apps in the middle of the top row (`Topic::QuickLaunch`).
-    pub quick_launch: sola_bus::topics::QuickLaunch,
+    /// The apps kept in the sidebar, and its Sleep button
+    /// (`Topic::KeptApps`).
+    pub kept: sola_bus::topics::KeptApps,
     pub tabbar: crate::tabbar::TabBarState,
     /// Each window's last published `Topic::WindowPlace`.
     pub places: crate::place::PlaceState,
@@ -615,7 +614,7 @@ impl Shell {
             lock_idle: false,
             sleep_idle: false,
             idle_done: false,
-            quick_launch: Default::default(),
+            kept: Default::default(),
             tabbar: crate::tabbar::TabBarState::default(),
             places: crate::place::PlaceState::default(),
             workspace: workspaces::WorkspaceState::default(),
@@ -903,6 +902,9 @@ impl Shell {
             SidebarEvent::Activate { id } => {
                 if let Some(wid) = window_of_row(&id) {
                     self.activate_window(wid);
+                }
+                if let Some(crate::stacks::BlockId::Kept(app)) = block_of_row(&id) {
+                    return self.open_kept(&app);
                 }
             }
             SidebarEvent::ToggleSection { id } => {
@@ -2865,8 +2867,7 @@ impl Shell {
                 self.activate_mail();
                 iced::Task::none()
             }
-            Msg::QuickLaunch(app_id) => self.quick_launch_app(&app_id),
-            Msg::QuickSleep => self.request_machine_power(crate::power::Kind::Sleep),
+            Msg::SleepButton => self.request_machine_power(crate::power::Kind::Sleep),
             Msg::NotifyExpire(generation) => {
                 let now = std::time::Instant::now();
                 if self.notify.begin_leave(generation, now) {
@@ -3271,7 +3272,7 @@ mod pending_launch_tests {
             lock_idle: false,
             sleep_idle: false,
             idle_done: false,
-            quick_launch: Default::default(),
+            kept: Default::default(),
             tabbar: crate::tabbar::TabBarState::default(),
             places: crate::place::PlaceState::default(),
             workspace: workspaces::WorkspaceState::default(),
@@ -3671,13 +3672,13 @@ mod hide_tests {
         assert_eq!(shell.tabs.parent_of(6), None, "its parent taken back with the rest");
     }
 
-    /// An app's menu → Add to Quick Launch puts the launcher's app on it,
-    /// once; Remove takes it off; an app the launcher lacks stays off.
-    /// Settings' word replaces it; retracted, it is empty.
+    /// An app's menu → Keep in Sidebar keeps the launcher's app, once;
+    /// Remove from Sidebar lets it go; an app the launcher lacks is not
+    /// kept. Settings' word replaces it; retracted, none is.
     #[test]
-    fn an_apps_own_menu_puts_it_on_the_quick_launch_and_takes_it_off() {
-        use sola_bus::topics::{MenuActionPayload, QuickLaunch, Topic};
-        use sola_kit::menu::{ACTION_QUICK_LAUNCH_ADD as ADD, ACTION_QUICK_LAUNCH_REMOVE as REMOVE};
+    fn an_apps_own_menu_keeps_it_in_the_sidebar_and_lets_it_go() {
+        use sola_bus::topics::{KeptApps, MenuActionPayload, Topic};
+        use sola_kit::menu::{ACTION_KEEP as KEEP, ACTION_UNKEEP as UNKEEP};
         let deliver = |shell: &mut Shell, t: Topic, sticky: bool| {
             let mut m = t.to_message();
             m.sticky = sticky;
@@ -3694,23 +3695,28 @@ mod hide_tests {
         let rt = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
         let _rt = rt.enter();
         let mut shell = test_shell(Vec::new(), None, &[]);
-        choose(&mut shell, "sola-mail", ADD);
-        choose(&mut shell, "sola-terminal", ADD);
-        choose(&mut shell, "sola-mail", ADD);
-        assert_eq!(shell.quick_launch.apps, ["sola-mail", "sola-terminal"]);
-        choose(&mut shell, "sola-mail", REMOVE);
-        assert_eq!(shell.quick_launch.apps, ["sola-terminal"]);
-        choose(&mut shell, "not-an-app", ADD);
-        assert_eq!(shell.quick_launch.apps, ["sola-terminal"]);
+        choose(&mut shell, "sola-mail", KEEP);
+        choose(&mut shell, "sola-terminal", KEEP);
+        choose(&mut shell, "sola-mail", KEEP);
+        assert_eq!(shell.kept.apps, ["sola-mail", "sola-terminal"]);
+        assert!(shell.tabs.has_kept_row("sola-mail"), "no window: its row");
+        choose(&mut shell, "sola-mail", UNKEEP);
+        assert_eq!(shell.kept.apps, ["sola-terminal"]);
+        assert!(!shell.tabs.has_kept_row("sola-mail"));
+        choose(&mut shell, "not-an-app", KEEP);
+        assert_eq!(shell.kept.apps, ["sola-terminal"]);
         assert_eq!(shell.menubar.toast.as_deref(), Some("not-an-app is not in the launcher"));
-        let mine = QuickLaunch {
+        let mine = KeptApps {
             apps: vec!["sola-browser".into()],
-            sleep: true,
+            sleep_button: true,
         };
-        deliver(&mut shell, Topic::QuickLaunch(mine.clone()), true);
-        assert_eq!(shell.quick_launch, mine);
-        deliver(&mut shell, Topic::QuickLaunch(mine), false);
-        assert_eq!(shell.quick_launch, QuickLaunch::default());
+        deliver(&mut shell, Topic::KeptApps(mine.clone()), true);
+        assert_eq!(shell.kept, mine);
+        assert!(shell.tabs.has_kept_row("sola-browser"));
+        assert!(!shell.tabs.has_kept_row("sola-terminal"));
+        deliver(&mut shell, Topic::KeptApps(mine), false);
+        assert_eq!(shell.kept, KeptApps::default());
+        assert!(!shell.tabs.has_kept_row("sola-browser"));
     }
 
     /// Window → Pin to All Workspaces, and again. No app hears a pinned window
@@ -3901,7 +3907,7 @@ mod hide_tests {
             lock_idle: false,
             sleep_idle: false,
             idle_done: false,
-            quick_launch: Default::default(),
+            kept: Default::default(),
             tabbar: crate::tabbar::TabBarState::default(),
             places: crate::place::PlaceState::default(),
             workspace: workspaces::WorkspaceState::default(),

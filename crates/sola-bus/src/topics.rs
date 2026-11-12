@@ -331,6 +331,11 @@ pub struct TabLayout {
     /// The app groups folded shut, each in its workspace's bar.
     #[serde(default)]
     pub folded: Vec<FoldedGroup>,
+    /// Where each kept app with no window sits in its workspace's bar
+    /// (`Topic::KeptApps`): its row, quiet, until its next window takes
+    /// the place.
+    #[serde(default)]
+    pub kept: Vec<TabLayoutGroup>,
 }
 
 /// An app group folded shut (`TabLayout.folded`).
@@ -773,14 +778,33 @@ pub struct IdleFade {
     pub done: bool,
 }
 
-/// The apps in the middle of the top row, to start with a click (Settings,
-/// an app's own menu → the shell; `Topic::QuickLaunch`, persistent).
+/// The apps kept in the sidebar: each keeps its row in the bar while it is
+/// not running, and a tap on that row starts it; and whether the bar has
+/// its Sleep button (Settings, an app's own menu → the shell;
+/// `Topic::KeptApps`, persistent). Where each kept row sits is the
+/// shell's, in its saved tab layout (`TabLayout.kept`).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct QuickLaunch {
-    /// Launcher app ids, in order.
+pub struct KeptApps {
+    /// Launcher app ids.
     pub apps: Vec<String>,
-    /// Sleep at the end of the row.
-    pub sleep: bool,
+    /// The Sleep button at the foot of the bar.
+    pub sleep_button: bool,
+}
+
+/// The apps that ship with Sola, as the shell's launcher has them, for
+/// Settings to list (`Topic::BuiltinApps`, sticky; the shell keeps the
+/// list, `sola-shell/src/builtins.rs`).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct BuiltinApps {
+    pub apps: Vec<BuiltinApp>,
+}
+
+/// One app of [`BuiltinApps`].
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct BuiltinApp {
+    pub app_id: String,
+    pub label: String,
+    pub icon: String,
 }
 
 /// The videos a window shows (an app → sola-river,
@@ -2307,10 +2331,15 @@ define_topics! {
     #[sticky(keys = [window_id])]
     WindowPlace(WindowPlace),
 
-    // The apps in the middle of the top row (Settings, an app's menu →
-    // the shell). Persistent. Appended last.
+    // The apps kept in the sidebar, and its Sleep button (Settings, an
+    // app's menu → the shell). Persistent. Appended last.
     #[persistent]
-    QuickLaunch(QuickLaunch),
+    KeptApps(KeptApps),
+
+    // The apps that ship with Sola (shell → Settings). Sticky. Appended
+    // last.
+    #[sticky]
+    BuiltinApps(BuiltinApps),
 }
 
 #[cfg(test)]
@@ -2636,20 +2665,32 @@ mod tests {
     }
 
     #[test]
-    fn the_quick_launch_is_persistent_and_reads_back() {
-        let quick = QuickLaunch {
+    fn the_kept_apps_are_persistent_and_the_builtins_sticky() {
+        let kept = KeptApps {
             apps: vec!["steam".into(), "sola-browser".into()],
-            sleep: true,
+            sleep_button: true,
         };
-        assert!(TopicKind::QuickLaunch.behavior().is_persistent());
-        match Topic::parse(&Topic::QuickLaunch(quick.clone()).to_message()) {
-            Some(Topic::QuickLaunch(back)) => assert_eq!(back, quick),
-            other => panic!("expected QuickLaunch, got {other:?}"),
+        assert!(TopicKind::KeptApps.behavior().is_persistent());
+        match Topic::parse(&Topic::KeptApps(kept.clone()).to_message()) {
+            Some(Topic::KeptApps(back)) => assert_eq!(back, kept),
+            other => panic!("expected KeptApps, got {other:?}"),
         }
-        let value = Topic::QuickLaunch(quick.clone()).to_yaml_value().unwrap();
-        match Topic::from_yaml_section(TopicKind::QuickLaunch, value) {
-            Some(Topic::QuickLaunch(back)) => assert_eq!(back, quick),
-            other => panic!("expected QuickLaunch, got {other:?}"),
+        let value = Topic::KeptApps(kept.clone()).to_yaml_value().unwrap();
+        match Topic::from_yaml_section(TopicKind::KeptApps, value) {
+            Some(Topic::KeptApps(back)) => assert_eq!(back, kept),
+            other => panic!("expected KeptApps, got {other:?}"),
+        }
+        let builtins = BuiltinApps {
+            apps: vec![BuiltinApp {
+                app_id: "sola-mail".into(),
+                label: "Mail".into(),
+                icon: "lucide/mail".into(),
+            }],
+        };
+        assert!(TopicKind::BuiltinApps.behavior().is_sticky());
+        match Topic::parse(&Topic::BuiltinApps(builtins.clone()).to_message()) {
+            Some(Topic::BuiltinApps(back)) => assert_eq!(back, builtins),
+            other => panic!("expected BuiltinApps, got {other:?}"),
         }
     }
 

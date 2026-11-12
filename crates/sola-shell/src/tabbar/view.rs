@@ -20,18 +20,26 @@
 //! row shows its parts apart (`sola_core::window_label`): the project, the
 //! session in it, quieter, and, on another computer, that computer as a
 //! chip in its prompt color.
+//!
+//! A kept app with no window (`Topic::KeptApps`) has a row of its own
+//! where its last window was, quiet: its icon and name faint, no
+//! stoplight. A tap starts it; its ring turns there until the window takes
+//! the row. With the Sleep button on, a round moon sits centred at the
+//! foot of the bar (`design/sidebar-keep/`, picked: B in place, the round
+//! moon in the theme's colors).
 
-use iced::widget::{row, text};
-use iced::{Alignment, Color, Element, Theme};
+use iced::widget::{button, container, row, svg, text};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Theme};
 use sola_bus::topics::{Activity, Zone};
 use sola_core::host_color::{PROMPT_LIGHTNESS, PROMPT_SATURATION, host_hue, hsl_rgb};
 use sola_core::window_label::WindowLabel;
+use sola_kit::components::style::mix_white;
 use sola_kit::components::{
     CaptionFold, LEADING_SLOT, SidebarIndicator, SidebarItem, SidebarPanel, SidebarSection, SidebarTag, icon,
-    island, status_mark,
+    icon_colored, island, status_mark,
 };
 
-use super::{group_row_id, row_id};
+use super::{group_row_id, kept_row_id, row_id};
 use crate::app::{Msg, Shell};
 use crate::stacks::{Block, Tab, grouped};
 
@@ -45,6 +53,11 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
             .map(|w| shell.tabs.parent_of(w).unwrap_or(w)),
     };
     let ghost = shell.launch_ghost();
+    // A kept app starting turns in its own row, not a ghost row.
+    let starting = ghost
+        .filter(|(_, _, app)| shell.tabs.has_kept_row(app))
+        .map(|(_, _, app)| app);
+    let ghost = ghost.filter(|_| starting.is_none());
     // The ghost joins its group when the group is on the bar.
     let ghost_group = ghost.filter(|(_, _, app)| {
         grouped(app)
@@ -61,7 +74,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
     for block in shell.tabs.blocks() {
         let rows = block.tabs();
         // An empty group is a remembered place: nothing to draw.
-        if rows.is_empty() {
+        if rows.is_empty() && !matches!(block, Block::Kept { .. }) {
             continue;
         }
         if let Some((_, label, _)) = ghost_loose.filter(|(g, ..)| *g <= at) {
@@ -69,6 +82,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
             ghost_loose = None;
         }
         match block {
+            Block::Kept { app, .. } => loose.push(kept_row(shell, app, starting == Some(app))),
             Block::Loose(t) => loose.push(tab_row(shell, &now, t, false)),
             Block::Group { app, tabs, .. } => {
                 if !loose.is_empty() {
@@ -103,6 +117,9 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         .fill_width();
     if !shell.workspace_islands() {
         panel = panel.header(super::head::view(shell));
+    }
+    if shell.kept.sleep_button {
+        panel = panel.footer(sleep_button());
     }
     let panel = panel.build();
     // An island in the grid's left column (board 06): rounded, rimmed,
@@ -230,6 +247,80 @@ fn ghost_row(label: &str) -> SidebarItem<'_, Msg> {
     .spacing(8)
     .align_y(Alignment::Center);
     SidebarItem::new(label, Msg::Noop).id(GHOST_ID).content(body)
+}
+
+/// A kept app's row while it has no window: its icon and name faint, no
+/// stoplight; a tap starts it (`SidebarEvent::Activate` on its id). While
+/// it starts, its ring turns in the icon's place.
+fn kept_row<'a>(shell: &'a Shell, app: &str, starting: bool) -> SidebarItem<'a, Msg> {
+    let label = app_label(shell, app);
+    let fg = shell.theme.palette().text;
+    let leading: Element<'_, Msg> = if starting {
+        status_mark(SidebarIndicator::Working)
+    } else {
+        icon_colored(app_icon(shell, app), LEADING_SLOT as u16, Color { a: 0.4, ..fg })
+    };
+    let body = row![
+        leading,
+        text(label.clone())
+            .size(13)
+            .color(Color { a: 0.42, ..fg }),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    SidebarItem::new(label, Msg::Noop)
+        .id(kept_row_id(shell.tabs.showing_id(), app))
+        .content(body)
+}
+
+/// The Sleep button: a round moon centred at the foot of the bar, in the
+/// theme's colors (the strong grey, the accent).
+fn sleep_button<'a>() -> Element<'a, Msg> {
+    const SIZE: f32 = 40.0;
+    let moon = svg(sleep_moon())
+        .width(Length::Fixed(18.0))
+        .height(Length::Fixed(18.0))
+        .style(|theme: &Theme, _| svg::Style {
+            color: Some(theme.extended_palette().primary.base.color),
+        });
+    let face = button(container(moon).center(Length::Fill))
+        .width(Length::Fixed(SIZE))
+        .height(Length::Fixed(SIZE))
+        .padding(0)
+        .style(|theme: &Theme, status| {
+            // A step above the bar, with a faint rim, as the top row's
+            // islands; a step more under the pointer.
+            let p = theme.extended_palette();
+            let fill = match status {
+                button::Status::Hovered | button::Status::Pressed => mix_white(p.background.strong.color, 0.06),
+                _ => p.background.strong.color,
+            };
+            button::Style {
+                background: Some(Background::Color(fill)),
+                border: Border {
+                    color: mix_white(fill, 0.1),
+                    width: 1.0,
+                    radius: (SIZE / 2.0).into(),
+                },
+                ..button::Style::default()
+            }
+        })
+        .on_press(Msg::SleepButton);
+    container(face)
+        .center_x(Length::Fill)
+        .padding(Padding {
+            top: 6.0,
+            bottom: 4.0,
+            ..Padding::ZERO
+        })
+        .into()
+}
+
+/// The crescent, read once.
+fn sleep_moon() -> svg::Handle {
+    static MOON: std::sync::OnceLock<svg::Handle> = std::sync::OnceLock::new();
+    MOON.get_or_init(|| sola_kit::components::icon::icon_handle("lucide/moon"))
+        .clone()
 }
 
 /// The chip naming the computer a window runs on: its prompt's hue

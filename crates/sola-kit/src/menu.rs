@@ -16,13 +16,13 @@
 //! titlebars add it last when an app omits it ([`ensure_window_menu`]).
 //!
 //! Titlebars also give the app's own menu (the first, under its name)
-//! **Add to Quick Launch** or **Remove from Quick Launch**
-//! ([`fill_quick_launch`]); the shell carries it out.
+//! **Keep in Sidebar** or **Remove from Sidebar** ([`fill_keep`]); the
+//! shell carries it out.
 
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use sola_bus::topics::{AppMenuPayload, KeyActions, MenuActionPayload, MenuDefinition, MenuItem, QuickLaunch, Topic, Workspaces, Zone, ZoneLayout};
+use sola_bus::topics::{AppMenuPayload, KeyActions, MenuActionPayload, MenuDefinition, MenuItem, KeptApps, Topic, Workspaces, Zone, ZoneLayout};
 use sola_core::{KeyChord, KeyCode};
 
 /// This process's latest published menus.
@@ -40,17 +40,17 @@ static LAYOUT: RwLock<Option<ZoneLayout>> = RwLock::new(None);
 /// items. `None`: not said yet.
 static WORKSPACES: RwLock<Option<Workspaces>> = RwLock::new(None);
 
-/// The quick launch (`Topic::QuickLaunch`), for the app menu's Add to /
-/// Remove from Quick Launch. `None`: not said yet (empty).
-static QUICK: RwLock<Option<QuickLaunch>> = RwLock::new(None);
+/// The apps kept in the sidebar (`Topic::KeptApps`), for the app menu's
+/// Keep in Sidebar / Remove from Sidebar. `None`: not said yet (none).
+static KEPT: RwLock<Option<KeptApps>> = RwLock::new(None);
 
 /// [`current`]'s answer until something it reads changes.
 static CURRENT: RwLock<Option<AppMenuPayload>> = RwLock::new(None);
 
-/// Learn the zone layout, the workspaces and the quick launch from a bus
+/// Learn the zone layout, the workspaces and the kept apps from a bus
 /// message (the kit's poller shows it every one).
 pub(crate) fn observe(message: &sola_bus::Message) {
-    if !matches!(message.topic.as_str(), "ZoneLayout" | "Workspaces" | "QuickLaunch") {
+    if !matches!(message.topic.as_str(), "ZoneLayout" | "Workspaces" | "KeptApps") {
         return;
     }
     match Topic::parse(message) {
@@ -62,8 +62,8 @@ pub(crate) fn observe(message: &sola_bus::Message) {
             *WORKSPACES.write().unwrap_or_else(|p| p.into_inner()) = message.sticky.then_some(w);
             forget_current();
         }
-        Some(Topic::QuickLaunch(q)) => {
-            *QUICK.write().unwrap_or_else(|p| p.into_inner()) = message.sticky.then_some(q);
+        Some(Topic::KeptApps(k)) => {
+            *KEPT.write().unwrap_or_else(|p| p.into_inner()) = message.sticky.then_some(k);
             forget_current();
         }
         _ => {}
@@ -230,16 +230,16 @@ pub fn current() -> Option<AppMenuPayload> {
 }
 
 /// What a titlebar shows of `payload`: the Window menu (added when it has
-/// none) with the layout's grid zones, the app menu's quick launch item,
+/// none) with the layout's grid zones, the app menu's Keep in Sidebar,
 /// and every item's key now.
 pub fn prepare(payload: AppMenuPayload) -> AppMenuPayload {
     let mut payload = ensure_window_menu(payload);
     {
-        let quick = QUICK.read().unwrap_or_else(|p| p.into_inner());
-        let on = quick.as_ref().is_some_and(|q| {
-            q.apps.iter().any(|a| a.eq_ignore_ascii_case(&payload.app_id))
+        let kept = KEPT.read().unwrap_or_else(|p| p.into_inner());
+        let on = kept.as_ref().is_some_and(|k| {
+            k.apps.iter().any(|a| a.eq_ignore_ascii_case(&payload.app_id))
         });
-        fill_quick_launch(&mut payload, on);
+        fill_keep(&mut payload, on);
     }
     let layout = LAYOUT
         .read()
@@ -489,50 +489,49 @@ pub fn quit_menu_item(label: &str) -> MenuItem {
 fn is_shell_action(id: &str) -> bool {
     id == ACTION_CLOSE_WINDOW
         || parse_window_action(id).is_some()
-        || parse_quick_launch_action(id).is_some()
+        || parse_keep_action(id).is_some()
 }
 
-/// The app menu's item that puts the app on the quick launch (the shell's
-/// row of apps in the middle of the top row).
-pub const ACTION_QUICK_LAUNCH_ADD: &str = "quick_launch.add";
-/// ...and the one that takes it off.
-pub const ACTION_QUICK_LAUNCH_REMOVE: &str = "quick_launch.remove";
+/// The app menu's item that keeps the app in the sidebar: its row stays
+/// in the shell's bar while it is not running, to start it from.
+pub const ACTION_KEEP: &str = "sidebar.keep";
+/// ...and the one that lets it go.
+pub const ACTION_UNKEEP: &str = "sidebar.unkeep";
 
-/// What an app menu's quick launch item asks of the shell.
+/// What an app menu's Keep in Sidebar item asks of the shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuickLaunchAction {
-    Add,
-    Remove,
+pub enum KeepAction {
+    Keep,
+    Unkeep,
 }
 
-/// The quick launch item `id` names, if it is one.
-pub fn parse_quick_launch_action(id: &str) -> Option<QuickLaunchAction> {
+/// The Keep in Sidebar item `id` names, if it is one.
+pub fn parse_keep_action(id: &str) -> Option<KeepAction> {
     match id {
-        ACTION_QUICK_LAUNCH_ADD => Some(QuickLaunchAction::Add),
-        ACTION_QUICK_LAUNCH_REMOVE => Some(QuickLaunchAction::Remove),
+        ACTION_KEEP => Some(KeepAction::Keep),
+        ACTION_UNKEEP => Some(KeepAction::Unkeep),
         _ => None,
     }
 }
 
-/// Give the app's own menu (the first, under its name) Add to Quick
-/// Launch, or Remove from Quick Launch when it is `on` it: before Close
-/// Window and Quit, set apart by a divider; at the end when it has
-/// neither.
-pub fn fill_quick_launch(payload: &mut AppMenuPayload, on: bool) {
+/// Give the app's own menu (the first, under its name) Keep in Sidebar,
+/// or Remove from Sidebar when it is kept (`on`): before Close Window and
+/// Quit, set apart by a divider; at the end when it has neither.
+pub fn fill_keep(payload: &mut AppMenuPayload, on: bool) {
     let Some(menu) = payload.menus.first_mut().filter(|m| m.label != WINDOW_MENU_LABEL) else {
         return;
     };
     // Made again: the item there goes, with the divider after it.
     if let Some(at) = menu.items.iter().position(|item| {
-        matches!(item, MenuItem::Action { id, .. } if parse_quick_launch_action(id).is_some())
+        matches!(item, MenuItem::Action { id, .. } if parse_keep_action(id).is_some())
     }) {
         let divider = matches!(menu.items.get(at + 1), Some(MenuItem::Divider));
         menu.items.drain(at..at + 1 + usize::from(divider));
     }
     let (id, label) = if on {
-        (ACTION_QUICK_LAUNCH_REMOVE, "Remove from Quick Launch")
+        (ACTION_UNKEEP, "Remove from Sidebar")
     } else {
-        (ACTION_QUICK_LAUNCH_ADD, "Add to Quick Launch")
+        (ACTION_KEEP, "Keep in Sidebar")
     };
     let item = MenuItem::Action {
         id: id.into(),
@@ -729,7 +728,7 @@ mod tests {
     }
 
     #[test]
-    fn the_app_menu_offers_the_quick_launch_before_close_and_quit() {
+    fn the_app_menu_offers_keep_in_sidebar_before_close_and_quit() {
         let mail = |items: Vec<MenuItem>| AppMenuPayload {
             app_id: "sola-mail".into(),
             menus: vec![
@@ -753,34 +752,34 @@ mod tests {
             close_window_menu_item(),
             quit_menu_item("Quit Mail"),
         ]);
-        fill_quick_launch(&mut p, false);
+        fill_keep(&mut p, false);
         assert_eq!(
             ids(&p.menus[0]),
-            ["refresh", "-", ACTION_QUICK_LAUNCH_ADD, "-", ACTION_CLOSE_WINDOW, "quit"]
+            ["refresh", "-", ACTION_KEEP, "-", ACTION_CLOSE_WINDOW, "quit"]
         );
         // Made again: the one item, now Remove.
-        fill_quick_launch(&mut p, true);
+        fill_keep(&mut p, true);
         assert_eq!(
             ids(&p.menus[0]),
-            ["refresh", "-", ACTION_QUICK_LAUNCH_REMOVE, "-", ACTION_CLOSE_WINDOW, "quit"]
+            ["refresh", "-", ACTION_UNKEEP, "-", ACTION_CLOSE_WINDOW, "quit"]
         );
         let mut p = mail(vec![refresh.clone(), quit_menu_item("Quit Mail")]);
-        fill_quick_launch(&mut p, false);
-        assert_eq!(ids(&p.menus[0]), ["refresh", "-", ACTION_QUICK_LAUNCH_ADD, "-", "quit"]);
+        fill_keep(&mut p, false);
+        assert_eq!(ids(&p.menus[0]), ["refresh", "-", ACTION_KEEP, "-", "quit"]);
         let mut p = mail(vec![refresh]);
-        fill_quick_launch(&mut p, false);
-        assert_eq!(ids(&p.menus[0]), ["refresh", "-", ACTION_QUICK_LAUNCH_ADD]);
+        fill_keep(&mut p, false);
+        assert_eq!(ids(&p.menus[0]), ["refresh", "-", ACTION_KEEP]);
         // The Window menu alone is left as it is.
         let mut p = AppMenuPayload {
             app_id: "x".into(),
             menus: vec![window_menu()],
         };
-        fill_quick_launch(&mut p, false);
+        fill_keep(&mut p, false);
         assert_eq!(ids(&p.menus[0]), ids(&window_menu()));
-        assert!(is_shell_action(ACTION_QUICK_LAUNCH_ADD));
+        assert!(is_shell_action(ACTION_KEEP));
         assert_eq!(
-            parse_quick_launch_action(ACTION_QUICK_LAUNCH_REMOVE),
-            Some(QuickLaunchAction::Remove)
+            parse_keep_action(ACTION_UNKEEP),
+            Some(KeepAction::Unkeep)
         );
     }
 
