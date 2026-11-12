@@ -117,7 +117,12 @@
   </div>
 
   <div class="section">
-    <div class="label">Kora's bar through a day · way A, kept apps first · Sleep A</div>
+    <div class="label">Picked · Joshua, 2026-11-11: "B In place" · switches in Settings for every app, no right-click menu · "the centered round moon (B) -- color match the theme"</div>
+    <div class="three" id="picked"></div>
+  </div>
+
+  <div class="section">
+    <div class="label">Kora's bar through a day · way A, kept apps first · Sleep A (before the pick)</div>
     <div class="strip" id="day"></div>
   </div>
 
@@ -242,6 +247,23 @@
       bar(rest, `<div class="sleepC">Sleep<span class="moon">${icon("moon", 15, "#ffd27a")}</span></div>`)],
   ];
   document.getElementById("sleep").innerHTML = SLEEP.map((s) => sample(...s)).join("");
+
+  /* ── Picked ─────────────────────────────────────────────────────── */
+  const moon = `<div class="sleepB" style="color: var(--accent)">${icon("moon", 18, "var(--accent)")}</div>`;
+  const PICKED = [
+    ["1", "Nothing running", "Each kept app's row where its last window was, quiet, among the other rows; no block, no rule. The round moon at the foot, in the theme's accent.",
+      bar(row({ ic: "settings", t: "Settings" }) + row({ face: STEAM, t: "Steam", kept: true }) + row({ face: MC, t: "Minecraft", kept: true }) +
+        row({ ic: "globe", t: "Browser", kept: true }) + row({ ic: "brush", t: "Paint", kept: true }), moon)],
+    ["2", "Steam starting, then playing", "A tap turns the ring in Steam's own row; its window takes the row. Closed, the row goes quiet again where it was.",
+      bar(row({ ic: "settings", t: "Settings" }) + row({ face: STEAM, t: "Steam", focus: true }) + row({ face: MC, t: "Minecraft", kept: true }) +
+        row({ ic: "globe", t: "Browser", kept: true }) + row({ ic: "brush", t: "Paint", kept: true }), moon)],
+    ["3", "Keeping one", "Settings → Applications: a switch on every app (Sola's own, the launcher's, web apps), and Sidebar → Sleep button. An app's own menu: Keep in Sidebar / Remove from Sidebar.",
+      `<div class="set" style="width:260px"><div class="cap">SOLA'S APPS</div><div class="grp-card">
+        <div class="srow">${icon("globe", 15)}<span>Browser</span><span class="tog"></span></div>
+        <div class="srow">${icon("mail", 15)}<span>Mail</span><span class="tog" style="background:#ffffff24"></span></div>
+        <div class="srow">${icon("brush", 15)}<span>Paint</span><span class="tog"></span></div></div></div>`],
+  ];
+  document.getElementById("picked").innerHTML = PICKED.map((p) => sample(...p)).join("");
 
   /* ── Questions ──────────────────────────────────────────────────── */
   document.getElementById("qa").innerHTML = [
