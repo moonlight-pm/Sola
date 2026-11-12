@@ -32,11 +32,15 @@ const PICTURE: u8 = 2;
 const REFUSED: u8 = 3;
 const CLIPBOARD: u8 = 4;
 const CURSOR: u8 = 5;
+const CAN_MIRROR: u8 = 6;
+const MIRRORING: u8 = 7;
 const KEYFRAME: u8 = 1;
 const EVENT: u8 = 2;
 const CLIPBOARD_SET: u8 = 3;
 const CLIPBOARD_GET: u8 = 4;
 const ACK: u8 = 5;
+const SIZE: u8 = 6;
+const MIRROR: u8 = 7;
 /// A picture's fields before its data.
 const PICTURE_HEADER: usize = 27;
 /// A pointer image's fields before its pixels.
@@ -125,6 +129,14 @@ pub enum Down {
     /// The host's pointer changed. Sent only when the picture leaves the
     /// pointer out; until one comes, the picture has it.
     Cursor(Cursor),
+    /// Whether the host has a screen of its own on to mirror (a laptop's
+    /// with its lid open, or another): with each `Display`, and when it
+    /// changes. Until one comes, it has.
+    CanMirror(bool),
+    /// What the pictures from here on are: the host's own screen (`true`)
+    /// or one of the window's size; with each `Display`. It can mirror when
+    /// asked to extend and could not.
+    Mirroring(bool),
 }
 
 impl Down {
@@ -174,6 +186,8 @@ impl Down {
                 out.extend_from_slice(&c.rgba);
                 out
             }
+            Self::CanMirror(can) => vec![CAN_MIRROR, u8::from(*can)],
+            Self::Mirroring(mirroring) => vec![MIRRORING, u8::from(*mirroring)],
         }
     }
 
@@ -217,12 +231,22 @@ impl Down {
                 }
                 Self::Cursor(cursor)
             }
-            DISPLAY | PICTURE | CURSOR => return Err(short()),
+            CAN_MIRROR if rest.len() == 1 => Self::CanMirror(rest[0] != 0),
+            MIRRORING if rest.len() == 1 => Self::Mirroring(rest[0] != 0),
+            DISPLAY | PICTURE | CURSOR | CAN_MIRROR | MIRRORING => return Err(short()),
             REFUSED => Self::Refused(String::from_utf8_lossy(rest).into_owned()),
             CLIPBOARD => Self::Clipboard(String::from_utf8_lossy(rest).into_owned()),
             _ => return Ok(None),
         }))
     }
+}
+
+/// The viewer's picture area: logical pixels, and the window's scale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Size {
+    pub width: u32,
+    pub height: u32,
+    pub scale_percent: u16,
 }
 
 /// Viewer to host.
@@ -238,6 +262,12 @@ pub enum Up {
     ClipboardGet,
     /// Picture `seq` is decoded; `held_us` from its last byte read to this.
     Ack { seq: u32, held_us: u32 },
+    /// Make the screen this size, when the host can; sent first and again
+    /// whenever it changes.
+    Size(Size),
+    /// Show the host's own screen (`true`), or extend it with one the
+    /// window's size (`false`, when this never comes); sent with the size.
+    Mirror(bool),
 }
 
 impl Up {
@@ -263,6 +293,14 @@ impl Up {
                 out.extend_from_slice(&held_us.to_le_bytes());
                 out
             }
+            Self::Size(size) => {
+                let mut out = vec![SIZE];
+                out.extend_from_slice(&size.width.to_le_bytes());
+                out.extend_from_slice(&size.height.to_le_bytes());
+                out.extend_from_slice(&size.scale_percent.to_le_bytes());
+                out
+            }
+            Self::Mirror(mirror) => vec![MIRROR, u8::from(*mirror)],
         }
     }
 
@@ -277,7 +315,13 @@ impl Up {
                 seq: u32_at(rest, 0),
                 held_us: u32_at(rest, 4),
             },
-            Some((&(KEYFRAME | CLIPBOARD_GET | ACK), _)) | None => {
+            Some((&SIZE, rest)) if rest.len() == 10 => Self::Size(Size {
+                width: u32_at(rest, 0),
+                height: u32_at(rest, 4),
+                scale_percent: u16_at(rest, 8),
+            }),
+            Some((&MIRROR, [mirror])) => Self::Mirror(*mirror != 0),
+            Some((&(KEYFRAME | CLIPBOARD_GET | ACK | SIZE | MIRROR), _)) | None => {
                 return Err(bad("a bad frame from the viewer".into()));
             }
             Some(_) => return Ok(None),
@@ -344,6 +388,9 @@ mod tests {
                 rgba: vec![0, 0, 0, 255, 255, 255, 255, 255],
             }),
             Down::Cursor(Cursor::default()),
+            Down::CanMirror(false),
+            Down::CanMirror(true),
+            Down::Mirroring(true),
         ] {
             assert_eq!(Down::decode(&msg.encode()).unwrap(), Some(msg));
         }
@@ -360,6 +407,13 @@ mod tests {
                 seq: 812,
                 held_us: 3_100,
             },
+            Up::Size(Size {
+                width: 3635,
+                height: 2102,
+                scale_percent: 100,
+            }),
+            Up::Mirror(true),
+            Up::Mirror(false),
         ] {
             assert_eq!(Up::decode(&msg.encode()).unwrap(), Some(msg));
         }
@@ -397,5 +451,7 @@ mod tests {
         assert!(Up::decode(&[]).is_err());
         assert!(Up::decode(&[KEYFRAME, 9]).is_err());
         assert!(Up::decode(&[ACK, 1, 2, 3]).is_err());
+        assert!(Up::decode(&[SIZE, 1, 2, 3]).is_err());
+        assert!(Up::decode(&[MIRROR]).is_err());
     }
 }

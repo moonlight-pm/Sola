@@ -53,7 +53,7 @@ pub fn run(target: Result<(String, u16), String>, wanted: u32, link_mbps: Option
                 eprintln!("{why}");
                 return ExitCode::FAILURE;
             }
-            Event::Ready(_) | Event::Connected(_) | Event::Cursor => {}
+            Event::Ready(_) | Event::Connected(_) | Event::Cursor | Event::CanMirror(_) | Event::Mirroring(_) => {}
         }
     }
     ExitCode::FAILURE

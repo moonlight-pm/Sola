@@ -5,6 +5,7 @@
 use std::io;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::os::fd::AsRawFd;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -13,7 +14,7 @@ use std::time::{Duration, Instant};
 use sola_kvm::clip;
 use sola_kvm::link::{self, Conn, Keys};
 use sola_kvm::protocol::{self, Packet};
-use sola_kvm::view_wire::{Down, MAX_CLIPBOARD, MAX_FRAME, PORT_OFFSET, Stream, Up};
+use sola_kvm::view_wire::{Down, MAX_CLIPBOARD, MAX_FRAME, PORT_OFFSET, Size, Stream, Up};
 use tracing::{debug, info, warn};
 
 use crate::decode::Decoder;
@@ -46,6 +47,10 @@ pub enum Event {
     Picture,
     /// The host's pointer changed; it waits in [`Pictures`].
     Cursor,
+    /// Whether the host has a screen of its own on to mirror.
+    CanMirror(bool),
+    /// Whether the pictures from here on are the host's own screen.
+    Mirroring(bool),
     Lost(String),
     /// The host will not send a picture; trying again will not help.
     Refused(String),
@@ -57,6 +62,10 @@ pub enum Outgoing {
     Keyframe,
     /// Picture `seq` is decoded.
     Ack { seq: u32, held_us: u32 },
+    /// Make the host's screen this size.
+    Size(Size),
+    /// Show the host's own screen, or extend it.
+    Mirror(bool),
     /// Give the host this machine's clipboard.
     PushClipboard,
     /// Ask for the host's clipboard.
@@ -176,8 +185,13 @@ fn session(
     throttle: &mut Option<Throttle>,
 ) -> io::Result<Stop> {
     let addr = resolve(host, kvm_port + PORT_OFFSET)?;
-    let (mut tcp, mut conn) = connect(addr, keys, Stream::Video)?;
+    // Input first, with the size, so the host's first picture is at it.
     *lock(link) = Some(connect(addr, keys, Stream::Input)?);
+    let _ = outgoing.send(Outgoing::Mirror(pictures.mirror.load(Ordering::Relaxed)));
+    if let Some(size) = pictures.wanted() {
+        let _ = outgoing.send(Outgoing::Size(size));
+    }
+    let (mut tcp, mut conn) = connect(addr, keys, Stream::Video)?;
     let mut decoder = None;
     info!(%addr, "remote view: connected");
     loop {
@@ -203,6 +217,8 @@ fn session(
             Down::Clipboard(text) => {
                 let _ = clip.send(ClipJob::Apply(text));
             }
+            Down::CanMirror(can) => events(Event::CanMirror(can)),
+            Down::Mirroring(mirroring) => events(Event::Mirroring(mirroring)),
             Down::Cursor(cursor) => {
                 debug!(
                     width = cursor.width,
@@ -323,6 +339,8 @@ fn write_loop(rx: Receiver<Outgoing>, link: Link, clip: Sender<ClipJob>) {
             let up = match out {
                 Outgoing::Keyframe => Up::Keyframe,
                 Outgoing::Ack { seq, held_us } => Up::Ack { seq, held_us },
+                Outgoing::Size(size) => Up::Size(size),
+                Outgoing::Mirror(mirror) => Up::Mirror(mirror),
                 Outgoing::PushClipboard => {
                     let _ = clip.send(ClipJob::Push);
                     continue;
@@ -351,13 +369,16 @@ fn write_loop(rx: Receiver<Outgoing>, link: Link, clip: Sender<ClipJob>) {
     }
 }
 
-/// Runs of pointer motion collapse to where the pointer ended up.
+/// Runs of pointer motion collapse to where the pointer ended up, and runs
+/// of sizes to the last.
 fn coalesce(batch: Vec<Outgoing>) -> Vec<Outgoing> {
     let mut out: Vec<Outgoing> = Vec::with_capacity(batch.len());
     for item in batch {
-        if let (Some(Outgoing::Packet(Packet::Motion { .. })), Outgoing::Packet(Packet::Motion { .. })) =
-            (out.last(), &item)
-        {
+        if matches!(
+            (out.last(), &item),
+            (Some(Outgoing::Packet(Packet::Motion { .. })), Outgoing::Packet(Packet::Motion { .. }))
+                | (Some(Outgoing::Size(_)), Outgoing::Size(_))
+        ) {
             out.pop();
         }
         out.push(item);

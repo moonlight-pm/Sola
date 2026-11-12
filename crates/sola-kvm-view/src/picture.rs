@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use iced::widget::shader::{self, Action, Viewport};
-use iced::{Event, Point, Rectangle, mouse};
+use iced::{Event, Point, Rectangle, Size, mouse};
 use sola_kvm::protocol::Packet;
 
 use crate::app::Msg;
@@ -59,16 +59,21 @@ fn button_index(button: mouse::Button) -> Option<u8> {
 }
 
 impl shader::Program<Msg> for Picture {
-    type State = ();
+    /// The size last told to the window.
+    type State = Option<Size>;
     type Primitive = Primitive;
 
     fn update(
         &self,
-        _state: &mut (),
+        told: &mut Option<Size>,
         event: &Event,
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<Action<Msg>> {
+        if *told != Some(bounds.size()) {
+            *told = Some(bounds.size());
+            return Some(Action::publish(Msg::Area(bounds.size())));
+        }
         let at = self.over(bounds, cursor)?;
         let Event::Mouse(event) = event else {
             return None;
@@ -91,7 +96,7 @@ impl shader::Program<Msg> for Picture {
         Some(Action::publish(Msg::Pointer(packet)).and_capture())
     }
 
-    fn draw(&self, _state: &(), _cursor: mouse::Cursor, _bounds: Rectangle) -> Primitive {
+    fn draw(&self, _told: &Option<Size>, _cursor: mouse::Cursor, _bounds: Rectangle) -> Primitive {
         let across = |at: i32, points: u32| at as f32 / points.max(1) as f32;
         Primitive {
             pictures: Arc::clone(&self.pictures),
@@ -102,7 +107,7 @@ impl shader::Program<Msg> for Picture {
         }
     }
 
-    fn mouse_interaction(&self, _state: &(), bounds: Rectangle, cursor: mouse::Cursor) -> mouse::Interaction {
+    fn mouse_interaction(&self, _told: &Option<Size>, bounds: Rectangle, cursor: mouse::Cursor) -> mouse::Interaction {
         // The other machine's pointer is in the picture or drawn over it.
         match self.over(bounds, cursor) {
             Some(at) if self.captured && self.target(bounds, at).is_some() => mouse::Interaction::Hidden,
