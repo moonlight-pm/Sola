@@ -246,7 +246,13 @@ home page, `/privacy` and `moonlight.pm` on Branding. `/privacy` is live (2026-1
 `google-site-verification` TXT record it already had; keep that record).
 The demo video is on YouTube, unlisted. Branding is verified and published, and
 the verification request went in on 2026-11-09: Data Access reads "under review".
-Google answers by email.
+Google answers by email. On 2026-11-11 its Trust and Safety team passed homepage,
+branding, app functionality and minimum scopes, and failed the privacy policy: it
+did not say which Google data Sola accesses, how it uses it, or how it protects
+it, and Google asked about AI. `/privacy` now has a section for each
+(`#data-accessed`, `#data-use`, `#data-protection`, `#ai`; live 2026-11-11). The
+console has nothing to resubmit: the review goes on when the email thread is
+answered.
 
 **Related:** `calendar` capability.
 
