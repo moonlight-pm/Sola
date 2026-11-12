@@ -1,8 +1,8 @@
 # Remote Desktop: a screen of its own, the size of the window
 
 **Status:** decided and built 2026-11-11 on branch `remote-desktop-screen`;
-applied on novus (`pkg:sola-kvm` 34dec613f386) and the agent on ember, both
-from next@fe55a91e; not merged.
+applied on novus (`pkg:sola-kvm` a0342f809818) and the agent on ember, both
+from next@ded2a58e; not merged.
 
 **Decided by Joshua (2026-11-11):** "weren't you going to make it so the mac
 changes its resolution to match what the content size is?" and "is it
@@ -38,6 +38,26 @@ Builds on [Remote Desktop](2026-11-09-sola-kvm-view-design.md) and
   for that one. Mirror is greyed out meanwhile and it shows extended; the
   choice is kept, and it mirrors again when the lid opens. A switch that will
   not start extends instead of ending the stream.
+- **The display stays while the lid is closed.** A viewer restarting with
+  the lid closed once let the display go, could not make another while it
+  went, and left a Mac with its lid closed and no screen, which slept. The
+  display is the agent's, kept across video streams: it goes when a stream
+  ends with the lid open, or when the lid opens with no viewer; a new stream
+  reuses it. Displays alternate between two serials, as macOS will not make
+  one while one with the same serial is going away. Only a missing Screen
+  Recording grant refuses a viewer for good; no screen for now ends the
+  stream, and the viewer comes back.
+- **When it cannot extend, it says so.** After a lock, a display left from
+  before blocked a new one and vanished while the next was arranged, and the
+  agent mirrored while the menu said Extend. Making a display tries the other
+  serial once, the arranging process tries again for a second, and the agent
+  says what each `Display` is (`Down::Mirroring`, additive): the menu checks
+  what is shown, and choosing Extend again tries again.
+- **ember never sleeps** (`sudo pmset -a disablesleep 1`, 2026-11-12, on
+  Joshua's word): a MacBook with its lid closed and no screen sleeps, and a
+  network wake does not hold, so it stays reachable. While its screen is
+  locked, macOS will not arrange displays (status 1014) and ScreenCaptureKit
+  lists none: unlocking is at the Mac.
 - When the viewer goes, the display goes with it: macOS moves its windows back
   to the laptop's screen, which is main again.
 - The laptop's screen keeps its own mode throughout; someone at ember sees the
