@@ -58,6 +58,16 @@ pub(crate) fn observe(message: &sola_bus::Message) {
     }
 }
 
+/// The zone layout now (the default until the shell says), for the
+/// titlebar's zone picker.
+pub(crate) fn zone_layout() -> ZoneLayout {
+    LAYOUT
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .unwrap_or_default()
+}
+
 /// Give a Window menu the layout's grid zones, after Float, named by
 /// their place ("Column 1"); their keys come with the rest
 /// (`crate::keys::apply`, or the shell's own table).
@@ -221,11 +231,7 @@ pub fn current() -> Option<AppMenuPayload> {
 /// none) with the layout's grid zones, and every item's key now.
 pub fn prepare(payload: AppMenuPayload) -> AppMenuPayload {
     let mut payload = ensure_window_menu(payload);
-    let layout = LAYOUT
-        .read()
-        .unwrap_or_else(|p| p.into_inner())
-        .clone()
-        .unwrap_or_default();
+    let layout = zone_layout();
     let workspaces = WORKSPACES
         .read()
         .unwrap_or_else(|p| p.into_inner())
@@ -306,6 +312,9 @@ pub fn choose(app_id: &str, action_id: &str) {
 pub const WINDOW_MENU_LABEL: &str = "Window";
 
 pub const ACTION_HIDE: &str = "window.hide";
+/// The titlebar's yellow light: hide this window alone (Hide takes its
+/// whole app). Not a Window menu item.
+pub const ACTION_HIDE_WINDOW: &str = "window.hide-window";
 pub const ACTION_CYCLE: &str = "window.cycle";
 pub const ACTION_FLOAT: &str = "window.float";
 pub const ACTION_FULLSCREEN: &str = "window.fullscreen";
@@ -334,6 +343,8 @@ pub fn workspace_action_id(index: usize) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowAction {
     Hide,
+    /// The focused window alone ([`ACTION_HIDE_WINDOW`]).
+    HideWindow,
     Cycle,
     Pin,
     Zone(Zone),
@@ -493,6 +504,9 @@ pub fn window_menu() -> MenuDefinition {
 /// Map a menu action id to a compositor window action. `None` means the
 /// id is not a kit Window item (forward to the app).
 pub fn parse_window_action(id: &str) -> Option<WindowAction> {
+    if id == ACTION_HIDE_WINDOW {
+        return Some(WindowAction::HideWindow);
+    }
     if let Some(n) = id.strip_prefix(ACTION_GRID_PREFIX) {
         return n.parse().ok().map(|n| WindowAction::Zone(Zone::Grid(n)));
     }
@@ -619,6 +633,7 @@ mod tests {
     #[test]
     fn hide_and_cycle_parse() {
         assert_eq!(parse_window_action(ACTION_HIDE), Some(WindowAction::Hide));
+        assert_eq!(parse_window_action(ACTION_HIDE_WINDOW), Some(WindowAction::HideWindow));
         assert_eq!(parse_window_action(ACTION_CYCLE), Some(WindowAction::Cycle));
         assert_eq!(parse_window_action("quit"), None);
         assert_eq!(parse_window_action("window.new"), None);

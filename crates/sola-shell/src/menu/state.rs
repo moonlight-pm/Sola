@@ -105,7 +105,7 @@ pub fn fill_window_menu(
                 Some(WindowAction::Cycle) => Act::NextTab,
                 Some(WindowAction::Zone(z)) => Act::Zone(z),
                 Some(WindowAction::SendToWorkspace(i)) => Act::SendToWorkspace(i),
-                Some(WindowAction::Pin) | None => continue,
+                Some(WindowAction::Pin | WindowAction::HideWindow) | None => continue,
             };
             *shortcut = keys.key(act);
         }

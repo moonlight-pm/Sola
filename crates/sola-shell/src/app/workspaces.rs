@@ -300,7 +300,7 @@ impl Shell {
             .focus
             .get(self.tabs.showing_id())
             .copied()
-            .filter(|w| self.tabs.desk_of(*w) == Some(showing))
+            .filter(|w| self.tabs.desk_of(*w) == Some(showing) && !self.tabs.is_hidden(*w))
             .filter(|w| {
                 self.app_id_for_window(*w)
                     .is_some_and(|app| !self.is_app_hidden(&app))
@@ -321,11 +321,12 @@ impl Shell {
         self.sync_workspaces();
     }
 
-    /// The most recently used window on the showing workspace whose app is
-    /// not hidden (and is not `except`).
+    /// The most recently used window on the showing workspace that is not
+    /// hidden, alone or with its app (and whose app is not `except`).
     pub(crate) fn mru_window_on_showing(&self, except: Option<&str>) -> Option<u32> {
         let showing = self.tabs.showing();
-        let on_showing = |w: &u32| self.tabs.desk_of(*w) == Some(showing);
+        let on_showing =
+            |w: &u32| self.tabs.desk_of(*w) == Some(showing) && !self.tabs.is_hidden(*w);
         self.mru_apps
             .iter()
             .filter(|app| app.as_str() != Self::APP_ID && Some(app.as_str()) != except)

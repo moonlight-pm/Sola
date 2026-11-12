@@ -84,6 +84,9 @@ pub struct Stacks {
     /// Windows on every workspace: a row on each, in one zone, with each
     /// workspace's own order and what it shows.
     pinned: HashSet<u32>,
+    /// Windows taken off screen alone (their titlebar's yellow light, not
+    /// their app's Hide): their rows stay; [`Self::show`] brings one back.
+    hidden: HashSet<u32>,
     /// child → parent.
     parents: HashMap<u32, u32>,
     /// Places from the saved layout not yet taken.
@@ -122,6 +125,7 @@ impl Stacks {
             layout,
             showing: 0,
             pinned: HashSet::new(),
+            hidden: HashSet::new(),
             parents: HashMap::new(),
             restore: Vec::new(),
             restore_until: None,
@@ -161,6 +165,7 @@ impl Stacks {
             d.clear();
         }
         self.pinned.clear();
+        self.hidden.clear();
     }
 
     // ---------------------------------------------------------------------
@@ -430,6 +435,20 @@ impl Stacks {
         self.pinned.contains(&window_id)
     }
 
+    /// Whether `window_id` (a dialog: its parent) is hidden alone.
+    pub fn is_hidden(&self, window_id: u32) -> bool {
+        let window_id = self.parent_of(window_id).unwrap_or(window_id);
+        self.hidden.contains(&window_id)
+    }
+
+    /// Take `window_id` (a dialog: its parent) off screen; its row stays.
+    /// Its zone shows its next tab, or gives way. False when it is not
+    /// placed or hidden already.
+    pub fn hide(&mut self, window_id: u32) -> bool {
+        let window_id = self.parent_of(window_id).unwrap_or(window_id);
+        self.desk_of(window_id).is_some() && self.hidden.insert(window_id)
+    }
+
     /// Pin `window_id` (a dialog: its parent) to every workspace; where it
     /// joins, it does not cover what shows. Pinned already, it stays on the
     /// showing workspace alone. Returns whether it is pinned now, `None` when
@@ -490,6 +509,7 @@ impl Stacks {
         // under its tab's key, and a new window must not take this one.
         let leaves_a_place = !self.unsettled(window_id, now);
         let pinned = self.pinned.remove(&window_id);
+        self.hidden.remove(&window_id);
         let restoring = self.restore_until.is_some_and(|until| now < until);
         let mut left = None;
         for desk in &mut self.desks {
@@ -568,11 +588,12 @@ impl Stacks {
     // ---------------------------------------------------------------------
 
     /// Show `window_id` in its zone (raise it, for a float; show its
-    /// parent, for a dialog), and its workspace. Its zone is picked, so it
-    /// comes on screen over whatever overlaps it. Returns false when it is
-    /// not placed.
+    /// parent, for a dialog), and its workspace, hidden or not. Its zone is
+    /// picked, so it comes on screen over whatever overlaps it. Returns
+    /// false when it is not placed.
     pub fn show(&mut self, window_id: u32) -> bool {
         let window_id = self.parent_of(window_id).unwrap_or(window_id);
+        self.hidden.remove(&window_id);
         let Some(d) = self.desk_of(window_id) else {
             return false;
         };
@@ -739,33 +760,40 @@ impl Stacks {
         &self.desks[self.showing].float_z
     }
 
+    /// Whether a tab stays off screen: its app is `hidden` (Hide), or it
+    /// is hidden alone.
+    fn off<'a>(&'a self, hidden: &'a dyn Fn(&str) -> bool) -> impl Fn(&Tab) -> bool + 'a {
+        move |t| hidden(&t.app_id) || self.hidden.contains(&t.window_id)
+    }
+
     /// The Cinema tab on screen on the showing workspace, if Cinema is up.
     pub fn cinema_up(&self, hidden: &dyn Fn(&str) -> bool) -> Option<u32> {
         let desk = &self.desks[self.showing];
-        desk.on_screen(&self.layout, hidden)
+        let off = self.off(hidden);
+        desk.on_screen(&self.layout, &off)
             .contains(&Zone::Cinema)
-            .then(|| desk.visible_shown(Zone::Cinema, hidden))
+            .then(|| desk.visible_shown(Zone::Cinema, &off))
             .flatten()
     }
 
     /// What a tiled zone of the showing workspace puts on screen: its
-    /// shown tab, or, when that tab's app is hidden (Super+H), the nearest
-    /// tab that is not.
+    /// shown tab, or, when that tab is hidden (its app's Hide, or alone),
+    /// the nearest tab that is not.
     pub fn visible_shown(&self, zone: Zone, hidden: &dyn Fn(&str) -> bool) -> Option<u32> {
-        self.desks[self.showing].visible_shown(zone, hidden)
+        self.desks[self.showing].visible_shown(zone, &self.off(hidden))
     }
 
     /// The tiled zones of the showing workspace on screen
     /// ([`Desk::on_screen`]).
     pub fn on_screen(&self, hidden: &dyn Fn(&str) -> bool) -> Vec<Zone> {
-        self.desks[self.showing].on_screen(&self.layout, hidden)
+        self.desks[self.showing].on_screen(&self.layout, &self.off(hidden))
     }
 
     /// Where focus belongs on the showing workspace when the focused tab
     /// left the screen: the last looked-at zone's tab, else the first on
     /// screen's.
     pub fn front(&self, hidden: &dyn Fn(&str) -> bool) -> Option<u32> {
-        self.desks[self.showing].front(&self.layout, hidden)
+        self.desks[self.showing].front(&self.layout, &self.off(hidden))
     }
 
     // ---------------------------------------------------------------------

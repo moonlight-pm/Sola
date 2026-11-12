@@ -325,9 +325,10 @@ impl Desk {
         self.float_z.clear();
     }
 
-    /// What a tiled zone puts on screen: its shown tab, or, when that
-    /// tab's app is hidden (Super+H), the nearest tab that is not.
-    pub fn visible_shown(&self, zone: Zone, hidden: &dyn Fn(&str) -> bool) -> Option<u32> {
+    /// What a tiled zone puts on screen: its shown tab, or, when that tab
+    /// is `hidden` (its app's Hide, or the window alone), the nearest tab
+    /// that is not.
+    pub fn visible_shown(&self, zone: Zone, hidden: &dyn Fn(&Tab) -> bool) -> Option<u32> {
         let tabs: Vec<&Tab> = self.in_zone(zone).collect();
         let shown = self.column(zone).shown;
         let at = shown.and_then(|w| tabs.iter().position(|t| t.window_id == w))?;
@@ -335,7 +336,7 @@ impl Desk {
         let before = tabs[..at].iter().rev();
         after
             .chain(before)
-            .find(|t| !hidden(&t.app_id))
+            .find(|t| !hidden(t))
             .map(|t| t.window_id)
     }
 
@@ -345,7 +346,7 @@ impl Desk {
     /// overlaps it. So picking Full takes the halves off, and picking a
     /// half takes Full off and brings the other half back. Listed in the
     /// layout's order.
-    pub fn on_screen(&self, layout: &ZoneLayout, hidden: &dyn Fn(&str) -> bool) -> Vec<Zone> {
+    pub fn on_screen(&self, layout: &ZoneLayout, hidden: &dyn Fn(&Tab) -> bool) -> Vec<Zone> {
         let mut order: Vec<Zone> = self.picks.clone();
         for z in layout.tiled() {
             if !order.contains(&z) {
@@ -370,7 +371,7 @@ impl Desk {
 
     /// The tab focus belongs on: the last looked-at zone's when it is on
     /// screen, else the first on screen's.
-    pub fn front(&self, layout: &ZoneLayout, hidden: &dyn Fn(&str) -> bool) -> Option<u32> {
+    pub fn front(&self, layout: &ZoneLayout, hidden: &dyn Fn(&Tab) -> bool) -> Option<u32> {
         let on = self.on_screen(layout, hidden);
         let zone = if on.contains(&self.last_zone) {
             self.last_zone

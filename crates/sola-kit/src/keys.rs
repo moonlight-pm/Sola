@@ -182,6 +182,8 @@ fn system_id(item: &str) -> Option<String> {
     }
     Some(match parse_window_action(item)? {
         WindowAction::Hide => "hide".into(),
+        // The yellow light's; no menu item, no key.
+        WindowAction::HideWindow => return None,
         WindowAction::Cycle => "tab.next".into(),
         // The shell's, with no key for now.
         WindowAction::Pin => "pin".into(),
