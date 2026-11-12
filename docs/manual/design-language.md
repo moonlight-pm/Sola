@@ -27,7 +27,7 @@ or the graphite brand requires it.
 | Palette | System greys | **Graphite on neutral greys** (`#0b0b0b` / `#151515` / …; no blue since 2026-10-23) |
 | Window layout | Freeform windows | **Zones**: Full, or Left and Right halves, on a 10 px gap grid; any window can float |
 | Menus | One global menu bar | **Each window's titlebar** carries its app's menus; the top row holds only the shell's islands |
-| Title bars | Title bar + three traffic lights | A 38 px titlebar on every kit window: **one** close dot, the menus, the title |
+| Title bars | Title bar + three traffic lights | A 38 px titlebar on every kit window: the three lights, the menus, the title. Yellow **hides that window**; green **picks a zone** |
 | Primary controls | Flat system blue | Soft accent fill, **dark label**, optional glow |
 | Hairlines | Solid system separator | Soft white edges, baked **opaque** on their surface (7% / 12%) |
 | Everything else | HIG dark mode density | Follow density; prefer graphite tokens |
@@ -169,7 +169,7 @@ This is the main intentional break from macOS chrome.
 
 ### Zones on a gap grid
 
-- **Every kit window has a titlebar**: 38 px, the close dot, the app's
+- **Every kit window has a titlebar**: 38 px, the stoplight, the app's
   menus (its name first, in semibold; the kit appends **Window**), then the
   window's title at the right in tertiary ink. Menus that do not fit are
   left off; the title is cut, or dropped under 32 px of room. A menu's
@@ -184,8 +184,8 @@ This is the main intentional break from macOS chrome.
   x 260.
 - **Windows have 12 px corners** and a 1 px opaque rim. The focused one's
   rim is the theme's highlight a step lighter, its titlebar a step
-  brighter, its close dot red; the others dim their menus to 55% and keep
-  their place. Corners are cleared, so the ground (black or the background
+  brighter, its lights coloured; the others grey their lights, dim
+  their menus to 55% and keep their place. Corners are cleared, so the ground (black or the background
   picture) shows there.
 - **Floats** sit over the tiles at their own size and are the only windows
   with a shadow (28%, y 3, blur 11). Any window can float (`Meta`+numpad
@@ -204,7 +204,10 @@ This is the main intentional break from macOS chrome.
 
 ### Implications for visual design
 
-- Design one close dot, not a traffic-light cluster.
+- The stoplight is close (red), hide (yellow) and zone (green), 12 px
+  lights 8 px apart, 13 px in. Yellow hides that window alone (its row
+  stays in the tab bar; Super+H hides the whole app); green opens the
+  zone picker under it.
 - Kit apps get the titlebar from the kit's window frame; they publish their
   menus and do not draw their own title row.
 - The tab bar (its focused row is the highlight pill) and the focused

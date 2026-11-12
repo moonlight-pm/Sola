@@ -113,6 +113,37 @@ fn an_empty_side_gives_the_screen_to_the_other() {
 }
 
 #[test]
+fn a_window_hidden_alone_gives_way_until_shown() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    for w in 1..=2 {
+        s.place(w, "term", "term", false, false, t);
+    }
+    s.place(3, "sola-scope", "sola-scope", true, false, t);
+    s.show(2);
+    assert!(s.hide(2));
+    assert!(!s.hide(2), "hidden already");
+    assert!(s.is_hidden(2));
+    // Its row stays; its zone shows its other tab, its app is not hidden.
+    assert_eq!(ids(&s, FULL), vec![1, 2]);
+    assert_eq!(s.visible_shown(FULL, &none), Some(1));
+    s.hide(1);
+    assert_eq!(s.on_screen(&none), Vec::<Zone>::new());
+    // Showing it brings it back.
+    s.show(2);
+    assert!(!s.is_hidden(2));
+    assert_eq!(s.visible_shown(FULL, &none), Some(2));
+    // A float too; a dialog goes with its parent.
+    s.set_parent(4, 3);
+    assert!(s.hide(4));
+    assert!(s.is_hidden(3) && s.is_hidden(4));
+    // A window that leaves is forgotten.
+    s.remove(1, t);
+    assert!(!s.is_hidden(1));
+    assert!(!s.hide(9), "not placed");
+}
+
+#[test]
 fn floats_and_dialogs() {
     let t = Instant::now();
     let mut s = Stacks::new();
