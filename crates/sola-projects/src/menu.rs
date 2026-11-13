@@ -22,6 +22,14 @@ pub fn app_menu() -> AppMenuPayload {
             checked: false,
         },
         MenuItem::Divider,
+        // The session's drop-down terminal ([`crate::dropdown`]).
+        MenuItem::Action {
+            id: "terminal".into(),
+            label: "Terminal".into(),
+            shortcut: Some(KeyCode::J.meta()),
+            disabled: false,
+            checked: false,
+        },
         // This computer stops watching; the session keeps running.
         MenuItem::Action {
             id: "close-window".into(),

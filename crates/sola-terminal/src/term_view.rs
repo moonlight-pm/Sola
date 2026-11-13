@@ -114,6 +114,11 @@ pub fn cols_rows_for(size: iced::Size, metrics: CellMetrics) -> (u16, u16) {
     (cols, rows)
 }
 
+/// The height that holds `rows` rows: [`cols_rows_for`]'s inverse.
+pub fn height_for(rows: u16, metrics: CellMetrics) -> f32 {
+    f32::from(rows) * metrics.cell_h + PAD * 2.0
+}
+
 /// Map a pixel position inside the canvas to a visible grid cell `(col, row)`.
 ///
 /// Inverse of [`TermView::cell_xy`]: subtract the padding, divide by the cell

@@ -500,6 +500,17 @@ own status line stays empty. The figures come with Claude's next update
 of its status line (after a message). In Cinema the window shows only
 the terminal.
 
+**A terminal to drop down.** The terminal button at the bar's right end,
+or **Project → Terminal** (⌘J), drops a terminal over the top of the
+session's window: 25 rows (fewer in a short window), a shell in the
+session's folder on the computer the session runs on, for a command or
+two. Keys go to it while it shows; the button or ⌘J again puts it away.
+The session under it keeps its size, so its agent does not redraw. Put
+away, it keeps what it was doing, and so it does when the window closes
+or Projects quits; `exit` ends it, and the next one starts afresh in the
+session's folder. Ending the session ends it too, wherever and however the
+session ends.
+
 **A Projects window to pick a project in.** The launcher's Projects
 (`window.navigate`), **Project → Open Project…** (⌘O) and **New
 Project…** (⌘N) open one; the launcher starts Projects first if it is not

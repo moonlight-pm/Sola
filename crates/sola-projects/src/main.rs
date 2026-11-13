@@ -36,6 +36,7 @@ mod calls;
 mod cards;
 mod catalog;
 mod cli;
+mod dropdown;
 mod gauges;
 mod hooks;
 mod instance;
@@ -230,6 +231,8 @@ struct App {
     local_busy: bool,
     /// The desk menu open on a session's pane.
     desk: desk::PaneMenu,
+    /// Sessions whose drop-down terminal shows ([`dropdown`]).
+    drops: HashSet<String>,
 }
 
 struct PendingWait {
@@ -293,6 +296,9 @@ enum Msg {
     /// `session.end`: end the session once the reply is out.
     EndSession(String),
     RestartShell(String),
+    /// The bar's terminal button: show or hide the session's drop-down
+    /// ([`dropdown`]).
+    DropDown(String),
     PaneFocused(String),
     Ignore,
     Hook(hooks::Incoming),
@@ -533,6 +539,7 @@ impl App {
             remote_ticked: HashMap::new(),
             local_busy: false,
             desk: desk::PaneMenu::default(),
+            drops: HashSet::new(),
         };
         app.link_hosts();
         app.sync_all_rows();
@@ -666,8 +673,14 @@ impl App {
     }
 
     /// The message changes what session `pane`'s window shows, and no other.
+    /// A hidden drop-down changes none.
     fn touch_pane(&self, pane: &str) {
-        match self.windows.window_of(pane) {
+        let tab = match dropdown::tab_of(pane) {
+            Some(tab) if !self.drops.contains(tab) => return scope::touch_none(),
+            Some(tab) => tab,
+            None => pane,
+        };
+        match self.windows.window_of(tab) {
             Some(window) => scope::touch(window),
             None => scope::touch_none(),
         }
@@ -793,12 +806,14 @@ impl App {
             },
             Msg::Nav(window, m) => self.on_nav(window, m),
             Msg::RestartShell(id) => self.attach_pane(&id, &[]),
+            Msg::DropDown(tab) => self.toggle_drop(&tab),
             Msg::PtyOutput(id) => {
                 if let Some(rt) = self.runtimes.get(&id) {
                     rt.cache.clear();
                 }
                 Task::none()
             }
+            Msg::PtyExit(id) if dropdown::tab_of(&id).is_some() => self.on_drop_exit(&id),
             Msg::PtyExit(id) => {
                 tracing::info!(pane = %id, "pane PTY exited");
                 // Drop the client without `close()` (plain Drop keeps tmux).
@@ -879,8 +894,11 @@ impl App {
             }
             Msg::Input(event) => self.on_input(event),
             Msg::SelectionChanged => {
-                if let Some(rt) = self.runtimes.get(&self.focused) {
-                    rt.cache.clear();
+                // In the session's pane or its drop-down.
+                for pane in [self.focused.clone(), self.key_pane()] {
+                    if let Some(rt) = self.runtimes.get(&pane) {
+                        rt.cache.clear();
+                    }
                 }
                 Task::none()
             }
@@ -980,8 +998,15 @@ impl App {
             .clip(true)
             .into();
         let bare = matches!(self.chrome(window), sola_kit::Chrome::Bare);
+        let pane: Element<'_, Msg> = match session.and_then(|id| self.drop_view(id)) {
+            Some(dropped) => stack![pane, dropped].into(),
+            None => pane,
+        };
         let body: Element<'_, Msg> = match session {
-            Some(id) if !bare => column![bar::view(self.pane_status.get(id)), pane].into(),
+            Some(id) if !bare => {
+                column![bar::view(self.pane_status.get(id), id, self.drops.contains(id)), pane]
+                    .into()
+            }
             _ => pane,
         };
 
@@ -1078,6 +1103,7 @@ impl App {
     fn forget_tab(&mut self, id: &str) {
         // Dropping the client only detaches it.
         self.runtimes.remove(id);
+        self.forget_drop(id);
         self.pane_status.remove(id);
         self.pane_grids.remove(id);
         self.remote_pending.remove(id);
@@ -1293,6 +1319,10 @@ impl App {
                         let id = self.selected.clone();
                         self.ask_end_session(&id)
                     }
+                    "terminal" => match self.windows.focused.and_then(|w| self.windows.tab_of(w)) {
+                        Some(tab) => self.toggle_drop(&tab.to_string()),
+                        None => Task::none(),
+                    },
                     "copy" => self.copy_selection(),
                     "paste" => self.paste_clipboard(),
                     _ => Task::none(),
@@ -1312,36 +1342,39 @@ impl App {
         (c.max(2), r.max(1))
     }
 
+    /// Pane `pane_id`'s grid: a session's, or its drop-down's.
+    fn term_canvas<'a>(&'a self, pane_id: &str, rt: &'a PaneRuntime) -> Element<'a, Msg> {
+        let view = term_view::TermView {
+            term: rt.emulator.term(),
+            cursor_snap: rt.emulator.cursor_snap(),
+            selection_track: rt.emulator.selection_track(),
+            cache: &rt.cache,
+            palette: &self.palette,
+            metrics: self.metrics,
+            cursor_on: self.cursor_on,
+            active: pane_id == self.key_pane(),
+            on_select: Msg::SelectionChanged,
+            on_scroll: Msg::Scrolled(pane_id.to_string()),
+            on_open_url: Box::new(Msg::OpenUrl),
+            on_wheel_pty: Box::new({
+                let pid = pane_id.to_string();
+                move |bytes| Msg::WheelToPty(pid.clone(), bytes)
+            }),
+            on_mouse_pty: Box::new({
+                let pid = pane_id.to_string();
+                move |bytes| Msg::MouseToPty(pid.clone(), bytes)
+            }),
+            on_desk_menu: Box::new({
+                let pid = pane_id.to_string();
+                move |at| Msg::DeskMenu(pid.clone(), at)
+            }),
+        };
+        canvas(view).width(Length::Fill).height(Length::Fill).into()
+    }
+
     fn render_leaf(&self, pane_id: &str) -> Element<'_, Msg> {
         let inner: Element<'_, Msg> = match self.runtimes.get(pane_id) {
-            Some(rt) => {
-                let view = term_view::TermView {
-                    term: rt.emulator.term(),
-                    cursor_snap: rt.emulator.cursor_snap(),
-                    selection_track: rt.emulator.selection_track(),
-                    cache: &rt.cache,
-                    palette: &self.palette,
-                    metrics: self.metrics,
-                    cursor_on: self.cursor_on,
-                    active: pane_id == self.focused,
-                    on_select: Msg::SelectionChanged,
-                    on_scroll: Msg::Scrolled(pane_id.to_string()),
-                    on_open_url: Box::new(Msg::OpenUrl),
-                    on_wheel_pty: Box::new({
-                        let pid = pane_id.to_string();
-                        move |bytes| Msg::WheelToPty(pid.clone(), bytes)
-                    }),
-                    on_mouse_pty: Box::new({
-                        let pid = pane_id.to_string();
-                        move |bytes| Msg::MouseToPty(pid.clone(), bytes)
-                    }),
-                    on_desk_menu: Box::new({
-                        let pid = pane_id.to_string();
-                        move |at| Msg::DeskMenu(pid.clone(), at)
-                    }),
-                };
-                canvas(view).width(Length::Fill).height(Length::Fill).into()
-            }
+            Some(rt) => self.term_canvas(pane_id, rt),
             None if self.remote_pending.contains(pane_id) => {
                 let host = self
                     .tab_for_pane(pane_id)
@@ -2801,14 +2834,15 @@ impl App {
         }
     }
 
-    /// Size each window's session to the window.
+    /// Size each window's session, and its drop-down, to the window.
     fn resize_all_panes(&mut self) {
         let targets: Vec<(String, u16, u16)> = self
             .windows
             .iter()
-            .map(|(_, id)| {
+            .flat_map(|(_, id)| {
                 let (c, r) = self.pane_grid(id);
-                (id.to_string(), c, r)
+                let (dc, dr) = self.drop_grid(id);
+                [(id.to_string(), c, r), (dropdown::pane_id(id), dc, dr)]
             })
             .collect();
         for (pane_id, cols, rows) in targets {
@@ -2840,13 +2874,15 @@ impl App {
                 false => iced::clipboard::write(nav.query.clone()),
             };
         }
-        let Some(rt) = self.runtimes.get(&self.focused) else {
-            return Task::none();
-        };
-        let text = { rt.emulator.term().lock().selection_to_string() };
+        // The drop-down's selection, else the session's.
+        let text = [self.key_pane(), self.focused.clone()]
+            .iter()
+            .filter_map(|pane| self.runtimes.get(pane))
+            .filter_map(|rt| rt.emulator.term().lock().selection_to_string())
+            .find(|s| !s.is_empty());
         match text {
-            Some(s) if !s.is_empty() => iced::clipboard::write(s),
-            _ => Task::none(),
+            Some(s) => iced::clipboard::write(s),
+            None => Task::none(),
         }
     }
 
@@ -2897,7 +2933,7 @@ impl App {
         let Some(text) = text else {
             let in_field = self.spawn.is_open()
                 || self.windows.focused.is_some_and(|w| self.navigators.contains_key(&w));
-            return if in_field { Task::none() } else { self.paste_image(self.focused.clone()) };
+            return if in_field { Task::none() } else { self.paste_image(self.key_pane()) };
         };
         if self.spawn.is_open() {
             self.spawn.name.push_str(&text.replace('\n', ""));
@@ -2910,7 +2946,7 @@ impl App {
             };
             return self.on_nav(window, NavMsg::Query(query));
         }
-        let Some(rt) = self.runtimes.get(&self.focused) else {
+        let Some(rt) = self.runtimes.get(&self.key_pane()) else {
             return Task::none();
         };
         let mode = { *rt.emulator.term().lock().mode() };
@@ -2983,11 +3019,12 @@ impl App {
             return Task::none();
         }
 
-        let Some(rt) = self.runtimes.get(&self.focused) else {
+        let pane = self.key_pane();
+        let Some(rt) = self.runtimes.get(&pane) else {
             return Task::none();
         };
         let mut mode = { *rt.emulator.term().lock().mode() };
-        if extkeys::level(&self.focused) >= 1 {
+        if extkeys::level(&pane) >= 1 {
             mode |= alacritty_terminal::term::TermMode::DISAMBIGUATE_ESC_CODES;
         }
         let mods = Mods::from(modifiers);
@@ -3006,7 +3043,7 @@ impl App {
             location,
             text: text.as_deref(),
             repeat,
-            modify_other_keys: extkeys::level(&self.focused) >= 1,
+            modify_other_keys: extkeys::level(&pane) >= 1,
         }) else {
             return Task::none();
         };
@@ -3018,7 +3055,7 @@ impl App {
             }
         }
         rt.backend.write(&bytes);
-        self.touch_pane(&self.focused);
+        self.touch_pane(&pane);
         Task::none()
     }
 

@@ -110,6 +110,11 @@ pub fn reload_config() {
 // wrapped over several rows names the whole URL. `set-clipboard on` passes a
 // program's OSC 52 copy; tmux drops it under the default, `external`. Both
 // reach the emulator, which is what acts on them.
+//
+// `session-closed` ends a session's drop-down terminal with it: Projects
+// runs one as `drop-<session>` beside the session. However the session
+// closes (ended from any computer, its shell exiting, killed by hand), the
+// server that held it kills the drop-down. Any other name finds nothing.
 pub(crate) const TMUX_CONF: &str = "\
 set -gu terminal-overrides
 set -g status off
@@ -129,6 +134,7 @@ set -g allow-passthrough on
 set -ga update-environment ' TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM WAYLAND_DISPLAY XDG_SESSION_TYPE'
 set-environment -g TERM_PROGRAM alacritty
 set-environment -g COLORTERM truecolor
+set-hook -g session-closed \"run-shell 'tmux -S #{socket_path} kill-session -t =drop-#{hook_session_name} 2>/dev/null || true'\"
 ";
 
 /// Remove a stale tmux socket left behind by a crashed or killed server.
@@ -770,6 +776,13 @@ mod tests {
     fn tmux_conf_disables_status() {
         assert!(TMUX_CONF.contains("status off"));
         assert!(TMUX_CONF.contains("prefix None"));
+    }
+
+    #[test]
+    fn tmux_conf_ends_a_drop_down_with_its_session() {
+        assert!(TMUX_CONF.contains(
+            "set-hook -g session-closed \"run-shell 'tmux -S #{socket_path} kill-session -t =drop-#{hook_session_name}"
+        ));
     }
 
     #[test]

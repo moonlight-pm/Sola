@@ -7,12 +7,17 @@
 //! quota/remaining, model effort, fast (on/off), context should show
 //! percent used"; [`crate::gauges`]): the effort and fast mode by the
 //! model, the context as % of its window, and what is left of the
-//! account's 5-hour and weekly limits (or a gateway's spend).
+//! account's 5-hour and weekly limits (or a gateway's spend). At its right
+//! end, the button that drops the session's terminal ([`crate::dropdown`]),
+//! lit while it shows.
 
-use iced::widget::{Space, container, row, text};
-use iced::{Alignment, Element, Length, Padding};
-use sola_kit::components::style::{BAR_H, SPACE_LG, SPACE_SM, chrome_surface};
-use sola_kit::components::text as kit_text;
+use std::sync::LazyLock;
+
+use iced::widget::{Space, button, container, row, svg, text};
+use iced::{Alignment, Element, Length, Padding, Theme};
+use sola_kit::components::icon::{icon_handle, icon_svg};
+use sola_kit::components::style::{BAR_H, PAD_CONTROL_SM, SPACE_LG, SPACE_SM, chrome_surface};
+use sola_kit::components::{text as kit_text, toolbar};
 use sola_kit::fonts;
 
 use crate::Msg;
@@ -93,7 +98,26 @@ pub fn line(st: Option<&PaneStatus>) -> Line {
     }
 }
 
-pub fn view<'a>(st: Option<&PaneStatus>) -> Element<'a, Msg> {
+/// Read once: the bar is drawn with every redraw of its window.
+static TERMINAL: LazyLock<svg::Handle> = LazyLock::new(|| icon_handle("lucide/terminal"));
+
+/// Shows or hides session `tab`'s drop-down; lit while it shows.
+fn terminal_button<'a>(tab: &str, dropped: bool) -> Element<'a, Msg> {
+    button(icon_svg(TERMINAL.clone(), 16))
+        .padding(PAD_CONTROL_SM)
+        .style(move |theme: &Theme, status| {
+            let mut style = toolbar::style(theme, status);
+            // At rest it is clear; shown, it looks held.
+            if dropped && status == button::Status::Active {
+                style.background = Some(theme.extended_palette().background.strong.color.into());
+            }
+            style
+        })
+        .on_press(Msg::DropDown(tab.to_string()))
+        .into()
+}
+
+pub fn view<'a>(st: Option<&PaneStatus>, tab: &str, dropped: bool) -> Element<'a, Msg> {
     let line = line(st);
     let mut left = row![text(line.agent).font(fonts::ui_medium()).size(13)]
         .spacing(SPACE_SM)
@@ -115,6 +139,7 @@ pub fn view<'a>(st: Option<&PaneStatus>) -> Element<'a, Msg> {
             .align_y(Alignment::Center),
         );
     }
+    let right = right.push(terminal_button(tab, dropped));
     let surface = chrome_surface();
     container(
         row![left, Space::new().width(Length::Fill), right]
