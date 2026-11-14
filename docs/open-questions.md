@@ -239,8 +239,8 @@ publish refuses without it; a clone without it has no Google sign-in and may set
 the environment variables at run time. Google calls a desktop client public, so
 the programs and the public plan carrying it is expected.
 
-**Google's side:** project `sola-508017`, published (in production, unverified:
-a warning, and 100 new users), with the two narrow scopes on Data Access and the
+**Google's side:** project `sola-508017`, published (in production; unverified
+until 2026-11-13, with a warning and a cap of 100 new users), with the two narrow scopes on Data Access and the
 home page, `/privacy` and `moonlight.pm` on Branding. `/privacy` is live (2026-11-09).
 `moonlight.pm` is proven in Search Console (2026-11-09, auto-verified by the
 `google-site-verification` TXT record it already had; keep that record).
@@ -252,7 +252,11 @@ did not say which Google data Sola accesses, how it uses it, or how it protects
 it, and Google asked about AI. `/privacy` now has a section for each
 (`#data-accessed`, `#data-use`, `#data-protection`, `#ai`; live 2026-11-11). The
 console has nothing to resubmit: the review goes on from the email thread,
-answered 2026-11-11. Waiting on Google.
+answered 2026-11-11. **Verified 2026-11-13:** Google approved `calendar.events`
+(the one sensitive scope; `calendar.calendarlist.readonly` is non-sensitive), and
+the Verification Center reads branding and data access verified. A new scope, or
+any change to the consent screen's branding, links or scopes, needs a new
+verification; `/privacy` must stay true of Calendar and Settings.
 
 **Related:** `calendar` capability.
 
