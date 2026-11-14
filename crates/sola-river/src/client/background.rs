@@ -253,6 +253,11 @@ pub fn sample(state: &AppData, x: i32, y: i32) -> [u8; 3] {
     [g.bgrx[i], g.bgrx[i + 1], g.bgrx[i + 2]]
 }
 
+/// The output's integer scale (1 until its size is known).
+pub fn scale(state: &AppData) -> i32 {
+    target(state).map_or(1, |t| t.scale)
+}
+
 /// The output in buffer pixels: its logical size times the integer scale
 /// its current mode gives (1 when the mode is not a whole multiple).
 fn target(state: &AppData) -> Option<Target> {

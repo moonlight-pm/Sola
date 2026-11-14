@@ -215,6 +215,8 @@ shows, compare only rows CEF's rect actually crosses per tile column.
   always re-execs user apps, not only managed `sola-*` daemons.
 - Confirm **direct scanout** (or at least no ARGB blend) for Cinema
   opaque-region windows — `WAYLAND_DEBUG` / river logs, not NVML alone.
+  A badge (`solactl badge`, 2026-11-14) over a Cinema window ends it for
+  as long as the badge shows: River composites the window under it.
 - Opaque **XRGB** swapchains in Cinema (today: ARGB + opaque-region
   hint). Only if region is not enough for scanout.
 - Tiles: an opaque region **minus the rounded corners**, so River can skip

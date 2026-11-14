@@ -807,6 +807,30 @@ pub struct BuiltinApp {
     pub icon: String,
 }
 
+/// Something waits on you, said in the screen's top-left corner while a
+/// window fills the screen (`solactl badge`, any app → sola-river;
+/// `Topic::Badge`, persistent, keyed by `id`; retracted: gone). A game
+/// shows nothing of the desk, so this is how a session editing its addon
+/// says a reload or a restart waits. One set before this boot is dropped:
+/// the reboot did it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Badge {
+    /// Whose it is ("halo"); badges sit side by side in id order.
+    pub id: String,
+    pub kind: BadgeKind,
+    /// When it was set (unix ms).
+    pub set_at: u64,
+}
+
+/// What a [`Badge`] says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BadgeKind {
+    /// A reload would take the change (↻, in the accent).
+    Reload,
+    /// Only a restart will (⏻, in the warning colour).
+    Restart,
+}
+
 /// The videos a window shows (an app → sola-river,
 /// `Topic::WindowVideos`, sticky, keyed by `window_id`; retracted when it
 /// shows none). sola-river leaves the desk's opacity off them, and a
@@ -2348,6 +2372,13 @@ define_topics! {
     // The black is over the whole screen (sola-river → shell): the shell
     // asks for the sleep now. Appended last.
     BlackedOut,
+
+    // Something waits on you, in the top-left corner over a window that
+    // fills the screen (any app → sola-river). Persistent, keyed by id, so
+    // it outlives its writer and a sola-river restart; retracted: gone.
+    // Appended last.
+    #[persistent(keys = [id])]
+    Badge(Badge),
 }
 
 #[cfg(test)]
@@ -2681,6 +2712,27 @@ mod tests {
         assert!(matches!(Topic::parse(&Topic::BlackedOut.to_message()), Some(Topic::BlackedOut)));
         assert!(!TopicKind::Blackout.behavior().is_sticky());
         assert!(!TopicKind::BlackedOut.behavior().is_sticky());
+    }
+
+    #[test]
+    fn a_badge_is_kept_per_id_on_disk() {
+        let badge = Badge {
+            id: "halo".into(),
+            kind: BadgeKind::Restart,
+            set_at: 7,
+        };
+        let msg = Topic::Badge(badge.clone()).to_message();
+        assert!(TopicKind::Badge.behavior().is_persistent());
+        assert_eq!(msg.keys, vec!["halo".to_string()]);
+        match Topic::parse(&msg) {
+            Some(Topic::Badge(back)) => assert_eq!(back, badge),
+            other => panic!("expected Badge, got {other:?}"),
+        }
+        let value = Topic::Badge(badge.clone()).to_yaml_value().unwrap();
+        match Topic::from_yaml_section(TopicKind::Badge, value) {
+            Some(Topic::Badge(back)) => assert_eq!(back, badge),
+            other => panic!("expected Badge, got {other:?}"),
+        }
     }
 
     #[test]

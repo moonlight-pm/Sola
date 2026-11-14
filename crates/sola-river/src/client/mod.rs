@@ -45,6 +45,7 @@ pub mod screenshot;
 pub mod screenshot_window;
 pub mod seat;
 pub mod background;
+pub mod badge;
 pub mod corners;
 pub mod fade;
 pub mod shadow;
@@ -210,6 +211,9 @@ pub struct AppData {
     pub corners: corners::CornerState,
     /// The background picture (`Topic::Background`).
     pub background: background::BackgroundState,
+    /// Badges in the corner over a window that fills the screen
+    /// (`Topic::Badge`).
+    pub badges: badge::BadgeState,
     /// The idle fade (`Appearance.fade_idle`).
     pub fade: fade::FadeState,
     /// A focused foreign window's rim (sRGB 0–1): the theme's highlight a
@@ -306,6 +310,7 @@ impl AppData {
             shadow: shadow::ShadowState::default(),
             corners: corners::CornerState::default(),
             background: background::BackgroundState::default(),
+            badges: badge::BadgeState::default(),
             fade: fade::FadeState::default(),
             rim_focused: sola_core::theme::focus_rim(sola_core::theme::highlight_rgb(
                 &sola_core::theme::Theme::default(),
@@ -534,6 +539,7 @@ pub fn bus_tick(state: &mut AppData) {
                     state.rim_rest = rest;
                     state.pending.render_dirty = true;
                 }
+                badge::theme(state, &theme);
             }
             sola_bus::topics::Topic::Appearance(look) => {
                 // A retraction arrives as the same topic, not sticky.
@@ -550,6 +556,10 @@ pub fn bus_tick(state: &mut AppData) {
                 // A retraction arrives as the same topic, not sticky.
                 background::set(state, msg.sticky.then_some(bg));
                 background::poll(state);
+            }
+            sola_bus::topics::Topic::Badge(b) => {
+                // A retraction arrives as the same topic, not sticky.
+                badge::set(state, b.id.clone(), msg.sticky.then_some(b));
             }
             sola_bus::topics::Topic::Shutdown => {
                 info!("shutdown requested via bus");

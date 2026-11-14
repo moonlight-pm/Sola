@@ -387,7 +387,13 @@ with `Appearance.sleep_idle`, puts the machine to sleep (`power.rs`,
 Oath's `power=sleep`). Every sleep first asks sola-river for black
 (`Topic::Blackout`, `client/fade/blackout.rs`: the dim's black layer, on
 top) and waits for its `BlackedOut`; the request runs off the shell's UI
-thread and, when it returns at wake, `Blackout` false lifts it. The menubar carries no
+thread and, when it returns at wake, `Blackout` false lifts it. Badges
+(persistent `Topic::Badge`, keyed by id, from `solactl badge`): while a
+window fills the screen (`background::screen_filled`) sola-river draws each
+as a 32 px round shell surface in the top-left corner, input region empty,
+placed on top in every render sequence before the fade's layers
+(`client/badge.rs`, painted on the CPU into shm); one set before this boot
+it retracts. The menubar carries no
 app menus. Kept apps (persistent `Topic::KeptApps`): `stacks` holds a
 `Block::Kept` among a workspace's loose rows for each kept app with no
 window — where its last window was, saved in the tab layout

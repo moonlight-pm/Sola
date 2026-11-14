@@ -7,6 +7,7 @@
 use clap::{Parser, Subcommand};
 
 mod background;
+mod badge;
 mod bus;
 mod call;
 mod compositor;
@@ -96,6 +97,13 @@ enum Command {
         cmd: background::Command,
     },
 
+    /// A badge in the screen's corner over a window that fills it (a game):
+    /// set one or clear it.
+    Badge {
+        #[command(subcommand)]
+        cmd: badge::Command,
+    },
+
     /// Global media-key action (MPRIS / wpctl). Invoked by the shell.
     Media {
         #[arg(value_enum)]
@@ -137,6 +145,7 @@ fn main() {
         Command::Emit { kind, payload } => emit::run(&kind, &payload),
         Command::Open { target } => open::run(&target),
         Command::Background { cmd } => background::run(cmd),
+        Command::Badge { cmd } => badge::run(cmd),
         Command::Media { action } => media::run(action),
         Command::External(args) => dynamic::run(args),
     };
