@@ -37,7 +37,7 @@ solactl emit KIND PAYLOAD
 solactl open TARGET
 solactl background set IMAGE
 solactl background clear
-solactl badge set ID reload|restart
+solactl badge set ID reload|restart [--corner CORNER] [--offset X,Y]
 solactl badge clear ID
 solactl media play-pause|next|prev|mute|vol-up|vol-down
 solactl help [COMMAND…]
@@ -1235,19 +1235,23 @@ image in front.
 ### badge
 
 ```text
-solactl badge set ID reload|restart
+solactl badge set ID reload|restart [--corner CORNER] [--offset X,Y]
 solactl badge clear ID
 ```
 
-`set` puts badge `ID` in the screen's top-left corner, shown while a window
-fills the screen (a game in Cinema): `reload` is ↻, `restart` is ⏻
-([Compositor → Badges](compositor.md#badges)). Setting it again replaces
-it. `clear` takes it away. A badge stays until it is cleared, through
+`set` puts badge `ID` in a corner of the screen, shown while a window fills
+the screen (a game in Cinema): `reload` is ↻, `restart` is ⏻
+([Compositor → Badges](compositor.md#badges)). `--corner` is `top-left`
+(the default), `top-right`, `bottom-left` or `bottom-right`; `--offset`
+is how far in from that corner the badge's own corner sits, across then
+down (or up), in logical pixels (`4,4` by default). Setting it again
+replaces it, place and all. `clear` takes it away. A badge stays until it is cleared, through
 restarts of `sola-river`, but not through a reboot. No bus connection is
 status 3.
 
 ```text
 solactl badge set halo reload
+solactl badge set halo restart --offset 112,7
 solactl badge clear halo
 ```
 

@@ -807,19 +807,41 @@ pub struct BuiltinApp {
     pub icon: String,
 }
 
-/// Something waits on you, said in the screen's top-left corner while a
-/// window fills the screen (`solactl badge`, any app → sola-river;
+/// Something waits on you, said in a corner of the screen while a window
+/// fills the screen (`solactl badge`, any app → sola-river;
 /// `Topic::Badge`, persistent, keyed by `id`; retracted: gone). A game
 /// shows nothing of the desk, so this is how a session editing its addon
 /// says a reload or a restart waits. One set before this boot is dropped:
 /// the reboot did it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Badge {
-    /// Whose it is ("halo"); badges sit side by side in id order.
+    /// Whose it is ("halo"). Badges at the same place sit side by side in
+    /// id order, the first at the place.
     pub id: String,
     pub kind: BadgeKind,
     /// When it was set (unix ms).
     pub set_at: u64,
+    /// The screen's corner it is placed from.
+    #[serde(default)]
+    pub corner: BadgeCorner,
+    /// Logical pixels in from that corner to the badge's own, across and
+    /// down (or up): `(4, 4)` by default.
+    #[serde(default = "badge_offset")]
+    pub offset: (i32, i32),
+}
+
+fn badge_offset() -> (i32, i32) {
+    (4, 4)
+}
+
+/// The corner of the screen a [`Badge`] is placed from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum BadgeCorner {
+    #[default]
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
 }
 
 /// What a [`Badge`] says.
@@ -2720,6 +2742,8 @@ mod tests {
             id: "halo".into(),
             kind: BadgeKind::Restart,
             set_at: 7,
+            corner: BadgeCorner::TopRight,
+            offset: (112, 7),
         };
         let msg = Topic::Badge(badge.clone()).to_message();
         assert!(TopicKind::Badge.behavior().is_persistent());
@@ -2731,6 +2755,14 @@ mod tests {
         let value = Topic::Badge(badge.clone()).to_yaml_value().unwrap();
         match Topic::from_yaml_section(TopicKind::Badge, value) {
             Some(Topic::Badge(back)) => assert_eq!(back, badge),
+            other => panic!("expected Badge, got {other:?}"),
+        }
+        // One kept before badges had a place sits top-left, 4 in.
+        let older = serde_yaml_ng::from_str("id: halo\nkind: Reload\nset_at: 7\n").unwrap();
+        match Topic::from_yaml_section(TopicKind::Badge, older) {
+            Some(Topic::Badge(back)) => {
+                assert_eq!((back.corner, back.offset), (BadgeCorner::TopLeft, (4, 4)));
+            }
             other => panic!("expected Badge, got {other:?}"),
         }
     }

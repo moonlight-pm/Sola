@@ -390,7 +390,8 @@ top) and waits for its `BlackedOut`; the request runs off the shell's UI
 thread and, when it returns at wake, `Blackout` false lifts it. Badges
 (persistent `Topic::Badge`, keyed by id, from `solactl badge`): while a
 window fills the screen (`background::screen_filled`) sola-river draws each
-as a 32 px round shell surface in the top-left corner, input region empty,
+as a 32 px round shell surface at its setter's corner and offset (badges
+at the same place side by side in id order), input region empty,
 placed on top in every render sequence before the fade's layers
 (`client/badge.rs`, painted on the CPU into shm); one set before this boot
 it retracts. The menubar carries no

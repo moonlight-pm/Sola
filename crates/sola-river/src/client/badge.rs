@@ -1,9 +1,10 @@
-//! Badges in the screen's top-left corner while a window fills it
-//! (`Topic::Badge`, `solactl badge`). A game in Cinema shows nothing of the
-//! desk, so this is how a session editing its addon says a reload (↻, in
-//! the accent) or a restart (⏻, in the warning colour) waits. One small
-//! round layer per badge, side by side in id order, [`MARGIN`] in from the
-//! corner; none while the desk itself shows.
+//! Badges in a corner of the screen while a window fills it (`Topic::Badge`,
+//! `solactl badge`). A game in Cinema shows nothing of the desk, so this is
+//! how a session editing its addon says a reload (↻, in the accent) or a
+//! restart (⏻, in the warning colour) waits. One small round layer per
+//! badge, where its setter placed it (a corner and an offset in from it);
+//! badges at the same place sit side by side in id order, going in from
+//! the corner. None while the desk itself shows.
 //!
 //! Each is a shell surface with an empty input region, never focused: a
 //! click goes through to the game, which keeps the keyboard and its
@@ -17,7 +18,7 @@ use std::io::Write;
 use std::os::fd::AsFd;
 
 use rustix::fs::{MemfdFlags, memfd_create};
-use sola_bus::topics::{Badge, BadgeKind, Topic};
+use sola_bus::topics::{Badge, BadgeCorner, BadgeKind, Topic};
 use sola_core::theme::Theme;
 use tracing::{info, warn};
 use wayland_client::protocol::{wl_buffer, wl_shm, wl_shm_pool, wl_surface};
@@ -27,16 +28,16 @@ use crate::protocol::river_window_management_v1::river_node_v1::RiverNodeV1;
 use crate::protocol::river_window_management_v1::river_shell_surface_v1::RiverShellSurfaceV1;
 
 /// A badge's side, logical pixels: small on a 5120 × 2160 screen, so the
-/// game's corner stays usable and an addon's button fits at 40.
+/// game's corner stays usable.
 const SIZE: i32 = 32;
-/// From the screen's edges, and between badges.
-const MARGIN: i32 = 4;
+/// Between badges at the same place.
+const GAP: i32 = 4;
 /// The plate's opacity.
 const PLATE: f32 = 0.92;
 
 pub struct BadgeState {
-    /// What is set, by id.
-    set: BTreeMap<String, BadgeKind>,
+    /// What is set, by id: what it says, and where.
+    set: BTreeMap<String, (BadgeKind, BadgeCorner, (i32, i32))>,
     colors: Colors,
     /// The layers on screen, and what they were made for (`None`: none).
     shown: Vec<Layer>,
@@ -75,13 +76,13 @@ impl Colors {
     }
 }
 
-/// What the layers on screen show, and where.
+/// What the layers on screen show, and where (each badge's top-left
+/// corner, layout pixels).
 #[derive(Debug, Clone, PartialEq)]
 struct Look {
-    kinds: Vec<BadgeKind>,
+    badges: Vec<(BadgeKind, (i32, i32))>,
     colors: Colors,
     scale: i32,
-    origin: (i32, i32),
 }
 
 struct Layer {
@@ -114,8 +115,8 @@ pub fn set(state: &mut AppData, id: String, badge: Option<Badge>) {
             return;
         }
         Some(badge) => {
-            info!(%id, kind = ?badge.kind, "badge set");
-            state.badges.set.insert(id, badge.kind);
+            info!(%id, kind = ?badge.kind, corner = ?badge.corner, offset = ?badge.offset, "badge set");
+            state.badges.set.insert(id, (badge.kind, badge.corner, badge.offset));
         }
         None => {
             if state.badges.set.remove(&id).is_none() {
@@ -153,10 +154,8 @@ pub fn sync_on_render(state: &mut AppData) {
         return;
     };
     let mut layers = Vec::new();
-    for (i, kind) in look.kinds.iter().enumerate() {
-        let x = look.origin.0 + MARGIN + i as i32 * (SIZE + MARGIN);
-        let y = look.origin.1 + MARGIN;
-        match make(state, *kind, look.colors, look.scale, (x, y)) {
+    for &(kind, at) in &look.badges {
+        match make(state, kind, look.colors, look.scale, at) {
             Ok(layer) => layers.push(layer),
             // Not tried again until the look changes.
             Err(e) => warn!(%e, ?kind, "badge layer"),
@@ -169,15 +168,42 @@ pub fn sync_on_render(state: &mut AppData) {
 /// What should show: the badges set, while a window fills the screen.
 fn wanted(state: &AppData) -> Option<Look> {
     let b = &state.badges;
+    let output = state.output_size?;
     if b.set.is_empty() || !background::screen_filled(state) {
         return None;
     }
+    let (ox, oy) = state.output_origin.unwrap_or((0, 0));
+    let mut placed = Vec::new();
+    let badges = b
+        .set
+        .values()
+        .map(|&(kind, corner, offset)| {
+            let before = placed.iter().filter(|p| **p == (corner, offset)).count() as i32;
+            placed.push((corner, offset));
+            let (x, y) = place(corner, offset, before, output);
+            (kind, (ox + x, oy + y))
+        })
+        .collect();
     Some(Look {
-        kinds: b.set.values().copied().collect(),
+        badges,
         colors: b.colors,
         scale: background::scale(state),
-        origin: state.output_origin.unwrap_or((0, 0)),
     })
+}
+
+/// The top-left corner, on an output `output` large, of the badge with `n`
+/// before it at `corner` and `offset`: `offset` in from that corner, then
+/// a badge and a gap further in across for each one before it.
+fn place(corner: BadgeCorner, offset: (i32, i32), n: i32, output: (i32, i32)) -> (i32, i32) {
+    let across = offset.0 + n * (SIZE + GAP);
+    let right = output.0 - across - SIZE;
+    let bottom = output.1 - offset.1 - SIZE;
+    match corner {
+        BadgeCorner::TopLeft => (across, offset.1),
+        BadgeCorner::TopRight => (right, offset.1),
+        BadgeCorner::BottomLeft => (across, bottom),
+        BadgeCorner::BottomRight => (right, bottom),
+    }
 }
 
 /// A badge's layer on top at `at`, its input region empty.
@@ -400,6 +426,18 @@ mod tests {
     fn a_badge_doubles_on_a_doubled_screen() {
         let buf = paint(BadgeKind::Restart, colors(), 2 * SIZE as usize);
         assert_eq!(buf.len(), 4 * (SIZE * SIZE) as usize * 4);
+    }
+
+    #[test]
+    fn a_badge_sits_its_offset_in_from_its_corner_and_the_next_further_in() {
+        let output = (5120, 2160);
+        assert_eq!(place(BadgeCorner::TopLeft, (4, 4), 0, output), (4, 4));
+        assert_eq!(place(BadgeCorner::TopLeft, (4, 4), 1, output), (40, 4));
+        assert_eq!(place(BadgeCorner::TopLeft, (112, 7), 0, output), (112, 7));
+        assert_eq!(place(BadgeCorner::TopRight, (4, 4), 0, output), (5084, 4));
+        assert_eq!(place(BadgeCorner::TopRight, (4, 4), 1, output), (5048, 4));
+        assert_eq!(place(BadgeCorner::BottomLeft, (10, 20), 0, output), (10, 2108));
+        assert_eq!(place(BadgeCorner::BottomRight, (0, 0), 0, output), (5088, 2128));
     }
 
     #[test]

@@ -511,7 +511,7 @@ here, starts its new one on the workspace you are on.
   alone. Nothing of the desk shows over it or through it: no top row,
   bar or floating windows, and black instead of the background picture.
   The launcher and Super+K still come up, and a badge set with `solactl
-  badge` shows in the top-left corner ([Compositor →
+  badge` shows in its corner ([Compositor →
   Badges](compositor.md#badges)). An app that asks for
   fullscreen (a game, a video, F11) goes to Cinema, and back to its zone
   when it leaves fullscreen.
