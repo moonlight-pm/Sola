@@ -126,6 +126,8 @@ pub const PACKAGES: &[Package] = &[
             "sola-session",
             "sola-lock",
             "solactl",
+            // The drop-down terminal the shell starts over a fullscreen app.
+            "sola-dropdown",
             // Sola's opener under the name every program calls (D14), and
             // the one Rust's `webbrowser` crate calls instead.
             "xdg-open",

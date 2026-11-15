@@ -8508,6 +8508,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-dropdown"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "iced",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "sola-terminal",
+ "tracing",
+]
+
+[[package]]
 name = "sola-editor"
 version = "0.1.0"
 dependencies = [

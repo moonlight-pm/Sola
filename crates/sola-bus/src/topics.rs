@@ -853,6 +853,23 @@ pub enum BadgeKind {
     Restart,
 }
 
+/// A drop-down terminal over an app while it fills the screen (`solactl
+/// dropdown`, → the shell; `Topic::DropDown`, persistent, keyed by
+/// `app_id`; retracted: the app has none). Its key brings it down over the
+/// app and sends it away; the app stays fullscreen under it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DropDown {
+    /// The app's id (a Steam game under Proton: `steam_app_<number>`).
+    pub app_id: String,
+    /// What it shows: run with `sh -c` each time it comes down, ended when
+    /// it is sent away.
+    pub command: String,
+    /// How much of the screen's height it takes, in percent.
+    pub height: u8,
+    /// The key that brings it down and sends it away.
+    pub key: KeyChord,
+}
+
 /// The videos a window shows (an app → sola-river,
 /// `Topic::WindowVideos`, sticky, keyed by `window_id`; retracted when it
 /// shows none). sola-river leaves the desk's opacity off them, and a
@@ -2401,6 +2418,12 @@ define_topics! {
     // Appended last.
     #[persistent(keys = [id])]
     Badge(Badge),
+
+    // A drop-down terminal over an app while it fills the screen (`solactl
+    // dropdown` → the shell). Persistent, keyed by app_id; retracted: none.
+    // Appended last.
+    #[persistent(keys = [app_id])]
+    DropDown(DropDown),
 }
 
 #[cfg(test)]
@@ -2764,6 +2787,28 @@ mod tests {
                 assert_eq!((back.corner, back.offset), (BadgeCorner::TopLeft, (4, 4)));
             }
             other => panic!("expected Badge, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_drop_down_is_kept_per_app_on_disk() {
+        let drop = DropDown {
+            app_id: "steam_app_2286654072".into(),
+            command: "tmux -L sola-ws attach-session -t =sws-ws-main-6".into(),
+            height: 40,
+            key: sola_core::KeyCode::J.meta(),
+        };
+        let msg = Topic::DropDown(drop.clone()).to_message();
+        assert!(TopicKind::DropDown.behavior().is_persistent());
+        assert_eq!(msg.keys, vec!["steam_app_2286654072".to_string()]);
+        match Topic::parse(&msg) {
+            Some(Topic::DropDown(back)) => assert_eq!(back, drop),
+            other => panic!("expected DropDown, got {other:?}"),
+        }
+        let value = Topic::DropDown(drop.clone()).to_yaml_value().unwrap();
+        match Topic::from_yaml_section(TopicKind::DropDown, value) {
+            Some(Topic::DropDown(back)) => assert_eq!(back, drop),
+            other => panic!("expected DropDown, got {other:?}"),
         }
     }
 

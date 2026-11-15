@@ -28,6 +28,7 @@ pub mod agents;
 pub mod bus;
 pub mod cycle;
 pub mod desk;
+pub mod dropdown;
 pub mod projects;
 pub mod kept;
 pub mod vault;
@@ -96,6 +97,8 @@ pub enum Msg {
     Bus(Arc<sola_bus::Message>),
     /// A key capture outlived its time (Settings went away mid-capture).
     KeyCaptureExpire(u64),
+    /// The drop-down program of this start ended ([`dropdown`]).
+    DropDownEnded(u64),
     /// Fired by `iced::window::open`'s Task when a window's OS handle is ready.
     WindowOpened(WindowKind, iced::window::Id),
     /// Overlay iced swapchain size (after Wayland configure). Used to delay
@@ -474,6 +477,8 @@ pub struct Shell {
     /// The Cinema tab on screen: the only tab in the compositor's
     /// fullscreen.
     pub cinema_shown: Option<u32>,
+    /// Drop-down terminals over an app in Cinema, and the one down.
+    pub drop_down: dropdown::DropDowns,
 
     // Application catalog (built-ins + user entries from Topic::Application)
     pub applications: ApplicationsConfig,
@@ -646,6 +651,7 @@ impl Shell {
             keys: crate::bindings::Bindings::default(),
             key_capture_gen: 0,
             cinema_shown: None,
+            drop_down: Default::default(),
             applications: ApplicationsConfig {
                 apps: crate::builtins::builtin_apps(),
             },
@@ -1630,8 +1636,12 @@ impl Shell {
         if let Some(wid) = cinema {
             // Cinema on screen: its tab (with its dialogs) is all that is
             // drawn — no top row, bar, other tiles or floats — so nothing
-            // of the desk shows over or through it.
+            // of the desk shows over or through it. A drop-down over it
+            // goes after it: rivulet draws it over the fullscreen app.
             self.push_with_dialogs(&mut order, wid);
+            if let Some(drop) = self.drop_down_window(wid) {
+                order.push(drop);
+            }
         } else {
             self.push_desk(&mut order);
         }
@@ -1701,6 +1711,7 @@ impl Shell {
         }
         for w in &self.known_windows {
             if w.app_id == Self::APP_ID
+                || Self::is_drop_down_app(&w.app_id)
                 || order.contains(&w.window_id)
                 || self.tabs.zone_of(w.window_id).is_some()
                 || self.is_app_hidden(&w.app_id)
@@ -1894,6 +1905,9 @@ impl Shell {
             }
         }
 
+        // A drop-down's key, while its app is in Cinema.
+        bindings.extend(self.drop_down_key());
+
         bindings.sort_by_key(|b| (b.keycode.raw(), b.meta, b.alt, b.ctrl, b.shift));
         bindings.dedup();
         bindings
@@ -1923,6 +1937,7 @@ impl Shell {
         }
         self.collect_overlay_frames(&mut frames);
         frames.extend(self.tab_frames());
+        frames.extend(self.drop_down_frame());
         Self::emit_frames(frames);
         self.sync_places();
     }
@@ -2514,6 +2529,10 @@ impl Shell {
     fn dispatch_msg(&mut self, msg: Msg) -> iced::Task<Msg> {
         match msg {
             Msg::Bus(arc) => self.handle_bus(&arc),
+            Msg::DropDownEnded(start) => {
+                self.on_drop_down_ended(start);
+                iced::Task::none()
+            }
             Msg::KeyCaptureExpire(generation) => {
                 if generation == self.key_capture_gen && self.keys.capturing {
                     tracing::warn!("key capture timed out; grabbing keys again");
@@ -3417,6 +3436,7 @@ mod pending_launch_tests {
             keys: crate::bindings::Bindings::default(),
             key_capture_gen: 0,
             cinema_shown: None,
+            drop_down: Default::default(),
             applications: ApplicationsConfig {
                 apps: crate::builtins::builtin_apps(),
             },
@@ -3933,6 +3953,60 @@ mod hide_tests {
         assert_ne!(shell.tabs.zone_of(8), Some(Zone::Cinema));
     }
 
+    /// A game in Cinema with a drop-down: its key is grabbed then; a press
+    /// starts one, whose window maps over the game, out of the bar, with
+    /// the keyboard; the key again sends it away and gives it back.
+    #[test]
+    fn a_drop_down_comes_down_over_a_game_in_cinema_and_goes_away() {
+        use sola_bus::topics::{DropDown, FullscreenRequest, Topic};
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        shell.windows_seen = true;
+        let send = |shell: &mut Shell, t: Topic| {
+            let mut m = t.to_message();
+            m.sticky = true;
+            let _ = shell.handle_bus(&m);
+        };
+        let window = |id, app_id: &str| Window {
+            window_id: id,
+            app_id: app_id.into(),
+            title: "w".into(),
+            pid: None,
+        };
+        let key = sola_core::KeyCode::J.meta();
+        send(
+            &mut shell,
+            Topic::DropDown(DropDown {
+                app_id: "steam_app_1".into(),
+                command: "true".into(),
+                height: 40,
+                key,
+            }),
+        );
+        send(&mut shell, Topic::Windows(vec![window(7, "steam_app_1")]));
+        assert!(!shell.shell_key_chords().contains(&key), "not in Cinema yet");
+
+        send(&mut shell, Topic::FullscreenRequest(FullscreenRequest { window_id: 7, fullscreen: true }));
+        assert_eq!(shell.cinema_shown, Some(7));
+        assert!(shell.shell_key_chords().contains(&key));
+
+        assert!(shell.drop_down_chord(&key).is_some());
+        let both = vec![window(7, "steam_app_1"), window(9, dropdown::APP_ID)];
+        send(&mut shell, Topic::Windows(both));
+        assert_eq!(shell.tabs.zone_of(9), None, "not in the bar");
+        assert_eq!(composed_apps(&shell), vec![7, 9], "over the game");
+        assert_eq!(shell.focused_window_id, Some(9));
+        // Unset elsewhere: with an output, frames go to the bus.
+        shell.zoning.output_size = Some((5120, 2160));
+        let frame = shell.drop_down_frame().map(|f| (f.x, f.y, f.width, f.height));
+        assert_eq!(frame, Some((0, 0, 5120, 864)));
+        shell.zoning.output_size = None;
+
+        assert!(shell.drop_down_chord(&key).is_some());
+        assert_eq!(composed_apps(&shell), vec![7]);
+        assert_eq!(shell.focused_window_id, Some(7));
+        assert_eq!(shell.cinema_shown, Some(7), "the game stays in Cinema");
+    }
+
     #[test]
     fn a_session_opens_on_the_workspace_of_the_session_that_started_it() {
         use sola_bus::topics::{Tab, TabOpener, Topic};
@@ -4068,6 +4142,7 @@ mod hide_tests {
             keys: crate::bindings::Bindings::default(),
             key_capture_gen: 0,
             cinema_shown: None,
+            drop_down: Default::default(),
             applications: ApplicationsConfig {
                 apps: crate::builtins::builtin_apps(),
             },

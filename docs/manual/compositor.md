@@ -307,9 +307,15 @@ be. The shell's own surfaces don't count.
 
 A window leaves fullscreen when it asks to, when the shell sends it a
 `Frame` without fullscreen (another zone's key, or another tab taking the
-screen), and when keyboard focus moves to another window. The last rule covers
-games that switch to a windowed mode internally without telling the
-compositor, and would otherwise stay above everything.
+screen), and when keyboard focus moves to a window that is not composed
+above it. The last rule covers games that switch to a windowed mode
+internally without telling the compositor, and would otherwise stay above
+everything. A window composed after a fullscreen window draws over it
+(rivulet since Oath dc481d4) and takes the pointer there, so focus moving
+to one leaves the fullscreen window as it is: a drop-down terminal
+([Drop-down terminals](sola-shell.md#drop-down-terminals)), and the
+Shell's launcher, menu or shortcuts over a game in Cinema. On a rivulet
+before dc481d4 such a window stays hidden under the fullscreen one.
 
 ### Frames, rims, and corners
 

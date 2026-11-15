@@ -12,6 +12,7 @@ mod bus;
 mod call;
 mod compositor;
 mod desk;
+mod dropdown;
 mod dynamic;
 mod emit;
 mod logs;
@@ -104,6 +105,13 @@ enum Command {
         cmd: badge::Command,
     },
 
+    /// A drop-down terminal over an app while it fills the screen: give
+    /// one to an app or take it away.
+    Dropdown {
+        #[command(subcommand)]
+        cmd: dropdown::Command,
+    },
+
     /// Global media-key action (MPRIS / wpctl). Invoked by the shell.
     Media {
         #[arg(value_enum)]
@@ -146,6 +154,7 @@ fn main() {
         Command::Open { target } => open::run(&target),
         Command::Background { cmd } => background::run(cmd),
         Command::Badge { cmd } => badge::run(cmd),
+        Command::Dropdown { cmd } => dropdown::run(cmd),
         Command::Media { action } => media::run(action),
         Command::External(args) => dynamic::run(args),
     };

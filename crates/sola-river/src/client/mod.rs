@@ -233,6 +233,21 @@ pub struct AppData {
     pub last_composition: Vec<u32>,
 }
 
+/// Whether `window` comes after `under` in the newest composition (the
+/// shell sends it before the focus that goes with it). Rivulet draws a
+/// window placed after a fullscreen one over it (Oath dc481d4), so the
+/// fullscreen one keeps its fullscreen while that window has the keyboard.
+fn composed_above(state: &AppData, under: u32, window: u32) -> bool {
+    let order = state.pending.composition.as_deref().unwrap_or(&state.last_composition);
+    after(order, under, window)
+}
+
+/// Whether `window` comes after `under` in `order` (bottom to top).
+fn after(order: &[u32], under: u32, window: u32) -> bool {
+    let at = |id: u32| order.iter().position(|&w| w == id);
+    matches!((at(under), at(window)), (Some(u), Some(w)) if w > u)
+}
+
 /// Operator hook (`compositor.cursor`). River honors the magic xcursor
 /// names `sola-cursor-hidden` / `sola-cursor-visible` when patched.
 pub fn set_pointer_visible(state: &AppData, visible: bool) {
@@ -483,8 +498,13 @@ pub fn bus_tick(state: &mut AppData) {
                 // Alt-Tab gives no visual feedback, even though focus
                 // technically changed (music drops, but the game is
                 // still painted on top of the new focus target).
+                // Not for a window composed above it (a drop-down over a
+                // game): rivulet draws that over the fullscreen one.
                 if let Some(prev) = state.focused_window {
-                    if prev != t.window_id && state.currently_fullscreen.contains(&prev) {
+                    if prev != t.window_id
+                        && state.currently_fullscreen.contains(&prev)
+                        && !composed_above(state, prev, t.window_id)
+                    {
                         tracing::info!(
                             prev_window_id = prev,
                             new_window_id = t.window_id,
@@ -930,5 +950,20 @@ impl Dispatch<WpCursorShapeDeviceV1, ()> for AppData {
         _: &QueueHandle<Self>,
     ) {
         // wp_cursor_shape_device_v1 has no events.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::after;
+
+    #[test]
+    fn a_window_after_a_fullscreen_one_is_over_it() {
+        // The game in Cinema, then a drop-down over it.
+        assert!(after(&[8, 12], 8, 12));
+        assert!(!after(&[12, 8], 8, 12));
+        // A window not in the composition is not over it.
+        assert!(!after(&[8], 8, 12));
+        assert!(!after(&[12], 8, 12));
     }
 }
