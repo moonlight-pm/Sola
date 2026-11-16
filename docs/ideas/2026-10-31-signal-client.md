@@ -1,84 +1,136 @@
-# Signal client — parked
+# Signal client — a Rust client of our own (researched, not started)
 
-**Status:** parked (Joshua, 2026-10-31: "just stick this research in ideas
-… its parked"). Research only; nothing built. Do not implement from this
+**Status:** research only; nothing built. Do not implement from this
 file — promote a slice into a freeze + plan + `CURRENT.md` **Now** first.
 
-**Asked** (Joshua, 2026-10-31): "sometime over the last year i had
+**Direction** (Joshua, 2026-11-16): "a fully custom client, in rust. That
+means no java … I'm ok with having to keep the thing working when signal
+changes .. it will be ongoing … a fully independent app - not relying on
+secondary cli's .. it shall be a single binary." This replaces the
+2026-10-31 recommendation (signal-cli behind a daemon; kept at the end).
+
+**First asked** (Joshua, 2026-10-31): "sometime over the last year i had
 attempted to do a custom signal client for sola (or a previous os
 experiment) — at the time it was pretty buggy and fidgety … research how
-feasible this is now — consider any open source work others have done."
+feasible this is now". That attempt was not found anywhere (repos,
+GitHub, transcripts); had it been Rust, it was on presage 0.7.0.
 
-## The earlier attempt
+## Verdict (2026-11-16)
 
-Not found: not in this repo or its history, not in the other repos in
-`~/Projects`, not in Joshua's GitHub repos (personal, moonlight-pm,
-niarada), not in agent transcripts or notes. The only trace is Signal
-Desktop installed from nixpkgs-unstable. Had it been Rust, it was on
-presage, whose last release (0.7.0, May 2025) still had link failures,
-decryption-failure loops, phone-sent messages missing and no history on
-link — likely the "buggy and fidgety".
+Achievable: one binary, `sola-signal`, a kit app that is a **linked
+device** of the phone, with its own service layer written against
+Signal's own Rust library. Everyday messaging first (1:1, groups,
+attachments, reactions, replies, edits, receipts, typing, history on
+link); group administration, stories and calls later. Never
+set-and-forget: Signal changes what its servers require a few times a
+year, and the fix is then ours to write.
 
-## Verdict
+What makes it reasonable now: Signal is moving its service API out of the
+apps and into **libsignal**. Signal-Android and Signal-Desktop both open
+their chat, unauthenticated and provisioning connections through
+`libsignal-net`, and send messages through its typed API. That library is
+Rust, so a Rust client calls it with no bridge. Each release moves more of
+the wire into it (v0.108.0 added `getAccountIdentity`), and it already
+hides the move from REST-over-websocket to gRPC. The part we own gets
+smaller each release, and following Signal is more often a tag bump.
 
-Feasible for everyday messaging, never set-and-forget. Signal does not
-support third-party clients and changes what its servers require a few
-times a year; every unofficial stack breaks for days to weeks until it
-catches up. That part has not changed; how fast fixes land has.
+## What exists (read from the sources, 2026-11-16)
 
-## The stacks (as of 2026-10-31)
+| | State | Use to us |
+|--|--|--|
+| **libsignal** (Signal, Rust, AGPL-3.0) | v0.108.0 (2026-11-13), about weekly; git only; "use outside of Signal is unsupported"; Rust API breaks between minors. Android 8.36.2 and Desktop 8.38.0 both pin 0.107.0. | **The base.** `protocol` (sessions, sealed sender, PQXDH, SPQR, sender keys), `zkgroup` (groups, profile credentials), `net` + `net/chat` (connections, typed API: send sealed / unsealed / multi-recipient / sync, pre-keys, profile credentials, usernames, upload forms, devices, registration, key transparency; CDSI; the chat server's gRPC protos), `provisioning` (the link envelope), `message-backup` (the history archive), `account-keys`, `usernames`. |
+| **Signal-Desktop** (TypeScript, AGPL-3.0) | Released weekly. `ts/textsecure`: 21.7k lines. | **First reference**: it is the linked desktop device. Linking, sync messages, the history import, the capabilities a linked device must declare. |
+| **Signal-Android** (Java/Kotlin, AGPL-3.0) | Released weekly. `lib/libsignal-service`: 29.9k lines, 14 proto files (2.5k lines). | **Second reference**, and where the protos are copied from. Most complete service layer. |
+| **mautrix-signal** `signalmeow` (Go, AGPL-3.0) | v26.11 (2026-11-16), monthly, funded. 14.2k lines over `libsignal-ffi`. | **Third reference**: the smallest complete independent client, and proof that one small team keeps up. |
+| **libsignal-service-rs** (Rust, AGPL-3.0) | `main` 2026-11-05; pins libsignal v0.99.0 (a bump to 0.106.2 is an open PR). 13.4k lines. Its own websocket and reqwest; `libsignal-net` only for contact discovery. | Reading only. Nine libsignal minors behind, and not on the transport Signal is moving to. |
+| **presage** (Rust, AGPL-3.0) | `main` 2026-11-15, `0.8.0-dev`, no tag since 0.7.0 (2025-05). 8.6k lines. ~37 open PRs, most from one contributor, holding create/change groups, the history archive, stories, sender keys, multi-recipient send, the pre-key rework. | Reading only. Review is the bottleneck: the features exist and wait. |
+| **signal-rusted** (Rust, AGPL-3.0) | iced 0.14 over vendored presage, 22.9k lines, created 2026-10-27, no users. Imports link-time history with `libsignal-message-backup`. | Proof that iced + history on link works. |
+| **RingRTC** (Signal, Rust + WebRTC, AGPL-3.0) | v2.75.0. A `native` feature (cubeb audio) and a prebuilt WebRTC. | The path to calls, later. |
+| Flare, gurk-rs, Whisperfish | All on presage. | Nothing to reuse. |
+| signal-cli | Java. | Ruled out. |
 
-| | State | Fits Sola | Main risk |
-|--|--|--|--|
-| **presage** (Rust, AGPL-3.0) | No release since 0.7.0 (2025-05-13); `main` very active (merges 2026-10-27); pins libsignal v0.99 while upstream is v0.106.1. Linked device: yes. sqlite store (sled gone). | Pure Rust, no D-Bus | A git rev of a volunteer reimplementation of Signal's service layer. 2026: linking broke on the SPQR requirement (Mar) and an HTTP 409 (Jul — library fix in 5 days, apps 1–4 weeks); forged sync messages accepted Apr–Oct. Can't change groups; no stories, calls, history on link. |
-| **signal-cli** (Java, GPL-3.0) | v0.14.9 (2026-10-07), monthly. JSON-RPC daemon on stdio / Unix socket / HTTP; D-Bus optional. SPQR support two days after enforcement. Group admin, stories. Its service layer is a fork of Signal-Android's own Java code, so it inherits Signal's fixes. | Java 25 (GraalVM native build experimental); ~100 MB RSS (unverified) | Releases older than ~3 months may stop working. Keys in plain files. |
-| **libsignal** directly (AGPL-3.0) | "Use outside of Signal is unsupported"; git only; Rust API breaks every minor (gRPC default v0.102, Tahini v0.106). | Rust | You become presage. Only funded teams keep up (mautrix-signal: Go + `libsignal-ffi`, within ~10 days). |
-| Apps | Flare 0.22.7 (GTK4 on presage; D-Bus for secrets and portals); gurk-rs v0.10.2 (TUI); Whisperfish (Sailfish); signal-rusted (iced on presage, created 2026-10-27, no users). | — | Proof iced + presage works; nothing to reuse. Signal Desktop's service logic is Electron-bound TypeScript. |
+## Shape
 
-Policy: no sign Signal kicks third-party linked devices; enforcement is
-technical (required capabilities, version expiry). A linked device that
-stays offline ~45 days is unlinked (support page not loaded to confirm).
-
-## Recommendation (if unparked)
-
-signal-cli as the engine, in a service shaped like Vault's:
+One crate, `crates/sola-signal`, its own package (`pkg:sola-signal`),
+licensed AGPL-3.0-only as everything it links is. One binary:
 
 ```text
-svc:sola-signal
-  sola-signald (Rust) ── runs signal-cli `jsonRpc` on stdio, restarts it
-                      ── bus: unread counts, notifications for the shell
-                      ── call plane `signal`: status, open a conversation
-  Signal (kit app)    ── private socket: conversations, send, attachments
+sola-signal
+  ui/        kit app, drawn as Mail is: conversations, a thread, a composer
+  engine/    link, connect, receive, send, groups, attachments, profiles,
+             sync, storage service, history import   (ours)
+  store/     rusqlite: keys, sessions, conversations, messages
+  proto/     copied from Signal-Android, with a script that shows the diff
+  ── libsignal at one pinned tag (protocol, zkgroup, net, …)
 ```
 
-Always on, so messages notify while the app is closed and the device is
-never unlinked for inactivity. The app ↔ daemon protocol stays
-engine-neutral so presage can replace signal-cli later (if it tags
-releases and gains history on link) without touching the app.
+It keeps running with its window closed (an `iced::daemon`), so messages
+notify and the device is not unlinked for inactivity. Bus: an unread
+count for the menubar, `AppNotification`. `sgnl://` through `sola-open`.
 
-- **Gets:** 1:1 and group messages, attachments, replies, reactions,
-  receipts, typing, desk notifications, `sgnl://` through `sola-open`.
-- **Not:** past history — neither engine transfers it on link (presage
-  #396 open; nothing in signal-cli's changelog), so the client starts
-  empty. Calls stay on the phone or Signal Desktop.
-- **Costs:** a Java 25 package on Oath; signal-cli bumped monthly (at
-  least quarterly); an occasional relink. Signal pieces are AGPL/GPL —
-  keep them in their own process and package.
+Size of what we own, by the references: 10–15k lines of engine and store
+(libsignal-service-rs + presage are 22k with their own transport;
+signalmeow is 14k), plus the UI.
+
+## Slices
+
+1. **Spike, no UI** — link by QR, receive and decrypt, send 1:1, sync
+   transcripts, receipts. Proves the stack on the current libsignal tag.
+2. **Daily driver** — the app; groups (read state, send with sender
+   keys), attachments, profiles and avatars, contacts, reactions,
+   replies, edits, deletes, typing, disappearing timers, notifications.
+3. **History on link** — the transfer archive the phone offers when
+   linking, parsed with `libsignal-message-backup`.
+4. **Later** — create and change groups, stories, usernames, stickers,
+   link previews, key transparency; calls (RingRTC) last.
+
+Out: payments, donations, registering as the primary device.
+
+## Costs
+
+- **Upkeep.** Pin one libsignal tag; bump it about monthly with Desktop's
+  and Android's changes read beside it. A server-side requirement (2026:
+  SPQR in March, an HTTP 409 on link in July) stops the client until we
+  ship the fix.
+- **The receive path is security code.** What to trust is ours to get
+  right (presage accepted forged sync messages April–October 2026). Port
+  Desktop's checks as written, with tests.
+- **AGPL-3.0.** The binary, including the kit linked into it, is AGPL:
+  whoever gets the binary may ask for that source.
+- **Build.** libsignal builds BoringSSL (Signal's `boring` fork) and its
+  protos: it needs libclang, cmake and protoc. novus has cmake only, and
+  Oath's repository has no clang or protobuf pack — ask the Oath session.
+  libsignal wants Rust 1.93.1; novus has 1.99.1.
+- **Policy.** No sign Signal removes third-party linked devices;
+  enforcement is technical (required capabilities, version expiry). Its
+  terms are not known to name third-party clients (not verified).
 
 ## Open (Joshua's calls)
 
-1. Engine: signal-cli + a JVM, or presage to stay all-Rust and take more
-   breakage.
-2. Is a client that starts with no history acceptable.
+1. AGPL-3.0 for this crate and binary.
+2. Linked device with the phone as primary (recommended), not a primary.
+3. Desktop as the first reference, Android second (Joshua named Android).
+4. Where the keys rest: the sqlite file as it is, or sealed by Vault.
+5. The build tools on Oath (libclang, protoc), before the spike.
+
+## The 2026-10-31 recommendation (replaced)
+
+signal-cli (Java, GPL-3.0, monthly releases, a fork of Signal-Android's
+service code) as the engine behind a `sola-signald` service, with a kit
+app as its client and an engine-neutral protocol so presage could replace
+it. Rejected 2026-11-16: no Java, no second process. That note also
+called building on libsignal directly "you become presage"; that stands,
+and is now the accepted cost.
 
 ## Sources
 
-- presage — <https://github.com/whisperfish/presage> (tags, #396, #426, #482)
-- libsignal-service-rs — <https://github.com/whisperfish/libsignal-service-rs>
-- libsignal releases — <https://github.com/signalapp/libsignal/releases>
-- signal-cli — <https://github.com/AsamK/signal-cli> (#1993: deregistered on old versions)
-- gurk-rs 409 on link — <https://github.com/boxdot/gurk-rs/issues/556>
-- Whisperfish notes — <https://whisperfish.rubdos.be/>
-- mautrix-signal — <https://github.com/mautrix/signal/releases>
+- libsignal — <https://github.com/signalapp/libsignal> (`RELEASE_NOTES.md`, `rust/net/chat/src/api/`, `rust/net/grpc/proto/`)
+- Signal-Desktop — <https://github.com/signalapp/Signal-Desktop> (`ts/textsecure/`, `protos/`)
+- Signal-Android — <https://github.com/signalapp/Signal-Android> (`lib/libsignal-service/`)
+- mautrix-signal — <https://github.com/mautrix/signal> (`pkg/signalmeow/`)
+- presage — <https://github.com/whisperfish/presage> (#396, #447, #448)
+- libsignal-service-rs — <https://github.com/whisperfish/libsignal-service-rs> (#365, #453, #502)
 - signal-rusted — <https://github.com/Guilherme-M-Mateus/signal-rusted>
-- LibreSignal and Signal's servers (2016) — <https://github.com/LibreSignal/LibreSignal/issues/37>
+- RingRTC — <https://github.com/signalapp/ringrtc>
+- signal-cli — <https://github.com/AsamK/signal-cli>
+- gurk-rs 409 on link — <https://github.com/boxdot/gurk-rs/issues/556>
