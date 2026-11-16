@@ -19,6 +19,7 @@
 //!   Outward-facing: only with the owner's go-ahead.
 
 mod catalog;
+pub use catalog::on_oath;
 mod cpus;
 mod origin;
 mod packages;

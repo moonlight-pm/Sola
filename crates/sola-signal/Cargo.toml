@@ -1,0 +1,23 @@
+[package]
+name = "sola-signal"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+
+# Signal client: a linked device of the phone, on Signal's libsignal.
+# Everything it links from Signal is AGPL-3.0, so this crate is too.
+# Research: docs/ideas/2026-10-31-signal-client.md.
+
+[[bin]]
+name = "sola-signal"
+path = "src/main.rs"
+
+[dependencies]
+libsignal-core = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-protocol = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-net = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-net-chat = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-provisioning = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-account-keys = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+zkgroup = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+rand = "0.9"

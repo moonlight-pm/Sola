@@ -53,6 +53,9 @@ wgpu-hal = { path = "crates/wgpu-hal-patched" }
 iced_winit = { path = "crates/iced_winit-patched" }
 # iced 0.14: a window's image atlas starts at 512², not 16 MiB of 2048².
 iced_wgpu = { path = "crates/iced_wgpu-patched" }
+# libsignal's TLS is Signal's fork of BoringSSL's crate (sola-signal).
+boring = { git = "https://github.com/signalapp/boring", tag = "signal-v5.4.0" }
+boring-sys = { git = "https://github.com/signalapp/boring", tag = "signal-v5.4.0" }
 
 # Release builds strip DWARF debug info but keep the symbol table, so
 # stack traces from /opt/sola/log still show meaningful function names

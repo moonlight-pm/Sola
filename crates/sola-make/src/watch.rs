@@ -93,7 +93,10 @@ fn build_and_install(crate_name: &str, release: bool) -> bool {
     if release {
         args.push("--release".to_string());
     }
-    let status = Command::new("cargo").args(&args).status();
+    let status = Command::new("cargo")
+        .args(&args)
+        .envs(crate::signal_tools::vars_or_exit(&[crate_name.to_string()]))
+        .status();
 
     match status {
         Ok(s) if s.success() => {}

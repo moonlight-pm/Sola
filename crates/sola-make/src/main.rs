@@ -13,6 +13,7 @@ mod iso;
 mod isolated;
 mod oath;
 mod publish;
+mod signal_tools;
 mod vm;
 mod watch;
 
@@ -29,6 +30,10 @@ use clap::Parser;
 /// Currently empty — `sola-browser` builds normally in the workspace. The mechanism
 /// is kept for any future app that needs the same treatment.
 const EXCLUDED_TARGETS: &[&str] = &[];
+
+/// Binaries a build uses and nothing installs: this tool, and the `protoc`
+/// that libsignal's build scripts run (`crates/sola-protoc`).
+const BUILD_TOOLS: &[&str] = &["sola-make", "protoc"];
 
 #[derive(Parser, Debug)]
 #[command(name = "sola-make", about = "Sola build system")]
@@ -356,6 +361,7 @@ fn build(packages: &[String], release: bool) {
     let status = Command::new("cargo")
         .args(&args)
         .envs(google_client::vars_or_exit())
+        .envs(signal_tools::vars_or_exit(packages))
         .status()
         .expect("failed to run cargo build");
     if !status.success() {
@@ -401,6 +407,7 @@ fn build_exec(target: Option<String>, release: bool) -> ! {
     let err = Command::new("cargo")
         .args(&args)
         .envs(google_client::vars_or_exit())
+        .envs(signal_tools::vars_or_exit(&packages))
         .exec();
     eprintln!("failed to exec cargo: {err}");
     exit(1);
@@ -461,7 +468,7 @@ pub(crate) fn bin_names_from_toml(contents: &str) -> Vec<String> {
 ///
 /// Looks for `Cargo.toml` files in `crates/` that contain a
 /// `src/main.rs` (i.e. are binary crates), and extracts the package name.
-/// Skips sola-make itself (it's the build tool), entries listed in
+/// Skips [`BUILD_TOOLS`], entries listed in
 /// [`EXCLUDED_TARGETS`] (retired apps still buildable on demand), and
 /// any path declared in the workspace's `[workspace] exclude` list
 /// (those are isolated crates with their own target dirs — see
@@ -497,7 +504,7 @@ pub(crate) fn discover_binaries() -> Vec<String> {
                 Err(_) => continue,
             };
             for name in bin_names_from_toml(&contents) {
-                if name != "sola-make" && !EXCLUDED_TARGETS.contains(&name.as_str()) {
+                if !BUILD_TOOLS.contains(&name.as_str()) && !EXCLUDED_TARGETS.contains(&name.as_str()) {
                     binaries.push(name);
                 }
             }
