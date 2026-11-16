@@ -1,7 +1,7 @@
 # Sola notifications
 
 **Date:** 2026-08-25  
-**Status:** **Frozen** — implemented on `sola-browser` (KenHerbert desk card 2026-08-27) and `sola-wrapper` (smoked 2026-08-29). Pile UX (count on the bell / no Clear / unseen accent) **installed** `shell` release 2026-09-03. Grouped pile (no cap 20; ≤4 list as rows; tag replace) + Super+Tab unseen count marks (bell/focus ack) **installed** `kit`+`shell` release 2026-09-03. `sola-persist:` stay-until-dismiss **smoked** `shell` release 2026-10-12.  
+**Status:** **Frozen** — the bell and its pile are superseded by lit apps in the top row (2026-11-16, see the decision log). implemented on `sola-browser` (KenHerbert desk card 2026-08-27) and `sola-wrapper` (smoked 2026-08-29). Pile UX (count on the bell / no Clear / unseen accent) **installed** `shell` release 2026-09-03. Grouped pile (no cap 20; ≤4 list as rows; tag replace) + Super+Tab unseen count marks (bell/focus ack) **installed** `kit`+`shell` release 2026-09-03. `sola-persist:` stay-until-dismiss **smoked** `shell` release 2026-10-12.  
 **Related:** [design language](../manual/design-language.md); [shell iced](2026-05-22-sola-shell-iced-port-design.md); [workspaces](2026-08-13-sola-agent-terminal-design.md)
 
 ## Intent
@@ -125,3 +125,4 @@ remaining `AppToast` senders (launch fail / exit). Pile grouping by
 | 2026-09-03 | Drop pile cap 20. Group by app; overlay height follows collapsed groups. Super+Tab count mark (live+pile; Mail unread). Raise does not drain. |
 | 2026-09-03 | Switcher mark is unseen attention, not pile length. Bell open or raise-focus acks the badge; pile stays. FFM does not ack. |
 | 2026-09-03 | Bell vs list: ≤4 from one app list as rows; 5+ collapse. Same tag replaces in the pile. |
+| 2026-11-16 | No bell, no pile (Joshua: "this thing is practically useless"). An app that notifies while you are not in it is lit: its icon (a Sola app's glyph, a web app's favicon) in a notifications island of its own, apart from the devices island; click = its newest notification; being in the app (raise or pointer focus) puts it out, as does × on its newest card. Mail's unread count sits there too, accented when it went up. Projects stays out (agent islands). |

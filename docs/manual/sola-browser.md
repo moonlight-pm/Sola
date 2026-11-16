@@ -326,7 +326,8 @@ A page that calls `Notification.requestPermission()` gets a dialog
 `notifications.json`. After **Allow**, `new Notification(title, { body })`
 shows a Sola desk card at the top right of the screen, under the top row,
 not a banner over the page. Click the card to bring that page's window
-forward. Missed cards collect behind the bell in the top row.
+forward. The web app's favicon (Browser's globe, for a page) stays lit in
+the top row until you are in it ([Shell](sola-shell.md#apps-with-news-and-mail)).
 
 Sites you have not allowed cannot notify. Notifications have no sound and
 no action buttons.

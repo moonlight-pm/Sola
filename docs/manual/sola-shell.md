@@ -122,9 +122,9 @@ Left to right:
   with an error ("… exited (code N)", "… killed (signal N)"),
   "Screenshot copied". On a narrow screen it sits just left of the
   right-hand islands rather than over them.
-- On the right, an island per group: mail, the bell, the mouse battery
-  and Bluetooth; the volume spectrum; CPU, GPU, VRAM and MEM; RX and TX;
-  the clock.
+- On the right, an island per group: the apps with news and mail; the
+  mouse battery and Bluetooth; the volume spectrum; CPU, GPU, VRAM and
+  MEM; RX and TX; the clock.
 
 Click an item for its panel; its island lifts while the panel is open.
 Click it again, press Escape, or click a window to close the panel.
@@ -216,13 +216,25 @@ a mute button and its devices. Click a device to make it the default
 last level and default it saw, and a change waits until WirePlumber
 answers.
 
-### Mail, the bell, the mouse and Bluetooth
+### Apps with news, and mail
 
-- **Mail**: an envelope and the inbox's unread count, in the accent,
-  while Mail has a window and there is unread mail. Click it to bring Mail
-  forward.
-- **The bell**: the missed notifications and their count
-  ([Notifications](#notifications)).
+- **An app with news**: an app that sends a notification while you are
+  not in it shows its icon here, in the accent: a Sola app's glyph, a web
+  app's favicon (the one it was made with). The newest comes in at the
+  left; one already here keeps its place. Click it to go where its newest
+  notification goes, as clicking its card does. Being in the app again
+  (clicking it, a row in the bar, the pointer resting on its window) puts
+  the icon out. An icon shows only while its app has a window. Projects
+  is not here: its sessions have [islands of their own](#agent-islands).
+- **Mail**: an envelope and the inbox's unread count, at the right of the
+  island, while Mail has a window and there is unread mail. It is in the
+  accent when the count has gone up since you were last in Mail, plain
+  otherwise. Click it to bring Mail forward.
+
+### The mouse and Bluetooth
+
+Their own island, right of the apps'.
+
 - **The mouse**: a Lamzu mouse on its 4K receiver (`3554:f510`) shows its
   battery: a mouse glyph and a percent, in the warning colour at 20% and
   below, the danger colour at 10% and below, with a charging glyph while
@@ -748,7 +760,7 @@ shows its next window instead. The process keeps running.
 
 To bring it back: click one of its rows in the bar (or reach it with
 Super+Backtick), or pick it in the launcher. Clicking one of its
-notifications, the mail chip or an event in the clock's panel brings it
+notifications or its icon in the top row, or an event in the clock's panel, brings it
 back too, and so does the app showing one of its own windows.
 
 Hiding the last app on screen leaves the top row, the bar and the ground.
@@ -758,8 +770,10 @@ Hiding the last app on screen leaves the top row, the bar and the ground.
 A notification arrives as a card at the top right, under the top row: the
 app's icon, the source, the title and the text. Click it to bring its app
 forward (the app is told which notification it was); × dismisses it. Up
-to three cards show at once. A card leaves after six seconds and goes to
-the missed list; a newer card pushes the oldest out the same way.
+to three cards show at once. A card leaves after six seconds; a newer
+card pushes the oldest out. Either way its app stays lit in the top row
+until you are in it ([Apps with news](#apps-with-news-and-mail)); × on
+the app's newest card puts it out too.
 Calendar's reminders are the exception: they stay until you click or
 dismiss them (up to six). A notification that updates an earlier one
 (the same tag) replaces it rather than stacking.
@@ -772,18 +786,8 @@ mailto: links with *App* instead of *Mail*?", with **Keep Mail** and
 that already opens it, or does not claim it, gets no card; a newer
 request replaces one still waiting.
 
-The bell in the top row appears while anything is missed, with the
-count, in the accent until you open its panel. The panel, **Notifications**,
-groups the missed items by app, newest first:
-
-- An app with up to four items lists each of them; one with more is a
-  single row with a count. Click it to expand (the newest 30, then how
-  many more).
-- Click an item to bring its app forward. × on an item dismisses it, and
-  × on an app's row dismisses all of that app's items.
-
-There is no Clear All. With nothing missed the panel says **Nothing
-missed.**
+There is no list of missed notifications: what is left of one is its
+app's icon in the top row.
 
 ## Screenshots
 

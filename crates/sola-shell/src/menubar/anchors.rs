@@ -33,7 +33,7 @@ pub struct Edges {
     pub mem: f32,
     /// The spectrum island's left edge (meaningless without one).
     pub spectrum: f32,
-    /// Bluetooth, the extras island's last item.
+    /// Bluetooth, the devices island's last item.
     pub bluetooth: f32,
 }
 
