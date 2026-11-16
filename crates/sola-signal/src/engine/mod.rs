@@ -947,3 +947,51 @@ async fn certificate(chat: &ChatConnection) -> Result<SenderCertificate> {
     let answer: Answer = serde_json::from_slice(response.body.as_deref().unwrap_or_default()).context("certificate")?;
     SenderCertificate::deserialize(&BASE64.decode(answer.certificate)?).map_err(|e| anyhow!("certificate: {e}"))
 }
+
+/// Try against Signal what a conversation with someone else would try,
+/// with no message to anyone: sign in, fetch our own profile, put a file
+/// on the file server and take it back.
+pub async fn selftest(store: Store) -> Result<()> {
+    let account = store.account()?.context("not linked")?;
+    let net = Net::new();
+    let chat = net.connect(net::CHAT_WEBSOCKET_PATH, Some(net::sign_in(&account)), Box::new(|_| {}), "chat").await?;
+    let unauth = net.connect(net::CHAT_WEBSOCKET_PATH, None, Box::new(|_| {}), "unauth").await?;
+    println!("signed in");
+    let certificate = certificate(&chat).await?;
+    println!("sender certificate: until {}", certificate.expiration().map_err(|e| anyhow!("{e}"))?.epoch_millis());
+    let me = store.recipient_for(account.aci)?;
+    let wire = Rc::new(Wire { chat, unauth, certificate: RefCell::new(Some(certificate)) });
+    let named = profile::name(&wire, account.aci, &account.profile_key).await?.is_some();
+    println!("own profile: {}", if named { "read, with a name" } else { "read, no name" });
+    let shared = Shared {
+        store,
+        wire: RefCell::new(Some(wire)),
+        account: RefCell::new(Some(account)),
+        me: std::cell::Cell::new(me),
+        group_credential: RefCell::new(None),
+    };
+
+    let plain: Vec<u8> = (0..70_000u32).map(|n| (n * 31 % 251) as u8).collect();
+    let path = std::env::temp_dir().join(format!("sola-signal-selftest-{}", uuid::Uuid::new_v4()));
+    std::fs::write(&path, &plain)?;
+    let attachment = crate::store::chats::Attachment {
+        id: 0,
+        message: 0,
+        content_type: "application/octet-stream".into(),
+        file_name: None,
+        size: plain.len() as u64,
+        width: 0,
+        height: 0,
+        pointer: None,
+        path: Some(path.to_string_lossy().into_owned()),
+        state: crate::store::chats::Fetch::Here,
+    };
+    let uploaded = files::upload(&shared, &attachment).await;
+    let _ = std::fs::remove_file(&path);
+    let pointer = uploaded.map_err(|e| anyhow!("upload: {e}"))?;
+    println!("uploaded {} bytes to file server {}", plain.len(), pointer.cdn_number());
+    let back = files::download(&pointer).await.context("download")?;
+    anyhow::ensure!(back == plain, "what came back is not what went up");
+    println!("downloaded and decrypted: the same bytes");
+    Ok(())
+}

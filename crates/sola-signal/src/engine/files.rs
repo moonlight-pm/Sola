@@ -111,15 +111,20 @@ pub async fn upload(shared: &Shared, attachment: &Attachment) -> Result<Attachme
     };
     let form: Form = serde_json::from_slice(form.body.as_deref().unwrap_or_default()).context("upload form").map_err(never)?;
 
+    tracing::debug!(cdn = form.cdn, headers = ?form.headers.keys().collect::<Vec<_>>(), "upload form");
     let later = |e: anyhow::Error| Failure::Later(e);
     let mut headers: Vec<(String, String)> = form.headers.into_iter().collect();
+    let has = |headers: &[(String, String)], name: &str| headers.iter().any(|(held, _)| held.eq_ignore_ascii_case(name));
     if form.cdn == 3 {
         // One request of the tus protocol: create the upload with its bytes.
         use base64::Engine;
         headers.push(("Tus-Resumable".into(), "1.0.0".into()));
         headers.push(("Upload-Length".into(), sealed.len().to_string()));
-        let name = base64::engine::general_purpose::STANDARD.encode(&form.key);
-        headers.push(("Upload-Metadata".into(), format!("filename {name}")));
+        // The form names the file itself in what it hands us; older ones did not.
+        if !has(&headers, "Upload-Metadata") {
+            let name = base64::engine::general_purpose::STANDARD.encode(&form.key);
+            headers.push(("Upload-Metadata".into(), format!("filename {name}")));
+        }
         headers.push(("Content-Type".into(), "application/offset+octet-stream".into()));
         http::send("POST", form.signed_upload_location, headers, Some(sealed)).await.map_err(later)?.ok("upload").map_err(never)?;
     } else {

@@ -21,7 +21,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use crate::net::Net;
 use crate::store::Store;
 
-const USAGE: &str = "usage: sola-signal [link [device name] | status | run [seconds]]";
+const USAGE: &str = "usage: sola-signal [link [device name] | status | selftest | run [seconds] | demo]";
 
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -134,6 +134,10 @@ async fn run(args: &[String]) -> Result<()> {
         Some("link") => link(&store, args.get(1).map_or("Sola", String::as_str)).await,
         Some("status") => status(&store),
         Some("demo") => demo::seed(&store),
+        Some("selftest") => {
+            let _alone = alone()?;
+            tokio::task::LocalSet::new().run_until(engine::selftest(store)).await
+        }
         Some("run") => headless(store, args.get(1).and_then(|s| s.parse().ok()).unwrap_or(u64::MAX)).await,
         _ => bail!("{USAGE}"),
     }

@@ -42,7 +42,12 @@ impl Answer {
     pub fn ok(self, what: &str) -> Result<Vec<u8>> {
         match self.status {
             200..=299 => Ok(self.body),
-            status => Err(anyhow!("{what}: HTTP {status}")),
+            status => {
+                // What the server says of a refusal is not secret, and is the
+                // only way to know why.
+                let said: String = String::from_utf8_lossy(&self.body).chars().take(200).collect();
+                Err(anyhow!("{what}: HTTP {status} {said}"))
+            }
         }
     }
 }
