@@ -83,20 +83,6 @@ impl Store {
         Ok(())
     }
 
-    /// Forget the link and everything kept under it.
-    pub fn unlink(&self) -> Result<()> {
-        self.db().execute_batch(
-            "BEGIN;
-             DELETE FROM outbox; DELETE FROM messages; DELETE FROM conversations; DELETE FROM group_members;
-             DELETE FROM groups; DELETE FROM recipients; DELETE FROM settings;
-             DELETE FROM sessions; DELETE FROM identities; DELETE FROM pre_keys; DELETE FROM signed_pre_keys;
-             DELETE FROM kyber_pre_keys; DELETE FROM kyber_base_keys; DELETE FROM sender_keys;
-             DELETE FROM account;
-             COMMIT;",
-        )?;
-        Ok(())
-    }
-
     /// Keep a new link: the account and the pre-keys the server took with it,
     /// together or not at all.
     pub fn save_link(&self, linked: &Linked) -> Result<()> {

@@ -5,7 +5,7 @@ Copied unchanged from Signal-Android (AGPL-3.0-only), at
 
 | File | From |
 |--|--|
-| `SignalService.proto`, `Provisioning.proto` | `lib/libsignal-service/src/main/protowire/` |
+| `SignalService.proto`, `Provisioning.proto`, `Groups.proto`, `StorageService.proto` | `lib/libsignal-service/src/main/protowire/` |
 | `DeviceName.proto` | `core/util-jvm/src/main/protowire/` |
 
 To follow Signal: copy the files again, read the diff, write the new

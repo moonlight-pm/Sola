@@ -108,7 +108,7 @@ crates/
   sola-kvm-view/       # Remote Desktop (`sola-kvm view`): a host's screen in a window
   sola-lock/           # Lock screen (ext-session-lock-v1; Oath's login service)
   sola-editor/         # Text editor (Emacs keys; `edit <file>…` opens files in it)
-  sola-signal/         # Signal client on Signal's libsignal (AGPL-3.0; a spike, no window yet)
+  sola-signal/         # Signal client on Signal's libsignal (AGPL-3.0): a linked device, engine + window
   sola-protoc/         # `protoc` for libsignal's build scripts (a build tool, not installed)
   sola-preview/        # Simple image viewer (argv)
   sola-paint/          # Default image viewer/editor (MIME; screenshots stay on preview)

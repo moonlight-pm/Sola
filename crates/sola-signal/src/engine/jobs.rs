@@ -71,22 +71,7 @@ async fn run(shared: &Shared, job: Job, more: &mpsc::UnboundedSender<Job>) -> Re
             }
         }
         Job::Group(id) => {
-            let group = store.group(id)?;
-            let state = groups::fetch(shared, &group.master_key).await.context("a group")?;
-            let mut members = Vec::new();
-            for (aci, key) in &state.members {
-                let member = store.recipient_for(*aci)?;
-                if let Some(key) = key
-                    && member != shared.me.get()
-                    && store.set_profile_key(member, key)?
-                {
-                    let _ = more.send(Job::Profile(member));
-                }
-                members.push(member);
-            }
-            store.set_group(id, state.revision, &state.title, &members)?;
-            let conversation = store.conversation_in(id)?;
-            store.set_timer(conversation, state.timer, 1)?;
+            let conversation = group(shared, id, more).await.context("a group")?;
             fx.changed.insert(conversation);
             fx.people = true;
         }
@@ -102,6 +87,28 @@ async fn run(shared: &Shared, job: Job, more: &mpsc::UnboundedSender<Job>) -> Re
         Job::Storage => return super::storage::sync(shared, more).await.context("the storage service"),
     }
     Ok(fx)
+}
+
+/// Read a group's state from the server into the store. Answers with its
+/// conversation.
+pub async fn group(shared: &Shared, id: Id, more: &mpsc::UnboundedSender<Job>) -> Result<Id> {
+    let store = &shared.store;
+    let state = groups::fetch(shared, &store.group(id)?.master_key).await?;
+    let mut members = Vec::new();
+    for (aci, key) in &state.members {
+        let member = store.recipient_for(*aci)?;
+        if let Some(key) = key
+            && member != shared.me.get()
+            && store.set_profile_key(member, key)?
+        {
+            let _ = more.send(Job::Profile(member));
+        }
+        members.push(member);
+    }
+    store.set_group(id, state.revision, &state.title, &members)?;
+    let conversation = store.conversation_in(id)?;
+    store.set_timer(conversation, state.timer, 1)?;
+    Ok(conversation)
 }
 
 /// Fetch an attachment's file, by itself: files do not wait for each other.

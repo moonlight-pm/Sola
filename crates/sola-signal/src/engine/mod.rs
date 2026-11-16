@@ -38,6 +38,7 @@ use crate::receive::{Opened, Receiver, Unreadable};
 use crate::send::{self, Failure, Options, Sealed, Sender};
 use crate::store::chats::{Id, Outgoing, Status};
 use crate::store::{Store, now};
+pub use inbox::duration;
 use inbox::{Effects, Inbox};
 use jobs::Job;
 
@@ -122,8 +123,9 @@ pub struct Wire {
     /// Not signed in: sealed sends and profiles, where the server is not
     /// told who asks.
     pub unauth: ChatConnection,
-    /// Signal's word that we are who our sealed messages say.
-    pub certificate: Option<SenderCertificate>,
+    /// Signal's word that we are who our sealed messages say. It runs out,
+    /// so it is fetched again before it does.
+    pub certificate: RefCell<Option<SenderCertificate>>,
 }
 
 /// What jobs share with the engine.
@@ -270,6 +272,11 @@ impl Engine {
     /// Open both connections, off the loop; `Input::Up` says how it went.
     fn connect(&mut self) {
         let Ok(account) = self.account() else { return };
+        // For looking at the window over an invented store (`demo`).
+        if std::env::var_os("SOLA_SIGNAL_OFFLINE").is_some() {
+            (self.emit)(Event::Offline("kept offline".into()));
+            return;
+        }
         self.epoch += 1;
         self.early.clear();
         *self.shared.wire.borrow_mut() = None;
@@ -291,7 +298,7 @@ impl Engine {
                         None
                     }
                 };
-                Ok(Box::new(Wire { chat, unauth, certificate }))
+                Ok(Box::new(Wire { chat, unauth, certificate: RefCell::new(certificate) }))
             }
             .await;
             let _ = inputs.send(Input::Up(epoch, wire));
@@ -529,7 +536,8 @@ impl Engine {
         let account = self.account().map_err(never)?;
         let recipient = self.store().recipient(to).map_err(never)?;
         let aci = recipient.aci.context("someone with no account id").map_err(never)?;
-        let sealed = wire.certificate.as_ref().map(|certificate| Sealed { chat: &wire.unauth, certificate });
+        let certificate = self.certificate(&wire).await;
+        let sealed = certificate.as_ref().map(|certificate| Sealed { chat: &wire.unauth, certificate });
         let options = Options {
             timestamp,
             urgent,
@@ -540,6 +548,20 @@ impl Engine {
         let sender = Sender::new(self.store(), &account, &wire.chat, sealed);
         let sealed = sender.deliver(aci.into(), content, &options).await?;
         Ok((aci.into(), sealed))
+    }
+
+    /// The sender certificate, fetched again when it has under an hour left.
+    async fn certificate(&self, wire: &Wire) -> Option<SenderCertificate> {
+        let held = wire.certificate.borrow().clone();
+        let soon = Timestamp::from_epoch_millis(now() + 3_600_000);
+        if let Some(certificate) = &held
+            && certificate.expiration().is_ok_and(|expires| expires > soon)
+        {
+            return held;
+        }
+        let fresh = certificate(&wire.chat).await.inspect_err(|e| tracing::warn!("no sender certificate: {e:#}")).ok();
+        *wire.certificate.borrow_mut() = fresh.clone();
+        fresh
     }
 
     /// Send what is in the outbox, oldest first, until something has to wait
@@ -586,6 +608,11 @@ impl Engine {
                 match (conversation.recipient, conversation.group) {
                     (Some(recipient), _) => (vec![recipient], None),
                     (_, Some(group)) => {
+                        // Never read from the server: we do not know who is
+                        // in it, and it must not go to no one.
+                        if self.store().group(group).map_err(never)?.revision < 0 {
+                            jobs::group(&self.shared, group, &self.jobs).await.map_err(Failure::Later)?;
+                        }
                         let group = self.store().group(group).map_err(never)?;
                         let identifier = inbox::group_identifier(&group.master_key).map_err(never)?;
                         (group.members.into_iter().filter(|member| *member != me).collect(), Some(identifier))

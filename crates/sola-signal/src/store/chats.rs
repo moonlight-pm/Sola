@@ -72,17 +72,14 @@ fn name_sql(alias: &str) -> String {
 
 #[derive(Clone, Debug)]
 pub struct Group {
-    pub id: Id,
     pub master_key: Vec<u8>,
     /// -1 until its state has been fetched.
     pub revision: i64,
-    pub title: Option<String>,
     pub members: Vec<Id>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Conversation {
-    pub id: Id,
     pub recipient: Option<Id>,
     pub group: Option<Id>,
     /// Seconds a message lives once read; 0 is forever.
@@ -148,7 +145,6 @@ pub struct Attachment {
     pub size: u64,
     pub width: u32,
     pub height: u32,
-    pub flags: u32,
     pub pointer: Option<Vec<u8>>,
     pub path: Option<String>,
     pub state: Fetch,
@@ -230,10 +226,9 @@ fn attachment_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Attachment> {
         size: row.get::<_, i64>(4)? as u64,
         width: row.get(5)?,
         height: row.get(6)?,
-        flags: row.get(7)?,
-        pointer: row.get(8)?,
-        path: row.get(9)?,
-        state: match row.get::<_, i64>(10)? {
+        pointer: row.get(7)?,
+        path: row.get(8)?,
+        state: match row.get::<_, i64>(9)? {
             1 => Fetch::Fetching,
             2 => Fetch::Here,
             3 => Fetch::Failed,
@@ -242,8 +237,8 @@ fn attachment_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Attachment> {
     })
 }
 
-const ATTACHMENT: &str = "SELECT id, message, content_type, file_name, size, width, height, flags, pointer, path, state
-     FROM attachments";
+const ATTACHMENT: &str =
+    "SELECT id, message, content_type, file_name, size, width, height, pointer, path, state FROM attachments";
 
 fn touch(db: &Connection, conversation: Id, at: u64) -> rusqlite::Result<()> {
     db.execute(
@@ -343,14 +338,12 @@ impl Store {
 
     pub fn group(&self, id: Id) -> Result<Group> {
         let db = self.db();
-        let (master_key, revision, title) = db
-            .query_row("SELECT master_key, revision, title FROM groups WHERE id = ?1", [id], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })
+        let (master_key, revision) = db
+            .query_row("SELECT master_key, revision FROM groups WHERE id = ?1", [id], |row| Ok((row.get(0)?, row.get(1)?)))
             .context("group")?;
         let mut query = db.prepare("SELECT recipient FROM group_members WHERE grp = ?1 ORDER BY recipient")?;
         let members = query.query_map([id], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
-        Ok(Group { id, master_key, revision, title, members })
+        Ok(Group { master_key, revision, members })
     }
 
     /// A group's state as the server has it.
@@ -383,15 +376,14 @@ impl Store {
     pub fn conversation(&self, id: Id) -> Result<Conversation> {
         self.db()
             .query_row(
-                "SELECT id, recipient, grp, expire_timer, expire_timer_version FROM conversations WHERE id = ?1",
+                "SELECT recipient, grp, expire_timer, expire_timer_version FROM conversations WHERE id = ?1",
                 [id],
                 |row| {
                     Ok(Conversation {
-                        id: row.get(0)?,
-                        recipient: row.get(1)?,
-                        group: row.get(2)?,
-                        expire_timer: row.get(3)?,
-                        expire_timer_version: row.get(4)?,
+                        recipient: row.get(0)?,
+                        group: row.get(1)?,
+                        expire_timer: row.get(2)?,
+                        expire_timer_version: row.get(3)?,
                     })
                 },
             )

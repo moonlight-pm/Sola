@@ -21,66 +21,90 @@ pinned tag (v0.108.0). No Java, no second process, no presage.
 Open: where the keys rest (the sqlite file as it is, or sealed by Vault).
 Today the file holds them in the clear, mode 0600.
 
-## Slice 1 — spike, no window
+## Direction (Joshua, 2026-11-16, after the first link and a Note to Self)
 
-- [x] Builds on novus from `cargo make build sola-signal`, with nothing
-      outside the tree but Oath's libclang.
-- [x] `sola-signal link [name]`: the provisioning socket through
-      libsignal-net, the QR code in the terminal, the phone's keys decrypted
-      (libsignal-provisioning), the device registered (`PUT /v1/devices/link`)
-      with a signed pre-key and a last-resort Kyber pre-key per identity, all
-      kept in `~/.local/state/sola/signal/signal.db`. **Linked to Joshua's
-      phone 2026-11-16 (device 5).**
-- [x] `sola-signal receive`: signs in, tops up one-time pre-keys, decrypts
-      each envelope (sealed sender, pre-key, double ratchet, sender key,
-      plaintext notice) and prints one line for it. **Against Signal: signs
-      in, uploads pre-keys, drains the queue (empty). Decrypting is tested
-      against a real libsignal session in a unit test; no message from
-      Signal has come through it yet.**
-- [x] The first real link (Joshua scanned the code, 2026-11-16).
-- [ ] The first message from Signal read by `receive`.
-- [x] `sola-signal send <me|account id> <text>`: the recipient's pre-keys
-      (`GET /v2/keys/<id>/*`, signed in), a session per device, the server's
-      corrections (missing, gone, registered again) and a retry, then the
-      transcript to our other devices; through libsignal-net-chat's typed
-      `send_message` / `send_sync_message`. To `me` it is a Note to Self:
-      the transcript alone. **A Note to Self was accepted by Signal's
-      server; tested against real libsignal sessions in a unit test. Not
-      yet sent to another account.**
-- [ ] Sealed sends: keep each contact's profile key (it arrives on their
-      messages), derive the access key, fetch our sender certificate.
-- [ ] A conversation's disappearing timer on what we send (needs the
-      conversation kept; today a send carries none).
-- [ ] Delivery and read receipts out; a retry request when a message does
-      not decrypt (today it is logged and dropped).
-- [ ] Decrypt and keep a message in one transaction, acknowledged after.
-- [ ] Ask the phone for contacts, blocked, configuration and keys.
+"lets skip these intermediate tests -- just build out the full client and
+we'll test it 'in production' so to speak". So the client is built whole
+and tried in real use; what is below says of each piece whether it has run
+against Signal or only against libsignal in a unit test.
+
+## Built
+
+One process: the window on the main thread, the engine on its own
+(`engine/`), the store between them. The window reads the store and is told
+what changed; what is to be sent goes to the store's outbox first and
+leaves when there is a connection, across restarts.
+
+- [x] **Build:** `cargo make build sola-signal`, with nothing outside the
+      tree but Oath's libclang.
+- [x] **Link:** the code to scan in the window (or `sola-signal link` in a
+      terminal), the phone's keys, the device registered. Linking again
+      (after the phone removed the device) keeps the conversations if it is
+      the same account. *Against Signal: linked to Joshua's phone
+      2026-11-16 (device 5); the window's code shown from Signal on a
+      private desk.*
+- [x] **Receive:** every envelope kind (sealed sender, pre-key, double
+      ratchet, sender key, plaintext notice), kept before it is
+      acknowledged; a replay is dropped; a sync message only from our own
+      account; what does not decrypt is asked for again (a
+      `DecryptionErrorMessage`). *Against Signal: signs in, uploads
+      pre-keys, received and kept a group message. Unit tests against real
+      libsignal sessions.*
+- [x] **Send:** text, replies, attachments, to a person or a group (one
+      send per member; sender keys later), sealed when we hold the
+      recipient's profile key and signed in when not; the server's device
+      corrections; the transcript to our other devices; a resend when a
+      device says it could not read us. *Against Signal: a Note to Self
+      reached the phone. Nothing has been sent to another account yet.*
+- [x] **Conversations:** messages, edits, deletes for everyone, deletes on
+      this device, reactions, quotes, mentions as names, disappearing
+      timers (kept, counted from reading, removed when up), delivery and
+      read states of what we sent, delivery receipts out, read receipts out
+      when the account sends them, reads told to our other devices and
+      taken from them, typing shown, calls as a line ("answered on your
+      phone"), view-once as a line. *Unit tests of the store logic; none of
+      it seen against another account yet.*
+- [x] **People and groups:** the account's record on the storage service
+      (contacts with profile keys, groups, blocked, read receipts), the
+      phone's contacts sync, profiles (names, decrypted), group states
+      from the group server (zkgroup credential; name, members, timer).
+      *Against Signal: 43 people (33 named), the groups read; a group the
+      account has left answers 403 and stays unnamed.*
+- [x] **Attachments:** fetched and decrypted (pictures and sound by
+      themselves, the rest when asked), encrypted and uploaded (both of
+      Signal's upload protocols). *Cipher unit-tested; no file has been
+      fetched from or sent to Signal yet.*
+- [x] **The window:** conversations with unread counts and drafts, search
+      that also finds people to write to, the thread (bubbles, day lines,
+      names in groups, pictures, files, reactions, replies), the composer
+      (Enter sends, Shift+Enter a new line, files), a picked message's
+      actions (react, reply, copy, edit, delete), menus (Edit, the
+      disappearing timer), a desk notification per conversation, the
+      unread count in the window's title. *Looked at on a private desk
+      over an invented store (`sola-signal demo`, `SOLA_SIGNAL_OFFLINE=1`).*
+
+## Not built
+
+- The app stops receiving when its window closes (it is an
+  `iced::application`, as Mail is). A daemon that stays is next.
+- History from before the link (`backup5` and `libsignal-message-backup`).
+- Pictures of people and groups (discs with an initial stand in), stickers
+  as packs, link previews, voice notes recorded here, polls and pins as
+  more than a line of text.
+- Sender keys for groups (a group message is one send per member today),
+  group changes as lines in the thread, creating or changing a group.
+- Typing told to others; signed pre-keys rotated (Desktop does every two
+  days; ours stay as registered).
+- Phone numbers and usernames looked up (a conversation starts from
+  someone the account already knows).
+- Stories, payments, calls (RingRTC), key transparency.
+- A package: `pkg:sola-signal` is a new name (the Oath session), and the
+  launcher's entry comes with it.
+- Where the keys rest: still the sqlite file in the clear, mode 0600.
 
 One `sola-signal` signs in at a time (`signal.lock` beside the store): the
 server closes a device's connection when it opens another, and two
-processes would write the same sessions. `send` leaves what the server
-delivers on its connection unanswered, so it comes again to `receive`.
-The app is one process with one connection for both.
-
-## Slice 2 — daily driver (the app)
-
-A kit app drawn as Mail is: conversations, a thread, a composer. It keeps
-running with its window closed (`iced::daemon`). Messages and
-conversations in the store; names and avatars (profiles, contacts sync,
-storage service); groups (state by zkgroup, sending with sender keys);
-attachments; reactions, replies, edits, deletes, typing, disappearing
-timers; the unread count and notifications on the bus; `sgnl://`.
-
-## Slice 3 — history on link
-
-Advertise `backup5` in the link URL, take the transfer archive the phone
-offers, parse it with `libsignal-message-backup`.
-
-## Later
-
-Create and change groups, stories, usernames, stickers, link previews, key
-transparency; calls (RingRTC) last. Packaging: `pkg:sola-signal` (a new
-name: the Oath session), the plan build in `oath build`'s sandbox.
+processes would write the same sessions.
 
 ## Following Signal
 
@@ -88,6 +112,9 @@ name: the Oath session), the plan build in `oath build`'s sandbox.
   monthly, with `RELEASE_NOTES.md` read.
 - Protos: `crates/sola-signal/proto/README.md` names the Signal-Android
   commit they were copied from.
+- Signal's server parameters (`engine/server_public_params.b64`) and trust
+  roots (`receive.rs`) are Signal-Desktop's `config/production.json`; its
+  TLS roots are libsignal's.
 - What a linked device must declare (`link.rs` `capabilities`) and the
   link URL follow Signal-Desktop's `getCapabilities` and `Provisioner`.
 
