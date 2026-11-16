@@ -29,19 +29,38 @@ Today the file holds them in the clear, mode 0600.
       libsignal-net, the QR code in the terminal, the phone's keys decrypted
       (libsignal-provisioning), the device registered (`PUT /v1/devices/link`)
       with a signed pre-key and a last-resort Kyber pre-key per identity, all
-      kept in `~/.local/state/sola/signal/signal.db`. **Reaches Signal and
-      shows the QR code; not yet scanned by a phone.**
+      kept in `~/.local/state/sola/signal/signal.db`. **Linked to Joshua's
+      phone 2026-11-16 (device 5).**
 - [x] `sola-signal receive`: signs in, tops up one-time pre-keys, decrypts
       each envelope (sealed sender, pre-key, double ratchet, sender key,
-      plaintext notice) and prints one line for it. **Tested against a real
-      libsignal session in a unit test; not yet against Signal.**
-- [ ] The first real link and receive (Joshua scans the code).
-- [ ] `sola-signal send <who> <text>`: the recipient's pre-keys, a session
-      per device, sealed sender, the transcript to our other devices.
+      plaintext notice) and prints one line for it. **Against Signal: signs
+      in, uploads pre-keys, drains the queue (empty). Decrypting is tested
+      against a real libsignal session in a unit test; no message from
+      Signal has come through it yet.**
+- [x] The first real link (Joshua scanned the code, 2026-11-16).
+- [ ] The first message from Signal read by `receive`.
+- [x] `sola-signal send <me|account id> <text>`: the recipient's pre-keys
+      (`GET /v2/keys/<id>/*`, signed in), a session per device, the server's
+      corrections (missing, gone, registered again) and a retry, then the
+      transcript to our other devices; through libsignal-net-chat's typed
+      `send_message` / `send_sync_message`. To `me` it is a Note to Self:
+      the transcript alone. **A Note to Self was accepted by Signal's
+      server; tested against real libsignal sessions in a unit test. Not
+      yet sent to another account.**
+- [ ] Sealed sends: keep each contact's profile key (it arrives on their
+      messages), derive the access key, fetch our sender certificate.
+- [ ] A conversation's disappearing timer on what we send (needs the
+      conversation kept; today a send carries none).
 - [ ] Delivery and read receipts out; a retry request when a message does
       not decrypt (today it is logged and dropped).
 - [ ] Decrypt and keep a message in one transaction, acknowledged after.
 - [ ] Ask the phone for contacts, blocked, configuration and keys.
+
+One `sola-signal` signs in at a time (`signal.lock` beside the store): the
+server closes a device's connection when it opens another, and two
+processes would write the same sessions. `send` leaves what the server
+delivers on its connection unanswered, so it comes again to `receive`.
+The app is one process with one connection for both.
 
 ## Slice 2 — daily driver (the app)
 

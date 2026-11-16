@@ -8,11 +8,12 @@
 
 use anyhow::anyhow;
 use async_trait::async_trait;
+use libsignal_core::DeviceId;
 use libsignal_protocol::{
     CiphertextMessageType, Direction, GenericSignedPreKey, IdentityChange, IdentityKey, IdentityKeyPair,
     IdentityKeyStore, KyberPreKeyId, KyberPreKeyRecord, KyberPreKeyStore, PreKeyId, PreKeyRecord, PreKeyStore,
-    ProtocolAddress, PublicKey, SenderKeyRecord, SenderKeyStore, SessionRecord, SessionStore, SignalProtocolError,
-    SignedPreKeyId, SignedPreKeyRecord, SignedPreKeyStore,
+    ProtocolAddress, PublicKey, SenderKeyRecord, SenderKeyStore, SessionRecord, SessionStore,
+    SessionUsabilityRequirements, SignalProtocolError, SignedPreKeyId, SignedPreKeyRecord, SignedPreKeyStore,
 };
 use rusqlite::{OptionalExtension, params};
 use uuid::Uuid;
@@ -59,6 +60,44 @@ impl ProtocolStore {
 
     pub fn save_kyber_record(&self, record: &KyberPreKeyRecord) -> anyhow::Result<()> {
         super::account::save_kyber(&self.store.db(), self.identity, record, false)
+    }
+
+    /// The devices of the account `name` that a message can be encrypted
+    /// for now, each with the registration id its session was made with.
+    pub fn open_sessions(&self, name: &str) -> Result<Vec<(DeviceId, u32)>> {
+        let rows: Vec<(u8, Vec<u8>)> = {
+            let db = self.store.db();
+            let mut query = db
+                .prepare("SELECT device, record FROM sessions WHERE identity = ?1 AND address = ?2 ORDER BY device")
+                .map_err(failed("open_sessions"))?;
+            query
+                .query_map(params![self.identity.as_str(), name], |row| Ok((row.get(0)?, row.get(1)?)))
+                .and_then(Iterator::collect)
+                .map_err(failed("open_sessions"))?
+        };
+        let usable = SessionUsabilityRequirements::NotStale
+            | SessionUsabilityRequirements::EstablishedWithPqxdh
+            | SessionUsabilityRequirements::Spqr;
+        let mut open = Vec::new();
+        for (device, record) in rows {
+            let record = SessionRecord::deserialize(&record)?;
+            if let Ok(device) = DeviceId::new(device)
+                && record.has_usable_sender_chain(std::time::SystemTime::now(), usable)?
+            {
+                open.push((device, record.remote_registration_id()?));
+            }
+        }
+        Ok(open)
+    }
+
+    /// Put the session with `address` away: nothing more is encrypted with
+    /// it, and what was sent under it can still be read.
+    pub async fn archive_session(&mut self, address: &ProtocolAddress) -> Result<()> {
+        if let Some(mut record) = self.load_session(address).await? {
+            record.archive_current_state()?;
+            self.store_session(address, &record).await?;
+        }
+        Ok(())
     }
 }
 

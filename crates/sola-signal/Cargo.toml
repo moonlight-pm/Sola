@@ -18,6 +18,7 @@ libsignal-core = { git = "https://github.com/signalapp/libsignal", tag = "v0.108
 libsignal-protocol = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
 libsignal-net = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
 libsignal-net-infra = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-net-chat = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
 libsignal-provisioning = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
 signal-crypto = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
 anyhow = "1"
