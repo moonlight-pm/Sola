@@ -13,11 +13,28 @@ name = "sola-signal"
 path = "src/main.rs"
 
 [dependencies]
+sola-core = { path = "../sola-core" }
 libsignal-core = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
 libsignal-protocol = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
 libsignal-net = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
-libsignal-net-chat = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-net-infra = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
 libsignal-provisioning = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
-libsignal-account-keys = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
-zkgroup = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+signal-crypto = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+bytes = "1"
+http = "1"
+prost = "0.14"
+qrcode = { version = "0.14", default-features = false }
 rand = "0.9"
+rusqlite = { version = "0.39", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tracing = "0.1"
+uuid = "1"
+
+[build-dependencies]
+prost-build = "0.14"
+protox = "0.10"
