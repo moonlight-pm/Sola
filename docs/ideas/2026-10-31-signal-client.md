@@ -1,7 +1,9 @@
-# Signal client — a Rust client of our own (researched, not started)
+# Signal client — a Rust client of our own (research)
 
-**Status:** research only; nothing built. Do not implement from this
-file — promote a slice into a freeze + plan + `CURRENT.md` **Now** first.
+**Status:** started 2026-11-16 as
+[`../plans/2026-11-16-sola-signal-plan.md`](../plans/2026-11-16-sola-signal-plan.md)
+(branch `signal`). This file is the research behind it; the plan has what
+is built.
 
 **Direction** (Joshua, 2026-11-16): "a fully custom client, in rust. That
 means no java … I'm ok with having to keep the thing working when signal
@@ -98,20 +100,17 @@ Out: payments, donations, registering as the primary device.
 - **AGPL-3.0.** The binary, including the kit linked into it, is AGPL:
   whoever gets the binary may ask for that source.
 - **Build.** libsignal builds BoringSSL (Signal's `boring` fork) and its
-  protos: it needs libclang, cmake and protoc. novus has cmake only, and
-  Oath's repository has no clang or protobuf pack — ask the Oath session.
-  libsignal wants Rust 1.93.1; novus has 1.99.1.
+  protos: it needs libclang, cmake and protoc. Since 2026-11-16 novus has
+  Oath's `pkg:libclang` and the tree has its own protoc (`sola-protoc`).
 - **Policy.** No sign Signal removes third-party linked devices;
   enforcement is technical (required capabilities, version expiry). Its
   terms are not known to name third-party clients (not verified).
 
-## Open (Joshua's calls)
+## Decided (Joshua, 2026-11-16: "All this is good")
 
-1. AGPL-3.0 for this crate and binary.
-2. Linked device with the phone as primary (recommended), not a primary.
-3. Desktop as the first reference, Android second (Joshua named Android).
-4. Where the keys rest: the sqlite file as it is, or sealed by Vault.
-5. The build tools on Oath (libclang, protoc), before the spike.
+AGPL-3.0 for the crate; a linked device; Desktop the first reference;
+the build tools from Oath (it gave libclang, R91, and advised protox for
+protoc). Still open: where the keys rest (the sqlite file, or Vault).
 
 ## The 2026-10-31 recommendation (replaced)
 

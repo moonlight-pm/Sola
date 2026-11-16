@@ -4,7 +4,10 @@
 //! holds them beside its database key; it is made readable by its owner only.
 
 mod account;
+mod protocol;
 mod schema;
+
+pub use protocol::ProtocolStore;
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};

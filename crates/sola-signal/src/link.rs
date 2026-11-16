@@ -172,20 +172,17 @@ async fn register(net: &Net, device_name: &str, message: ProvisionMessage) -> Re
         .connect(net::CHAT_WEBSOCKET_PATH, None, Box::new(|_| {}), "link")
         .await
         .context("opening the chat socket")?;
-    let response = net::send_json(
+    let response = net::request(
         &chat,
         http::Method::PUT,
         "/v1/devices/link",
         Some((http::header::AUTHORIZATION, authorization)),
-        &body,
+        Some(&body),
     )
     .await
-    .map_err(|e| anyhow!("registering the device: {e}"))?;
+    .context("registering the device");
     chat.disconnect().await;
-    if !response.status.is_success() {
-        let text = response.body.as_deref().map(String::from_utf8_lossy).unwrap_or_default();
-        bail!("the server refused the device: {} {text}", response.status);
-    }
+    let response = response?;
 
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -229,7 +226,7 @@ fn identity_pair(private: &[u8]) -> Result<IdentityKeyPair> {
 }
 
 /// The signed pre-key and the last-resort Kyber pre-key a device registers with.
-fn first_pre_keys(
+pub(crate) fn first_pre_keys(
     identity: Identity,
     keys: &IdentityKeyPair,
 ) -> Result<(Identity, SignedPreKeyRecord, KyberPreKeyRecord)> {

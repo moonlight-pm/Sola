@@ -1,11 +1,14 @@
 //! Sola's Signal client. For now a spike with no window: `link` joins the
-//! phone's account as a linked device.
+//! phone's account as a linked device, `receive` prints what arrives.
 
 mod account;
 mod devicename;
+mod keys;
 mod link;
 mod net;
 mod proto;
+mod receive;
+mod show;
 mod store;
 
 use anyhow::{Context, Result, bail};
@@ -13,7 +16,7 @@ use anyhow::{Context, Result, bail};
 use crate::net::Net;
 use crate::store::Store;
 
-const USAGE: &str = "usage: sola-signal link [device name] | status";
+const USAGE: &str = "usage: sola-signal link [device name] | status | receive";
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
@@ -33,6 +36,7 @@ async fn run(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("link") => link(&store, args.get(1).map_or("Sola", String::as_str)).await,
         Some("status") => status(&store),
+        Some("receive") => receive(&store).await,
         _ => bail!("{USAGE}"),
     }
 }
@@ -50,6 +54,14 @@ async fn link(store: &Store, device_name: &str) -> Result<()> {
     store.save_link(&linked).context("keeping the link")?;
     println!("Linked as device {} of {}.", linked.account.device_id, linked.account.aci.service_id_string());
     Ok(())
+}
+
+/// Print what arrives until the socket closes.
+async fn receive(store: &Store) -> Result<()> {
+    let account = store.account()?.context("not linked: run `sola-signal link` first")?;
+    receive::Receiver::new(store, account)?
+        .run(&Net::new(), |received| println!("{}", show::line(&received)))
+        .await
 }
 
 fn status(store: &Store) -> Result<()> {

@@ -35,6 +35,39 @@ const STEPS: &[&str] = &[
         last_resort INTEGER NOT NULL,
         PRIMARY KEY (identity, id)
     ) STRICT;",
+    // 2: what the Signal protocol keeps. `identity` is ours (aci or pni);
+    // `address` is the other side's service id.
+    "CREATE TABLE identities (
+        address TEXT PRIMARY KEY,
+        key BLOB NOT NULL
+    ) STRICT;
+    CREATE TABLE sessions (
+        identity TEXT NOT NULL,
+        address TEXT NOT NULL,
+        device INTEGER NOT NULL,
+        record BLOB NOT NULL,
+        PRIMARY KEY (identity, address, device)
+    ) STRICT;
+    CREATE TABLE pre_keys (
+        identity TEXT NOT NULL,
+        id INTEGER NOT NULL,
+        record BLOB NOT NULL,
+        PRIMARY KEY (identity, id)
+    ) STRICT;
+    CREATE TABLE kyber_base_keys (
+        identity TEXT NOT NULL,
+        kyber_id INTEGER NOT NULL,
+        signed_id INTEGER NOT NULL,
+        base_key BLOB NOT NULL,
+        PRIMARY KEY (identity, kyber_id, signed_id, base_key)
+    ) STRICT;
+    CREATE TABLE sender_keys (
+        address TEXT NOT NULL,
+        device INTEGER NOT NULL,
+        distribution_id TEXT NOT NULL,
+        record BLOB NOT NULL,
+        PRIMARY KEY (address, device, distribution_id)
+    ) STRICT;",
 ];
 
 pub fn migrate(db: &Connection) -> Result<()> {

@@ -90,22 +90,45 @@ impl Net {
     }
 }
 
-/// One JSON request on a connection.
-pub async fn send_json(
+/// One request on a connection, its body JSON if it has one. An answer that
+/// is not a success is an error that says what the server said.
+pub async fn request(
     chat: &ChatConnection,
     method: http::Method,
-    path: &'static str,
+    path: &str,
     extra: Option<(HeaderName, http::HeaderValue)>,
-    body: &serde_json::Value,
-) -> Result<Response, SendError> {
+    body: Option<&serde_json::Value>,
+) -> anyhow::Result<Response> {
     let mut headers = http::HeaderMap::new();
-    headers.insert(http::header::CONTENT_TYPE, http::HeaderValue::from_static("application/json"));
+    if body.is_some() {
+        headers.insert(http::header::CONTENT_TYPE, http::HeaderValue::from_static("application/json"));
+    }
     headers.extend(extra);
     let request = Request {
-        method,
-        path: http::uri::PathAndQuery::from_static(path),
+        method: method.clone(),
+        path: path.parse()?,
         headers,
-        body: Some(body.to_string().into_bytes().into()),
+        body: body.map(|body| body.to_string().into_bytes().into()),
     };
-    chat.send(request, REQUEST_TIMEOUT).await
+    // The path, without what it asks about.
+    let what = format!("{method} {}", path.split('?').next().unwrap_or(path));
+    let response: Response =
+        chat.send(request, REQUEST_TIMEOUT).await.map_err(|e: SendError| anyhow::anyhow!("{what}: {e}"))?;
+    if !response.status.is_success() {
+        let said = response.body.as_deref().map(String::from_utf8_lossy).unwrap_or_default();
+        anyhow::bail!("{what}: {} {said}", response.status);
+    }
+    Ok(response)
+}
+
+/// The headers that sign a connection in as this device.
+pub fn sign_in(account: &crate::account::Account) -> ChatHeaders {
+    chat::AuthenticatedChatHeaders {
+        aci: account.aci,
+        device_id: account.device_id,
+        password: account.password.clone(),
+        receive_stories: false.into(),
+        languages: chat::LanguageList::parse(&["en"]).expect("a language tag"),
+    }
+    .into()
 }
