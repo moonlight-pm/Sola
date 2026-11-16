@@ -39,6 +39,7 @@ async fn run(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("link") => link(&store, args.get(1).map_or("Sola", String::as_str)).await,
         Some("status") => status(&store),
+        Some("run") => headless(store, args.get(1).and_then(|s| s.parse().ok()).unwrap_or(u64::MAX)).await,
         _ => bail!("{USAGE}"),
     }
 }
@@ -67,6 +68,20 @@ async fn link(store: &Store, device_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// The engine with no window, for a while: what it does is in the log and
+/// the store. Events are printed without what was said or by whom.
+async fn headless(store: Store, seconds: u64) -> Result<()> {
+    let _alone = alone()?;
+    let _engine = engine::start(store, |event| match event {
+        engine::Event::Arrived { conversation, .. } => println!("Arrived in {conversation}"),
+        engine::Event::Typing { conversation, started, .. } => println!("Typing in {conversation}: {started}"),
+        engine::Event::LinkCode(_) => println!("LinkCode"),
+        other => println!("{other:?}"),
+    });
+    tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
+    Ok(())
+}
+
 fn status(store: &Store) -> Result<()> {
     match store.account()? {
         Some(a) => println!(
@@ -77,6 +92,11 @@ fn status(store: &Store) -> Result<()> {
         ),
         None => println!("not linked"),
     }
+    let people = store.recipients()?;
+    let named = people.iter().filter(|person| person.contact_name.is_some() || person.profile_name.is_some()).count();
+    let keyed = people.iter().filter(|person| person.profile_key.is_some()).count();
+    println!("people: {} ({named} with a name, {keyed} with a profile key)", people.len());
+    println!("conversations shown: {}, unread messages: {}", store.chats()?.len(), store.unread_total()?);
     Ok(())
 }
 

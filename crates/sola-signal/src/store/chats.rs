@@ -302,6 +302,21 @@ impl Store {
         Ok(())
     }
 
+    /// A profile name from somewhere other than the profile itself, kept
+    /// only until the profile has been read.
+    pub fn set_profile_name_if_none(&self, id: Id, name: &str) -> Result<()> {
+        self.db().execute(
+            "UPDATE recipients SET profile_name = ?2 WHERE id = ?1 AND coalesce(profile_name, '') = ''",
+            params![id, name],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_blocked_one(&self, id: Id, blocked: bool) -> Result<()> {
+        self.db().execute("UPDATE recipients SET blocked = ?2 WHERE id = ?1", params![id, blocked])?;
+        Ok(())
+    }
+
     pub fn set_blocked(&self, blocked: &[Id]) -> Result<()> {
         let mut db = self.db();
         let tx = db.transaction()?;
@@ -391,6 +406,16 @@ impl Store {
             params![conversation, seconds, version],
         )?;
         Ok(changed > 0)
+    }
+
+    /// Muted until a time (the far future for always), and whether the
+    /// conversation is put away.
+    pub fn set_muted(&self, conversation: Id, until: u64, archived: bool) -> Result<()> {
+        self.db().execute(
+            "UPDATE conversations SET muted_until = ?2, archived = ?3 WHERE id = ?1",
+            params![conversation, until.min(i64::MAX as u64) as i64, archived],
+        )?;
+        Ok(())
     }
 
     pub fn set_draft(&self, conversation: Id, draft: &str) -> Result<()> {

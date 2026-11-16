@@ -11,6 +11,7 @@ mod inbox;
 mod jobs;
 mod outgoing;
 mod profile;
+mod storage;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -172,6 +173,8 @@ struct Engine {
     /// Delivery receipts owed, sent when the queue is quiet.
     owed: Vec<(Id, u64)>,
     linking: bool,
+    /// What the socket said before the connections were both up.
+    early: Vec<ServerEvent>,
 }
 
 impl Engine {
@@ -195,6 +198,7 @@ impl Engine {
             jobs,
             owed: Vec::new(),
             linking: false,
+            early: Vec::new(),
         })
     }
 
@@ -267,6 +271,7 @@ impl Engine {
     fn connect(&mut self) {
         let Ok(account) = self.account() else { return };
         self.epoch += 1;
+        self.early.clear();
         *self.shared.wire.borrow_mut() = None;
         (self.emit)(Event::Connecting);
         let (epoch, net, inputs) = (self.epoch, self.net.clone(), self.inputs.clone());
@@ -306,6 +311,15 @@ impl Engine {
     async fn handle(&mut self, input: Input) -> Result<()> {
         match input {
             Input::Command(command) => self.command(command).await,
+            // The socket delivers before both connections are up: what it
+            // says waits until they are.
+            Input::Server(epoch, event) if epoch == self.epoch && self.wire().is_none() => {
+                match event {
+                    ServerEvent::Stopped(_) => self.server(event).await?,
+                    event => self.early.push(event),
+                }
+                Ok(())
+            }
             Input::Server(epoch, event) if epoch == self.epoch => self.server(event).await,
             Input::Server(..) => Ok(()),
             Input::Up(epoch, wire) if epoch == self.epoch => self.up(wire).await,
@@ -365,6 +379,11 @@ impl Engine {
         let _ = self.jobs.send(Job::Profile(self.shared.me.get()));
         let _ = self.jobs.send(Job::Storage);
         let _ = self.jobs.send(Job::Stale);
+        for event in std::mem::take(&mut self.early) {
+            if let Err(e) = self.server(event).await {
+                tracing::warn!("{e:#}");
+            }
+        }
         Ok(())
     }
 

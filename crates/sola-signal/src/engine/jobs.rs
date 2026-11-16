@@ -99,7 +99,7 @@ async fn run(shared: &Shared, job: Job, more: &mpsc::UnboundedSender<Job>) -> Re
             }
             fx.people = true;
         }
-        Job::Storage => {}
+        Job::Storage => return super::storage::sync(shared, more).await.context("the storage service"),
     }
     Ok(fx)
 }
