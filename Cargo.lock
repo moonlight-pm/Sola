@@ -10055,6 +10055,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "http",
+ "image",
  "libsignal-core",
  "libsignal-net",
  "libsignal-net-chat",
@@ -10067,13 +10068,17 @@ dependencies = [
  "qrcode",
  "rand 0.9.5",
  "rusqlite",
+ "rustls",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "signal-crypto",
  "sola-core",
  "tokio",
  "tracing",
+ "ureq",
  "uuid",
+ "zkgroup",
 ]
 
 [[package]]

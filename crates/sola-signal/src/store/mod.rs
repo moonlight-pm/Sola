@@ -4,6 +4,7 @@
 //! holds them beside its database key; it is made readable by its owner only.
 
 mod account;
+pub mod chats;
 mod protocol;
 mod schema;
 
@@ -42,4 +43,14 @@ impl Store {
     fn db(&self) -> MutexGuard<'_, Connection> {
         self.db.lock().expect("the store's lock")
     }
+
+    /// Where attachments' files are kept, beside the store.
+    pub fn files_dir() -> PathBuf {
+        Self::path().with_file_name("files")
+    }
+}
+
+/// Now, as Signal counts time: milliseconds since 1970.
+pub fn now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }

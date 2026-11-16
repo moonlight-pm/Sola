@@ -67,6 +67,36 @@ impl Store {
         }))
     }
 
+    /// Whether the account sends read receipts, as the phone has it set.
+    pub fn set_read_receipts(&self, on: bool) -> Result<()> {
+        self.db().execute("UPDATE account SET read_receipts = ?1", [on])?;
+        Ok(())
+    }
+
+    /// The account's root keys, sent again by the phone.
+    pub fn set_account_keys(&self, entropy_pool: Option<&str>, media_root_backup_key: Option<&[u8]>) -> Result<()> {
+        self.db().execute(
+            "UPDATE account SET account_entropy_pool = coalesce(?1, account_entropy_pool),
+                                media_root_backup_key = coalesce(?2, media_root_backup_key)",
+            params![entropy_pool, media_root_backup_key],
+        )?;
+        Ok(())
+    }
+
+    /// Forget the link and everything kept under it.
+    pub fn unlink(&self) -> Result<()> {
+        self.db().execute_batch(
+            "BEGIN;
+             DELETE FROM outbox; DELETE FROM messages; DELETE FROM conversations; DELETE FROM group_members;
+             DELETE FROM groups; DELETE FROM recipients; DELETE FROM settings;
+             DELETE FROM sessions; DELETE FROM identities; DELETE FROM pre_keys; DELETE FROM signed_pre_keys;
+             DELETE FROM kyber_pre_keys; DELETE FROM kyber_base_keys; DELETE FROM sender_keys;
+             DELETE FROM account;
+             COMMIT;",
+        )?;
+        Ok(())
+    }
+
     /// Keep a new link: the account and the pre-keys the server took with it,
     /// together or not at all.
     pub fn save_link(&self, linked: &Linked) -> Result<()> {
@@ -74,6 +104,22 @@ impl Store {
         let tx = db.transaction()?;
         let a = &linked.account;
         let pni = a.pni.as_ref();
+        // Linked again: the device is a new one, so what the protocol kept
+        // for the old one is void. Another account's conversations go too.
+        let before: Option<String> = tx.query_row("SELECT aci FROM account", [], |row| row.get(0)).optional()?;
+        if before.is_some() {
+            tx.execute_batch(
+                "DELETE FROM account; DELETE FROM sessions; DELETE FROM pre_keys; DELETE FROM signed_pre_keys;
+                 DELETE FROM kyber_pre_keys; DELETE FROM kyber_base_keys; DELETE FROM sender_keys;
+                 DELETE FROM outbox; DELETE FROM settings;",
+            )?;
+        }
+        if before.is_some_and(|aci| aci != a.aci.service_id_string()) {
+            tx.execute_batch(
+                "DELETE FROM messages; DELETE FROM conversations; DELETE FROM group_members; DELETE FROM groups;
+                 DELETE FROM recipients; DELETE FROM identities;",
+            )?;
+        }
         tx.execute(
             "INSERT INTO account (id, aci, pni, number, device_id, password, aci_identity,
                 aci_registration_id, pni_identity, pni_registration_id, profile_key,

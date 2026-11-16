@@ -6,9 +6,9 @@
 //! that are missing, gone or registered again; those are put right and the
 //! send is tried once more.
 //!
-//! Not sealed yet: a sealed send needs the recipient's profile key, and
-//! nothing keeps those yet. The server sees who sent it, as it does for a
-//! first message from any client.
+//! A send is sealed (the server is not told who it is from) when we hold
+//! the recipient's profile key, and falls back to a signed-in send when
+//! the recipient's account does not take it.
 
 use std::time::SystemTime;
 
@@ -18,12 +18,14 @@ use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use libsignal_core::{DeviceId, ServiceId};
 use libsignal_net::chat::ChatConnection;
 use libsignal_net_chat::api::messages::{
-    AuthenticatedChatApi, SingleOutboundUnsealedMessage, UnsealedSendFailure,
+    AuthenticatedChatApi, MismatchedDeviceError, SealedSendFailure, SingleOutboundSealedSenderMessage,
+    SingleOutboundUnsealedMessage, UnauthenticatedChatApi, UnsealedSendFailure, UserBasedSendAuthorization,
 };
-use libsignal_net_chat::api::{Auth, RequestError};
+use libsignal_net_chat::api::{Auth, RequestError, Unauth, UserBasedAuthorization};
 use libsignal_protocol::{
-    CiphertextMessage, IdentityKey, PreKeyBundle, ProtocolAddress, PublicKey, Timestamp, kem, message_encrypt,
-    process_prekey_bundle,
+    CiphertextMessage, ContentHint, IdentityKey, PlaintextContent, PreKeyBundle, ProtocolAddress, PublicKey,
+    SenderCertificate, Timestamp, UnidentifiedSenderMessageContent, kem, message_encrypt, process_prekey_bundle,
+    sealed_sender_encrypt_from_usmc,
 };
 use prost::Message;
 use rand::Rng;
@@ -31,7 +33,7 @@ use serde::Deserialize;
 
 use crate::account::{Account, Identity};
 use crate::net;
-use crate::proto::{self, Content, DataMessage, SyncMessage, sync_message};
+use crate::proto::{self, Content, SyncMessage, sync_message};
 use crate::store::{ProtocolStore, Store};
 
 /// How often one send is tried while the server corrects our list of the
@@ -50,70 +52,124 @@ const BASE64: GeneralPurpose = GeneralPurpose::new(
 
 type Outbound = SingleOutboundUnsealedMessage<CiphertextMessage>;
 
+/// Why something was not sent.
+#[derive(Debug)]
+pub enum Failure {
+    /// The connection: it is worth trying again once there is one.
+    Later(anyhow::Error),
+    /// It will not go however often it is tried.
+    Never(anyhow::Error),
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Failure::Later(e) | Failure::Never(e) => write!(f, "{e:#}"),
+        }
+    }
+}
+
+fn never(e: anyhow::Error) -> Failure {
+    Failure::Never(e)
+}
+
+fn classify<E: std::fmt::Display>(e: RequestError<E>) -> Failure {
+    let later = matches!(
+        e,
+        RequestError::Timeout | RequestError::Disconnected(_) | RequestError::RetryLater(_) | RequestError::ServerSideError
+    );
+    let e = anyhow!("sending: {e}");
+    if later { Failure::Later(e) } else { Failure::Never(e) }
+}
+
+/// What a sealed send needs beside the recipient's access key: the
+/// connection that is not signed in, and Signal's certificate that we are
+/// who the message says.
+pub struct Sealed<'a> {
+    pub chat: &'a ChatConnection,
+    pub certificate: &'a SenderCertificate,
+}
+
+/// What one send carries beside its content.
+pub struct Options<'a> {
+    pub timestamp: u64,
+    pub urgent: bool,
+    /// The recipient's access key (from their profile key): the send is
+    /// sealed with it when it can be.
+    pub access_key: Option<[u8; 16]>,
+    pub hint: ContentHint,
+    pub group: Option<&'a [u8]>,
+}
+
+enum Payload<'a> {
+    /// A padded `Content`, to encrypt for each device.
+    Content(Vec<u8>),
+    Notice(&'a PlaintextContent),
+}
+
+enum Outcome {
+    Done,
+    Wrong(MismatchedDeviceError),
+    /// A sealed send the recipient's server-side key did not allow.
+    NotAllowed,
+}
+
 pub struct Sender<'a> {
     account: &'a Account,
     store: ProtocolStore,
     chat: &'a ChatConnection,
+    sealed: Option<Sealed<'a>>,
 }
 
 impl<'a> Sender<'a> {
     /// `chat` is a signed-in connection.
-    pub fn new(store: &Store, account: &'a Account, chat: &'a ChatConnection) -> Self {
-        Self { store: store.protocol(Identity::Aci, account.aci_keys.clone()), account, chat }
-    }
-
-    /// Send `text` to `to`. To our own account it is a Note to Self: only
-    /// the transcript goes out.
-    pub async fn text(&self, to: ServiceId, text: &str) -> Result<()> {
-        let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_millis() as u64;
-        let us = ServiceId::from(self.account.aci);
-        let message = DataMessage {
-            body: Some(text.to_owned()),
-            timestamp: Some(timestamp),
-            profile_key: Some(self.account.profile_key.clone()),
-            ..Default::default()
-        };
-        if to != us {
-            let content = Content {
-                content: Some(proto::content::Content::DataMessage(message.clone())),
-                ..Default::default()
-            };
-            self.deliver(to, &content, timestamp, true).await?;
-        }
-        self.deliver(us, &transcript(to, to != us, message, timestamp), timestamp, false)
-            .await
-            .context("the transcript for our other devices")
+    pub fn new(store: &Store, account: &'a Account, chat: &'a ChatConnection, sealed: Option<Sealed<'a>>) -> Self {
+        Self { store: store.protocol(Identity::Aci, account.aci_keys.clone()), account, chat, sealed }
     }
 
     /// Encrypt `content` for each device of `to` and hand it to the server.
-    async fn deliver(&self, to: ServiceId, content: &Content, timestamp: u64, urgent: bool) -> Result<()> {
+    /// To our own account it goes to our other devices. True if it went
+    /// sealed.
+    pub async fn deliver(&self, to: ServiceId, content: &Content, options: &Options<'_>) -> Result<bool, Failure> {
+        self.send(to, Payload::Content(pad(content.encode_to_vec())), options).await
+    }
+
+    async fn send(&self, to: ServiceId, payload: Payload<'_>, options: &Options<'_>) -> Result<bool, Failure> {
         let name = to.service_id_string();
         let ours = to == ServiceId::from(self.account.aci);
-        let plaintext = pad(content.encode_to_vec());
-        if open_sessions(&self.store, self.account, &name)?.is_empty() {
+        if open_sessions(&self.store, self.account, &name).map_err(never)?.is_empty() {
             self.start_sessions(to, None).await?;
         }
-        let chat: &Auth<ChatConnection> = self.chat.into();
-        let timestamp = Timestamp::from_epoch_millis(timestamp);
+        let mut sealed =
+            options.access_key.zip(self.sealed.as_ref()).filter(|_| !ours && matches!(payload, Payload::Content(_)));
         for _ in 0..ATTEMPTS {
-            let messages = encrypt(&self.store, self.account, &name, &plaintext).await?;
-            if messages.is_empty() {
-                bail!("no device of {name} to send to");
+            let messages = match &payload {
+                Payload::Content(plaintext) => encrypt(&self.store, self.account, &name, plaintext).await,
+                Payload::Notice(notice) => open_sessions(&self.store, self.account, &name).map(|open| {
+                    open.into_iter()
+                        .map(|(device_id, registration_id)| Outbound {
+                            device_id,
+                            registration_id,
+                            contents: CiphertextMessage::PlaintextContent((*notice).clone()),
+                        })
+                        .collect()
+                }),
             }
-            let sent = if ours {
-                chat.send_sync_message(timestamp, &messages, urgent)
-                    .await
-                    .map_err(|e| e.flat_map_other(|e| RequestError::Other(UnsealedSendFailure::MismatchedDevices(e))))
-            } else {
-                chat.send_message(to, timestamp, &messages, false, urgent).await
+            .map_err(never)?;
+            if messages.is_empty() {
+                return Err(never(anyhow!("no device of {name} to send to")));
+            }
+            let outcome = match sealed {
+                Some((key, sealed)) => self.send_sealed(to, &messages, options, key, sealed).await?,
+                None => self.send_unsealed(to, ours, &messages, options).await?,
             };
-            let wrong = match sent {
-                Ok(()) => return Ok(()),
-                Err(RequestError::Other(UnsealedSendFailure::MismatchedDevices(wrong))) => wrong,
-                Err(RequestError::Other(UnsealedSendFailure::ServiceIdNotFound)) => {
-                    bail!("{name} is not a Signal account")
+            let wrong = match outcome {
+                Outcome::Done => return Ok(sealed.is_some()),
+                Outcome::NotAllowed => {
+                    sealed = None;
+                    continue;
                 }
-                Err(e) => bail!("sending: {e}"),
+                Outcome::Wrong(wrong) => wrong,
             };
             tracing::info!(
                 missing = wrong.missing_devices.len(),
@@ -123,23 +179,110 @@ impl<'a> Sender<'a> {
             );
             for device in wrong.extra_devices.iter().chain(&wrong.stale_devices) {
                 let address = ProtocolAddress::new(name.clone(), *device);
-                self.store.clone().archive_session(&address).await.map_err(|e| anyhow!("{address}: {e}"))?;
+                self.store.clone().archive_session(&address).await.map_err(|e| never(anyhow!("{address}: {e}")))?;
             }
             let fresh: Vec<DeviceId> = wrong.missing_devices.into_iter().chain(wrong.stale_devices).collect();
             if !fresh.is_empty() {
                 self.start_sessions(to, Some(&fresh)).await?;
             }
         }
-        bail!("the server and this device did not come to agree on {name}'s devices")
+        Err(never(anyhow!("the server and this device did not come to agree on {name}'s devices")))
+    }
+
+    async fn send_unsealed(
+        &self,
+        to: ServiceId,
+        ours: bool,
+        messages: &[Outbound],
+        options: &Options<'_>,
+    ) -> Result<Outcome, Failure> {
+        let chat: &Auth<ChatConnection> = self.chat.into();
+        let timestamp = Timestamp::from_epoch_millis(options.timestamp);
+        let sent = if ours {
+            chat.send_sync_message(timestamp, messages, options.urgent)
+                .await
+                .map_err(|e| e.flat_map_other(|e| RequestError::Other(UnsealedSendFailure::MismatchedDevices(e))))
+        } else {
+            chat.send_message(to, timestamp, messages, false, options.urgent).await
+        };
+        match sent {
+            Ok(()) => Ok(Outcome::Done),
+            Err(RequestError::Other(UnsealedSendFailure::MismatchedDevices(wrong))) => Ok(Outcome::Wrong(wrong)),
+            Err(RequestError::Other(UnsealedSendFailure::ServiceIdNotFound)) => {
+                Err(never(anyhow!("{} is not a Signal account", to.service_id_string())))
+            }
+            Err(e) => Err(classify(e)),
+        }
+    }
+
+    /// Wrap each ciphertext so that only the recipient learns who sent it,
+    /// and send them on the connection that is not signed in.
+    async fn send_sealed(
+        &self,
+        to: ServiceId,
+        messages: &[Outbound],
+        options: &Options<'_>,
+        access_key: [u8; 16],
+        sealed: &Sealed<'_>,
+    ) -> Result<Outcome, Failure> {
+        let e = |e| never(anyhow!("sealing: {e}"));
+        let mut wrapped = Vec::new();
+        for message in messages {
+            let remote = ProtocolAddress::new(to.service_id_string(), message.device_id);
+            let inner = UnidentifiedSenderMessageContent::new(
+                message.contents.message_type(),
+                sealed.certificate.clone(),
+                message.contents.serialize().to_vec(),
+                options.hint,
+                options.group.map(<[u8]>::to_vec),
+            )
+            .map_err(e)?;
+            let contents =
+                sealed_sender_encrypt_from_usmc(&remote, &inner, &self.store, &mut rand::rng()).await.map_err(e)?;
+            wrapped.push(SingleOutboundSealedSenderMessage {
+                device_id: message.device_id,
+                registration_id: message.registration_id,
+                contents: contents.into(),
+            });
+        }
+        let chat: &Unauth<ChatConnection> = sealed.chat.into();
+        let auth = UserBasedSendAuthorization::User(UserBasedAuthorization::AccessKey(access_key));
+        let timestamp = Timestamp::from_epoch_millis(options.timestamp);
+        match chat.send_message(to, timestamp, wrapped, auth, false, options.urgent).await {
+            Ok(()) => Ok(Outcome::Done),
+            Err(RequestError::Other(SealedSendFailure::MismatchedDevices(wrong))) => Ok(Outcome::Wrong(wrong)),
+            Err(RequestError::Other(SealedSendFailure::Unauthorized)) => Ok(Outcome::NotAllowed),
+            Err(RequestError::Other(SealedSendFailure::ServiceIdNotFound)) => {
+                Err(never(anyhow!("{} is not a Signal account", to.service_id_string())))
+            }
+            Err(e) => Err(classify(e)),
+        }
+    }
+
+    /// Tell `to` that something it sent did not decrypt. The notice is not
+    /// encrypted (the session may be what is broken); it goes to each of
+    /// the account's devices and names the one it is about.
+    pub async fn notice(&self, to: ServiceId, notice: &PlaintextContent, timestamp: u64) -> Result<(), Failure> {
+        let options = Options { timestamp, urgent: false, access_key: None, hint: ContentHint::Default, group: None };
+        self.send(to, Payload::Notice(notice), &options).await.map(drop)
     }
 
     /// Fetch `to`'s pre-keys and start a session with each of `devices`
     /// (`None`: every device).
-    async fn start_sessions(&self, to: ServiceId, devices: Option<&[DeviceId]>) -> Result<()> {
+    async fn start_sessions(&self, to: ServiceId, devices: Option<&[DeviceId]>) -> Result<(), Failure> {
         let path = format!("/v2/keys/{}/*", to.service_id_string());
-        let response = net::request(self.chat, http::Method::GET, &path, None, None).await?;
-        let keys: Keys = serde_json::from_slice(response.body.as_deref().unwrap_or_default()).context("pre-keys")?;
-        start_sessions(&self.store, self.account, to, keys, devices).await
+        let response = match net::request(self.chat, http::Method::GET, &path, None, None).await {
+            Ok(response) => response,
+            Err(e) if e.status() == Some(http::StatusCode::NOT_FOUND) => {
+                return Err(never(anyhow!("{} is not a Signal account", to.service_id_string())));
+            }
+            Err(e @ net::Refused::Status { .. }) => return Err(never(e.into())),
+            Err(e) => return Err(Failure::Later(e.into())),
+        };
+        let keys: Keys = serde_json::from_slice(response.body.as_deref().unwrap_or_default())
+            .context("pre-keys")
+            .map_err(never)?;
+        start_sessions(&self.store, self.account, to, keys, devices).await.map_err(never)
     }
 }
 
@@ -266,32 +409,35 @@ async fn encrypt(store: &ProtocolStore, account: &Account, name: &str, plaintext
     Ok(messages)
 }
 
-/// What our other devices are told of a message this one sent.
-fn transcript(to: ServiceId, delivered: bool, message: DataMessage, timestamp: u64) -> Content {
-    let to = to.service_id_string();
-    let status = sync_message::sent::UnidentifiedDeliveryStatus {
-        destination_service_id: Some(to.clone()),
-        unidentified: Some(false),
-        ..Default::default()
-    };
-    let sent = sync_message::Sent {
-        destination_service_id: Some(to),
-        timestamp: Some(timestamp),
-        message: Some(message),
-        unidentified_status: if delivered { vec![status] } else { Vec::new() },
-        ..Default::default()
-    };
-    // A sync message carries 1 to 512 random bytes, so its size says less.
+/// What our other devices are told of something this one sent: `sent`, with
+/// the random bytes every sync message carries so its size says less.
+pub fn sync(content: sync_message::Content) -> Content {
     let mut padding = vec![0; rand::rng().random_range(1..=512)];
     rand::rng().fill(padding.as_mut_slice());
     Content {
         content: Some(proto::content::Content::SyncMessage(SyncMessage {
-            content: Some(sync_message::Content::Sent(sent)),
+            content: Some(content),
             padding: Some(padding),
             ..Default::default()
         })),
         ..Default::default()
     }
+}
+
+/// The transcript of a message: where it went (an account, or a group
+/// named inside `message`), and to whom it went sealed.
+pub fn transcript(to: Option<ServiceId>, delivered: &[(ServiceId, bool)], mut sent: sync_message::Sent, timestamp: u64) -> Content {
+    sent.destination_service_id = to.map(|to| to.service_id_string());
+    sent.timestamp = Some(timestamp);
+    sent.unidentified_status = delivered
+        .iter()
+        .map(|(to, sealed)| sync_message::sent::UnidentifiedDeliveryStatus {
+            destination_service_id: Some(to.service_id_string()),
+            unidentified: Some(*sealed),
+            ..Default::default()
+        })
+        .collect();
+    sync(sync_message::Content::Sent(sent))
 }
 
 /// A 0x80 marker, then zeros up to the block (Signal-Desktop's `padMessage`).
@@ -313,6 +459,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::proto::DataMessage;
     use crate::account::IdentityKeys;
     use crate::link::first_pre_keys;
 
@@ -427,7 +574,11 @@ mod tests {
         });
         let our_id = ServiceId::from(us.aci);
         start_sessions(&store, &us, our_id, serde_json::from_value(ours).unwrap(), None).await.unwrap();
-        let sync = transcript(alice, true, DataMessage { body: Some("hello".into()), ..Default::default() }, 1234);
+        let sent = sync_message::Sent {
+            message: Some(DataMessage { body: Some("hello".into()), ..Default::default() }),
+            ..Default::default()
+        };
+        let sync = transcript(Some(alice), &[(alice, false)], sent, 1234);
         let messages = encrypt(&store, &us, &our_id.service_id_string(), &pad(sync.encode_to_vec())).await.unwrap();
         assert_eq!(messages.len(), 1);
         let to = ProtocolAddress::new(our_id.service_id_string(), messages[0].device_id);

@@ -4,22 +4,22 @@
 
 mod account;
 mod devicename;
+mod engine;
+mod http;
 mod keys;
 mod link;
 mod net;
 mod proto;
 mod receive;
 mod send;
-mod show;
 mod store;
 
 use anyhow::{Context, Result, anyhow, bail};
-use libsignal_core::{Aci, ServiceId};
 
 use crate::net::Net;
 use crate::store::Store;
 
-const USAGE: &str = "usage: sola-signal link [device name] | status | receive | send <me|account id> <text>";
+const USAGE: &str = "usage: sola-signal [link [device name] | status]";
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
@@ -39,8 +39,6 @@ async fn run(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("link") => link(&store, args.get(1).map_or("Sola", String::as_str)).await,
         Some("status") => status(&store),
-        Some("receive") => receive(&store).await,
-        Some("send") if args.len() > 2 => send(&store, &args[1], &args[2..].join(" ")).await,
         _ => bail!("{USAGE}"),
     }
 }
@@ -66,35 +64,6 @@ async fn link(store: &Store, device_name: &str) -> Result<()> {
     .await?;
     store.save_link(&linked).context("keeping the link")?;
     println!("Linked as device {} of {}.", linked.account.device_id, linked.account.aci.service_id_string());
-    Ok(())
-}
-
-/// Print what arrives until the socket closes.
-async fn receive(store: &Store) -> Result<()> {
-    let _alone = alone()?;
-    let account = store.account()?.context("not linked: run `sola-signal link` first")?;
-    receive::Receiver::new(store, account)?
-        .run(&Net::new(), |received| println!("{}", show::line(&received)))
-        .await
-}
-
-/// Send one text to `who`: `me`, or an account id as `receive` prints it.
-async fn send(store: &Store, who: &str, text: &str) -> Result<()> {
-    let _alone = alone()?;
-    let account = store.account()?.context("not linked: run `sola-signal link` first")?;
-    let to = match who {
-        "me" => account.aci,
-        _ => Aci::parse_from_service_id_string(who).context("who: `me`, or an account id as `receive` prints it")?,
-    };
-    // What the server delivers on this connection is left unanswered, so
-    // it comes again to the next `receive`.
-    let chat = Net::new()
-        .connect(net::CHAT_WEBSOCKET_PATH, Some(net::sign_in(&account)), Box::new(|_| {}), "chat")
-        .await
-        .context("signing in")?;
-    send::Sender::new(store, &account, &chat).text(ServiceId::from(to), text).await?;
-    chat.disconnect().await;
-    println!("Sent.");
     Ok(())
 }
 

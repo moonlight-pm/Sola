@@ -90,6 +90,35 @@ impl Net {
     }
 }
 
+/// Why a request got no good answer.
+#[derive(Debug)]
+pub enum Refused {
+    /// The server answered, and not with a success.
+    Status { what: String, status: http::StatusCode, said: String },
+    /// No answer: the connection, or the time allowed.
+    Connection { what: String, why: String },
+}
+
+impl Refused {
+    pub fn status(&self) -> Option<http::StatusCode> {
+        match self {
+            Refused::Status { status, .. } => Some(*status),
+            Refused::Connection { .. } => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Refused::Status { what, status, said } => write!(f, "{what}: {status} {said}"),
+            Refused::Connection { what, why } => write!(f, "{what}: {why}"),
+        }
+    }
+}
+
+impl std::error::Error for Refused {}
+
 /// One request on a connection, its body JSON if it has one. An answer that
 /// is not a success is an error that says what the server said.
 pub async fn request(
@@ -98,25 +127,27 @@ pub async fn request(
     path: &str,
     extra: Option<(HeaderName, http::HeaderValue)>,
     body: Option<&serde_json::Value>,
-) -> anyhow::Result<Response> {
+) -> Result<Response, Refused> {
+    // The path, without what it asks about.
+    let what = format!("{method} {}", path.split('?').next().unwrap_or(path));
     let mut headers = http::HeaderMap::new();
     if body.is_some() {
         headers.insert(http::header::CONTENT_TYPE, http::HeaderValue::from_static("application/json"));
     }
     headers.extend(extra);
     let request = Request {
-        method: method.clone(),
-        path: path.parse()?,
+        method,
+        path: path.parse().map_err(|e| Refused::Connection { what: what.clone(), why: format!("{e}") })?,
         headers,
         body: body.map(|body| body.to_string().into_bytes().into()),
     };
-    // The path, without what it asks about.
-    let what = format!("{method} {}", path.split('?').next().unwrap_or(path));
-    let response: Response =
-        chat.send(request, REQUEST_TIMEOUT).await.map_err(|e: SendError| anyhow::anyhow!("{what}: {e}"))?;
+    let response: Response = chat
+        .send(request, REQUEST_TIMEOUT)
+        .await
+        .map_err(|e: SendError| Refused::Connection { what: what.clone(), why: e.to_string() })?;
     if !response.status.is_success() {
-        let said = response.body.as_deref().map(String::from_utf8_lossy).unwrap_or_default();
-        anyhow::bail!("{what}: {} {said}", response.status);
+        let said = response.body.as_deref().map(String::from_utf8_lossy).unwrap_or_default().into_owned();
+        return Err(Refused::Status { what, status: response.status, said });
     }
     Ok(response)
 }

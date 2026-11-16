@@ -1,5 +1,5 @@
-//! Receiving: the signed-in socket, each envelope the server delivers, and
-//! what is inside once decrypted.
+//! Receiving: each envelope the server delivers, and what is inside once
+//! decrypted.
 //!
 //! The checks are Signal-Desktop's (`MessageReceiver`) and signalmeow's
 //! (`receiving_decrypt.go`): a sealed envelope only for our ACI, its sender
@@ -10,18 +10,14 @@ use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use libsignal_core::{DeviceId, ServiceId};
-use libsignal_net::chat::server_requests::ServerEvent;
 use libsignal_protocol::{
     CiphertextMessage, CiphertextMessageType, PlaintextContent, PreKeySignalMessage, ProtocolAddress, PublicKey,
-    SenderKeyDistributionMessage, SignalMessage, Timestamp, group_decrypt, message_decrypt,
+    SenderKeyDistributionMessage, SignalMessage, SignalProtocolError, Timestamp, group_decrypt, message_decrypt,
     process_sender_key_distribution_message, sealed_sender_decrypt_to_usmc,
 };
 use prost::Message;
-use tokio::sync::mpsc;
 
 use crate::account::{Account, Identity};
-use crate::keys;
-use crate::net::{self, Net};
 use crate::proto::{self, Content, Envelope, envelope};
 use crate::store::{ProtocolStore, Store};
 
@@ -36,6 +32,24 @@ pub struct Received {
     pub sender_device: DeviceId,
     pub timestamp: u64,
     pub content: Content,
+}
+
+/// An envelope whose sender is known and whose content would not decrypt:
+/// what the sender is asked to send again.
+pub struct Unreadable {
+    pub sender: ServiceId,
+    pub sender_device: DeviceId,
+    pub timestamp: u64,
+    pub kind: CiphertextMessageType,
+    pub ciphertext: Vec<u8>,
+    pub why: String,
+}
+
+pub enum Opened {
+    Message(Box<Received>),
+    /// Nothing to read: a receipt the server made, or a message seen before.
+    Nothing,
+    Unreadable(Unreadable),
 }
 
 pub struct Receiver {
@@ -59,54 +73,9 @@ impl Receiver {
         })
     }
 
-    /// Sign in and hand each message to `on_message` until the socket closes.
-    pub async fn run(&self, net: &Net, mut on_message: impl FnMut(Received)) -> Result<()> {
-        let (events, mut event) = mpsc::unbounded_channel();
-        let chat = net
-            .connect(
-                net::CHAT_WEBSOCKET_PATH,
-                Some(net::sign_in(&self.account)),
-                Box::new(move |e| match ServerEvent::try_from(e) {
-                    Ok(e) => drop(events.send(e)),
-                    Err(e) => tracing::warn!("chat socket: {e}"),
-                }),
-                "chat",
-            )
-            .await
-            .context("signing in")?;
-
-        keys::replenish(&chat, &self.aci, Identity::Aci, &self.account.aci_keys).await?;
-        if let (Some(store), Some((_, keys))) = (&self.pni, &self.account.pni) {
-            keys::replenish(&chat, store, Identity::Pni, keys).await?;
-        }
-
-        while let Some(event) = event.recv().await {
-            match event {
-                ServerEvent::IncomingMessage { envelope, send_ack, .. } => {
-                    match self.open(&envelope).await {
-                        Ok(Some(received)) => on_message(received),
-                        Ok(None) => {}
-                        // Nothing asks the sender to send it again yet.
-                        Err(e) => tracing::warn!("an envelope was not read: {e:#}"),
-                    }
-                    send_ack(http::StatusCode::OK).map_err(|e| anyhow!("ack: {e}"))?;
-                }
-                ServerEvent::QueueEmpty => tracing::info!("caught up with the server's queue"),
-                ServerEvent::ServerTimestamp(_) => {}
-                ServerEvent::Alerts(alerts) => {
-                    if !alerts.is_empty() {
-                        tracing::warn!(?alerts, "the server has alerts for this device");
-                    }
-                }
-                ServerEvent::Stopped(cause) => bail!("the chat socket closed: {cause:?}"),
-            }
-        }
-        Ok(())
-    }
-
-    /// Decrypt one envelope. `None`: it carries nothing to read (a receipt
-    /// the server made).
-    async fn open(&self, bytes: &[u8]) -> Result<Option<Received>> {
+    /// Decrypt one envelope. An error is an envelope that is not ours to
+    /// read at all; it is dropped.
+    pub async fn open(&self, bytes: &[u8]) -> Result<Opened> {
         let envelope = Envelope::decode(bytes).context("envelope")?;
         let timestamp = envelope.client_timestamp.unwrap_or_default();
         let kind = envelope.r#type();
@@ -124,13 +93,13 @@ impl Receiver {
         let local = ProtocolAddress::new(destination.service_id_string(), self.account.device_id);
         let content = envelope.content.as_deref().unwrap_or_default();
 
-        let (sender, sender_device, plaintext) = match kind {
-            envelope::Type::ServerDeliveryReceipt => return Ok(None),
+        let (sender, sender_device, kind, ciphertext) = match kind {
+            envelope::Type::ServerDeliveryReceipt => return Ok(Opened::Nothing),
             envelope::Type::UnidentifiedSender => {
                 if destination != our_aci {
                     bail!("a sealed envelope that is not for our ACI");
                 }
-                self.open_sealed(store, &local, content, envelope.server_timestamp.unwrap_or_default()).await?
+                self.unseal(store, content, envelope.server_timestamp.unwrap_or_default()).await?
             }
             envelope::Type::DoubleRatchet | envelope::Type::PrekeyMessage | envelope::Type::PlaintextContent => {
                 let sender = service_id(envelope.source_service_id_binary.as_deref(), envelope.source_service_id.as_deref())
@@ -142,17 +111,31 @@ impl Receiver {
                     envelope::Type::PrekeyMessage => CiphertextMessageType::PreKey,
                     _ => CiphertextMessageType::Plaintext,
                 };
-                let remote = ProtocolAddress::new(sender.service_id_string(), device);
-                (sender, device, self.decrypt(store, kind, content, &remote, &local).await?)
+                (sender, device, kind, content.to_vec())
             }
             envelope::Type::Unknown => bail!("an envelope of unknown type"),
+        };
+
+        let remote = ProtocolAddress::new(sender.service_id_string(), sender_device);
+        let plaintext = match self.decrypt(store, kind, &ciphertext, &remote, &local).await {
+            Ok(plaintext) => plaintext,
+            Err(SignalProtocolError::DuplicatedMessage(..)) => return Ok(Opened::Nothing),
+            Err(e) => {
+                return Ok(Opened::Unreadable(Unreadable {
+                    sender,
+                    sender_device,
+                    timestamp,
+                    kind,
+                    ciphertext,
+                    why: e.to_string(),
+                }));
+            }
         };
 
         let content = Content::decode(unpad(&plaintext)?).context("content")?;
         if let Some(distribution) = &content.sender_key_distribution_message {
             let message = SenderKeyDistributionMessage::try_from(distribution.as_slice())
                 .map_err(|e| anyhow!("sender key distribution: {e}"))?;
-            let remote = ProtocolAddress::new(sender.service_id_string(), sender_device);
             process_sender_key_distribution_message(&remote, &message, &mut self.aci.clone())
                 .await
                 .map_err(|e| anyhow!("sender key distribution: {e}"))?;
@@ -160,16 +143,17 @@ impl Receiver {
         if matches!(content.content, Some(proto::content::Content::SyncMessage(_))) && sender != our_aci {
             bail!("a sync message from {}, which is not our account", sender.service_id_string());
         }
-        Ok(Some(Received { sender, sender_device, timestamp, content }))
+        Ok(Opened::Message(Box::new(Received { sender, sender_device, timestamp, content })))
     }
 
-    async fn open_sealed(
+    /// Take the outer layer off a sealed envelope: who sent it, checked
+    /// against Signal's certificate, and the ciphertext inside.
+    async fn unseal(
         &self,
         store: &ProtocolStore,
-        local: &ProtocolAddress,
         sealed: &[u8],
         server_timestamp: u64,
-    ) -> Result<(ServiceId, DeviceId, Vec<u8>)> {
+    ) -> Result<(ServiceId, DeviceId, CiphertextMessageType, Vec<u8>)> {
         let e = |e| anyhow!("sealed envelope: {e}");
         let message = sealed_sender_decrypt_to_usmc(sealed, store).await.map_err(e)?;
         let certificate = message.sender().map_err(e)?;
@@ -186,10 +170,7 @@ impl Receiver {
         if sender == ServiceId::from(self.account.aci) && device == self.account.device_id {
             bail!("a sealed envelope from this device");
         }
-        let remote = ProtocolAddress::new(sender.service_id_string(), device);
-        let plaintext =
-            self.decrypt(store, message.msg_type().map_err(e)?, message.contents().map_err(e)?, &remote, local).await?;
-        Ok((sender, device, plaintext))
+        Ok((sender, device, message.msg_type().map_err(e)?, message.contents().map_err(e)?.to_vec()))
     }
 
     async fn decrypt(
@@ -199,20 +180,19 @@ impl Receiver {
         ciphertext: &[u8],
         remote: &ProtocolAddress,
         local: &ProtocolAddress,
-    ) -> Result<Vec<u8>> {
-        let e = |e| anyhow!("from {remote}: {e}");
+    ) -> std::result::Result<Vec<u8>, SignalProtocolError> {
         let message = match kind {
-            CiphertextMessageType::Whisper => CiphertextMessage::SignalMessage(SignalMessage::try_from(ciphertext).map_err(e)?),
+            CiphertextMessageType::Whisper => CiphertextMessage::SignalMessage(SignalMessage::try_from(ciphertext)?),
             CiphertextMessageType::PreKey => {
-                CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(ciphertext).map_err(e)?)
+                CiphertextMessage::PreKeySignalMessage(PreKeySignalMessage::try_from(ciphertext)?)
             }
             CiphertextMessageType::SenderKey => {
-                return group_decrypt(ciphertext, &mut self.aci.clone(), remote).await.map_err(e);
+                return group_decrypt(ciphertext, &mut self.aci.clone(), remote).await;
             }
             // Not encrypted: only ever a notice that decryption failed. The
             // body is a padded `Content`, after a marker byte.
             CiphertextMessageType::Plaintext => {
-                return Ok(PlaintextContent::try_from(ciphertext).map_err(e)?.body().to_vec());
+                return Ok(PlaintextContent::try_from(ciphertext)?.body().to_vec());
             }
         };
         message_decrypt(
@@ -227,11 +207,10 @@ impl Receiver {
             &mut rand::rng(),
         )
         .await
-        .map_err(e)
     }
 }
 
-fn service_id(binary: Option<&[u8]>, text: Option<&str>) -> Option<ServiceId> {
+pub fn service_id(binary: Option<&[u8]>, text: Option<&str>) -> Option<ServiceId> {
     match (binary, text) {
         (Some(bytes), _) if !bytes.is_empty() => ServiceId::parse_from_service_id_binary(bytes),
         (_, Some(text)) if !text.is_empty() => ServiceId::parse_from_service_id_string(text),
@@ -371,7 +350,7 @@ mod tests {
             ..Default::default()
         };
         let envelope = envelope_from(&mut alice_store, alice, &receiver, hello).await;
-        let received = receiver.open(&envelope).await.unwrap().unwrap();
+        let Opened::Message(received) = receiver.open(&envelope).await.unwrap() else { panic!("not read") };
         assert_eq!(received.sender, ServiceId::from(alice));
         assert_eq!(received.timestamp, 1234);
         let Some(proto::content::Content::DataMessage(message)) = received.content.content else {
@@ -379,8 +358,9 @@ mod tests {
         };
         assert_eq!(message.body.as_deref(), Some("hello"));
 
-        // The same envelope again is a replay.
-        assert!(receiver.open(&envelope).await.is_err());
+        // The same envelope again is a replay: not read, and not a thing to
+        // ask the sender for again.
+        assert!(!matches!(receiver.open(&envelope).await.unwrap(), Opened::Message(_)));
 
         let sync = Content {
             content: Some(proto::content::Content::SyncMessage(SyncMessage::default())),

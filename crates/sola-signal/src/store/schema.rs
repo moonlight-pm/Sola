@@ -68,6 +68,108 @@ const STEPS: &[&str] = &[
         record BLOB NOT NULL,
         PRIMARY KEY (address, device, distribution_id)
     ) STRICT;",
+    // 3: people, groups, conversations and what is said in them. A message
+    // is known by who sent it and the sender's timestamp; `revisions` holds
+    // the timestamps of its edits, which receipts and reactions also name.
+    // `outbox` is what has still to go out, in order.
+    "CREATE TABLE recipients (
+        id INTEGER PRIMARY KEY,
+        aci TEXT UNIQUE,
+        pni TEXT UNIQUE,
+        number TEXT,
+        profile_key BLOB,
+        contact_name TEXT,
+        profile_name TEXT,
+        profile_at INTEGER NOT NULL DEFAULT 0,
+        blocked INTEGER NOT NULL DEFAULT 0
+    ) STRICT;
+    CREATE TABLE groups (
+        id INTEGER PRIMARY KEY,
+        master_key BLOB NOT NULL UNIQUE,
+        identifier BLOB NOT NULL UNIQUE,
+        revision INTEGER NOT NULL DEFAULT -1,
+        title TEXT
+    ) STRICT;
+    CREATE TABLE group_members (
+        grp INTEGER NOT NULL REFERENCES groups ON DELETE CASCADE,
+        recipient INTEGER NOT NULL REFERENCES recipients,
+        PRIMARY KEY (grp, recipient)
+    ) STRICT, WITHOUT ROWID;
+    CREATE TABLE conversations (
+        id INTEGER PRIMARY KEY,
+        recipient INTEGER UNIQUE REFERENCES recipients,
+        grp INTEGER UNIQUE REFERENCES groups,
+        expire_timer INTEGER NOT NULL DEFAULT 0,
+        expire_timer_version INTEGER NOT NULL DEFAULT 1,
+        last_activity INTEGER NOT NULL DEFAULT 0,
+        archived INTEGER NOT NULL DEFAULT 0,
+        muted_until INTEGER NOT NULL DEFAULT 0,
+        draft TEXT NOT NULL DEFAULT '',
+        CHECK ((recipient IS NULL) <> (grp IS NULL))
+    ) STRICT;
+    CREATE TABLE messages (
+        id INTEGER PRIMARY KEY,
+        conversation INTEGER NOT NULL REFERENCES conversations ON DELETE CASCADE,
+        sender INTEGER NOT NULL REFERENCES recipients,
+        sent_at INTEGER NOT NULL,
+        received_at INTEGER NOT NULL,
+        kind INTEGER NOT NULL DEFAULT 0,
+        body TEXT NOT NULL DEFAULT '',
+        quote_sent_at INTEGER,
+        quote_author INTEGER REFERENCES recipients,
+        quote_text TEXT,
+        expires_in INTEGER NOT NULL DEFAULT 0,
+        expires_at INTEGER,
+        outgoing INTEGER NOT NULL,
+        status INTEGER NOT NULL DEFAULT 0,
+        unread INTEGER NOT NULL DEFAULT 0,
+        edited INTEGER NOT NULL DEFAULT 0,
+        deleted INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (sender, sent_at, conversation)
+    ) STRICT;
+    CREATE INDEX messages_thread ON messages (conversation, received_at, id);
+    CREATE INDEX messages_unread ON messages (conversation) WHERE unread = 1;
+    CREATE INDEX messages_expiring ON messages (expires_at) WHERE expires_at IS NOT NULL;
+    CREATE TABLE revisions (
+        message INTEGER NOT NULL REFERENCES messages ON DELETE CASCADE,
+        sent_at INTEGER NOT NULL,
+        PRIMARY KEY (message, sent_at)
+    ) STRICT, WITHOUT ROWID;
+    CREATE TABLE reactions (
+        message INTEGER NOT NULL REFERENCES messages ON DELETE CASCADE,
+        author INTEGER NOT NULL REFERENCES recipients,
+        emoji TEXT NOT NULL,
+        sent_at INTEGER NOT NULL,
+        PRIMARY KEY (message, author)
+    ) STRICT, WITHOUT ROWID;
+    CREATE TABLE attachments (
+        id INTEGER PRIMARY KEY,
+        message INTEGER NOT NULL REFERENCES messages ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        content_type TEXT NOT NULL DEFAULT '',
+        file_name TEXT,
+        size INTEGER NOT NULL DEFAULT 0,
+        width INTEGER NOT NULL DEFAULT 0,
+        height INTEGER NOT NULL DEFAULT 0,
+        flags INTEGER NOT NULL DEFAULT 0,
+        pointer BLOB,
+        path TEXT,
+        state INTEGER NOT NULL DEFAULT 0
+    ) STRICT;
+    CREATE INDEX attachments_message ON attachments (message, position);
+    CREATE TABLE outbox (
+        id INTEGER PRIMARY KEY,
+        conversation INTEGER REFERENCES conversations ON DELETE CASCADE,
+        recipient INTEGER REFERENCES recipients,
+        message INTEGER REFERENCES messages ON DELETE CASCADE,
+        timestamp INTEGER NOT NULL,
+        content BLOB,
+        urgent INTEGER NOT NULL DEFAULT 1
+    ) STRICT;
+    CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value BLOB NOT NULL
+    ) STRICT, WITHOUT ROWID;",
 ];
 
 pub fn migrate(db: &Connection) -> Result<()> {
