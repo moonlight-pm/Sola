@@ -765,7 +765,8 @@ impl Store {
         let db = self.db();
         let name = name_sql("r");
         let mut query = db.prepare(&format!(
-            "SELECT c.id, c.recipient, c.grp IS NOT NULL, coalesce(nullif(g.title, ''), {name}), c.last_activity,
+            "SELECT c.id, c.recipient, c.grp IS NOT NULL,
+                    coalesce(nullif(g.title, ''), CASE WHEN c.grp IS NOT NULL THEN 'Group' END, {name}), c.last_activity,
                     (SELECT count(*) FROM messages m WHERE m.conversation = c.id AND m.unread = 1),
                     c.muted_until, c.expire_timer, c.draft,
                     last.body, last.outgoing, last.deleted,

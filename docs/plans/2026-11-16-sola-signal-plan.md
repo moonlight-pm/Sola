@@ -72,8 +72,9 @@ leaves when there is a connection, across restarts.
       account has left answers 403 and stays unnamed.*
 - [x] **Attachments:** fetched and decrypted (pictures and sound by
       themselves, the rest when asked), encrypted and uploaded (both of
-      Signal's upload protocols). *Cipher unit-tested; no file has been
-      fetched from or sent to Signal yet.*
+      Signal's upload protocols). *Cipher unit-tested; `sola-signal
+      selftest` put a file on Signal's file server (the tus protocol) and
+      took the same bytes back. No file has gone in a message yet.*
 - [x] **The window:** conversations with unread counts and drafts, search
       that also finds people to write to, the thread (bubbles, day lines,
       names in groups, pictures, files, reactions, replies), the composer

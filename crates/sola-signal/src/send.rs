@@ -255,7 +255,15 @@ impl<'a> Sender<'a> {
             Err(RequestError::Other(SealedSendFailure::ServiceIdNotFound)) => {
                 Err(never(anyhow!("{} is not a Signal account", to.service_id_string())))
             }
-            Err(e) => Err(classify(e)),
+            Err(e) => match classify(e) {
+                later @ Failure::Later(_) => Err(later),
+                // Whatever else the sealed way is refused for, the signed-in
+                // way may still take it.
+                Failure::Never(e) => {
+                    tracing::warn!("a sealed send was refused; sending signed in: {e:#}");
+                    Ok(Outcome::NotAllowed)
+                }
+            },
         }
     }
 
