@@ -501,6 +501,11 @@ impl Shell {
         // emptied), else the most recent app.
         let prev_focused = self.focused_window_id;
         if let Some((wid, app_id)) = take_focus.clone() {
+            // A new window in front shows its Super+H'd app again, as its
+            // tab row would: hidden, it would leave its zone empty.
+            if self.is_app_hidden(&app_id) {
+                self.retract_app_hidden(&app_id);
+            }
             let suppress = self
                 .suppress_map_focus_for
                 .as_deref()

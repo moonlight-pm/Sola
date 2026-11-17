@@ -763,7 +763,8 @@ shows its next window instead. The process keeps running.
 To bring it back: click one of its rows in the bar (or reach it with
 Super+Backtick), or pick it in the launcher. Clicking one of its
 notifications or its icon in the top row, or an event in the clock's panel, brings it
-back too, and so does the app showing one of its own windows.
+back too, and so does the app showing one of its own windows or opening a
+new one in front (a link from Mail opening in a hidden Browser).
 
 Hiding the last app on screen leaves the top row, the bar and the ground.
 
