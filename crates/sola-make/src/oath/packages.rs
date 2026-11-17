@@ -152,6 +152,17 @@ pub const PACKAGES: &[Package] = &[
     app("sola-monitor", &["sola-monitor"], &[]),
     app("sola-calendar", &["sola-calendar"], &[]),
     app("sola-mail", &["sola-mail"], &[]),
+    // Signal: libsignal's build scripts run cmake over BoringSSL, git to
+    // patch it, and bindgen on libclang (`signal_tools`).
+    Package {
+        name: "sola-signal",
+        bins: &["sola-signal"],
+        build: &["rust", "pkgconf", "libxkbcommon", "cmake", "git", "libclang"],
+        needs: &[],
+        ui: true,
+        share: false,
+        cef: false,
+    },
     app("sola-settings", &["sola-settings"], &[]),
     // Oath, the package ecosystem app: it asks git whether a local
     // build's commit is pushed.

@@ -19,6 +19,7 @@
 //!   Outward-facing: only with the owner's go-ahead.
 
 mod catalog;
+pub use catalog::on_oath;
 mod cpus;
 mod origin;
 mod packages;
@@ -143,6 +144,11 @@ fn pin(wants: &[Want], me: &provenance::Source, force: bool, solactl: &Path) -> 
             catalog::create(&w.id, &w.hash, &w.needs, me)?;
         } else {
             catalog::set(&w.id, &w.hash, &w.needs, me)?;
+            // In the catalog but not on the machine: a plan build here made
+            // its object (`oath build` does, absent).
+            if was == "none" {
+                catalog::present(&w.id)?;
+            }
         }
         println!("[oath] {}: {} -> {}", w.id, short(was), short(&w.hash));
     }
