@@ -1,7 +1,8 @@
 # Signal client — plan
 
 **Started:** 2026-11-16, on Joshua's word ("All this is good -- go ahead").
-**Branch:** `signal` (`.worktrees/signal`), not merged, nothing installed.
+**Branch:** `signal` (`.worktrees/signal`), not merged, nothing installed;
+merged into `next` (613e7b77) for the overlay.
 **Research and why this shape:** [`../ideas/2026-10-31-signal-client.md`](../ideas/2026-10-31-signal-client.md).
 
 One binary, `sola-signal` (`crates/sola-signal`, AGPL-3.0-only): a linked
@@ -99,13 +100,32 @@ leaves when there is a connection, across restarts.
 - Phone numbers and usernames looked up (a conversation starts from
   someone the account already knows).
 - Stories, payments, calls (RingRTC), key transparency.
-- A package: `pkg:sola-signal` is a new name (the Oath session), and the
-  launcher's entry comes with it.
+- Applied anywhere. The package and the launcher's entry are written (see
+  Packaging) and wait for Joshua's word for the apply.
 - Where the keys rest: still the sqlite file in the clear, mode 0600.
 
 One `sola-signal` signs in at a time (`signal.lock` beside the store): the
 server closes a device's connection when it opens another, and two
 processes would write the same sessions.
+
+## Packaging
+
+- `pkg:sola-signal` in `sola-make`'s `PACKAGES`, its build packs `cmake`
+  (BoringSSL), `git` (boring-sys patches its copy with `git apply`) and
+  `libclang` (bindgen) beside the usual ones. `plan:sola-build` builds
+  `sola-protoc` first and sets `PROTOC`, `LIBCLANG_PATH=/lib` and bindgen's
+  clang arguments, as `signal_tools` does for a build on the desk;
+  `cargo make oath stage` takes the same environment.
+- **2026-11-16: `cargo make oath publish --local` passed from the branch
+  (8a77a48e)**: every plan built in the sandbox, `pkg:sola-signal`
+  6cc2ce03a164 among them (51 MB; it runs, and loads only the C and C++
+  runtimes). The vendored crates needed no change to the pruning.
+- The launcher's entry ("Signal", `lucide/message-circle`) is in
+  `sola-shell`'s `builtins.rs`: it reaches a desk with `pkg:sola`.
+- On novus the overlay makes the package (`cargo make oath apply sola-signal
+  sola` from `next`; `pkg:sola` restarts the desk). Other machines get it
+  only once it is published and the Oath session has put it in the desk
+  profile, with the AGPL-3.0 note.
 
 ## Following Signal
 
@@ -127,5 +147,8 @@ processes would write the same sessions.
   Signal's `boring` fork.
 - A whole-workspace `cargo make build` then builds BoringSSL (cmake) and
   needs libclang: on NixOS, a from-source build needs both.
+- Every release build compiles BoringSSL too, and the lock's bumps move
+  every package's hash: the first publish after the merge moves them all
+  (each app starts again, and the desk).
 - `cargo test -p sola-signal` needs the same environment by hand (there is
   no `cargo make test`).
