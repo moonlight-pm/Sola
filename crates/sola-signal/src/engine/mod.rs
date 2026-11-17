@@ -864,7 +864,7 @@ impl Engine {
                     _ => format!("You set messages to disappear after {}.", inbox::duration(seconds)),
                 };
                 let mut fx = Effects::default();
-                self.inbox().note(conversation, me, &text, false, &mut fx)?;
+                self.inbox().note(conversation, me, &text, now(), false, &mut fx)?;
                 (self.emit)(Event::Changed(conversation));
             }
             Command::Fetch { attachment } => jobs::fetch(self.shared.clone(), self.inputs.clone(), attachment),
