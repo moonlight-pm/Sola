@@ -360,7 +360,9 @@ fn cmd_pair(path: &PathBuf, pairing: Pairing) {
     let then = match (view, on_mac) {
         (_, true) => format!("Restart the agent on {host} (it reads the keys when it starts)."),
         (true, false) => format!("{host} takes this machine's view from now on: sola-kvm view {host}"),
-        (false, false) => format!("Restart sola-kvm listen on {host}; the server here starts by itself."),
+        (false, false) => format!(
+            "sola-kvm starts by itself on each side that was waiting for a pairing; restart one that ran with other keys (on {host}, its listen)."
+        ),
     };
     println!(
         "Paired with {host}.\n  this machine: {}\n  {host}: {}\n{then}",
@@ -455,9 +457,16 @@ fn cmd_server(path: &PathBuf, input: &str) {
         }
     };
     serve_view(cfg.peer.port);
-    // Unpaired, input sharing waits for a pairing rather than exit and be
-    // restarted: a machine that is only viewed never has one.
-    let keys = pairing().unwrap_or_else(|| {
+    if let Err(e) = run::run_server(&cfg, backend, paired_or_wait()) {
+        error!("{e}");
+        std::process::exit(1);
+    }
+}
+
+/// The pairing; unpaired, input sharing waits for one rather than exit and
+/// be restarted: a machine that is only viewed never has one.
+fn paired_or_wait() -> Keys {
+    pairing().unwrap_or_else(|| {
         info!("no input peer: input sharing waits for `sola-kvm pair <peer>`");
         let dir = link::dir();
         if let Err(e) = sola_kvm::wait::until(&dir, || matches!(link::load(&dir), Ok(Some(_)))) {
@@ -465,11 +474,7 @@ fn cmd_server(path: &PathBuf, input: &str) {
             std::process::exit(1);
         }
         paired()
-    });
-    if let Err(e) = run::run_server(&cfg, backend, keys) {
-        error!("{e}");
-        std::process::exit(1);
-    }
+    })
 }
 
 /// This machine's screen to the machines paired to view it, once one is
@@ -496,11 +501,16 @@ fn serve_view(kvm_port: u16) {
 
 fn cmd_listen(path: &PathBuf, bind: Option<String>, dump: bool) {
     let cfg = load(path);
-    let keys = paired();
     let addr = bind.unwrap_or_else(|| format!("0.0.0.0:{}", cfg.peer.port));
     let result = if dump {
-        sola_kvm::inject::run_dump(&addr, keys)
+        sola_kvm::inject::run_dump(&addr, paired())
     } else {
+        // A Linux peer is viewed as a Mac's agent is: its screen goes to
+        // the machines paired to view it, beside the input it takes.
+        sola_core::env::activate_wayland_session(30_000);
+        let port = addr.rsplit_once(':').and_then(|(_, port)| port.parse().ok());
+        serve_view(port.unwrap_or(cfg.peer.port));
+        let keys = paired_or_wait();
         let clip = if cfg.clipboard.enable {
             Some(sola_kvm::clip::ClipConfig {
                 peer_host: cfg.peer.host.clone(),

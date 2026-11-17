@@ -53,13 +53,15 @@ and [a screen of its own](2026-11-11-remote-desktop-screen-design.md).
 
 ## Host on Linux
 
-- `sola-kvm server` (Oath's `svc:sola-kvm` on every desk) serves the screen
-  once a viewer is paired: TCP on the KVM port plus one, a viewer's key read
+- `sola-kvm server` and `sola-kvm listen` (Oath's `svc:sola-kvm` runs one
+  of them on every desk; koeurax's is `listen`) serve the screen once a
+  viewer is paired, as the Mac agent does beside its input: TCP on the KVM port plus one, a viewer's key read
   as it connects (`Conn::accept_from`), so a pairing needs no restart.
-- **Unpaired, the server waits** (`wait.rs`, inotify on its folder) instead
-  of exiting: a machine that is only viewed never has an input peer, and
-  before this it failed and was restarted until Oath gave up. Input sharing
-  starts by itself once a peer is paired. `listen` is unchanged.
+- **Unpaired, the server and `listen` wait** (`wait.rs`, inotify on their
+  folder) instead of exiting: a machine that is only viewed never has an
+  input peer, and before this it failed and was restarted until Oath gave
+  up (koeurax's `svc:sola-kvm` had been turned off). Input sharing starts by
+  itself once a peer is paired.
 - One viewer at a time; a new one takes over, as on the Mac.
 - **Picture:** wlr-screencopy (version 3) of the first output into shared
   memory, the pointer drawn in (`overlay_cursor`; wlroots draws it in
