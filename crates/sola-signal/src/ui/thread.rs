@@ -5,7 +5,7 @@ use iced::{Alignment, ContentFit, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::scroll;
-use sola_kit::components::style::{BAR_H, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, mix, on_color};
+use sola_kit::components::style::{BAR_H, RADIUS_LG, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, mix, on_color};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::toolbar::toolbar_icon_tip;
 use sola_kit::fonts;
@@ -343,11 +343,14 @@ fn view_attachment(attachment: &Attachment, outgoing: bool) -> Element<'_, Msg> 
             }
             _ => (PICTURE, PICTURE * 0.75),
         };
-        return button(image(image::Handle::from_path(path)).width(w).height(h).content_fit(ContentFit::Contain))
-            .on_press(Msg::OpenFile(path.clone()))
-            .padding(0)
-            .style(style::bare)
-            .into();
+        let picture = image(image::Handle::from_path(path))
+            .width(w)
+            .height(h)
+            .content_fit(ContentFit::Contain)
+            .border_radius(RADIUS_LG);
+        let open = button(picture).on_press(Msg::OpenFile(path.clone())).padding(0).style(style::bare);
+        // As far from the bubble's top and bottom as from its sides.
+        return container(open).padding(Padding::from([SPACE_SM, 0.0])).into();
     }
     let what = match attachment.content_type.split('/').next() {
         Some("image") => "Photo",
