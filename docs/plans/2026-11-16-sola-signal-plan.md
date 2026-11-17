@@ -2,8 +2,11 @@
 
 **Started:** 2026-11-16, on Joshua's word ("All this is good -- go ahead").
 **Branch:** `signal`, merged to master 2026-11-16 (Joshua: "apply it and merge
-to master"). **On novus:** `pkg:sola-signal` cd68fe1b6422 and `pkg:sola`
+to master"). **On novus:** `pkg:sola-signal` 6f13d09066a3 from next@d9e75c25, `pkg:sola`
 b5951e0d23dd from next@088ce181 (the launcher's "Signal"). Not released.
+**While Joshua tries it (2026-11-16, his standing word):** a fix that moves
+only `pkg:sola-signal` is applied from `next` and merged to master without
+asking; anything that moves the desk core is still asked.
 **Research and why this shape:** [`../ideas/2026-10-31-signal-client.md`](../ideas/2026-10-31-signal-client.md).
 
 One binary, `sola-signal` (`crates/sola-signal`, AGPL-3.0-only): a linked
@@ -85,6 +88,14 @@ leaves when there is a connection, across restarts.
       disappearing timer), a desk notification per conversation, the
       unread count in the window's title. *Looked at on a private desk
       over an invented store (`sola-signal demo`, `SOLA_SIGNAL_OFFLINE=1`).*
+
+## Found in use
+
+- 2026-11-16: a conversation that had waited on the server showed all of
+  Joshua's messages first. Ours were placed by their sent time and theirs
+  by when they reached this device. Every message is now placed by the
+  server's time for it (`Received.server_timestamp`); schema step 4 places
+  the ones already kept by their sent time. Applied (6f13d09066a3).
 
 ## Not built
 
