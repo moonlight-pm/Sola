@@ -16,9 +16,12 @@ mod display;
 mod encode;
 #[cfg(target_os = "macos")]
 mod lid;
+// Shared with the Linux host, as `link.rs` is.
+#[path = "../../../../crates/sola-kvm/src/host/flow.rs"]
 mod flow;
 #[cfg(target_os = "macos")]
 mod pattern;
+#[path = "../../../../crates/sola-kvm/src/host/rate.rs"]
 mod rate;
 mod server;
 mod shape;

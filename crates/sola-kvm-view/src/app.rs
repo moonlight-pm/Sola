@@ -1,75 +1,44 @@
-//! The window: the picture, and everything said to the other machine.
+//! Remote Desktop: a window per machine, several at once, and the
+//! Connections window to open one from, pair a new one in, or forget one.
+//! Menus follow the focused window.
 
-use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
-use std::sync::mpsc::Sender;
 
-use iced::futures::SinkExt as _;
-use iced::futures::StreamExt as _;
-use iced::keyboard::{self, key::Physical};
-use iced::widget::{Stack, center, container, shader, text};
-use iced::{Alignment, Color, Element, Event, Length, Size, Subscription, Task, Theme, event, stream, window};
+use iced::keyboard::{self, key::Named};
+use iced::widget::container;
+use iced::{Element, Event, Length, Size, Subscription, Task, Theme, event, window};
 
 use sola_bus::Message;
-use sola_core::state_file::StateFile;
 use sola_bus::topics::Topic;
-use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
-use sola_kit::fonts;
+use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit, window_settings_transparent};
+use sola_kit::tabs::TabWindows;
 use sola_kit::theme::default_theme;
-use sola_kvm::protocol::Packet;
-use sola_kvm::view_wire;
+use sola_kvm::link;
 
 use crate::APP_ID;
-use crate::inhibit::{self, Inhibitor};
+use crate::connections::{self, Connections, Row};
+use crate::instance;
 use crate::menu;
-use crate::net::{self, Display, Outgoing};
-use crate::picture::Picture;
-use crate::pictures::Pictures;
+use crate::session::{self, Session};
 
-const ESCAPE_EVDEV: u32 = 1;
+/// The list's tab key; a machine's is `machine/<host>`.
+const LIST_TAB: &str = "connections";
 
-/// How the other machine is, in words for the window.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Status {
-    Connecting,
-    Showing,
-    Lost(String),
-    Refused(String),
-}
+/// A machine to show: its host, and the KVM port when it is not the usual.
+pub type Target = (String, u16);
 
 pub struct App {
-    /// `None`: no machine to show, and the status says why.
-    host: Option<String>,
-    port: u16,
-    status: Status,
-    display: Option<Display>,
-    pictures: Arc<Pictures>,
-    outgoing: Option<Sender<Outgoing>>,
-    /// Keys the other machine has been told are down.
-    held: BTreeSet<u32>,
-    /// False once Ctrl+Alt+Esc has handed keyboard and pointer back.
-    captured: bool,
-    /// Where the other machine's pointer was sent, in its points; `None`
-    /// until a move since connecting.
-    pointer: Option<(i32, i32)>,
-    /// The picture's area, which the host's screen is made to fit; `None`
-    /// until laid out, and nothing connects before.
-    area: Option<Size>,
-    scale: f32,
-    focused: bool,
-    /// View → Statistics: the window's corner says how the pictures come.
-    statistics: bool,
-    /// View → Mirror: the other machine's own screen, not one of the
-    /// window's size. Kept across starts.
-    mirror: bool,
-    /// The other machine has a screen of its own on to mirror.
-    can_mirror: bool,
-    /// The pictures are its own screen, as it says: it mirrors when it
-    /// could not extend. `None` until it says.
-    mirroring: Option<bool>,
-    inhibitor: Option<Arc<Inhibitor>>,
-    window_id: Option<window::Id>,
+    tabs: TabWindows,
+    sessions: HashMap<window::Id, Session>,
+    /// The Connections window, while it is up.
+    list: Option<(window::Id, Connections)>,
+    /// The machines this one is paired to view, in name order.
+    machines: Vec<String>,
+    /// The window menus and keys act on: the last focused.
+    focused: Option<window::Id>,
+    /// The menus last published.
+    menu: Option<menu::Focus>,
     theme: Theme,
     float: sola_kit::FloatState,
 }
@@ -77,428 +46,468 @@ pub struct App {
 #[derive(Debug, Clone)]
 pub enum Msg {
     Bus(Arc<Message>),
-    Net(net::Event),
+    Session(window::Id, session::Msg),
+    List(window::Id, connections::Msg),
+    /// A key, for whichever window has the keyboard.
     Key {
-        physical: Physical,
+        window: window::Id,
+        physical: keyboard::key::Physical,
+        key: keyboard::Key,
         pressed: bool,
         repeat: bool,
         modifiers: keyboard::Modifiers,
     },
-    Pointer(Packet),
-    Area(Size),
-    Scale(f32),
-    Capture,
-    Focused,
-    Unfocused,
-    Inhibited(Option<Arc<Inhibitor>>),
-    WindowReady(Option<window::Id>),
-    TitleDrag,
-    TitleResize(window::Direction),
-    TitleClose,
+    Window(window::Id, window::Event),
+    /// The list's titlebar.
+    Drag(window::Id),
+    Resize(window::Id, window::Direction),
+    /// Another launch named these machines (none: the list).
+    Handoff(Vec<String>),
+    /// `sola-kvm pair <host> --view` finished.
+    Paired(String, Result<(), String>),
+    Opened(window::Id),
 }
 
 impl App {
-    pub fn boot(target: Result<(String, u16), String>) -> (Self, Task<Msg>) {
-        let (host, port, status) = match target {
-            Ok((host, port)) => (Some(host), port, Status::Connecting),
-            Err(why) => (None, 0, Status::Refused(why)),
+    /// The machines named, each in its window; with none, the list.
+    pub fn boot(targets: Vec<Target>) -> (Self, Task<Msg>) {
+        let mut app = Self {
+            tabs: TabWindows::new(APP_ID),
+            sessions: HashMap::new(),
+            list: None,
+            machines: paired_machines(),
+            focused: None,
+            menu: None,
+            theme: default_theme(),
+            float: sola_kit::FloatState::new(APP_ID),
         };
-        (
-            Self {
-                host,
-                port,
-                status,
-                display: None,
-                pictures: {
-                    let pictures = Arc::new(Pictures::default());
-                    pictures.mirror.store(saved_mirror(), Ordering::Relaxed);
-                    pictures
-                },
-                outgoing: None,
-                held: BTreeSet::new(),
-                captured: true,
-                pointer: None,
-                area: None,
-                scale: 1.0,
-                focused: false,
-                statistics: false,
-                mirror: saved_mirror(),
-                can_mirror: true,
-                mirroring: None,
-                inhibitor: None,
-                window_id: None,
-                theme: default_theme(),
-                float: sola_kit::FloatState::new(APP_ID),
-            },
-            sola_kit::window_ready_task(Msg::WindowReady),
-        )
+        let task = app.open_targets(targets);
+        app.publish_menu();
+        (app, task)
     }
 
-    pub fn title(&self) -> String {
-        self.name().to_string()
+    pub fn title(&self, window: window::Id) -> String {
+        self.sessions
+            .get(&window)
+            .map_or_else(|| "Remote Desktop".into(), |s| s.host.clone())
     }
 
-    fn name(&self) -> &str {
-        self.host.as_deref().unwrap_or("Remote Desktop")
+    pub fn theme(&self, window: window::Id) -> Theme {
+        sola_kit::theme_for(self.chrome(window), &self.theme)
     }
 
-    pub fn theme(&self) -> Theme {
-        sola_kit::theme_for(self.float.chrome_any(), &self.theme)
+    fn chrome(&self, window: window::Id) -> sola_kit::Chrome {
+        self.tabs
+            .river_id(window)
+            .map_or(sola_kit::Chrome::Tiled, |id| self.float.chrome(id))
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
-        let host = self.host.clone().filter(|_| self.area.is_some());
-        let link = host.map_or_else(Subscription::none, |host| {
-            Subscription::run_with(
-                Link {
-                    host,
-                    port: self.port,
-                    pictures: Arc::clone(&self.pictures),
-                },
-                run_link,
-            )
-        });
-        Subscription::batch([
-            bus_subscription().map(Msg::Bus),
-            link.map(Msg::Net),
-            event::listen_with(|event, _status, _id| match event {
-                Event::Keyboard(keyboard::Event::KeyPressed {
-                    physical_key,
-                    modifiers,
-                    repeat,
-                    ..
-                }) => Some(Msg::Key {
-                    physical: physical_key,
-                    pressed: true,
-                    repeat,
-                    modifiers,
+        let links = self
+            .sessions
+            .iter()
+            .map(|(&window, session)| session.subscription().with(window).map(|(w, m)| Msg::Session(w, m)));
+        Subscription::batch(
+            [
+                bus_subscription().map(Msg::Bus),
+                instance::subscription().map(Msg::Handoff),
+                event::listen_with(|event, _status, window| match event {
+                    Event::Keyboard(keyboard::Event::KeyPressed {
+                        physical_key,
+                        key,
+                        modifiers,
+                        repeat,
+                        ..
+                    }) => Some(Msg::Key {
+                        window,
+                        physical: physical_key,
+                        key,
+                        pressed: true,
+                        repeat,
+                        modifiers,
+                    }),
+                    Event::Keyboard(keyboard::Event::KeyReleased {
+                        physical_key,
+                        key,
+                        modifiers,
+                        ..
+                    }) => Some(Msg::Key {
+                        window,
+                        physical: physical_key,
+                        key,
+                        pressed: false,
+                        repeat: false,
+                        modifiers,
+                    }),
+                    Event::Window(event) => Some(Msg::Window(window, event)),
+                    _ => None,
                 }),
-                Event::Keyboard(keyboard::Event::KeyReleased {
-                    physical_key, modifiers, ..
-                }) => Some(Msg::Key {
-                    physical: physical_key,
-                    pressed: false,
-                    repeat: false,
-                    modifiers,
-                }),
-                Event::Window(window::Event::Focused) => Some(Msg::Focused),
-                Event::Window(window::Event::Rescaled(scale)) => Some(Msg::Scale(scale)),
-                Event::Window(window::Event::Unfocused) => Some(Msg::Unfocused),
-                _ => None,
-            }),
-        ])
+            ]
+            .into_iter()
+            .chain(links),
+        )
     }
 
     pub fn update(&mut self, msg: Msg) -> Task<Msg> {
+        let task = self.on(msg);
+        self.publish_menu();
+        task
+    }
+
+    fn on(&mut self, msg: Msg) -> Task<Msg> {
         match msg {
-            Msg::Bus(message) => {
-                self.float.update(&message);
-                apply_theme_update(&message, &mut self.theme);
-                if is_self_quit(&message, APP_ID) {
-                    return iced::exit();
+            Msg::Bus(message) => return self.on_bus(&message),
+            Msg::Session(window, msg) => {
+                if matches!(msg, session::Msg::TitleClose) {
+                    return self.close(window);
                 }
-                if let Some(Topic::MenuAction(p)) = Topic::parse(&message) {
-                    if p.app_id == APP_ID && p.action_id == "quit" {
-                        return iced::exit();
-                    }
-                    if p.app_id == APP_ID && p.action_id == menu::STATISTICS {
-                        self.statistics = !self.statistics;
-                        self.publish_menu();
-                    }
-                    if p.app_id == APP_ID && [menu::MIRROR, menu::EXTEND].contains(&p.action_id.as_str()) {
-                        self.set_mirror(p.action_id == menu::MIRROR);
-                    }
+                if let Some(session) = self.sessions.get_mut(&window) {
+                    return session.update(msg).map(move |m| Msg::Session(window, m));
                 }
             }
-            Msg::Net(event) => return self.on_net(event),
+            Msg::List(window, msg) => return self.on_list(window, msg),
             Msg::Key {
+                window,
                 physical,
+                key,
                 pressed,
                 repeat,
                 modifiers,
-            } => return self.on_key(&physical, pressed, repeat, modifiers),
-            Msg::Pointer(packet) => {
-                if let Packet::Motion { x, y } = packet {
-                    self.pointer = Some((x, y));
+            } => {
+                if self.sessions.contains_key(&window) {
+                    let key = session::Msg::Key {
+                        physical,
+                        pressed,
+                        repeat,
+                        modifiers,
+                    };
+                    return self.on(Msg::Session(window, key));
                 }
-                self.send(packet);
-            }
-            Msg::Area(area) => {
-                self.area = Some(area);
-                self.want_size();
-            }
-            Msg::Scale(scale) => {
-                self.scale = scale;
-                self.want_size();
-            }
-            Msg::Capture => {
-                self.captured = true;
-                self.clipboard_to_host();
-                return self.inhibit();
-            }
-            Msg::Focused => {
-                self.focused = true;
-                self.clipboard_to_host();
-            }
-            Msg::Unfocused => {
-                self.focused = false;
-                self.release_keys();
-                self.clipboard_from_host();
-            }
-            Msg::Inhibited(inhibitor) => {
-                // A release that landed while this was on its way wins.
-                if self.captured {
-                    self.inhibitor = inhibitor;
+                if let (true, keyboard::Key::Named(named)) = (pressed, key) {
+                    return self.on_list(window, connections::Msg::Key(named));
                 }
             }
-            Msg::WindowReady(id) => {
-                self.window_id = id;
-                let scale = id.map_or_else(Task::none, |id| window::scale_factor(id).map(Msg::Scale));
-                return Task::batch([self.inhibit(), scale]);
+            Msg::Drag(window) => return sola_kit::drag(Some(window)),
+            Msg::Resize(window, direction) => return sola_kit::drag_resize(Some(window), direction),
+            Msg::Window(window, event) => return self.on_window(window, event),
+            Msg::Handoff(targets) => {
+                return match targets.is_empty() {
+                    true => self.show_list(),
+                    false => self.open_targets(targets.iter().map(|t| target(t)).collect()),
+                };
             }
-            Msg::TitleDrag => return sola_kit::drag(self.window_id),
-            Msg::TitleResize(direction) => return sola_kit::drag_resize(self.window_id, direction),
-            Msg::TitleClose => sola_kit::close_app(APP_ID),
+            Msg::Paired(host, result) => {
+                self.machines = paired_machines();
+                let Some((_, list)) = self.list.as_mut() else {
+                    return match result {
+                        Ok(()) => self.open_machine(host, DEFAULT_KVM_PORT),
+                        Err(_) => Task::none(),
+                    };
+                };
+                list.pairing = None;
+                match result {
+                    Ok(()) => {
+                        tracing::info!(%host, "remote desktop: paired");
+                        list.set_query(String::new());
+                        let list_window = self.list.as_ref().map(|(w, _)| *w);
+                        let open = self.open_machine(host, DEFAULT_KVM_PORT);
+                        return Task::batch([open, list_window.map_or_else(Task::none, |w| self.close(w))]);
+                    }
+                    Err(why) => {
+                        tracing::warn!(%host, %why, "remote desktop: pairing failed");
+                        list.error = Some(why);
+                    }
+                }
+            }
+            Msg::Opened(window) => {
+                if let Some(session) = self.sessions.get(&window) {
+                    return session.opened().map(move |m| Msg::Session(window, m));
+                }
+                if self.list.as_ref().is_some_and(|(w, _)| *w == window) {
+                    return iced::widget::operation::focus(iced::widget::Id::new(connections::FIELD_ID));
+                }
+            }
         }
         Task::none()
     }
 
-    fn on_net(&mut self, event: net::Event) -> Task<Msg> {
-        match event {
-            net::Event::Ready(outgoing) => self.outgoing = Some(outgoing),
-            net::Event::Connected(display) => {
-                self.display = Some(display);
-                self.pointer = None;
-                // Said again after each Display.
-                self.mirroring = None;
-                self.status = Status::Showing;
-                self.clipboard_to_host();
+    fn on_bus(&mut self, message: &Message) -> Task<Msg> {
+        self.float.update(message);
+        self.tabs.update(message);
+        apply_theme_update(message, &mut self.theme);
+        if is_self_quit(message, APP_ID) {
+            return iced::exit();
+        }
+        // The tab bar's stoplight: as the window's own close.
+        if let Some(window) = self.tabs.close_request(message) {
+            return self.close(window);
+        }
+        let Some(Topic::MenuAction(p)) = Topic::parse(message) else {
+            return Task::none();
+        };
+        if p.app_id != APP_ID {
+            return Task::none();
+        }
+        let action = p.action_id.as_str();
+        match action {
+            "quit" => return iced::exit(),
+            menu::CONNECTIONS => return self.show_list(),
+            menu::CONNECT => {
+                if let Some(machine) = self.list_selection() {
+                    return self.pick_machine(machine);
+                }
             }
-            // The message alone brings the redraw that uploads it.
-            net::Event::Picture => self.pictures.drawn(),
-            net::Event::Cursor => {}
-            net::Event::CanMirror(can) => {
-                self.can_mirror = can;
-                self.publish_menu();
+            menu::FORGET => {
+                if let Some(machine) = self.list_selection() {
+                    self.forget(&machine);
+                }
             }
-            net::Event::Mirroring(mirroring) => {
-                self.mirroring = Some(mirroring);
-                self.publish_menu();
-            }
-            net::Event::Lost(why) => {
-                self.status = Status::Lost(why);
-                self.held.clear();
-            }
-            net::Event::Refused(why) => self.status = Status::Refused(why),
+            _ => {}
+        }
+        let Some(session) = self.focused.and_then(|w| self.sessions.get_mut(&w)) else {
+            return Task::none();
+        };
+        match action {
+            menu::STATISTICS => session.statistics = !session.statistics,
+            menu::MIRROR | menu::EXTEND => session.set_mirror(action == menu::MIRROR),
+            _ => {}
         }
         Task::none()
     }
 
-    fn on_key(&mut self, physical: &Physical, pressed: bool, repeat: bool, modifiers: keyboard::Modifiers) -> Task<Msg> {
-        if !self.captured {
-            return Task::none();
+    fn on_window(&mut self, window: window::Id, event: window::Event) -> Task<Msg> {
+        let to_session = match event {
+            window::Event::Focused => {
+                self.focused = Some(window);
+                if self.list.as_ref().is_some_and(|(w, _)| *w == window) {
+                    self.machines = paired_machines();
+                }
+                Some(session::Msg::Focused)
+            }
+            window::Event::Unfocused => Some(session::Msg::Unfocused),
+            window::Event::Rescaled(scale) => Some(session::Msg::Scale(scale)),
+            window::Event::CloseRequested => return self.close(window),
+            window::Event::Closed => {
+                self.forget_window(window);
+                if self.sessions.is_empty() && self.list.is_none() {
+                    return iced::exit();
+                }
+                None
+            }
+            _ => None,
+        };
+        match (to_session, self.sessions.get_mut(&window)) {
+            (Some(msg), Some(session)) => session.update(msg).map(move |m| Msg::Session(window, m)),
+            _ => Task::none(),
         }
-        let Some(code) = sola_kit::keys::evdev_of(physical) else {
+    }
+
+    fn on_list(&mut self, window: window::Id, msg: connections::Msg) -> Task<Msg> {
+        let Some((list_window, list)) = self.list.as_mut() else {
             return Task::none();
         };
-        if pressed && code == ESCAPE_EVDEV && modifiers.control() && modifiers.alt() {
-            return self.release();
-        }
-        if pressed {
-            self.held.insert(code);
-        } else if !self.held.remove(&code) {
-            // Pressed elsewhere and let go here: the other machine never
-            // heard it go down.
+        if *list_window != window {
             return Task::none();
         }
-        let state = match (pressed, repeat) {
-            (false, _) => 0,
-            (true, false) => 1,
-            (true, true) => 2,
-        };
-        self.send(Packet::Key { keycode: code, pressed: state });
+        let len = list.rows(&self.machines).len();
+        match msg {
+            connections::Msg::Query(query) => {
+                list.set_query(query);
+                list.error = None;
+            }
+            connections::Msg::Key(Named::ArrowUp) => list.step(-1, len),
+            connections::Msg::Key(Named::ArrowDown) => list.step(1, len),
+            connections::Msg::Key(Named::Escape) => return self.close(window),
+            connections::Msg::Key(_) => {}
+            connections::Msg::Pick(i) => {
+                list.selected = i;
+                match list.rows(&self.machines).into_iter().nth(i) {
+                    Some(Row::Machine(machine)) => return self.pick_machine(machine),
+                    Some(Row::Pair(host)) if list.pairing.is_none() => {
+                        list.pairing = Some(host.clone());
+                        list.error = None;
+                        return Task::perform(pair(host.clone()), move |result| Msg::Paired(host.clone(), result));
+                    }
+                    Some(Row::Pair(_)) | None => {}
+                }
+            }
+        }
         Task::none()
     }
 
-    /// Ctrl+Alt+Esc: keyboard, pointer and the desk's shortcuts come back.
-    /// A click on the picture takes them again.
-    fn release(&mut self) -> Task<Msg> {
-        self.clipboard_from_host();
-        self.captured = false;
-        self.inhibitor = None;
-        self.held.clear();
-        self.send(Packet::Leave);
-        Task::none()
+    /// A machine picked in the list: its window, and the list goes.
+    fn pick_machine(&mut self, machine: String) -> Task<Msg> {
+        let list = self.list.as_ref().map(|(w, _)| *w);
+        let open = self.open_machine(machine, DEFAULT_KVM_PORT);
+        Task::batch([open, list.map_or_else(Task::none, |w| self.close(w))])
     }
 
-    /// Coming in: what was copied here is there to paste.
-    fn clipboard_to_host(&self) {
-        if self.captured && self.focused {
-            self.send_out(Outgoing::PushClipboard);
+    /// This machine no longer views `machine` (its key here goes; the other
+    /// still knows this one's until it is paired again).
+    fn forget(&mut self, machine: &str) {
+        let forgot = link::forget_view_peer(&link::dir(), machine);
+        self.machines = paired_machines();
+        if let Some((_, list)) = self.list.as_mut() {
+            list.error = forgot.err().map(|e| format!("{machine} could not be forgotten: {e}"));
+            let len = list.rows(&self.machines).len();
+            list.selected = list.selected.min(len.saturating_sub(1));
         }
+        tracing::info!(%machine, "remote desktop: forgot a machine");
     }
 
-    /// Going out: what was copied there is here to paste.
-    fn clipboard_from_host(&self) {
-        if self.captured {
-            self.send_out(Outgoing::PullClipboard);
+    fn list_selection(&self) -> Option<String> {
+        let (_, list) = self.list.as_ref()?;
+        list.selected_machine(&self.machines)
+    }
+
+    fn open_targets(&mut self, targets: Vec<Target>) -> Task<Msg> {
+        if targets.is_empty() {
+            return self.show_list();
         }
+        Task::batch(
+            targets
+                .into_iter()
+                .map(|(host, port)| self.open_machine(host, port))
+                .collect::<Vec<_>>(),
+        )
     }
 
-    /// Mirror the other machine's screen, or extend it, now and from now on.
-    fn set_mirror(&mut self, mirror: bool) {
-        self.mirror = mirror;
-        mirror_file().save(&mirror);
-        self.pictures.mirror.store(mirror, Ordering::Relaxed);
-        self.publish_menu();
-        self.send_out(Outgoing::Mirror(mirror));
-    }
-
-    fn publish_menu(&self) {
-        let mirrored = self.mirroring.unwrap_or(self.mirror && self.can_mirror);
-        sola_kit::menu::publish(menu::app_menu(self.statistics, mirrored, self.can_mirror));
-    }
-
-    /// The host's screen at the picture's area, when it can.
-    fn want_size(&self) {
-        let Some(area) = self.area else {
-            return;
-        };
-        let size = view_wire::Size {
-            width: area.width as u32,
-            height: area.height as u32,
-            scale_percent: (self.scale * 100.0).round() as u16,
-        };
-        if self.pictures.want(size) {
-            self.send_out(Outgoing::Size(size));
-        }
-    }
-
-    fn release_keys(&mut self) {
-        for keycode in std::mem::take(&mut self.held) {
-            self.send(Packet::Key { keycode, pressed: 0 });
-        }
-    }
-
-    fn inhibit(&self) -> Task<Msg> {
-        let Some(id) = self.window_id else {
+    /// `host`'s window: brought up when it is open, else opened.
+    fn open_machine(&mut self, host: String, port: u16) -> Task<Msg> {
+        if let Some((&window, _)) = self.sessions.iter().find(|(_, s)| s.host == host) {
+            self.tabs.show(window);
             return Task::none();
-        };
-        window::run(id, |window| inhibit::acquire(window).map(Arc::new)).map(Msg::Inhibited)
+        }
+        let mut settings = window_settings_transparent(APP_ID);
+        settings.size = Size::new(1512.0, 1010.0);
+        let (window, task) = self.tabs.open(&format!("machine/{host}"), settings, false);
+        tracing::info!(%host, port, "remote desktop: a machine's window");
+        self.sessions.insert(window, Session::new(host, port, window));
+        self.focused = Some(window);
+        task.map(Msg::Opened)
     }
 
-    fn send(&self, packet: Packet) {
-        self.send_out(Outgoing::Packet(packet));
+    /// The Connections window: brought up when it is open, else opened.
+    fn show_list(&mut self) -> Task<Msg> {
+        self.machines = paired_machines();
+        if let Some((window, _)) = &self.list {
+            self.tabs.show(*window);
+            return iced::widget::operation::focus(iced::widget::Id::new(connections::FIELD_ID));
+        }
+        let mut settings = window_settings_transparent(APP_ID);
+        settings.size = Size::new(720.0, 520.0);
+        let (window, task) = self.tabs.open(LIST_TAB, settings, false);
+        self.list = Some((window, Connections::default()));
+        self.focused = Some(window);
+        task.map(Msg::Opened)
     }
 
-    fn send_out(&self, out: Outgoing) {
-        if let Some(outgoing) = &self.outgoing {
-            let _ = outgoing.send(out);
+    fn close(&mut self, window: window::Id) -> Task<Msg> {
+        self.forget_window(window);
+        window::close(window)
+    }
+
+    /// A window going: its connection ends with its session.
+    fn forget_window(&mut self, window: window::Id) {
+        self.sessions.remove(&window);
+        if self.list.as_ref().is_some_and(|(w, _)| *w == window) {
+            self.list = None;
+        }
+        self.tabs.close(window);
+        if self.focused == Some(window) {
+            self.focused = None;
         }
     }
 
-    pub fn view(&self) -> Element<'_, Msg> {
-        let note = match &self.status {
-            Status::Showing => None,
-            Status::Connecting => Some(format!("Connecting to {}…", self.name())),
-            Status::Lost(why) => Some(format!("Lost {}: {why}. Connecting again…", self.name())),
-            Status::Refused(why) => Some(why.clone()),
+    /// The menus for the focused window, sent when they change.
+    fn publish_menu(&mut self) {
+        let focus = match self.focused {
+            Some(window) if self.list.as_ref().is_some_and(|(w, _)| *w == window) => {
+                menu::Focus::Connections(self.list_selection())
+            }
+            Some(window) if self.sessions.contains_key(&window) => menu::Focus::Machine(self.sessions[&window].menu()),
+            _ => match self.list {
+                Some(_) => menu::Focus::Connections(self.list_selection()),
+                None => menu::Focus::Machine(self.sessions.values().next().map_or(
+                    menu::View {
+                        statistics: false,
+                        mirrored: false,
+                        can_mirror: true,
+                        can_extend: true,
+                    },
+                    Session::menu,
+                )),
+            },
         };
-        // The picture is always laid out: its area is the size the host's
-        // screen is made, said before connecting.
-        let picture = shader(Picture {
-            pictures: Arc::clone(&self.pictures),
-            points: self.display.map(|d| d.points),
-            pointer: self.pointer,
-            captured: self.captured,
-        })
-        .width(Length::Fill)
-        .height(Length::Fill);
-        let over = match note {
-            Some(note) => Some(center(panel(text(note).color(Color::WHITE))).into()),
-            None => self.statistics.then(|| self.statistics_panel()),
+        if self.menu.as_ref() != Some(&focus) {
+            sola_kit::menu::publish(menu::app_menu(&focus));
+            self.menu = Some(focus);
+        }
+    }
+
+    pub fn view(&self, window: window::Id) -> Element<'_, Msg> {
+        if let Some(session) = self.sessions.get(&window) {
+            return session.view(self.chrome(window)).map(move |m| Msg::Session(window, m));
+        }
+        let Some((_, list)) = self.list.as_ref().filter(|(w, _)| *w == window) else {
+            return container(iced::widget::Space::new()).width(Length::Fill).height(Length::Fill).into();
         };
-        let body = Stack::new().push(picture).extend(over);
-        let body = container(body)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(|_| container::background(Color::BLACK));
+        let open: Vec<&str> = self.sessions.values().map(|s| s.host.as_str()).collect();
+        let body = connections::view(list, &self.machines, &open).map(move |m| Msg::List(window, m));
         sola_kit::window_frame(
-            self.float.chrome_any(),
-            self.name(),
-            Msg::TitleDrag,
-            Msg::TitleClose,
-            Msg::TitleResize,
-            body.into(),
+            self.chrome(window),
+            "Remote Desktop",
+            Msg::Drag(window),
+            Msg::Window(window, window::Event::CloseRequested),
+            move |direction| Msg::Resize(window, direction),
+            body,
         )
     }
 }
 
-impl App {
-    /// The last second of pictures, in a corner over the picture.
-    fn statistics_panel(&self) -> Element<'_, Msg> {
-        let words = match self.pictures.stats.last() {
-            (_, Some(second)) => second.to_string(),
-            (_, None) => "Waiting for a second of pictures…".into(),
-        };
-        let panel = panel(text(words).font(fonts::mono()).size(12).color(Color::WHITE));
-        container(panel)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(8)
-            .align_x(Alignment::End)
-            .align_y(Alignment::Start)
-            .into()
+pub const DEFAULT_KVM_PORT: u16 = 4242;
+
+/// `host` or `host:port`.
+pub fn target(arg: &str) -> Target {
+    match arg.rsplit_once(':') {
+        Some((host, port)) => (host.to_string(), port.parse().unwrap_or(DEFAULT_KVM_PORT)),
+        None => (arg.to_string(), DEFAULT_KVM_PORT),
     }
 }
 
-fn mirror_file() -> StateFile {
-    StateFile::new(APP_ID, "mirror.json")
-}
-
-/// View → Mirror as last chosen; Extend before anything is.
-pub fn saved_mirror() -> bool {
-    mirror_file().load().unwrap_or(false)
-}
-
-/// Words over the picture, on a dark ground.
-fn panel<'a>(words: impl Into<Element<'a, Msg>>) -> container::Container<'a, Msg> {
-    container(words)
-        .padding(8)
-        .style(|_| container::background(Color::from_rgba(0.0, 0.0, 0.0, 0.7)))
-}
-
-/// The subscription's identity: one link per host.
-struct Link {
-    host: String,
-    port: u16,
-    pictures: Arc<Pictures>,
-}
-
-impl std::hash::Hash for Link {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.host.hash(state);
-        self.port.hash(state);
-    }
-}
-
-fn run_link(link: &Link) -> impl iced::futures::Stream<Item = net::Event> + use<> {
-    let (host, port, pictures) = (link.host.clone(), link.port, Arc::clone(&link.pictures));
-    stream::channel(64, async move |mut output: iced::futures::channel::mpsc::Sender<net::Event>| {
-        let (tx, mut rx) = iced::futures::channel::mpsc::unbounded();
-        net::start(
-            host,
-            port,
-            pictures,
-            Arc::new(move |event| {
-                let _ = tx.unbounded_send(event);
-            }),
-            None,
-        );
-        while let Some(event) = rx.next().await {
-            if output.send(event).await.is_err() {
-                return;
-            }
-        }
+fn paired_machines() -> Vec<String> {
+    link::view_hosts(&link::dir()).unwrap_or_else(|e| {
+        tracing::warn!(%e, "remote desktop: the paired machines cannot be read");
+        Vec::new()
     })
+}
+
+/// `sola-kvm pair <host> --view`, off the UI's threads: what it said went
+/// wrong, in its words.
+async fn pair(host: String) -> Result<(), String> {
+    let (tx, rx) = iced::futures::channel::oneshot::channel();
+    std::thread::spawn(move || {
+        let bin = std::env::current_exe()
+            .ok()
+            .and_then(|me| Some(me.parent()?.join("sola-kvm")))
+            .filter(|path| path.exists())
+            .unwrap_or_else(|| "sola-kvm".into());
+        let out = std::process::Command::new(&bin)
+            .args(["pair", &host, "--view"])
+            .stdin(std::process::Stdio::null())
+            .output();
+        let _ = tx.send(match out {
+            Ok(out) if out.status.success() => Ok(()),
+            // Its last line says what failed; ssh's own lines come before.
+            Ok(out) => {
+                let said = String::from_utf8_lossy(&out.stderr);
+                Err(match said.lines().map(str::trim).rfind(|l| !l.is_empty()) {
+                    Some(line) => line.trim_start_matches("sola-kvm pair: ").to_string(),
+                    None => format!("Pairing with {host} failed ({})", out.status),
+                })
+            }
+            Err(e) => Err(format!("{}: {e}", bin.display())),
+        });
+    });
+    rx.await.unwrap_or_else(|_| Err("the pairing stopped".into()))
 }

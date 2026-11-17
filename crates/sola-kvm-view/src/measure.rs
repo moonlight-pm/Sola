@@ -20,7 +20,7 @@ pub fn run(target: Result<(String, u16), String>, wanted: u32, link_mbps: Option
     };
     let pictures = Arc::new(Pictures::with_stats(Stats::whole_run()));
     let (tx, rx) = mpsc::channel();
-    net::start(
+    let _running = net::start(
         host,
         port,
         Arc::clone(&pictures),
@@ -53,7 +53,12 @@ pub fn run(target: Result<(String, u16), String>, wanted: u32, link_mbps: Option
                 eprintln!("{why}");
                 return ExitCode::FAILURE;
             }
-            Event::Ready(_) | Event::Connected(_) | Event::Cursor | Event::CanMirror(_) | Event::Mirroring(_) => {}
+            Event::Ready(_)
+            | Event::Connected(_)
+            | Event::Cursor
+            | Event::CanMirror(_)
+            | Event::CanExtend(_)
+            | Event::Mirroring(_) => {}
         }
     }
     ExitCode::FAILURE
