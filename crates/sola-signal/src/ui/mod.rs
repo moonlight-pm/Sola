@@ -75,6 +75,10 @@ pub enum Msg {
     OpenLink(String),
     Earlier,
     Relink,
+    /// Write our own name for whoever the open conversation is with.
+    Alias,
+    AliasInput(String),
+    AliasKeep,
     /// Take what the clipboard holds: text into the field with the
     /// cursor, a picture among the files to send.
     Paste,
@@ -115,6 +119,8 @@ pub struct App {
     editing: Option<Id>,
     files: Vec<PathBuf>,
     picked: Option<Id>,
+    /// The alias being written for whoever the open conversation is with.
+    aliasing: Option<String>,
     /// Who is typing, where, and when we last heard so.
     typing: Option<(Id, String, Instant)>,
     stale_list: bool,
@@ -133,6 +139,10 @@ fn thread_id() -> WidgetId {
 
 fn search_id() -> WidgetId {
     WidgetId::new("signal-search")
+}
+
+fn alias_id() -> WidgetId {
+    WidgetId::new("signal-alias")
 }
 
 impl App {
@@ -156,6 +166,7 @@ impl App {
             editing: None,
             files: Vec::new(),
             picked: None,
+            aliasing: None,
             typing: None,
             stale_list: false,
             stale_thread: false,
@@ -201,6 +212,12 @@ impl App {
 
     fn open_chat(&self) -> Option<&Chat> {
         self.open.and_then(|open| self.chats.iter().find(|chat| chat.id == open))
+    }
+
+    /// Who the open conversation is with, if that is one person other
+    /// than ourselves.
+    fn open_person(&self) -> Option<Id> {
+        self.open_chat().and_then(|chat| chat.recipient).filter(|person| *person != self.me)
     }
 
     pub fn subscription(&self) -> Subscription<Msg> {
@@ -254,6 +271,9 @@ impl App {
             Msg::Escape => {
                 if self.picker.is_some() {
                     return Task::none();
+                }
+                if self.aliasing.take().is_some() {
+                    return iced::widget::operation::focus(editor_id());
                 }
                 if self.replying.is_some() || self.editing.is_some() {
                     return self.update(Msg::Cancel);
@@ -354,6 +374,31 @@ impl App {
                 self.linked = Linked::No { code: None, failed: None };
                 tell(Command::Link { device_name: DEVICE_NAME.into() });
             }
+            Msg::Alias => {
+                if let (Some(chat), Some(_)) = (self.open_chat(), self.open_person()) {
+                    // The title is the alias when they have a name beside it.
+                    self.aliasing = Some(chat.own_name.as_ref().map(|_| chat.title.clone()).unwrap_or_default());
+                    return iced::widget::operation::focus(alias_id());
+                }
+            }
+            Msg::AliasInput(alias) => {
+                if let Some(aliasing) = self.aliasing.as_mut() {
+                    *aliasing = alias;
+                }
+            }
+            Msg::AliasKeep => {
+                if let (Some(alias), Some(person)) = (self.aliasing.take(), self.open_person()) {
+                    if let Err(e) = store().set_alias(person, &alias) {
+                        tracing::error!("keeping an alias: {e:#}");
+                    }
+                    if !self.people.is_empty() {
+                        self.people = store().recipients().unwrap_or_default();
+                    }
+                    self.read_list();
+                    self.read_thread();
+                    return iced::widget::operation::focus(editor_id());
+                }
+            }
             Msg::Paste => return paste(),
             Msg::Pasted(Offer::Text(text)) => return self.menu_edit(MenuEdit::Paste(text)),
             Msg::Pasted(Offer::Image { bytes, filename, .. }) => {
@@ -397,6 +442,7 @@ impl App {
             "select_all" => self.menu_edit(MenuEdit::SelectAll),
             "find" => iced::widget::operation::focus(search_id()),
             "attach" if self.open.is_some() => self.update(Msg::Attach),
+            "alias" => self.update(Msg::Alias),
             "connect" => {
                 tell(Command::Connect);
                 Task::none()
@@ -411,8 +457,8 @@ impl App {
         }
     }
 
-    /// An Edit menu command: to the search field if it has the cursor, else
-    /// to the composer.
+    /// An Edit menu command: to the search or alias field if one has the
+    /// cursor, else to the composer.
     fn menu_edit(&self, edit: MenuEdit) -> Task<Msg> {
         text_input::edit_focused(edit.clone()).map(move |done| Msg::MenuEdited(edit.clone(), done))
     }
@@ -443,7 +489,10 @@ impl App {
             };
         };
         if let Some(value) = done.value {
-            self.search = value;
+            match self.aliasing.as_mut() {
+                Some(alias) if done.id == Some(alias_id()) => *alias = value,
+                _ => self.search = value,
+            }
         }
         match done.copied {
             Some(text) if !text.is_empty() => iced::clipboard::write(text),
@@ -536,6 +585,7 @@ impl App {
         self.open = Some(conversation);
         self.limit = PAGE;
         self.picked = None;
+        self.aliasing = None;
         self.replying = None;
         self.editing = None;
         self.files.clear();

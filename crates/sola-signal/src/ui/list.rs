@@ -48,7 +48,16 @@ impl App {
 
         let query = self.search.trim().to_lowercase();
         let mut rows = column![];
-        let shown: Vec<&Chat> = self.chats.iter().filter(|chat| query.is_empty() || chat.title.to_lowercase().contains(&query)).collect();
+        // Someone with an alias is found by their own name too.
+        let shown: Vec<&Chat> = self
+            .chats
+            .iter()
+            .filter(|chat| {
+                query.is_empty()
+                    || chat.title.to_lowercase().contains(&query)
+                    || chat.own_name.as_ref().is_some_and(|own| own.to_lowercase().contains(&query))
+            })
+            .collect();
         for chat in &shown {
             rows = rows.push(self.chat_row(chat));
         }
@@ -59,8 +68,9 @@ impl App {
                 .filter(|person| {
                     person.id != self.me
                         && !person.blocked
-                        && (person.contact_name.is_some() || person.profile_name.is_some())
-                        && person.name().to_lowercase().contains(&query)
+                        && (person.alias.is_some() || person.contact_name.is_some() || person.profile_name.is_some())
+                        && (person.name().to_lowercase().contains(&query)
+                            || person.own_name().to_lowercase().contains(&query))
                         && !shown.iter().any(|chat| chat.recipient == Some(person.id))
                 })
                 .take(30)
@@ -138,7 +148,11 @@ impl App {
 fn person_row(person: &Recipient) -> Element<'_, Msg> {
     let name = person.name();
     let mut words = column![text(name.clone()).size(14)].spacing(SPACE_XS);
-    if let Some(number) = person.number.as_deref().filter(|number| *number != name) {
+    // Under an alias, their own name; else their number.
+    let own = person.own_name();
+    if own != name {
+        words = words.push(kit_text::caption(own).style(kit_text::muted));
+    } else if let Some(number) = person.number.as_deref().filter(|number| *number != name) {
         words = words.push(kit_text::caption(number).style(kit_text::muted));
     }
     button(row![avatar(person.id, &name, AVATAR), words].spacing(SPACE_MD).align_y(Alignment::Center))

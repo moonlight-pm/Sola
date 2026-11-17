@@ -108,6 +108,16 @@ leaves when there is a connection, across restarts.
   as itself above the composer. Tried on a private desk with `wl-copy` and
   the menu's action on the bus; not with the shell's key, and no picture
   has gone to a person yet. Applied (588b2ed09e5e).
+- 2026-11-17 (Joshua: "I'd like to be able to set an alias on contacts"):
+  a person can be given a name of our own (`recipients.alias`, schema step
+  5), set from the pencil in the conversation's bar or Conversation → Set
+  Alias…; an empty one takes it away. It is shown before the phone's
+  contact name and the profile name everywhere a name is (the list, the
+  bar, with their own name beside it, group messages, replies,
+  notifications), and search finds them by either. It is this device's
+  alone: the storage service is read, never written, so the phone does not
+  see it (a nickname set on the phone still arrives as the contact name).
+  Tried on a private desk. ALIAS_APPLIED
 
 ## Not built
 

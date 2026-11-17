@@ -99,6 +99,7 @@ fn window() -> std::process::ExitCode {
             "Conversation",
             vec![
                 item("attach", "Attach Files…", Some(KeyCode::A.meta_shift())),
+                item("alias", "Set Alias…", None),
                 MenuItem::Divider,
                 timer(0, "Messages Do Not Disappear"),
                 timer(30, "Disappear After 30 Seconds"),
