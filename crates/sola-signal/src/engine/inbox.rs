@@ -70,16 +70,18 @@ impl Inbox {
         let sender = self.store.recipient_for(aci)?;
         use proto::content::Content as C;
         match received.content.content {
-            Some(C::DataMessage(message)) => self.data(sender, None, message, received.timestamp, &mut fx)?,
+            Some(C::DataMessage(message)) => {
+                self.data(sender, None, message, received.timestamp, received.server_timestamp, &mut fx)?
+            }
             Some(C::EditMessage(edit)) => self.edit(sender, edit, &mut fx)?,
             // `receive` has checked that it is from our own account.
-            Some(C::SyncMessage(sync)) => self.sync(sync, &mut fx)?,
+            Some(C::SyncMessage(sync)) => self.sync(sync, received.server_timestamp, &mut fx)?,
             Some(C::ReceiptMessage(receipt)) => self.receipt(receipt, &mut fx)?,
             Some(C::TypingMessage(typing)) => self.typing(sender, typing, &mut fx)?,
             Some(C::CallMessage(call)) if call.offer.is_some() => {
                 let conversation = self.store.conversation_with(sender)?;
                 let name = self.store.recipient(sender)?.name();
-                self.note(conversation, sender, &format!("{name} called. Calls are answered on your phone."), true, &mut fx)?;
+                self.note(conversation, sender, &format!("{name} called. Calls are answered on your phone."), received.server_timestamp, true, &mut fx)?;
             }
             Some(C::DecryptionErrorMessage(notice)) => fx.unread_by = Some((sender, received.sender_device, notice)),
             _ => {}
@@ -88,20 +90,22 @@ impl Inbox {
     }
 
     /// A message someone wrote. `sent` is set when it is our own, told to
-    /// us by another of our devices.
+    /// us by another of our devices. `placed` is where it goes in its
+    /// thread: the server's time for it, ours and theirs alike, so messages
+    /// that waited on the server come out in the order they were said.
     fn data(
         &self,
         author: Id,
         sent: Option<&sync_message::Sent>,
         message: DataMessage,
         timestamp: u64,
+        placed: u64,
         fx: &mut Effects,
     ) -> Result<()> {
         if message.timestamp.is_some_and(|inner| inner != timestamp) {
             bail!("a message whose timestamp is not its envelope's");
         }
         let ours = sent.is_some();
-        let now = now();
 
         if let (Some(key), false) = (&message.profile_key, ours)
             && self.store.set_profile_key(author, key)?
@@ -172,7 +176,7 @@ impl Inbox {
                     0 => format!("{who} turned off disappearing messages."),
                     _ => format!("{who} set messages to disappear after {}.", duration(timer)),
                 };
-                self.note(conversation, author, &text, false, fx)?;
+                self.note(conversation, author, &text, placed, false, fx)?;
             }
             return Ok(());
         }
@@ -223,7 +227,7 @@ impl Inbox {
             conversation,
             sender: author,
             sent_at: timestamp,
-            received_at: if ours { timestamp } else { now },
+            received_at: placed,
             body,
             quote,
             expires_in: timer,
@@ -263,7 +267,7 @@ impl Inbox {
     }
 
     /// What another of our devices tells this one.
-    fn sync(&self, sync: SyncMessage, fx: &mut Effects) -> Result<()> {
+    fn sync(&self, sync: SyncMessage, placed: u64, fx: &mut Effects) -> Result<()> {
         let now = now();
         for read in sync.read.iter().map(|r| (&r.sender_aci_binary, &r.sender_aci, r.timestamp())).chain(
             sync.viewed.iter().map(|v| (&v.sender_aci_binary, &v.sender_aci, v.timestamp())),
@@ -280,7 +284,7 @@ impl Inbox {
             Some(S::Sent(mut sent)) => {
                 let timestamp = sent.timestamp();
                 if let Some(message) = sent.message.take() {
-                    self.data(self.me, Some(&sent), message, timestamp, fx)?;
+                    self.data(self.me, Some(&sent), message, timestamp, placed, fx)?;
                 } else if let Some(edit) = sent.edit_message.take() {
                     self.edit(self.me, edit, fx)?;
                 }
@@ -388,13 +392,12 @@ impl Inbox {
     }
 
     /// A line of the client's own in a conversation.
-    pub fn note(&self, conversation: Id, about: Id, text: &str, unread: bool, fx: &mut Effects) -> Result<()> {
-        let at = now();
+    pub fn note(&self, conversation: Id, about: Id, text: &str, placed: u64, unread: bool, fx: &mut Effects) -> Result<()> {
         let new = NewMessage {
             conversation,
             sender: about,
-            sent_at: at,
-            received_at: at,
+            sent_at: now(),
+            received_at: placed,
             note: true,
             body: text.to_owned(),
             unread,
@@ -515,6 +518,7 @@ mod tests {
                 sender: sender.into(),
                 sender_device: DeviceId::new(1).unwrap(),
                 timestamp,
+                server_timestamp: timestamp + 1,
                 content: Content { content: Some(content), ..Default::default() },
             };
             self.inbox.take(received).unwrap()
@@ -603,6 +607,29 @@ mod tests {
         desk.from(desk.alice, 700, proto::content::Content::ReceiptMessage(delivered));
         // A delivery heard after a read does not take the read back.
         assert_eq!(desk.thread(conversation)[0].status, Status::Read);
+    }
+
+    #[test]
+    fn what_waited_on_the_server_comes_out_in_the_order_it_was_said() {
+        let desk = desk();
+        let ours = |body: &str, at: u64| {
+            let sent = sync_message::Sent {
+                destination_service_id: Some(desk.alice.service_id_string()),
+                timestamp: Some(at),
+                message: Some(text(body, at)),
+                ..Default::default()
+            };
+            let sync = SyncMessage { content: Some(sync_message::Content::Sent(sent)), ..Default::default() };
+            desk.from(desk.us, at, proto::content::Content::SyncMessage(sync))
+        };
+        // A conversation held on the phone, all of it arriving here at once.
+        let fx = ours("one", 100);
+        desk.says(desk.alice, 200, text("two", 200));
+        ours("three", 300);
+        desk.says(desk.alice, 400, text("four", 400));
+        let conversation = *fx.changed.first().unwrap();
+        let said: Vec<String> = desk.thread(conversation).into_iter().map(|bubble| bubble.body).collect();
+        assert_eq!(said, ["one", "two", "three", "four"]);
     }
 
     #[test]

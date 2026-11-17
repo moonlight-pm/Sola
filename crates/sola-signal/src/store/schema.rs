@@ -71,6 +71,7 @@ const STEPS: &[&str] = &[
     // 3: people, groups, conversations and what is said in them. A message
     // is known by who sent it and the sender's timestamp; `revisions` holds
     // the timestamps of its edits, which receipts and reactions also name.
+    // `received_at` is its place in the thread: the server's time for it.
     // `outbox` is what has still to go out, in order.
     "CREATE TABLE recipients (
         id INTEGER PRIMARY KEY,
@@ -170,6 +171,12 @@ const STEPS: &[&str] = &[
         key TEXT PRIMARY KEY,
         value BLOB NOT NULL
     ) STRICT, WITHOUT ROWID;",
+    // 4: others' messages were placed by when they reached this device, so
+    // those that had waited on the server came after all of our own. The
+    // server's time for them was not kept: the sender's stands in.
+    "UPDATE messages SET received_at = sent_at WHERE outgoing = 0 AND kind = 0;
+    UPDATE conversations SET last_activity = coalesce(
+        (SELECT max(received_at) FROM messages WHERE conversation = conversations.id), last_activity)",
 ];
 
 pub fn migrate(db: &Connection) -> Result<()> {

@@ -31,6 +31,9 @@ pub struct Received {
     pub sender: ServiceId,
     pub sender_device: DeviceId,
     pub timestamp: u64,
+    /// When Signal's server took it in: one clock for everyone's messages,
+    /// so what a thread is ordered by.
+    pub server_timestamp: u64,
     pub content: Content,
 }
 
@@ -143,7 +146,8 @@ impl Receiver {
         if matches!(content.content, Some(proto::content::Content::SyncMessage(_))) && sender != our_aci {
             bail!("a sync message from {}, which is not our account", sender.service_id_string());
         }
-        Ok(Opened::Message(Box::new(Received { sender, sender_device, timestamp, content })))
+        let server_timestamp = envelope.server_timestamp.filter(|at| *at != 0).unwrap_or(timestamp);
+        Ok(Opened::Message(Box::new(Received { sender, sender_device, timestamp, server_timestamp, content })))
     }
 
     /// Take the outer layer off a sealed envelope: who sent it, checked
