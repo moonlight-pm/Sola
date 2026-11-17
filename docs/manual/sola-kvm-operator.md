@@ -202,10 +202,10 @@ sola-kvm pair <mac-host> --remote-bin sola-kvm-mac   # a Mac peer
 It sends this machine's public key to the peer over ssh (`pair --accept`
 there), which keeps it and answers with its own, then keeps that here, and
 prints both. Without a peer, it uses `peer.host` from the config. If the
-peer cannot take the key, nothing changes here. An unpaired server waits for
-its pairing and starts by itself; re-pairing a running one, or a Linux
-peer's `listen` or the Mac agent, needs a restart (on Oath, `pkill -x
-sola-kvm`; PID 1 starts it again). Each logs `paired` at start.
+peer cannot take the key, nothing changes here. An unpaired server or
+listener waits for its pairing and starts by itself; re-pairing one that
+runs, or the Mac agent, needs a restart (on Oath, `pkill -x sola-kvm`; PID 1
+starts it again). Each logs `paired` at start.
 
 Without ssh, pair by hand: `sola-kvm pair --public` prints a machine's
 public key, and `echo <the other's key> | sola-kvm pair --accept` keeps the
@@ -221,8 +221,8 @@ to move forward). The clipboard connection runs its own handshake, and the
 peer refuses a connection from any other key. Dropped input is logged at
 most every 10 s, with the sender's address.
 
-Nothing is sent or taken unpaired: the server waits for a pairing, and
-`listen` and the Mac agent do not start. Neither starts with keys it cannot
+Nothing is sent or taken unpaired: the server and `listen` wait for a
+pairing, and the Mac agent does not start. Neither starts with keys it cannot
 read.
 A machine paired by an older sola-kvm has a shared key,
 `~/.config/sola-kvm/pair.key`: it does not start until paired again, which
@@ -320,7 +320,8 @@ its own (**View → Mirror**); the choice is kept for each Mac.
 
 ### A Linux machine
 
-Nothing to install: `sola-kvm` serves the screen once a viewer is paired,
+Nothing to install: `sola-kvm` (the server, or `listen` on an input peer)
+serves the screen once a viewer is paired,
 and reads each viewer's key as it connects, so no restart is needed. It
 shows the machine's own screen at its own size (Extend is greyed out), with
 its pointer, and sends nothing while the screen is still. A screen that
