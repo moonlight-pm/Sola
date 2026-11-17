@@ -1,0 +1,52 @@
+[package]
+name = "sola-signal"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+
+# Signal client: a linked device of the phone, on Signal's libsignal.
+# Everything it links from Signal is AGPL-3.0, so this crate is too.
+# Research: docs/ideas/2026-10-31-signal-client.md.
+
+[[bin]]
+name = "sola-signal"
+path = "src/main.rs"
+
+[dependencies]
+sola-core = { path = "../sola-core" }
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland"] }
+libsignal-core = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-protocol = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-net = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-net-infra = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-net-chat = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-provisioning = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+signal-crypto = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+libsignal-account-keys = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+zkgroup = { git = "https://github.com/signalapp/libsignal", tag = "v0.108.0" }
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+bytes = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+hkdf = "0.12"
+http = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+prost = "0.14"
+qrcode = { version = "0.14", default-features = false }
+rand = "0.9"
+rusqlite = { version = "0.39", features = ["bundled"] }
+rustls = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tracing = "0.1"
+ureq = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
+
+[build-dependencies]
+prost-build = "0.14"
+protox = "0.10"

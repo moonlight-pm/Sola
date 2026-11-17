@@ -90,6 +90,13 @@ pub fn builtin_apps() -> Vec<Application> {
             ..Default::default()
         },
         Application {
+            app_id: "sola-signal".into(),
+            label: "Signal".into(),
+            command: kit_command("sola-signal"),
+            icon: "lucide/message-circle".into(),
+            ..Default::default()
+        },
+        Application {
             app_id: "sola-calendar".into(),
             label: "Calendar".into(),
             command: kit_command("sola-calendar"),

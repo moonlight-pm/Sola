@@ -15,6 +15,10 @@ Not freezes (those are [`../specs/`](../specs/)). Not the capability matrix.
 
 ## Active
 
+- [2026-11-16-sola-signal-plan.md](2026-11-16-sola-signal-plan.md) —
+  Signal client of our own on libsignal (branch `signal`): the engine and
+  the window are built and linked to Joshua's phone; not yet in daily use,
+  not packaged.
 - [2026-10-21-next-tab-bar-plan.md](2026-10-21-next-tab-bar-plan.md) —
   Next tab bar on `next` (canto): Phase 0 spec draft awaiting review; slice 1
   is the shell-only bar over today's apps

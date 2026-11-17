@@ -1,0 +1,16 @@
+[package]
+name = "sola-protoc"
+version.workspace = true
+edition.workspace = true
+
+# `protoc` for the build scripts of libsignal (sola-signal), in Rust, so a
+# build needs no protobuf compiler on the machine. `cargo make build` builds
+# it first and puts it on PATH (crates/sola-make/src/signal_tools.rs). Not
+# installed.
+
+[[bin]]
+name = "protoc"
+path = "src/main.rs"
+
+[dependencies]
+protox = "0.10"
