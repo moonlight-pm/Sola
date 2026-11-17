@@ -2,7 +2,7 @@
 //! per group").
 //!
 //! Layout (left-to-right), a gap in from every edge, the ground between:
-//!   (✿) (1 Main) (2 Mail ◆)       (toast)        (✉ 🔔 ᛒ) (spectrum)
+//!   (✿) (1 Main) (2 Mail ◆)     (toast)     (◆ ✉ 3) (🖱 80% ᛒ) (spectrum)
 //!                                       (CPU GPU VRAM MEM) (RX TX) (clock)
 //! The workspaces are here only when set to be islands ([`super::workspaces`]).
 //!
@@ -165,43 +165,52 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     // ── Right: an island per group ───────────────────────────────────
     let mut islands: Vec<Element<'_, Msg>> = Vec::new();
 
-    let mut extras: Vec<Element<'_, Msg>> = Vec::new();
     // Their widths, for where the right-hand islands begin.
     let text_w = |s: &str| fonts::line_width(s, CHROME_SIZE, fonts::chrome());
     let glyph_and = |label: &str| f32::from(ICON_SIZE) + STAT_INNER_SPACING + text_w(label);
-    let mut extras_w: Vec<f32> = Vec::new();
-    if let Some(unread) = shell.mail_unread_badge() {
-        let accent = shell.theme.extended_palette().primary.base.color;
-        extras.push(item(extra_badge("lucide/mail", unread, accent), Msg::RaiseMail));
-        extras_w.push(glyph_and(&sola_kit::components::count_label(unread)));
+    let accent = shell.theme.extended_palette().primary.base.color;
+
+    // Notifications: an icon per app with news since you were last in it
+    // (a Sola app's glyph, a web app's favicon), the one lit last at the
+    // left; then mail, there for its unread count too, lit or not.
+    let mut notes: Vec<Element<'_, Msg>> = Vec::new();
+    let mut notes_w: Vec<f32> = Vec::new();
+    for lit in shell.lit_apps() {
+        let name = shell.app_icon(&lit.app_id);
+        notes.push(item(extra_icon(name, accent), Msg::RaiseLit(lit.app_id.clone())));
+        notes_w.push(f32::from(ICON_SIZE));
     }
-    if shell.notify.pile_count() > 0 {
-        let tint = if shell.notify.unseen {
-            shell.theme.extended_palette().primary.base.color
+    if let Some(unread) = shell.mail_unread_badge() {
+        let tint = if shell.notify.lit(crate::app::MAIL_APP).is_some() {
+            accent
         } else {
             fg
         };
-        extras.push(item(
-            extra_badge("lucide/bell", shell.notify.pile_count(), tint),
-            Msg::ToggleNotifyPile,
-        ));
-        extras_w.push(glyph_and(&sola_kit::components::count_label(shell.notify.pile_count())));
+        let mail = Msg::RaiseLit(crate::app::MAIL_APP.into());
+        notes.push(item(extra_badge("lucide/mail", unread, tint), mail));
+        notes_w.push(glyph_and(&sola_kit::components::count_label(unread)));
     }
-    // Left of Bluetooth: panel anchors walk right-to-left, so nothing
-    // anchored moves when this comes and goes.
+
+    // Devices: the mouse's battery left of Bluetooth (panel anchors walk
+    // right-to-left, so nothing anchored moves when it comes and goes).
+    let mut devices: Vec<Element<'_, Msg>> = Vec::new();
+    let mut devices_w: Vec<f32> = Vec::new();
     if let Some(chip) = crate::mouse::bar_chip(&shell.mouse) {
-        extras_w.push(glyph_and(&chip.label));
-        extras.push(mouse_chip(chip, fg, muted, &shell.theme));
+        devices_w.push(glyph_and(&chip.label));
+        devices.push(mouse_chip(chip, fg, muted, &shell.theme));
     }
     if let Some(icon) = crate::bluetooth::bar_icon(&shell.bluetooth.snapshot) {
         let tint = if icon.muted { muted } else { fg };
-        extras.push(item(extra_icon(icon.name, tint), Msg::ToggleBluetooth));
-        extras_w.push(f32::from(ICON_SIZE));
+        devices.push(item(extra_icon(icon.name, tint), Msg::ToggleBluetooth));
+        devices_w.push(f32::from(ICON_SIZE));
     }
-    let extras_open = panel_active(shell, crate::app::Panel::Bluetooth)
-        || panel_active(shell, crate::app::Panel::NotifyPile);
-    if !extras.is_empty() {
-        islands.push(island(items(extras), extras_open, ISLAND_PAD_H));
+
+    if !notes.is_empty() {
+        islands.push(island(items(notes), false, ISLAND_PAD_H));
+    }
+    if !devices.is_empty() {
+        let open = panel_active(shell, crate::app::Panel::Bluetooth);
+        islands.push(island(items(devices), open, ISLAND_PAD_H));
     }
 
     // Alone in its island: centered as is (no lift to a text band), inset
@@ -276,14 +285,13 @@ pub fn view(shell: &crate::app::Shell) -> Element<'_, Msg> {
     let middle = mb.toast.as_deref().map(|message| {
         let w = text_w(message) + 2.0 * ISLAND_PAD_H;
         let toast = island(toast_widget(Some(message)), false, ISLAND_PAD_H);
-        // The extras island's right edge, from the items to its right.
-        let extras_right = shell.right_edges().bluetooth + ISLAND_PAD_H + f32::from(ICON_SIZE);
-        let right_start = if extras_w.is_empty() {
-            extras_right + ISLAND_GAP
-        } else {
-            let items: f32 = extras_w.iter().sum();
-            extras_right - 2.0 * ISLAND_PAD_H - items - ITEM_GAP * (extras_w.len() - 1) as f32
-        };
+        // Where the right-hand islands begin: left from the devices
+        // island's right edge, past it and the notifications island.
+        let devices_right = shell.right_edges().bluetooth + ISLAND_PAD_H + f32::from(ICON_SIZE);
+        let right_start = [&devices_w, &notes_w]
+            .into_iter()
+            .filter(|w| !w.is_empty())
+            .fold(devices_right + ISLAND_GAP, |x, w| x - ISLAND_GAP - island_w(w));
         let output_w = shell.output_size.map_or(1920.0, |(w, _)| w as f32);
         let left_end = crate::agents::view::left_group_end(shell);
         let x = place(output_w, w, left_end, right_start);
@@ -333,6 +341,12 @@ fn place(output_w: f32, width: f32, left_end: f32, right_start: f32) -> f32 {
         .max(left_end + ISLAND_GAP)
 }
 
+/// An island's width around items `widths` wide.
+fn island_w(widths: &[f32]) -> f32 {
+    let gaps = ITEM_GAP * widths.len().saturating_sub(1) as f32;
+    2.0 * ISLAND_PAD_H + widths.iter().sum::<f32>() + gaps
+}
+
 /// An island's items, [`ITEM_GAP`] apart.
 fn items(items: Vec<Element<'_, Msg>>) -> Element<'_, Msg> {
     row(items)
@@ -377,13 +391,13 @@ fn stat_graph<'a>(
     .into()
 }
 
-/// Lucide extras: 14px glyph, optically lifted with the LED matrices.
+/// A 14px glyph (or favicon), optically lifted with the LED matrices.
 fn extra_icon(name: &str, color: Color) -> Element<'static, Msg> {
     chrome_nudge(icon_colored(name, ICON_SIZE, color))
 }
 
 /// Glyph + chrome count, lifted as a pair so the numeral sits on the
-/// same band as CPU and the icon matches a lone extra (bell / bluetooth).
+/// same band as CPU and the icon matches a lone extra (an app, bluetooth).
 fn extra_badge(name: &'static str, count: u32, color: Color) -> Element<'static, Msg> {
     let label = sola_kit::components::count_label(count);
     chrome_nudge(

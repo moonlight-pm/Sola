@@ -232,7 +232,7 @@ Use this when restyling or reviewing shell UI. Default comparison target: **macO
 | Bluetooth | Menu bar extras (Control Center-ish) | Quiet lucide glyph, last in the extras island; popover is the same Menu overlay (`Panel::Bluetooth`). Off vs on on the icon. Not a Waybar module. [freeze](../specs/2026-08-29-shell-bluetooth-menubar-design.md). |
 | Volume | Menu bar extras (Control Center-ish) | 12-band LED spectrum alone in its own island, right of the extras; click it for `Panel::Audio` (slider, mute, output/input pick). No speaker glyph. Media keys stay `solactl media`. [freeze](../specs/2026-08-29-shell-audio-menubar-design.md). |
 | Toasts (whispers) | Menu-bar status | An island of 13 px chrome in the true center of the top row. `Opening…`, screenshot path. Not for attention. |
-| Notifications | Banners + Notification Center | 340 px desk cards at the top right, under the top row, that drop 14 px into place; missed pile is a bell + count in the extras island, grouped by app (no Clear; no cap). Super+Tab carries a count mark on the icon. See [notifications freeze](../specs/2026-08-25-sola-notifications-design.md). |
+| Notifications | Banners + Notification Center | 340 px desk cards at the top right, under the top row, that drop 14 px into place; no missed list: an app that notifies while you are elsewhere lights its icon (a Sola app's glyph, a web app's favicon) in the notifications island until you are in it; Mail's envelope there carries its unread count, in the accent when it went up. See [notifications freeze](../specs/2026-08-25-sola-notifications-design.md). |
 
 ---
 

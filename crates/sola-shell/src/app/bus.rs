@@ -862,6 +862,8 @@ impl Shell {
         }
         let app_changed = self.focused_app_id.as_deref() != Some(app_id);
         self.focused_app_id = Some(app_id.to_string());
+        // You are in it: its news is seen.
+        self.notify.put_out(app_id);
         if bump_mru {
             self.mru_apps.retain(|m| m != app_id);
             self.mru_apps.insert(0, app_id.to_string());
@@ -1031,12 +1033,17 @@ impl Shell {
     ///
     /// If we were still showing "Opening …" for this app, clear that pending
     /// state either way so a hung toast does not outlive a dead process.
+    /// Mail is lit when its unread count goes up (not when it is first
+    /// heard).
     fn on_mail_status(&mut self, s: MailStatus, sticky: bool) {
-        if sticky {
-            self.inbox_unread = Some(s.inbox_unread);
-        } else {
+        if !sticky {
             self.inbox_unread = None;
+            return;
         }
+        if self.inbox_unread.is_some_and(|was| s.inbox_unread > was) {
+            self.light(crate::app::MAIL_APP, None);
+        }
+        self.inbox_unread = Some(s.inbox_unread);
     }
 
     fn on_user_app_exited(&mut self, e: UserAppExitedPayload) -> Task<Msg> {

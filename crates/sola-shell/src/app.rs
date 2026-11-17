@@ -62,6 +62,7 @@ fn with_bus(f: impl FnOnce(&mut sola_bus::BusClient)) {
 
 /// Calendar's app id: the clock's panel opens its events there.
 const CALENDAR_APP: &str = "sola-calendar";
+pub(crate) const MAIL_APP: &str = "sola-mail";
 
 /// Ask Calendar to show event `id` (as a reminder card's click does).
 fn emit_calendar_event(id: String) {
@@ -183,8 +184,9 @@ pub enum Msg {
     ShortcutsActivate,
     /// Activate a visible shortcuts row by filtered index (click).
     ShortcutsPick(usize),
-    /// Menubar unread chip: raise (and unhide) sola-mail.
-    RaiseMail,
+    /// An icon in the top row's notifications island: its app's newest
+    /// notification, as if its card were clicked, else the app raised.
+    RaiseLit(String),
     /// The bar's Sleep button.
     SleepButton,
     /// A sleep, restart or shut down came back: from sleep, the machine is
@@ -194,18 +196,12 @@ pub enum Msg {
     NotifyExpire(u64),
     /// Animation tick while a banner is entering or leaving.
     NotifyTick,
-    /// Click a card / pile row: raise source, drop from live+pile.
+    /// Click a card: raise its app, the card goes.
     NotifyActivate(String),
     /// × without raising.
     NotifyDismiss(String),
     /// Your answer to an app asking to be a handler: `true` is Use.
     HandlerAnswer(bool),
-    /// Expand / collapse a pile group.
-    NotifyToggleGroup(String),
-    /// Dismiss every missed item for an app (group ×). Live cards stay.
-    NotifyDismissApp(String),
-    /// Open / close the missed-pile panel.
-    ToggleNotifyPile,
     /// Open / close the volume popover.
     ToggleAudio,
     /// Snapshot from the PipeWire worker.
@@ -324,7 +320,6 @@ impl std::fmt::Debug for FreezeImage {
 pub enum Panel {
     Calendar,
     Stat(crate::stats::Metric),
-    NotifyPile,
     Bluetooth,
     Audio,
     /// The workspace menu, under the tab bar's head.
@@ -1093,12 +1088,39 @@ impl Shell {
         if self.mail_is_mapped() { Some(n) } else { None }
     }
 
-    /// Raise sola-mail (unhide first if it is composition-hidden).
-    pub fn activate_mail(&mut self) {
-        if self.is_app_hidden("sola-mail") {
-            self.unhide_app("sola-mail");
+    /// An app's icon: its catalog entry's (a Sola app's glyph, a web app's
+    /// favicon).
+    pub fn app_icon(&self, app_id: &str) -> &str {
+        self.applications
+            .get_for_window(app_id)
+            .map(|a| a.icon.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("lucide/box")
+    }
+
+    /// `app_id` notified: lit in the top row's notifications island,
+    /// unless you are in it. Projects' sessions have islands of their own.
+    fn light(&mut self, app_id: &str, newest: Option<sola_bus::topics::AppNotification>) {
+        let here = self
+            .focused_app_id
+            .as_deref()
+            .is_some_and(|f| f.eq_ignore_ascii_case(app_id));
+        if here || app_id == crate::launcher::projects::APP_ID {
+            return;
         }
-        self.raise_app("sola-mail");
+        self.notify.light(app_id, newest);
+    }
+
+    /// The lit apps the island shows, left to right: each one still with a
+    /// window, mail last (it is there for its count too).
+    pub fn lit_apps(&self) -> impl Iterator<Item = &crate::notify::Lit> {
+        self.notify.lit.iter().filter(|l| {
+            l.app_id != MAIL_APP
+                && self
+                    .known_windows
+                    .iter()
+                    .any(|w| w.app_id.eq_ignore_ascii_case(&l.app_id))
+        })
     }
 
     /// Today's events from Calendar's agenda, if it has published a span
@@ -1170,7 +1192,8 @@ impl Shell {
             self.unhide_app(&n.app_id);
         }
         self.raise_app(&n.app_id);
-        if let Ok(mut bus) = sola_kit::app::bus().lock() {
+        self.notify.put_out(&n.app_id);
+        with_bus(|bus| {
             let _ = bus.emit(Topic::NotificationActivate(
                 sola_bus::topics::NotificationActivate {
                     id: n.id.clone(),
@@ -1179,19 +1202,13 @@ impl Shell {
                     url: n.url.clone(),
                 },
             ));
-        }
-        if self.open_panel == Some(Panel::NotifyPile) {
-            let _ = self.dismiss_open_menu();
-        }
+        });
         self.emit_overlay_frames();
         self.emit_composition();
         iced::Task::none()
     }
 
     fn notify_followup(&mut self, now: std::time::Instant) -> iced::Task<Msg> {
-        if self.open_panel == Some(Panel::NotifyPile) {
-            self.notify.acknowledge();
-        }
         self.emit_overlay_frames();
         self.emit_composition();
         if self.notify.needs_tick(now) {
@@ -1225,6 +1242,11 @@ impl Shell {
         let persist = n.persists();
         let now = std::time::Instant::now();
         let generation = self.notify.push(n, now);
+        // The card as pushed (its id assigned) is what the icon opens.
+        if let Some(b) = self.notify.live.iter().find(|b| b.generation == generation) {
+            let (app_id, n) = (b.n.app_id.clone(), b.n.clone());
+            self.light(&app_id, Some(n));
+        }
         let expire = if persist {
             iced::Task::none()
         } else {
@@ -2185,7 +2207,7 @@ impl Shell {
         }
     }
 
-    /// Left edge of the Bluetooth item (the extras island's last).
+    /// Left edge of the Bluetooth item (the devices island's last).
     pub fn estimate_bluetooth_x(&self) -> f32 {
         self.right_edges().bluetooth
     }
@@ -2221,17 +2243,6 @@ impl Shell {
                     w,
                     crate::stats::view::CARD_HEIGHT,
                 )
-            }
-            Some(Panel::NotifyPile) => {
-                let w = crate::notify::view::PILE_WIDTH;
-                let usable = self
-                    .output_size
-                    .map(|(_, h)| {
-                        (h - crate::zoning::MENUBAR_HEIGHT - crate::zoning::MENU_SHADOW_PAD) as f32
-                    })
-                    .unwrap_or(720.0);
-                let height = self.notify.overlay_height(usable);
-                (clamp_x(ow - w - GUTTER, w), w, height)
             }
             Some(Panel::Bluetooth) => {
                 let w = crate::bluetooth::view::CARD_WIDTH;
@@ -2975,9 +2986,17 @@ impl Shell {
                 tracing::warn!(app = %label, error = %e, "launcher: window.navigate");
                 self.projects_toast(format!("{label}: {e}"))
             }
-            Msg::RaiseMail => {
-                self.activate_mail();
-                iced::Task::none()
+            Msg::RaiseLit(app_id) => {
+                match self.notify.lit(&app_id).and_then(|l| l.newest.as_ref()) {
+                    Some(n) => {
+                        let id = n.id.clone();
+                        self.activate_notification(&id)
+                    }
+                    None => {
+                        self.raise_app(&app_id);
+                        iced::Task::none()
+                    }
+                }
             }
             Msg::SleepButton => self.request_machine_power(crate::power::Kind::Sleep),
             Msg::PowerDone(kind, result) => self.power_done(kind, result),
@@ -3006,37 +3025,6 @@ impl Shell {
             }
             Msg::NotifyDismiss(id) => {
                 self.notify.dismiss(&id);
-                if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
-                    let _ = self.dismiss_open_menu();
-                }
-                self.emit_overlay_frames();
-                self.emit_composition();
-                iced::Task::none()
-            }
-            Msg::NotifyToggleGroup(app_id) => {
-                self.notify.toggle_group(&app_id);
-                self.emit_overlay_frames();
-                iced::Task::none()
-            }
-            Msg::NotifyDismissApp(app_id) => {
-                self.notify.dismiss_app(&app_id);
-                if self.notify.pile.is_empty() && self.open_panel == Some(Panel::NotifyPile) {
-                    let _ = self.dismiss_open_menu();
-                }
-                self.emit_overlay_frames();
-                self.emit_composition();
-                iced::Task::none()
-            }
-            Msg::ToggleNotifyPile => {
-                self.notify.acknowledge();
-                if self.menu_open && self.open_panel == Some(Panel::NotifyPile) {
-                    let _ = self.dismiss_open_menu();
-                } else {
-                    self.menu_open = true;
-                    self.set_open_panel(Some(Panel::NotifyPile));
-                    self.current_open_index = None;
-                    self.current_open_is_system = false;
-                }
                 self.emit_overlay_frames();
                 self.emit_composition();
                 iced::Task::none()
@@ -4553,15 +4541,86 @@ mod hide_tests {
         assert_eq!(shell.open_panel, None);
     }
 
+    fn deliver(shell: &mut Shell, t: sola_bus::topics::Topic, sticky: bool) {
+        let mut m = t.to_message();
+        m.sticky = sticky;
+        let _ = shell.handle_bus(&m);
+    }
+
+    fn note(id: &str, app_id: &str) -> sola_bus::topics::AppNotification {
+        sola_bus::topics::AppNotification {
+            id: id.into(),
+            app_id: app_id.into(),
+            source: app_id.into(),
+            title: "news".into(),
+            body: String::new(),
+            tag: None,
+            tab_id: None,
+            url: None,
+        }
+    }
+
+    fn lit(shell: &Shell) -> Vec<&str> {
+        shell.lit_apps().map(|l| l.app_id.as_str()).collect()
+    }
+
+    /// The bell's replacement: an app that notifies while you are
+    /// elsewhere is lit in the top row until you are in it.
     #[test]
-    fn arm_screenshot_keeps_open_notifications() {
+    fn an_app_that_notifies_while_you_are_elsewhere_is_lit_until_you_are_in_it() {
+        use sola_bus::topics::Topic;
+        let rt = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        let _rt = rt.enter();
+        let mut shell = desktop();
+        deliver(&mut shell, Topic::AppNotification(note("a", "sola-browser")), false);
+        // The app you are in, and Projects (its sessions have islands).
+        deliver(&mut shell, Topic::AppNotification(note("b", "sola-terminal")), false);
+        deliver(&mut shell, Topic::AppNotification(note("c", "sola-projects")), false);
+        assert_eq!(lit(&shell), ["sola-browser"]);
+        // Its card clicked: the app comes up and the light goes.
+        let _ = shell.update(Msg::NotifyActivate("a".into()));
+        assert_eq!(shell.focused_app_id.as_deref(), Some("sola-browser"));
+        assert!(lit(&shell).is_empty());
+        // Lit again while elsewhere, then in it by the pointer alone.
+        shell.bus_set_focus("sola-terminal");
+        deliver(&mut shell, Topic::AppNotification(note("d", "sola-browser")), false);
+        assert_eq!(lit(&shell), ["sola-browser"]);
+        shell.set_pointer_focus("sola-browser");
+        assert!(lit(&shell).is_empty());
+    }
+
+    #[test]
+    fn mail_is_lit_when_its_count_goes_up_not_when_first_heard() {
+        use sola_bus::topics::{MailStatus, Topic};
+        let mut shell = test_shell(
+            vec![win(2, "sola-terminal", "Terminal"), win(6, "sola-mail", "Mail")],
+            Some("sola-terminal"),
+            &["sola-terminal", "sola-mail"],
+        );
+        let status = |n| Topic::MailStatus(MailStatus { inbox_unread: n });
+        deliver(&mut shell, status(3), true);
+        assert_eq!(shell.mail_unread_badge(), Some(3));
+        assert!(shell.notify.lit(MAIL_APP).is_none());
+        deliver(&mut shell, status(2), true);
+        assert!(shell.notify.lit(MAIL_APP).is_none());
+        deliver(&mut shell, status(4), true);
+        assert!(shell.notify.lit(MAIL_APP).is_some());
+        // Mail is drawn with its count, not among the other lit apps.
+        assert!(lit(&shell).is_empty());
+        shell.bus_set_focus("sola-mail");
+        assert!(shell.notify.lit(MAIL_APP).is_none());
+        assert_eq!(shell.mail_unread_badge(), Some(4));
+    }
+
+    #[test]
+    fn arm_screenshot_keeps_an_open_panel() {
         let mut shell = desktop();
         shell.menu_open = true;
-        shell.open_panel = Some(Panel::NotifyPile);
+        shell.open_panel = Some(Panel::Bluetooth);
         shell.focused_window_id = Some(2);
         shell.arm_screenshot_handoff();
         assert!(shell.menu_open);
-        assert_eq!(shell.open_panel, Some(Panel::NotifyPile));
+        assert_eq!(shell.open_panel, Some(Panel::Bluetooth));
         assert_eq!(shell.screenshot_return_focus, Some(2));
     }
 
@@ -4569,7 +4628,7 @@ mod hide_tests {
     fn dismiss_chrome_leaves_selection_armed() {
         let mut shell = desktop();
         shell.menu_open = true;
-        shell.open_panel = Some(Panel::NotifyPile);
+        shell.open_panel = Some(Panel::Bluetooth);
         let _ = shell.selection.start_freeze(Some(2));
         assert!(shell.selection.pending);
         assert!(shell.dismiss_chrome_overlays());

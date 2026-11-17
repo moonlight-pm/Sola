@@ -187,7 +187,7 @@ fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab, in_group: bool) -> SidebarI
     // The tab's own icon (a page's favicon), else its app's.
     let face = key
         .and_then(|key| shell.tab_icons.get(key))
-        .map_or_else(|| app_icon(shell, &t.app_id), String::as_str);
+        .map_or_else(|| shell.app_icon(&t.app_id), String::as_str);
     let leading: Element<'_, Msg> = match mark(activity) {
         Some(indicator) => status_mark(indicator),
         None => icon(face, LEADING_SLOT as u16).into(),
@@ -259,7 +259,7 @@ fn kept_row<'a>(shell: &'a Shell, app: &str, starting: bool) -> SidebarItem<'a, 
     let leading: Element<'_, Msg> = if starting {
         status_mark(SidebarIndicator::Working)
     } else {
-        icon_colored(app_icon(shell, app), LEADING_SLOT as u16, Color { a: 0.4, ..fg })
+        icon_colored(shell.app_icon(app), LEADING_SLOT as u16, Color { a: 0.4, ..fg })
     };
     let body = row![
         leading,
@@ -361,15 +361,6 @@ fn app_label(shell: &Shell, app_id: &str) -> String {
         .get_for_window(app_id)
         .map(|a| a.label.clone())
         .unwrap_or_else(|| app_id.to_string())
-}
-
-fn app_icon<'a>(shell: &'a Shell, app_id: &str) -> &'a str {
-    shell
-        .applications
-        .get_for_window(app_id)
-        .map(|a| a.icon.as_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("lucide/box")
 }
 
 #[cfg(test)]

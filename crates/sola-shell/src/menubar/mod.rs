@@ -4,8 +4,9 @@
 //! shell's islands on the ground, a gap in from every edge, no band behind
 //! them. Left: the flower (system menu; the workspaces are the tab bar's
 //! head, or islands here, [`workspaces`]). Center: a toast while one shows. Right, an island per group:
-//! extras (mail / bell / mouse battery / bluetooth), the spectrum, the
-//! meters (CPU / GPU / VRAM / MEM), the network (RX / TX), the clock. Only the
+//! notifications (an icon per app with news, mail), devices (mouse
+//! battery / bluetooth), the spectrum, the meters (CPU / GPU / VRAM / MEM),
+//! the network (RX / TX), the clock. Only the
 //! look of the islands is here; the surfaces that grow out of them come
 //! later.
 //!
@@ -32,14 +33,14 @@ pub const EDGE: f32 = crate::zoning::GAP as f32;
 pub const ISLAND_GAP: f32 = 6.0;
 /// Inside an island, either side of its content.
 pub const ISLAND_PAD_H: f32 = 12.0;
-/// Between items in one island (CPU · GPU · VRAM · MEM, the extras).
+/// Between items in one island (CPU · GPU · VRAM · MEM, the apps).
 pub const ITEM_GAP: f32 = 12.0;
 /// Between a stat label and its pixel graph.
 pub const STAT_INNER_SPACING: f32 = 5.0;
 /// The spectrum's island: inset the same all round, so the matrix's round
 /// ends sit concentric with the pill's.
 pub const SPECTRUM_PAD_H: f32 = (ISLAND_H - crate::audio::wave::SPECTRUM_H) / 2.0;
-/// Lucide extras and the flower.
+/// The apps' and devices' icons, and the flower.
 pub const ICON_SIZE: u16 = 14;
 /// The row's type size (labels, the clock).
 pub const CHROME_SIZE: f32 = 13.0;
