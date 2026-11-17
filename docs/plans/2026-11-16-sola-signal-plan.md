@@ -2,7 +2,7 @@
 
 **Started:** 2026-11-16, on Joshua's word ("All this is good -- go ahead").
 **Branch:** `signal`, merged to master 2026-11-16 (Joshua: "apply it and merge
-to master"). **On novus:** `pkg:sola-signal` 6f13d09066a3 from next@d9e75c25, `pkg:sola`
+to master"). **On novus:** `pkg:sola-signal` 7046cd955ad6 from next@3638cede, `pkg:sola`
 b5951e0d23dd from next@088ce181 (the launcher's "Signal"). Not released.
 **While Joshua tries it (2026-11-16, his standing word):** a fix that moves
 only `pkg:sola-signal` is applied from `next` and merged to master without
@@ -96,6 +96,10 @@ leaves when there is a connection, across restarts.
   by when they reached this device. Every message is now placed by the
   server's time for it (`Received.server_timestamp`); schema step 4 places
   the ones already kept by their sent time. Applied (6f13d09066a3).
+- 2026-11-16 (Joshua: "rounded corners and a little more marging"): a
+  picture in a message has the bubble's corner radius and 12 px above and
+  below, as at its sides. Looked at on a private desk. Applied
+  (7046cd955ad6).
 
 ## Not built
 
