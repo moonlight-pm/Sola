@@ -177,6 +177,8 @@ const STEPS: &[&str] = &[
     "UPDATE messages SET received_at = sent_at WHERE outgoing = 0 AND kind = 0;
     UPDATE conversations SET last_activity = coalesce(
         (SELECT max(received_at) FROM messages WHERE conversation = conversations.id), last_activity)",
+    // 5: a name of our own for someone, shown before any other.
+    "ALTER TABLE recipients ADD COLUMN alias TEXT",
 ];
 
 pub fn migrate(db: &Connection) -> Result<()> {

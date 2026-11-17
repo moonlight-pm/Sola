@@ -7,11 +7,12 @@ use sola_kit::components::icon::icon_handle;
 use sola_kit::components::scroll;
 use sola_kit::components::style::{BAR_H, RADIUS_LG, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, mix, on_color};
 use sola_kit::components::text as kit_text;
+use sola_kit::components::text_input::text_input;
 use sola_kit::components::toolbar::toolbar_icon_tip;
 use sola_kit::fonts;
 
 use super::list::{avatar, h_hairline};
-use super::{App, Msg, editor_id, style, thread_id, when};
+use super::{App, Msg, alias_id, editor_id, style, thread_id, when};
 use crate::engine::duration;
 use crate::store::chats::{Attachment, Bubble, Fetch, Kind, Status};
 
@@ -21,6 +22,8 @@ const BUBBLE_W: f32 = 520.0;
 const PICTURE: f32 = 320.0;
 /// The height of a picture waiting in the composer to be sent.
 const ATTACHED: f32 = 64.0;
+/// The field an alias is written in.
+const ALIAS_W: f32 = 240.0;
 const QUICK: [&str; 6] = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 impl App {
@@ -34,12 +37,32 @@ impl App {
                 .into();
         };
 
-        let mut heading = row![
-            avatar(chat.id, &chat.title, 28.0),
-            text(chat.title.as_str()).size(15).font(fonts::ui_medium()),
-        ]
-        .spacing(SPACE_MD)
-        .align_y(Alignment::Center);
+        let mut heading = row![avatar(chat.id, &chat.title, 28.0)].spacing(SPACE_MD).align_y(Alignment::Center);
+        let person = self.open_person().is_some();
+        match self.aliasing.as_deref().filter(|_| person) {
+            // Their own name shows in the empty field: what an empty alias leaves.
+            Some(alias) => {
+                heading = heading
+                    .push(
+                        text_input(chat.own_name.as_deref().unwrap_or(&chat.title), alias)
+                            .id(alias_id())
+                            .on_input(Msg::AliasInput)
+                            .on_submit(Msg::AliasKeep)
+                            .size(13)
+                            .padding(Padding::from([5, 9]))
+                            .width(ALIAS_W)
+                            .style(style::search),
+                    )
+                    .push(kit_btn::labeled_sm("Done", kit_btn::primary).on_press(Msg::AliasKeep))
+                    .push(kit_btn::labeled_sm("Cancel", kit_btn::ghost).on_press(Msg::Escape));
+            }
+            None => {
+                heading = heading.push(text(chat.title.as_str()).size(15).font(fonts::ui_medium()));
+                if let Some(own) = &chat.own_name {
+                    heading = heading.push(kit_text::caption(own.as_str()).style(kit_text::muted));
+                }
+            }
+        }
         if chat.expire_timer > 0 {
             heading = heading.push(
                 kit_text::caption(format!("Messages disappear after {}", duration(chat.expire_timer))).style(kit_text::muted),
@@ -48,6 +71,9 @@ impl App {
         heading = heading.push(Space::new().width(Length::Fill));
         if let Some(note) = self.wire_note() {
             heading = heading.push(note);
+        }
+        if person && self.aliasing.is_none() {
+            heading = heading.push(toolbar_icon_tip(icon_handle("lucide/pencil"), "Set an alias", Some(Msg::Alias)));
         }
         let bar = container(heading).height(BAR_H).padding(Padding::from([0.0, SPACE_LG])).center_y(BAR_H);
 

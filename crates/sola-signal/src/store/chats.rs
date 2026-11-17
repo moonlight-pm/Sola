@@ -47,6 +47,8 @@ pub struct Recipient {
     pub aci: Option<Aci>,
     pub number: Option<String>,
     pub profile_key: Option<Vec<u8>>,
+    /// The name we gave them here. It is this device's alone.
+    pub alias: Option<String>,
     pub contact_name: Option<String>,
     pub profile_name: Option<String>,
     pub profile_at: u64,
@@ -54,8 +56,14 @@ pub struct Recipient {
 }
 
 impl Recipient {
-    /// The name to show: the phone's contact, else the profile, else the number.
+    /// The name to show: our alias for them, else their own.
     pub fn name(&self) -> String {
+        self.alias.clone().filter(|alias| !alias.is_empty()).unwrap_or_else(|| self.own_name())
+    }
+
+    /// Their name without our alias: the phone's contact, else the profile,
+    /// else the number.
+    pub fn own_name(&self) -> String {
         [&self.contact_name, &self.profile_name, &self.number]
             .into_iter()
             .flatten()
@@ -65,9 +73,14 @@ impl Recipient {
     }
 }
 
-/// The same choice in SQL, for a joined `recipients` row named `alias`.
-fn name_sql(alias: &str) -> String {
-    format!("coalesce(nullif({alias}.contact_name, ''), nullif({alias}.profile_name, ''), {alias}.number, 'Unknown')")
+/// `Recipient::own_name` in SQL, for a joined `recipients` row named `row`.
+fn own_name_sql(row: &str) -> String {
+    format!("coalesce(nullif({row}.contact_name, ''), nullif({row}.profile_name, ''), {row}.number, 'Unknown')")
+}
+
+/// `Recipient::name` in SQL.
+fn name_sql(row: &str) -> String {
+    format!("coalesce(nullif({row}.alias, ''), {})", own_name_sql(row))
 }
 
 #[derive(Clone, Debug)]
@@ -157,6 +170,8 @@ pub struct Chat {
     pub recipient: Option<Id>,
     pub group: bool,
     pub title: String,
+    /// The person's own name, when the title is our alias for them.
+    pub own_name: Option<String>,
     pub last_activity: u64,
     pub unread: u32,
     pub muted: bool,
@@ -211,11 +226,12 @@ fn recipient_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Recipient> {
         profile_name: row.get(5)?,
         profile_at: row.get::<_, i64>(6)? as u64,
         blocked: row.get(7)?,
+        alias: row.get(8)?,
     })
 }
 
 const RECIPIENT: &str =
-    "SELECT id, aci, number, profile_key, contact_name, profile_name, profile_at, blocked FROM recipients";
+    "SELECT id, aci, number, profile_key, contact_name, profile_name, profile_at, blocked, alias FROM recipients";
 
 fn attachment_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Attachment> {
     Ok(Attachment {
@@ -294,6 +310,12 @@ impl Store {
             "UPDATE recipients SET number = coalesce(?2, number), contact_name = ?3 WHERE id = ?1",
             params![id, number, name],
         )?;
+        Ok(())
+    }
+
+    /// Our own name for someone; an empty one takes it away.
+    pub fn set_alias(&self, id: Id, alias: &str) -> Result<()> {
+        self.db().execute("UPDATE recipients SET alias = nullif(?2, '') WHERE id = ?1", params![id, alias.trim()])?;
         Ok(())
     }
 
@@ -764,13 +786,15 @@ impl Store {
     pub fn chats(&self) -> Result<Vec<Chat>> {
         let db = self.db();
         let name = name_sql("r");
+        let own = own_name_sql("r");
         let mut query = db.prepare(&format!(
             "SELECT c.id, c.recipient, c.grp IS NOT NULL,
                     coalesce(nullif(g.title, ''), CASE WHEN c.grp IS NOT NULL THEN 'Group' END, {name}), c.last_activity,
                     (SELECT count(*) FROM messages m WHERE m.conversation = c.id AND m.unread = 1),
                     c.muted_until, c.expire_timer, c.draft,
                     last.body, last.outgoing, last.deleted,
-                    (SELECT count(*) FROM attachments a WHERE a.message = last.id)
+                    (SELECT count(*) FROM attachments a WHERE a.message = last.id),
+                    CASE WHEN nullif(r.alias, '') IS NOT NULL THEN {own} END
              FROM conversations c
              LEFT JOIN groups g ON g.id = c.grp
              LEFT JOIN recipients r ON r.id = c.recipient
@@ -796,6 +820,7 @@ impl Store {
                     recipient: row.get(1)?,
                     group: row.get(2)?,
                     title: row.get(3)?,
+                    own_name: row.get(13)?,
                     last_activity: row.get::<_, i64>(4)? as u64,
                     unread: row.get(5)?,
                     muted: row.get::<_, i64>(6)? as u64 > now,
@@ -899,4 +924,36 @@ fn oldest_id(bubbles: &[Bubble], first: Id) -> Id {
 fn attachment_files(db: &Connection, condition: &str, arg: i64) -> rusqlite::Result<Vec<String>> {
     let mut query = db.prepare(&format!("SELECT path FROM attachments WHERE path IS NOT NULL AND {condition}"))?;
     query.query_map([arg], |row| row.get(0))?.collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_alias_is_the_name_until_it_is_taken_away() {
+        let dir = std::env::temp_dir().join(format!("sola-signal-test-{}", uuid::Uuid::new_v4()));
+        let store = Store::open(&dir.join("signal.db")).unwrap();
+        let ada = store.recipient_for(Aci::from(uuid::Uuid::from_u128(0xada))).unwrap();
+        store.set_contact(ada, None, Some("Ada Lovelace")).unwrap();
+        let with_ada = store.conversation_with(ada).unwrap();
+        let said = NewMessage { conversation: with_ada, sender: ada, sent_at: 1, received_at: 1, body: "hello".into(), ..Default::default() };
+        store.add_message(&said).unwrap();
+        let chat = || store.chats().unwrap().remove(0);
+
+        assert_eq!((chat().title.as_str(), chat().own_name), ("Ada Lovelace", None));
+
+        store.set_alias(ada, "  Countess ").unwrap();
+        assert_eq!(store.recipient(ada).unwrap().name(), "Countess");
+        assert_eq!((chat().title.as_str(), chat().own_name.as_deref()), ("Countess", Some("Ada Lovelace")));
+        assert_eq!(store.thread(with_ada, 10, 0).unwrap()[0].sender_name, "Countess");
+        // What the phone says of her does not undo it.
+        store.set_contact(ada, None, Some("Ada King")).unwrap();
+        assert_eq!((chat().title.as_str(), chat().own_name.as_deref()), ("Countess", Some("Ada King")));
+
+        store.set_alias(ada, " ").unwrap();
+        assert_eq!(store.recipient(ada).unwrap().name(), "Ada King");
+        assert_eq!((chat().title.as_str(), chat().own_name), ("Ada King", None));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
