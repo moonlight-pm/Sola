@@ -2,7 +2,7 @@
 
 **Started:** 2026-11-16, on Joshua's word ("All this is good -- go ahead").
 **Branch:** `signal`, merged to master 2026-11-16 (Joshua: "apply it and merge
-to master"). **On novus:** `pkg:sola-signal` 588b2ed09e5e from next@1ca8153e, `pkg:sola`
+to master"). **On novus:** `pkg:sola-signal` 8ba6e890edff from next@5d1130db, `pkg:sola`
 b5951e0d23dd from next@088ce181 (the launcher's "Signal"). Not released.
 **While Joshua tries it (2026-11-16, his standing word):** a fix that moves
 only `pkg:sola-signal` is applied from `next` and merged to master without
@@ -117,7 +117,7 @@ leaves when there is a connection, across restarts.
   notifications), and search finds them by either. It is this device's
   alone: the storage service is read, never written, so the phone does not
   see it (a nickname set on the phone still arrives as the contact name).
-  Tried on a private desk. ALIAS_APPLIED
+  Tried on a private desk. Applied (8ba6e890edff).
 
 ## Not built
 
