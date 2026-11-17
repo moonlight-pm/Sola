@@ -25,6 +25,16 @@ pub struct Plan {
 
 const OATH_CEF: &str = "/oath/store/pkg/cef/live/cef";
 
+/// What libsignal's build scripts run, as `signal_tools` sets it up for a
+/// build on the desk: our `protoc`, built first, and bindgen on
+/// `pkg:libclang` (the sandbox's `/lib` has it, as a machine's does).
+const SIGNAL_TOOLS: &str = "cargo build --release --frozen -p sola-protoc
+mkdir -p /tmp/tools
+cp target/release/protoc /tmp/tools/
+export PATH=/tmp/tools:$PATH PROTOC=/tmp/tools/protoc LIBCLANG_PATH=/lib
+export BINDGEN_EXTRA_CLANG_ARGS=\"-resource-dir=$(ls -d /lib/clang/* | tail -n 1) -idirafter /oath/store/pkg/glibc/live/include\"
+";
+
 /// The plan's text. `oath fmt` makes it canonical before it is filed.
 pub fn text(p: &Plan) -> String {
     let needs = |v: &[(String, String)]| {
@@ -80,6 +90,9 @@ pub fn build_script(
     // plan and the programs both carry it; `google_client` checked it for a shell.
     for (key, value) in client {
         s += &format!("export {key}={value}\n");
+    }
+    if bins.contains(&crate::signal_tools::CRATE) {
+        s += SIGNAL_TOOLS;
     }
     let crates: Vec<String> = build_crates(bins.iter().copied())
         .iter()
@@ -140,7 +153,19 @@ mod tests {
         assert!(s.contains("s|@VENDOR@|/tmp/vendor|"), "the crates' path names no hash");
         assert!(s.contains("-p sola-bots") && !s.contains("-p sola-botsd"));
         assert!(s.contains(" sola-botsd"), "the daemon is still copied out");
-        assert_eq!(s.matches("cargo build").count(), 1);
+        // One for the programs, one for the `protoc` Signal's build runs.
+        assert_eq!(s.matches("cargo build").count(), 2);
+    }
+
+    #[test]
+    fn the_build_plan_makes_protoc_before_signal_needs_it() {
+        let s = build_script(&["sola-signal", "sola-mail"], "srchash", "crateshash", "0.1.0", &Vec::new());
+        let protoc = s.find("cargo build --release --frozen -p sola-protoc\n").unwrap();
+        let build = s.find("cargo build --release --frozen -p sola-signal").unwrap();
+        assert!(protoc < build);
+        assert!(s.contains("PROTOC=/tmp/tools/protoc") && s.contains("LIBCLANG_PATH=/lib"));
+        let s = build_script(&["sola-mail"], "srchash", "crateshash", "0.1.0", &Vec::new());
+        assert!(!s.contains("protoc"));
     }
 
     #[test]

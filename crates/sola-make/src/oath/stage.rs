@@ -90,12 +90,17 @@ fn build(release: bool, packages: &[&Package]) {
             crate::google_client::file().display()
         );
     }
+    let crates: Vec<String> = build_crates(packages.iter().flat_map(|p| p.bins.iter().copied()))
+        .into_iter()
+        .map(str::to_string)
+        .collect();
     let mut cmd = super::cpus::limited("cargo");
     cmd.arg("build").env("SOLA_CEF_DIR", OATH_CEF).envs(client);
+    cmd.envs(crate::signal_tools::vars_or_exit(&crates));
     if release {
         cmd.arg("--release");
     }
-    for krate in build_crates(packages.iter().flat_map(|p| p.bins.iter().copied())) {
+    for krate in &crates {
         cmd.args(["-p", krate]);
     }
     let status = cmd.status().unwrap_or_else(|e| fail(format!("cargo: {e}")));

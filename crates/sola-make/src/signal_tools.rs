@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, exit};
 
-const CRATE: &str = "sola-signal";
+pub const CRATE: &str = "sola-signal";
 const TOOLS: &str = "target/tools";
 const OATH_LIB: &str = "/lib";
 const OATH_LIBC_HEADERS: &str = "/oath/store/pkg/glibc/live/include";
