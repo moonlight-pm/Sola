@@ -5,7 +5,7 @@ use iced::{Alignment, ContentFit, Element, Length, Padding, Theme};
 use sola_kit::components::button as kit_btn;
 use sola_kit::components::icon::icon_handle;
 use sola_kit::components::scroll;
-use sola_kit::components::style::{BAR_H, RADIUS_LG, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, mix, on_color};
+use sola_kit::components::style::{BAR_H, RADIUS_LG, RADIUS_SM, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, mix, on_color};
 use sola_kit::components::text as kit_text;
 use sola_kit::components::toolbar::toolbar_icon_tip;
 use sola_kit::fonts;
@@ -19,6 +19,8 @@ use crate::store::chats::{Attachment, Bubble, Fetch, Kind, Status};
 const BUBBLE_W: f32 = 520.0;
 /// A picture in a bubble fits in a square of this side.
 const PICTURE: f32 = 320.0;
+/// The height of a picture waiting in the composer to be sent.
+const ATTACHED: f32 = 64.0;
 const QUICK: [&str; 6] = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 impl App {
@@ -236,10 +238,20 @@ impl App {
             let mut files = row![].spacing(SPACE_SM);
             for (index, file) in self.files.iter().enumerate() {
                 let name = file.file_name().and_then(|name| name.to_str()).unwrap_or("file");
+                let extension = file.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+                // A picture shows as itself, any other file by its name.
+                let what: Element<'_, Msg> = match extension.as_str() {
+                    "png" | "jpg" | "jpeg" | "gif" | "webp" => image(image::Handle::from_path(file))
+                        .height(ATTACHED)
+                        .content_fit(ContentFit::Contain)
+                        .border_radius(RADIUS_SM)
+                        .into(),
+                    _ => kit_text::caption(name).into(),
+                };
                 files = files.push(
                     container(
                         row![
-                            kit_text::caption(name),
+                            what,
                             button(text("×").size(14)).on_press(Msg::Unattach(index)).padding(Padding::from([0.0, SPACE_SM])).style(kit_btn::ghost),
                         ]
                         .spacing(SPACE_XS)
@@ -261,6 +273,8 @@ impl App {
                 match press.key.as_ref() {
                     // Enter sends; with Shift it is a new line.
                     Key::Named(Named::Enter) if !press.modifiers.shift() => Some(text_editor::Binding::Custom(Msg::Send)),
+                    // Ours, not the editor's: the clipboard may hold a picture.
+                    Key::Character("v") if press.modifiers.command() => Some(text_editor::Binding::Custom(Msg::Paste)),
                     _ => text_editor::Binding::from_key_press(press),
                 }
             })

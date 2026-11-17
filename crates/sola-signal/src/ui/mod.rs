@@ -16,6 +16,7 @@ use iced::{Element, Event as IcedEvent, Length, Subscription, Task, Theme, event
 use sola_bus::Message;
 use sola_bus::topics::{AppNotification, Topic};
 use sola_kit::app::{apply_theme_update, bus_subscription, is_self_quit};
+use sola_kit::clipboard::Offer;
 use sola_kit::components::file_picker::{FilePicker, Message as PickerMsg, Outcome};
 use sola_kit::components::style::{SPACE_LG, SPACE_MD, SPACE_SM};
 use sola_kit::components::text as kit_text;
@@ -74,7 +75,10 @@ pub enum Msg {
     OpenLink(String),
     Earlier,
     Relink,
-    Pasted(Option<String>),
+    /// Take what the clipboard holds: text into the field with the
+    /// cursor, a picture among the files to send.
+    Paste,
+    Pasted(Offer),
     MenuEdited(MenuEdit, Option<MenuEdited>),
 }
 
@@ -159,6 +163,8 @@ impl App {
             last_dir: None,
         };
         app.take_account();
+        // Pictures pasted and never sent.
+        let _ = std::fs::remove_dir_all(pasted_dir());
         (app, sola_kit::window_ready_task(Msg::WindowReady))
     }
 
@@ -348,8 +354,19 @@ impl App {
                 self.linked = Linked::No { code: None, failed: None };
                 tell(Command::Link { device_name: DEVICE_NAME.into() });
             }
-            Msg::Pasted(Some(text)) => return self.menu_edit(MenuEdit::Paste(text)),
-            Msg::Pasted(None) => {}
+            Msg::Paste => return paste(),
+            Msg::Pasted(Offer::Text(text)) => return self.menu_edit(MenuEdit::Paste(text)),
+            Msg::Pasted(Offer::Image { bytes, filename, .. }) => {
+                // A picture goes with a new message, not into an edit of one.
+                if self.open.is_some() && self.editing.is_none() {
+                    match keep_pasted(&bytes, &filename) {
+                        Ok(path) => self.files.push(path),
+                        Err(e) => tracing::error!("keeping a pasted picture: {e:#}"),
+                    }
+                    return iced::widget::operation::focus(editor_id());
+                }
+            }
+            Msg::Pasted(Offer::Empty) => {}
             Msg::MenuEdited(edit, done) => return self.on_menu_edited(edit, done),
         }
         Task::none()
@@ -376,7 +393,7 @@ impl App {
             }
             "cut" => self.menu_edit(MenuEdit::Cut),
             "copy" => self.menu_edit(MenuEdit::Copy),
-            "paste" => iced::clipboard::read().map(Msg::Pasted),
+            "paste" => paste(),
             "select_all" => self.menu_edit(MenuEdit::SelectAll),
             "find" => iced::widget::operation::focus(search_id()),
             "attach" if self.open.is_some() => self.update(Msg::Attach),
@@ -684,4 +701,29 @@ fn notify(conversation: Id, title: &str, text: &str) {
     if let Ok(mut bus) = sola_kit::app::bus().lock() {
         let _ = bus.emit(Topic::AppNotification(note));
     }
+}
+
+/// Read the clipboard from the compositor's side: iced's own reads text
+/// only, and a picture is what is often there.
+fn paste() -> Task<Msg> {
+    Task::perform(
+        async { tokio::task::spawn_blocking(sola_kit::clipboard::read_offer).await.unwrap_or(Offer::Empty) },
+        Msg::Pasted,
+    )
+}
+
+/// Where pasted pictures wait to be sent; a sent one is copied beside the
+/// store as any file is.
+fn pasted_dir() -> PathBuf {
+    crate::store::Store::files_dir().join("pasted")
+}
+
+/// A pasted picture as a file of its own, named as it will be sent.
+fn keep_pasted(bytes: &[u8], filename: &str) -> std::io::Result<PathBuf> {
+    let extension = std::path::Path::new(filename).extension().and_then(|e| e.to_str()).unwrap_or("png");
+    let dir = pasted_dir().join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("image.{extension}"));
+    std::fs::write(&path, bytes)?;
+    Ok(path)
 }
