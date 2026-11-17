@@ -257,7 +257,7 @@ fn input(mut tcp: TcpStream, mut conn: Conn, shared: &Shared) -> io::Result<()> 
                 }
             }
             Up::Event(bytes) => match (protocol::decode(&bytes), injector.as_mut()) {
-                (Ok((_, packet)), Some(injector)) => injector.handle(&packet),
+                (Ok((_, packet)), Some(injector)) => injector.handle(&from_viewer(packet)),
                 (Ok(_), None) => {}
                 (Err(e), _) => warn!(?e, "remote view: a bad input packet"),
             },
@@ -270,10 +270,31 @@ fn input(mut tcp: TcpStream, mut conn: Conn, shared: &Shared) -> io::Result<()> 
     result
 }
 
+/// A viewer's wheel turns come the other way round from the wire's own
+/// (the KVM server's), as the Mac in a window wants them; here they turn
+/// back, so a Linux desk scrolls as it does under its own mouse.
+fn from_viewer(packet: Packet) -> Packet {
+    match packet {
+        Packet::Scroll { dx, dy } => Packet::Scroll { dx: -dx, dy: -dy },
+        other => other,
+    }
+}
+
 fn clamp_u32(v: u64) -> u32 {
     u32::try_from(v).unwrap_or(u32::MAX)
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_viewers_wheel_turns_back_and_nothing_else_does() {
+        assert_eq!(from_viewer(Packet::Scroll { dx: 1.0, dy: -2.0 }), Packet::Scroll { dx: -1.0, dy: 2.0 });
+        assert_eq!(from_viewer(Packet::Motion { x: 3, y: 4 }), Packet::Motion { x: 3, y: 4 });
+    }
 }
