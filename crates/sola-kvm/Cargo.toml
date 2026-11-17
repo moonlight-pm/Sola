@@ -19,6 +19,8 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
 rustix = { version = "1", features = ["fs"] }
 libc = "0.2"
+# NVENC and CUDA come with the NVIDIA driver, so they are loaded at run time.
+libloading = "0.8"
 xkbcommon = "0.8"
 # Wayland/X11 clipboard without requiring wl-clipboard on PATH.
 arboard = "3"
