@@ -2,7 +2,7 @@
 
 **Started:** 2026-11-16, on Joshua's word ("All this is good -- go ahead").
 **Branch:** `signal`, merged to master 2026-11-16 (Joshua: "apply it and merge
-to master"). **On novus:** `pkg:sola-signal` 7046cd955ad6 from next@3638cede, `pkg:sola`
+to master"). **On novus:** `pkg:sola-signal` 588b2ed09e5e from next@1ca8153e, `pkg:sola`
 b5951e0d23dd from next@088ce181 (the launcher's "Signal"). Not released.
 **While Joshua tries it (2026-11-16, his standing word):** a fix that moves
 only `pkg:sola-signal` is applied from `next` and merged to master without
@@ -100,6 +100,14 @@ leaves when there is a connection, across restarts.
   picture in a message has the bubble's corner radius and 12 px above and
   below, as at its sides. Looked at on a private desk. Applied
   (7046cd955ad6).
+- 2026-11-16 (Joshua: "I need to be able to SUPER+V my clipboard, including
+  images"): Paste (the Edit menu's, so Super+V; Ctrl+V in the composer)
+  reads the clipboard from the compositor's side (`sola_kit::clipboard`):
+  text goes into the field with the cursor, a picture among the files to
+  send, kept under `files/pasted/` until sent (cleared at start) and shown
+  as itself above the composer. Tried on a private desk with `wl-copy` and
+  the menu's action on the bus; not with the shell's key, and no picture
+  has gone to a person yet. Applied (588b2ed09e5e).
 
 ## Not built
 
