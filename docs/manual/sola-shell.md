@@ -628,12 +628,13 @@ It opens in:
   Calendar, Vault, Browser's location bar and vault panel, and the rest;
 - a page in Browser, and in a web app's window
   ([Browser](sola-browser.md#page-menu));
-- a pane in Terminal and in Projects.
+- a pane in Terminal and in Projects;
+- a letter in Mail, a reply in Bots, an event's notes in Calendar.
 
 It does not open in other programs' windows (XWayland and other Wayland
 clients), in the Shell's own fields (the launcher, the shortcuts
-overlay's filter, renaming a workspace), or in multi-line text (a letter
-in Mail, an item's notes in Vault). In a Terminal or Projects pane whose
+overlay's filter, renaming a workspace), or in other multi-line text (a
+draft in Mail, an item's notes in Vault). In a Terminal or Projects pane whose
 program has asked for mouse reports (vim with the mouse on, htop), the
 right-click goes to that program and no menu opens. With the Shell not
 running, a right-click opens nothing.
@@ -644,7 +645,8 @@ From the top, a hairline between groups:
 
 1. **The application's rows**, when it has any: a page's (see
    [Browser](sola-browser.md#page-menu)), a pane's **Copy** (with a
-   selection) and **Paste**. Each shows the key the application's own
+   selection) and **Paste**, a letter's **Open Link** and **Copy Link**
+   (on a link, or a picture that is one). Each shows the key the application's own
    menus give it. A row can open one level of submenu.
 2. **Edit**, by what the click landed on: **Cut** with a selection in a
    field you can type in, **Copy** with a selection, **Paste** where you

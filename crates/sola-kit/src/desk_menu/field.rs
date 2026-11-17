@@ -1,5 +1,5 @@
-//! The desk menu of a kit text input: which menus its fields opened, and
-//! the pick each waits for.
+//! The desk menu of a kit text input or letter: which menus its fields
+//! (and letters) opened, and the pick each waits for.
 //!
 //! The field opens the menu ([`opened`]); the kit's bus poller sees the
 //! pick ([`observe`]) — redeeming a vault value or reading the clipboard
@@ -27,6 +27,8 @@ pub(crate) enum FieldOp {
     SelectAll,
     /// A vault value, at the caret.
     Insert(Secret),
+    /// One of the widget's own rows (a letter's Copy Link), by its id.
+    Action(String),
 }
 
 /// Menus fields opened and not yet answered. A field whose menu never
@@ -107,8 +109,9 @@ pub(crate) fn observe(pick: &DeskMenuPick) -> bool {
                 None
             }
         },
-        // Fields add no rows and fill no page.
-        DeskPick::Action(_) | DeskPick::VaultFill { .. } | DeskPick::Dismissed => None,
+        DeskPick::Action(id) => Some(FieldOp::Action(id.clone())),
+        // No kit widget fills a page.
+        DeskPick::VaultFill { .. } | DeskPick::Dismissed => None,
     };
     with(|f| f.answered(token, op, Instant::now()));
     true
@@ -165,6 +168,20 @@ mod tests {
         };
         assert!(!observe(&pick));
         assert!(take(pick.token).is_none());
+    }
+
+    #[test]
+    fn a_widgets_own_row_comes_back_to_it() {
+        let token = super::super::next_token();
+        opened(token);
+        let pick = DeskMenuPick {
+            app_id: "sola-mail".into(),
+            pid: std::process::id(),
+            token,
+            pick: DeskPick::Action("prose.copy-link".into()),
+        };
+        assert!(observe(&pick));
+        assert!(matches!(take(token), Some(FieldOp::Action(id)) if id == "prose.copy-link"));
     }
 
     #[test]

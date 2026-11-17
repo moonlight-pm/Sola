@@ -2,7 +2,9 @@
 //!
 //! Mail (and any other long-form pane) should render through this instead
 //! of a `text_editor`. Tokens only; no hex. Links are accent + underline
-//! and emit `on_link` on click. Drag-select copies the visible text.
+//! and emit `on_link` on click. Drag-select copies the visible text. A
+//! right-click opens the desk menu: Open Link and Copy Link over a link,
+//! Copy with a selection, Select All.
 
 mod markdown;
 mod view;

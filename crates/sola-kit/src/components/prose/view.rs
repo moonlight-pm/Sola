@@ -2,6 +2,8 @@
 //! still click. Selection lives in the widget tree; the parent is told
 //! the selected string (and can force Select All via a generation).
 
+mod desk;
+
 use std::time::{Duration, Instant};
 
 use iced::advanced::image as img;
@@ -230,6 +232,9 @@ struct State<P: text::Paragraph> {
     click_count: u8,
     hovered_link: Option<String>,
     link_pressed: Option<String>,
+    /// The desk menu this letter opened and waits on, and the link it
+    /// was opened over.
+    desk: Option<(u64, Option<String>)>,
 }
 
 impl<P: text::Paragraph> Default for State<P> {
@@ -246,6 +251,7 @@ impl<P: text::Paragraph> Default for State<P> {
             click_count: 0,
             hovered_link: None,
             link_pressed: None,
+            desk: None,
         }
     }
 }
@@ -366,12 +372,15 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &Renderer,
-        _clipboard: &mut dyn Clipboard,
+        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
+        // The desk menu's pick comes in with whatever event is next (the
+        // app's update for it redraws every window).
+        self.desk_apply(state, clipboard, shell);
 
         let cursor_pos = cursor.position().or_else(|| {
             if state.dragging {
@@ -451,6 +460,15 @@ where
                 shell.request_redraw();
                 shell.invalidate_layout();
                 shell.capture_event();
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                let Some(point) = cursor
+                    .position_over(bounds)
+                    .or_else(|| cursor.position().filter(|p| bounds.contains(*p)))
+                else {
+                    return;
+                };
+                self.desk_press(state, point, shell);
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if !state.dragging {
