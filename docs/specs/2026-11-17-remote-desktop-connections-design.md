@@ -67,7 +67,10 @@ and [a screen of its own](2026-11-11-remote-desktop-screen-design.md).
   memory, the pointer drawn in (`overlay_cursor`; wlroots draws it in
   software while a client asks, so its moves are damage). The first frame
   is copied at once, then each copy waits for damage: a still screen sends
-  nothing. At most 60 frames a second, whatever the screen's refresh. The
+  nothing. At most 60 frames a second, whatever the screen's refresh. Two
+  buffers: the next frame is asked for, and copied by the desk, while the
+  last encodes, so a frame costs the longer of the two, not both (koeurax:
+  33 → 60 fps). A frame's time is the desk's own timestamp on it. The
   gate and the bitrate are the Mac's (`host/flow.rs`, `host/rate.rs`, moved
   from the agent and included by it by path, as `link.rs` is).
 - **Encoder:** NVENC HEVC from system-memory RGB input, low latency, one
@@ -79,6 +82,10 @@ and [a screen of its own](2026-11-11-remote-desktop-screen-design.md).
   tag 8; until it comes a host can) greys out View → Extend; `Up::Size` and
   `Up::Mirror` are ignored. A screen that changes size makes a new encoder
   and a new `Display`.
+- **Wheel:** the viewer sends wheel turns the other way round from the
+  wire's own, as the Mac in a window wants them; a Linux host turns them
+  back (Joshua, 2026-11-17: "we don't need to invert the mouse like we do
+  over to macs").
 - **Input:** the KVM's Wayland injector (`inject.rs`: virtual pointer and
   keyboard), absolute in the output's pixels, which the `Display` names as
   points too. Keys held when the viewer goes are released.

@@ -38,10 +38,9 @@ impl Picture {
     }
 }
 
-/// A wheel turn in detents, in the wire's signs (up and right positive, as
-/// the KVM server sends them). Winit's, sent as they are, scrolled the Mac
-/// backwards on both axes, so both are negated. A Linux host's injector
-/// reads the wire as the Mac agent does.
+/// A wheel turn in detents. Winit's signs, sent as they are, scrolled the
+/// Mac backwards on both axes, so both are negated: the other way round
+/// from the wire's own (the KVM server's), which a Linux host turns back.
 fn wheel_detents(delta: mouse::ScrollDelta) -> (f32, f32) {
     match delta {
         mouse::ScrollDelta::Lines { x, y } => (-x, -y),

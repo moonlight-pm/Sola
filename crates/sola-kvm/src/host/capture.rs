@@ -1,8 +1,10 @@
 //! The picture source: wlr-screencopy of the output into shared memory,
 //! with the pointer drawn in, into the encoder. After the first frame each
 //! copy waits for the screen to change, so a still screen sends nothing;
-//! frames come no faster than [`FPS`]. Its own thread and Wayland
-//! connection; dropping [`Running`] stops it.
+//! frames come no faster than [`FPS`]. Two buffers: the desk copies the next
+//! frame into one while the last encodes from the other, so a frame costs
+//! the longer of the two, not both. Its own thread and Wayland connection;
+//! dropping [`Running`] stops it.
 
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::sync::Arc;
@@ -10,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::{wl_buffer, wl_output, wl_registry, wl_shm, wl_shm_pool};
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum};
@@ -101,7 +103,7 @@ pub fn start(feed: Feed) -> Result<(Down, Running), Failed> {
         output,
         stop: Arc::clone(&stop),
         frame: None,
-        buffer: None,
+        buffers: [None, None],
     };
     let offer = capture.offer().map_err(Failed::ForNow)?.ok_or_else(|| Failed::ForNow("stopped".into()))?;
     if !Encoder::supports(offer.format) {
@@ -117,7 +119,7 @@ pub fn start(feed: Feed) -> Result<(Down, Running), Failed> {
     thread::Builder::new()
         .name("kvm-view-capture".into())
         .spawn(move || {
-            if let Some(why) = capture.run(offer, encoder, &feed) {
+            if let Err(why) = capture.run(offer, encoder, &feed) {
                 let _ = feed.tx.send(Msg::Stopped(why));
             }
         })
@@ -153,6 +155,8 @@ struct State {
     y_invert: bool,
     /// `Some(true)` ready, `Some(false)` failed.
     done: Option<bool>,
+    /// When the desk had the frame: `CLOCK_MONOTONIC`, nanoseconds.
+    ready_ns: Option<u64>,
 }
 
 /// Our shared memory, the size of an offer.
@@ -236,12 +240,30 @@ struct Capture {
     stop: Arc<Stop>,
     /// The frame asked for and not yet copied.
     frame: Option<ZwlrScreencopyFrameV1>,
-    buffer: Option<Buffer>,
+    /// One copying while the other encodes.
+    buffers: [Option<Buffer>; 2],
+}
+
+/// A frame copied into `buffers[slot]`.
+struct Shot {
+    slot: usize,
+    offer: Offer,
+    y_invert: bool,
+    /// When the desk had it ([`now_us`]).
+    captured_us: u64,
+}
+
+/// How a copy ended.
+enum Copied {
+    Shot(Shot),
+    /// The desk failed it.
+    Failed,
+    Stopped,
 }
 
 impl Capture {
     /// Ask for a frame and wait for what buffer it wants; `None` when
-    /// stopped. The frame stays in `self.frame` for [`Self::copy`].
+    /// stopped. The frame stays in `self.frame` for [`Self::start_copy`].
     fn offer(&mut self) -> Result<Option<Offer>, String> {
         self.state = State::default();
         let frame = self.manager.capture_output(1, &self.output, &self.qh, ());
@@ -258,120 +280,100 @@ impl Capture {
         offer.map(Some).ok_or_else(|| "the desk offers no shared-memory buffer to capture into".into())
     }
 
-    fn run(mut self, mut offer: Offer, mut encoder: Encoder, feed: &Feed) -> Option<String> {
-        let (mut first, mut kbps, mut failures) = (true, feed.gate.kbps(), 0);
-        let mut key_at = Instant::now();
-        let started = Instant::now();
+    /// `Ok` when stopped (the viewer went); `Err` says why the capture
+    /// could not go on.
+    fn run(mut self, mut offer: Offer, encoder: Encoder, feed: &Feed) -> Result<(), String> {
+        let mut encoding = Encoding::new(encoder, feed);
+        let (mut slot, mut failures) = (0, 0);
+        self.start_copy(slot, offer, true)?;
+        let mut asked = Instant::now();
         loop {
-            let asked = Instant::now();
-            match self.copy(offer, first) {
-                Ok(None) => return None,
-                Ok(Some(true)) => failures = 0,
-                Ok(Some(false)) => {
+            let shot = match self.finish_copy(slot, offer)? {
+                Copied::Stopped => return Ok(()),
+                Copied::Failed => {
                     failures += 1;
                     if failures >= FAILURES {
-                        return Some("the desk failed to copy the screen".into());
+                        return Err("the desk failed to copy the screen".into());
                     }
-                    first = true;
+                    None
                 }
-                Err(why) => return Some(why),
-            }
-            if failures == 0 {
-                let captured_us = now_us();
-                if feed.gate.admit(captured_us, FRAME_US) {
-                    if feed.gate.kbps() != kbps {
-                        kbps = feed.gate.kbps();
-                        if let Err(why) = encoder.set_kbps(kbps) {
-                            warn!(%why, kbps, "remote view: the encoder kept its bitrate");
-                        }
-                    }
-                    let key = first || feed.force_key.swap(false, Ordering::Relaxed) || key_at.elapsed() >= KEY_EVERY;
-                    if key {
-                        key_at = Instant::now();
-                    }
-                    let buffer = self.buffer.as_ref().expect("copied into");
-                    let frame = Frame {
-                        data: buffer.bytes(),
-                        width: offer.width,
-                        height: offer.height,
-                        stride: offer.stride,
-                        format: offer.format,
-                        y_invert: self.state.y_invert,
-                    };
-                    let pts_us = started.elapsed().as_micros() as u64;
-                    match encoder.encode(&frame, key, pts_us) {
-                        Ok(picture) => {
-                            let encoded = Encoded {
-                                key: picture.key,
-                                pts_us,
-                                captured_us,
-                                data: picture.data,
-                            };
-                            if feed.tx.send(Msg::Picture(encoded)).is_err() {
-                                return None;
-                            }
-                        }
-                        Err(why) => {
-                            warn!(%why, "remote view: the encoder would not take a frame");
-                            feed.gate.dropped();
-                            feed.force_key.store(true, Ordering::Relaxed);
-                        }
-                    }
-                } else {
-                    feed.skipped.fetch_add(1, Ordering::Relaxed);
+                Copied::Shot(shot) => {
+                    failures = 0;
+                    Some(shot)
                 }
-                first = false;
-            }
+            };
             // No faster than the frame rate: the screen may refresh faster.
             if !self.pause(FRAME.saturating_sub(asked.elapsed())) {
-                return None;
+                return Ok(());
             }
-            let next = match self.offer() {
-                Ok(Some(next)) => next,
-                Ok(None) => return None,
-                Err(why) => return Some(why),
+            asked = Instant::now();
+            let Some(next) = self.offer()? else {
+                return Ok(());
             };
-            if next != offer {
-                info!(?next, "remote view: the screen changed");
-                if !Encoder::supports(next.format) {
-                    return Some(format!("the desk now captures as format {:#x}", next.format));
-                }
-                if (next.width, next.height) != (offer.width, offer.height) {
-                    encoder = match Encoder::new(next.width, next.height, FPS, kbps) {
-                        Ok(encoder) => encoder,
-                        Err(why) => return Some(why),
-                    };
-                    if feed.tx.send(Msg::Display(display(&next))).is_err() {
-                        return None;
+            let other = 1 - slot;
+            match &shot {
+                // The next frame copies into the other buffer while this
+                // one encodes.
+                Some(shot) if next == offer => {
+                    self.start_copy(other, next, false)?;
+                    if !encoding.picture(shot, self.bytes(shot.slot)) {
+                        return Ok(());
                     }
-                    first = true;
                 }
-                offer = next;
+                // This one first: the next is copied whole, at its size.
+                _ => {
+                    if let Some(shot) = &shot {
+                        if !encoding.picture(shot, self.bytes(shot.slot)) {
+                            return Ok(());
+                        }
+                    }
+                    if next != offer && !encoding.change(&offer, &next)? {
+                        return Ok(());
+                    }
+                    self.start_copy(other, next, true)?;
+                }
             }
+            (slot, offer) = (other, next);
         }
     }
 
-    /// Copy the asked frame into our buffer: once the screen changes, after
-    /// the first. `Some(true)` copied, `Some(false)` the desk failed it,
-    /// `None` stopped.
-    fn copy(&mut self, offer: Offer, first: bool) -> Result<Option<bool>, String> {
-        if self.buffer.as_ref().is_none_or(|b| b.offer != offer) {
-            self.buffer = None;
-            self.buffer = Some(Buffer::new(&self.shm, offer, &self.qh)?);
+    /// Ask the desk to copy the offered frame into `buffers[slot]`: at
+    /// once when `whole`, else once the screen changes.
+    fn start_copy(&mut self, slot: usize, offer: Offer, whole: bool) -> Result<(), String> {
+        if self.buffers[slot].as_ref().is_none_or(|b| b.offer != offer) {
+            self.buffers[slot] = None;
+            self.buffers[slot] = Some(Buffer::new(&self.shm, offer, &self.qh)?);
         }
-        let buffer = &self.buffer.as_ref().expect("made").buffer;
-        let frame = self.frame.take().expect("offered");
-        if first {
+        let buffer = &self.buffers[slot].as_ref().expect("made").buffer;
+        let frame = self.frame.as_ref().expect("offered");
+        if whole {
             frame.copy(buffer);
         } else {
             frame.copy_with_damage(buffer);
         }
+        self.queue.flush().map_err(|e| format!("the desk's connection: {e}"))
+    }
+
+    /// Wait for the copy into `buffers[slot]`.
+    fn finish_copy(&mut self, slot: usize, offer: Offer) -> Result<Copied, String> {
         let came = self.wait(|s| s.done.is_some());
-        frame.destroy();
-        Ok(match came? {
-            true => self.state.done,
-            false => None,
+        if let Some(frame) = self.frame.take() {
+            frame.destroy();
+        }
+        Ok(match (came?, self.state.done) {
+            (false, _) => Copied::Stopped,
+            (true, Some(true)) => Copied::Shot(Shot {
+                slot,
+                offer,
+                y_invert: self.state.y_invert,
+                captured_us: captured_us(self.state.ready_ns),
+            }),
+            (true, _) => Copied::Failed,
         })
+    }
+
+    fn bytes(&self, slot: usize) -> &[u8] {
+        self.buffers[slot].as_ref().map_or(&[], Buffer::bytes)
     }
 
     /// Dispatch until `until` holds (`true`), or the stop (`false`).
@@ -406,6 +408,148 @@ impl Capture {
             poll(&[self.stop.fd.as_raw_fd()], pause.as_millis() as i32);
         }
         !self.stop.is_set()
+    }
+}
+
+/// [`now_us`] when the desk had a frame, from its own timestamp: a frame
+/// that was ready while the one before encoded is older than its dispatch.
+fn captured_us(ready_ns: Option<u64>) -> u64 {
+    let now = now_us();
+    let Some(ready_ns) = ready_ns else {
+        return now;
+    };
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
+    let mono_ns = ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64;
+    let age_us = mono_ns.saturating_sub(ready_ns) / 1_000;
+    // Not the clock it should be: the dispatch is the nearest.
+    if age_us > 1_000_000 {
+        return now;
+    }
+    now.saturating_sub(age_us)
+}
+
+/// The encoder and what it keeps from frame to frame.
+struct Encoding<'a> {
+    encoder: Encoder,
+    feed: &'a Feed,
+    /// The bitrate the encoder has.
+    kbps: u32,
+    /// The next picture is a key one: the first, or after a new encoder.
+    key_next: bool,
+    key_at: Instant,
+    started: Instant,
+    second: Second,
+}
+
+/// A second of capture, for the debug log.
+#[derive(Default)]
+struct Second {
+    from: Option<Instant>,
+    pictures: u32,
+    skipped: u32,
+    encode: Duration,
+    bitrates: u32,
+}
+
+impl<'a> Encoding<'a> {
+    fn new(encoder: Encoder, feed: &'a Feed) -> Self {
+        Self {
+            encoder,
+            feed,
+            kbps: feed.gate.kbps(),
+            key_next: true,
+            key_at: Instant::now(),
+            started: Instant::now(),
+            second: Second::default(),
+        }
+    }
+
+    /// Encode `shot` from `data` and send it, when the gate lets it through.
+    /// `false` when the viewer has gone.
+    fn picture(&mut self, shot: &Shot, data: &[u8]) -> bool {
+        let feed = self.feed;
+        if !feed.gate.admit(shot.captured_us, FRAME_US) {
+            feed.skipped.fetch_add(1, Ordering::Relaxed);
+            self.second.skipped += 1;
+            return true;
+        }
+        let began = Instant::now();
+        if feed.gate.kbps() != self.kbps {
+            self.kbps = feed.gate.kbps();
+            self.second.bitrates += 1;
+            if let Err(why) = self.encoder.set_kbps(self.kbps) {
+                warn!(%why, kbps = self.kbps, "remote view: the encoder kept its bitrate");
+            }
+        }
+        let key = std::mem::take(&mut self.key_next)
+            || feed.force_key.swap(false, Ordering::Relaxed)
+            || self.key_at.elapsed() >= KEY_EVERY;
+        if key {
+            self.key_at = Instant::now();
+        }
+        let frame = Frame {
+            data,
+            width: shot.offer.width,
+            height: shot.offer.height,
+            stride: shot.offer.stride,
+            format: shot.offer.format,
+            y_invert: shot.y_invert,
+        };
+        let pts_us = self.started.elapsed().as_micros() as u64;
+        let sent = match self.encoder.encode(&frame, key, pts_us) {
+            Ok(picture) => {
+                let encoded = Encoded {
+                    key: picture.key,
+                    pts_us,
+                    captured_us: shot.captured_us,
+                    data: picture.data,
+                };
+                feed.tx.send(Msg::Picture(encoded)).is_ok()
+            }
+            Err(why) => {
+                warn!(%why, "remote view: the encoder would not take a frame");
+                feed.gate.dropped();
+                self.key_next = true;
+                true
+            }
+        };
+        self.second.pictures += 1;
+        self.second.encode += began.elapsed();
+        self.log_second();
+        sent
+    }
+
+    /// The screen changed from `was` to `now`: a new encoder when its size
+    /// did, and the viewer told. `false` when the viewer has gone.
+    fn change(&mut self, was: &Offer, now: &Offer) -> Result<bool, String> {
+        info!(?now, "remote view: the screen changed");
+        if !Encoder::supports(now.format) {
+            return Err(format!("the desk now captures as format {:#x}", now.format));
+        }
+        if (now.width, now.height) == (was.width, was.height) {
+            return Ok(true);
+        }
+        self.encoder = Encoder::new(now.width, now.height, FPS, self.kbps)?;
+        self.key_next = true;
+        Ok(self.feed.tx.send(Msg::Display(display(now))).is_ok())
+    }
+
+    fn log_second(&mut self) {
+        let second = &mut self.second;
+        let from = *second.from.get_or_insert_with(Instant::now);
+        if from.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        let encode_ms = second.encode.as_secs_f64() * 1000.0 / f64::from(second.pictures.max(1));
+        debug!(
+            pictures = second.pictures,
+            skipped = second.skipped,
+            encode_ms = format!("{encode_ms:.1}"),
+            bitrate_changes = second.bitrates,
+            "remote view: a second of capture"
+        );
+        *second = Second::default();
     }
 }
 
@@ -461,7 +605,15 @@ impl Dispatch<ZwlrScreencopyFrameV1, ()> for State {
             Event::Flags { flags } => {
                 state.y_invert = matches!(flags, WEnum::Value(f) if f.contains(zwlr_screencopy_frame_v1::Flags::YInvert));
             }
-            Event::Ready { .. } => state.done = Some(true),
+            Event::Ready {
+                tv_sec_hi,
+                tv_sec_lo,
+                tv_nsec,
+            } => {
+                let secs = (u64::from(tv_sec_hi) << 32) | u64::from(tv_sec_lo);
+                state.ready_ns = Some(secs * 1_000_000_000 + u64::from(tv_nsec));
+                state.done = Some(true);
+            }
             Event::Failed => state.done = Some(false),
             _ => {}
         }
