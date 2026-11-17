@@ -16,7 +16,7 @@ Not freezes (those are [`../specs/`](../specs/)). Not the capability matrix.
 ## Active
 
 - [2026-11-16-sola-signal-plan.md](2026-11-16-sola-signal-plan.md) —
-  Signal client of our own on libsignal (branch `signal`): the engine and
+  Signal client of our own on libsignal (merged 2026-11-16): the engine and
   the window are built and linked to Joshua's phone; not yet in daily use,
   not packaged.
 - [2026-10-21-next-tab-bar-plan.md](2026-10-21-next-tab-bar-plan.md) —

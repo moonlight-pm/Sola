@@ -91,6 +91,12 @@ pub fn set(id: &str, hash: &str, needs: &[(String, String)], source: &Source) ->
     run(Command::new("sudo").args(["oath", "set", id, "--from-json", &pin])).map(drop)
 }
 
+/// Put a package the catalog has, absent, on the machine at its pin (it
+/// is linked at apply).
+pub fn present(id: &str) -> Result<(), String> {
+    run(Command::new("sudo").args(["oath", "set", id, "present=true"])).map(drop)
+}
+
 /// The catalog has `id` (a `pkg` this machine knows, present or not).
 pub fn exists(id: &str) -> bool {
     Command::new("oath")

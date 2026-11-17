@@ -1,8 +1,9 @@
 # Signal client — plan
 
 **Started:** 2026-11-16, on Joshua's word ("All this is good -- go ahead").
-**Branch:** `signal` (`.worktrees/signal`), not merged, nothing installed;
-merged into `next` (613e7b77) for the overlay.
+**Branch:** `signal`, merged to master 2026-11-16 (Joshua: "apply it and merge
+to master"). **On novus:** `pkg:sola-signal` cd68fe1b6422 and `pkg:sola`
+b5951e0d23dd from next@088ce181 (the launcher's "Signal"). Not released.
 **Research and why this shape:** [`../ideas/2026-10-31-signal-client.md`](../ideas/2026-10-31-signal-client.md).
 
 One binary, `sola-signal` (`crates/sola-signal`, AGPL-3.0-only): a linked
@@ -100,8 +101,7 @@ leaves when there is a connection, across restarts.
 - Phone numbers and usernames looked up (a conversation starts from
   someone the account already knows).
 - Stories, payments, calls (RingRTC), key transparency.
-- Applied anywhere. The package and the launcher's entry are written (see
-  Packaging) and wait for Joshua's word for the apply.
+- A release: it is an overlay on novus only (see Packaging).
 - Where the keys rest: still the sqlite file in the clear, mode 0600.
 
 One `sola-signal` signs in at a time (`signal.lock` beside the store): the
@@ -122,10 +122,15 @@ processes would write the same sessions.
   runtimes). The vendored crates needed no change to the pruning.
 - The launcher's entry ("Signal", `lucide/message-circle`) is in
   `sola-shell`'s `builtins.rs`: it reaches a desk with `pkg:sola`.
-- On novus the overlay makes the package (`cargo make oath apply sola-signal
-  sola` from `next`; `pkg:sola` restarts the desk). Other machines get it
-  only once it is published and the Oath session has put it in the desk
-  profile, with the AGPL-3.0 note.
+- **Applied on novus 2026-11-16** from `next` (`cargo make oath apply
+  sola-signal sola`): `pkg:sola-signal` cd68fe1b6422, `pkg:sola`
+  b5951e0d23dd, both from next@088ce181. The plan build had left
+  `pkg:sola-signal` in the catalog, absent, so the pin alone did not link
+  it; `oath set pkg:sola-signal present=true` and an apply did, and
+  `sola-make` now does that itself for a package with no live hash (not
+  yet run against Oath). Other machines get the package only once it is
+  published and the Oath session has put it in the desk profile, with the
+  AGPL-3.0 note.
 
 ## Following Signal
 
