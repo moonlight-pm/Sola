@@ -160,6 +160,29 @@ fn floats_and_dialogs() {
 }
 
 #[test]
+fn a_dialog_of_a_dialog_belongs_to_their_tab() {
+    let t = Instant::now();
+    let mut s = Stacks::new();
+    s.place(1, "prismlauncher", "prismlauncher", false, false, t);
+    s.place(2, "sola-terminal", "sola-terminal", false, false, t);
+    // Prism's Settings (3), and the dialog Settings opened (4).
+    s.set_parent(3, 1);
+    s.set_parent(4, 3);
+    assert_eq!(s.tab_of(4), 1);
+    assert_eq!(s.desk_of(4), Some(MAIN));
+    // Showing the inner one shows their tab.
+    assert!(s.show(4));
+    assert_eq!(s.shown(FULL), Some(1));
+    // Hiding it hides the tab, and both dialogs with it.
+    assert!(s.hide(4));
+    assert!(s.is_hidden(1) && s.is_hidden(3) && s.is_hidden(4));
+    // Parents that loop still end.
+    s.set_parent(5, 6);
+    s.set_parent(6, 5);
+    assert!([5, 6].contains(&s.tab_of(5)));
+}
+
+#[test]
 fn closing_the_shown_tab_shows_the_one_shown_before() {
     let t = Instant::now();
     let mut s = Stacks::new();

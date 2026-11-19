@@ -757,7 +757,7 @@ impl Shell {
         let Some(wid) = self.focused_window_id else {
             return iced::Task::none();
         };
-        let wid = self.tabs.parent_of(wid).unwrap_or(wid);
+        let wid = self.tabs.tab_of(wid);
         self.move_tab(wid, zone);
         iced::Task::none()
     }
@@ -943,7 +943,7 @@ impl Shell {
         let Some(wid) = self.focused_window_id else {
             return;
         };
-        let wid = self.tabs.parent_of(wid).unwrap_or(wid);
+        let wid = self.tabs.tab_of(wid);
         let zone = self.tabs.zone_of(wid);
         if !self.tabs.hide(wid) {
             return;
@@ -952,7 +952,7 @@ impl Shell {
         self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
         if self
             .pointer_window_id
-            .is_some_and(|p| self.tabs.parent_of(p).unwrap_or(p) == wid)
+            .is_some_and(|p| self.tabs.tab_of(p) == wid)
         {
             self.pointer_window_id = None;
         }
@@ -1637,11 +1637,18 @@ impl Shell {
             return;
         }
         order.push(wid);
+        self.push_dialogs(order, wid);
+    }
+
+    /// The dialogs of `wid`, each with the dialogs it opened above it.
+    fn push_dialogs(&self, order: &mut Vec<u32>, wid: u32) {
         for child in self.tabs.children_of(wid) {
-            if !self.tabs.is_hidden(child)
+            if !order.contains(&child)
+                && !self.tabs.is_hidden(child)
                 && self.known_windows.iter().any(|w| w.window_id == child)
             {
                 order.push(child);
+                self.push_dialogs(order, child);
             }
         }
     }
@@ -3665,6 +3672,44 @@ mod hide_tests {
 
         deliver(&mut shell, Topic::WindowFacts(dialog), false);
         assert_eq!(shell.tabs.parent_of(6), None, "its parent taken back with the rest");
+    }
+
+    /// A dialog a dialog opened (Prism's Settings → Manage Skins) is drawn
+    /// above it, with their tab. Left out, it was hidden while it held the
+    /// other two modal.
+    #[test]
+    fn a_dialog_of_a_dialog_is_composed_above_it() {
+        use sola_bus::topics::{Topic, WindowFacts};
+        const PRISM: &str = "org.prismlauncher.PrismLauncher";
+        let mut shell = test_shell(Vec::new(), None, &[]);
+        let deliver = |shell: &mut Shell, t: Topic| {
+            let mut m = t.to_message();
+            m.sticky = true;
+            let _ = shell.handle_bus(&m);
+        };
+        deliver(
+            &mut shell,
+            Topic::Windows(vec![
+                win(5, PRISM, "Prism Launcher"),
+                win(6, PRISM, "Settings"),
+                win(7, PRISM, "Skin Upload"),
+            ]),
+        );
+        for (window_id, parent) in [(6, 5), (7, 6)] {
+            let facts = WindowFacts {
+                window_id,
+                rect: None,
+                tab: None,
+                parent: Some(parent),
+            };
+            deliver(&mut shell, Topic::WindowFacts(facts));
+        }
+        let prism: Vec<u32> = composed_apps(&shell)
+            .into_iter()
+            .filter(|w| [5, 6, 7].contains(w))
+            .collect();
+        assert_eq!(prism, vec![5, 6, 7]);
+        assert_eq!(shell.tabs.tab_of(7), 5);
     }
 
     /// An app's menu → Keep in Sidebar keeps the launcher's app, once;

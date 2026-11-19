@@ -184,7 +184,7 @@ impl Shell {
         let Some(wid) = self.focused_window_id else {
             return;
         };
-        let tab = self.tabs.parent_of(wid).unwrap_or(wid);
+        let tab = self.tabs.tab_of(wid);
         if !self.tabs.send(tab, index) {
             return;
         }
