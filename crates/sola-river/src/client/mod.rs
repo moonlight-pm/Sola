@@ -45,6 +45,7 @@ pub mod screenshot;
 pub mod screenshot_window;
 pub mod seat;
 pub mod background;
+pub mod badge;
 pub mod corners;
 pub mod fade;
 pub mod shadow;
@@ -210,6 +211,9 @@ pub struct AppData {
     pub corners: corners::CornerState,
     /// The background picture (`Topic::Background`).
     pub background: background::BackgroundState,
+    /// Badges in the corner over a window that fills the screen
+    /// (`Topic::Badge`).
+    pub badges: badge::BadgeState,
     /// The idle fade (`Appearance.fade_idle`).
     pub fade: fade::FadeState,
     /// A focused foreign window's rim (sRGB 0–1): the theme's highlight a
@@ -227,6 +231,21 @@ pub struct AppData {
     /// newly mapped window that is not yet in the list stays **hidden**
     /// (shell overlays used to flash at default-center before Frame).
     pub last_composition: Vec<u32>,
+}
+
+/// Whether `window` comes after `under` in the newest composition (the
+/// shell sends it before the focus that goes with it). Rivulet draws a
+/// window placed after a fullscreen one over it (Oath dc481d4), so the
+/// fullscreen one keeps its fullscreen while that window has the keyboard.
+fn composed_above(state: &AppData, under: u32, window: u32) -> bool {
+    let order = state.pending.composition.as_deref().unwrap_or(&state.last_composition);
+    after(order, under, window)
+}
+
+/// Whether `window` comes after `under` in `order` (bottom to top).
+fn after(order: &[u32], under: u32, window: u32) -> bool {
+    let at = |id: u32| order.iter().position(|&w| w == id);
+    matches!((at(under), at(window)), (Some(u), Some(w)) if w > u)
 }
 
 /// Operator hook (`compositor.cursor`). River honors the magic xcursor
@@ -306,6 +325,7 @@ impl AppData {
             shadow: shadow::ShadowState::default(),
             corners: corners::CornerState::default(),
             background: background::BackgroundState::default(),
+            badges: badge::BadgeState::default(),
             fade: fade::FadeState::default(),
             rim_focused: sola_core::theme::focus_rim(sola_core::theme::highlight_rgb(
                 &sola_core::theme::Theme::default(),
@@ -478,8 +498,13 @@ pub fn bus_tick(state: &mut AppData) {
                 // Alt-Tab gives no visual feedback, even though focus
                 // technically changed (music drops, but the game is
                 // still painted on top of the new focus target).
+                // Not for a window composed above it (a drop-down over a
+                // game): rivulet draws that over the fullscreen one.
                 if let Some(prev) = state.focused_window {
-                    if prev != t.window_id && state.currently_fullscreen.contains(&prev) {
+                    if prev != t.window_id
+                        && state.currently_fullscreen.contains(&prev)
+                        && !composed_above(state, prev, t.window_id)
+                    {
                         tracing::info!(
                             prev_window_id = prev,
                             new_window_id = t.window_id,
@@ -534,6 +559,7 @@ pub fn bus_tick(state: &mut AppData) {
                     state.rim_rest = rest;
                     state.pending.render_dirty = true;
                 }
+                badge::theme(state, &theme);
             }
             sola_bus::topics::Topic::Appearance(look) => {
                 // A retraction arrives as the same topic, not sticky.
@@ -550,6 +576,10 @@ pub fn bus_tick(state: &mut AppData) {
                 // A retraction arrives as the same topic, not sticky.
                 background::set(state, msg.sticky.then_some(bg));
                 background::poll(state);
+            }
+            sola_bus::topics::Topic::Badge(b) => {
+                // A retraction arrives as the same topic, not sticky.
+                badge::set(state, b.id.clone(), msg.sticky.then_some(b));
             }
             sola_bus::topics::Topic::Shutdown => {
                 info!("shutdown requested via bus");
@@ -920,5 +950,20 @@ impl Dispatch<WpCursorShapeDeviceV1, ()> for AppData {
         _: &QueueHandle<Self>,
     ) {
         // wp_cursor_shape_device_v1 has no events.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::after;
+
+    #[test]
+    fn a_window_after_a_fullscreen_one_is_over_it() {
+        // The game in Cinema, then a drop-down over it.
+        assert!(after(&[8, 12], 8, 12));
+        assert!(!after(&[12, 8], 8, 12));
+        // A window not in the composition is not over it.
+        assert!(!after(&[8], 8, 12));
+        assert!(!after(&[12], 8, 12));
     }
 }

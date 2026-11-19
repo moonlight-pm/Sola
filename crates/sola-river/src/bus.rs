@@ -38,6 +38,8 @@ pub const SUBSCRIPTIONS: &[TopicKind] = &[
     TopicKind::Blackout,
     // The videos each window shows: no overlay over them. Sticky.
     TopicKind::WindowVideos,
+    // Badges in the corner over a window that fills the screen. Persistent.
+    TopicKind::Badge,
 ];
 
 pub struct BusClient {

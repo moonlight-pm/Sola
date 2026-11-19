@@ -312,6 +312,28 @@ impl PtyBackend {
         )
     }
 
+    /// A pty running `argv` itself, with no tmux of its own (the drop-down
+    /// over a fullscreen app, whose command is often a tmux attach). Size it
+    /// with [`Self::resize_client`]; dropping it hangs up the command.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_command(
+        tab_id: &str,
+        argv: &[String],
+        cols: u16,
+        rows: u16,
+        term: Arc<FairMutex<Term<Listener>>>,
+        cursor: Arc<std::sync::RwLock<crate::emulator::CursorSnap>>,
+        notify: mpsc::Sender<String>,
+        exit: mpsc::Sender<String>,
+    ) -> std::io::Result<Self> {
+        let (program, args) = argv
+            .split_first()
+            .ok_or_else(|| std::io::Error::other("no command"))?;
+        let mut cmd = std::process::Command::new(program);
+        cmd.args(args);
+        Self::spawn_in_pty(tab_id, cmd, "", None, cols, rows, term, cursor, notify, exit)
+    }
+
     /// Run `cmd` on a new pty sized `cols`×`rows`, register the write
     /// queue, and start the reader + writer threads.
     #[allow(clippy::too_many_arguments)]

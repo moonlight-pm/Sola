@@ -307,9 +307,15 @@ be. The shell's own surfaces don't count.
 
 A window leaves fullscreen when it asks to, when the shell sends it a
 `Frame` without fullscreen (another zone's key, or another tab taking the
-screen), and when keyboard focus moves to another window. The last rule covers
-games that switch to a windowed mode internally without telling the
-compositor, and would otherwise stay above everything.
+screen), and when keyboard focus moves to a window that is not composed
+above it. The last rule covers games that switch to a windowed mode
+internally without telling the compositor, and would otherwise stay above
+everything. A window composed after a fullscreen window draws over it
+(rivulet since Oath dc481d4) and takes the pointer there, so focus moving
+to one leaves the fullscreen window as it is: a drop-down terminal
+([Drop-down terminals](sola-shell.md#drop-down-terminals)), and the
+Shell's launcher, menu or shortcuts over a game in Cinema. On a rivulet
+before dc481d4 such a window stays hidden under the fullscreen one.
 
 ### Frames, rims, and corners
 
@@ -458,6 +464,35 @@ video by its window's position and takes off whatever window is above it.
 Since the lock follows the full fade, a watched video keeps the desk from
 locking too. `IdleFade` still says `fading`.
 
+## Badges
+
+A badge is a small round mark in a corner of the screen that says
+something waits on you while a window fills the screen, where nothing of
+the desk shows: a session editing a game's addon uses it to say a reload
+or a restart is needed. `solactl badge set <id> reload|restart` sets one
+(`Badge`, keyed by its id), placed where its setter says, and `solactl
+badge clear <id>` takes it away.
+
+- **Reload** is ↻ in the theme's accent; **restart** is ⏻ in its warning
+  colour, with a rim of the same colour. Both sit on a round plate of the
+  theme's window colour.
+- Each is 32 logical pixels, placed from a corner of the screen
+  (`--corner`, top-left by default) with an offset in from it to the
+  badge's own corner (`--offset X,Y`, 4,4 by default). Badges set at the
+  same place sit side by side in the order of their ids, 4 apart, going in
+  from the corner.
+- They show only while a window fills the screen (Cinema, or a window as
+  large as the output), over it and over anything the Shell shows above
+  it. At the desk none shows. The idle dim and the black before sleep go
+  over them.
+- A badge takes no input and is never focused: a click on it goes to the
+  window under it, which keeps the keyboard and its fullscreen. While one
+  shows, River draws the window under it by compositing instead of
+  scanning it out.
+- A badge stays until it is cleared, through a restart of `sola-river`,
+  but not through a reboot: one set before the machine started is dropped
+  when `sola-river` sees it, as the reboot did what it asked.
+
 ## Outputs
 
 `sola-river` publishes the output's logical size as `OutputGeometry` when
@@ -603,10 +638,11 @@ rules. Payload fields are listed here.
 | `CloseApp` | Shell, kit applications | An app id: close request to its windows |
 | `CloseWindow` | Shell | A window id: close request to that window |
 | `Background` | Paint, Browser, `solactl`, Settings | The picture behind the windows; a retraction for the black ground |
+| `Badge` | `solactl badge` | `{id, kind, set_at, corner, offset}`: a badge in a corner while a window fills the screen; a retraction takes it away ([Badges](#badges)) |
 | `Appearance` | Settings | The desk's opacity, the idle fade and dim |
 | `IdleKeep` | Shell | `{x, y, w, h}`: what the fade keeps at the rest |
 | `WindowVideos` | Browser | `{window_id, videos: [{x, y, w, h, watched}]}`, window-local logical pixels: no overlay over them, and a watched one holds the fade ([The idle fade](#the-idle-fade)). `sola-river` retracts a window's entry when the window closes |
-| `Theme` | Shell | The rim's colors |
+| `Theme` | Shell | The rim's and the badges' colors |
 | `Shutdown` | Shell | `sola-river` exits with status 0 |
 
 ## Call methods

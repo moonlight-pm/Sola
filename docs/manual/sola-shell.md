@@ -522,7 +522,11 @@ here, starts its new one on the workspace you are on.
 - **Super+Keypad Enter** moves it to **Cinema**: the whole screen, drawn
   alone. Nothing of the desk shows over it or through it: no top row,
   bar or floating windows, and black instead of the background picture.
-  The launcher and Super+K still come up. An app that asks for
+  The launcher and Super+K still come up over it, and it stays
+  fullscreen under them; a badge set with `solactl badge` shows in its
+  corner ([Compositor → Badges](compositor.md#badges)), and an app that
+  has a drop-down terminal can bring it down
+  ([Drop-down terminals](#drop-down-terminals)). An app that asks for
   fullscreen (a game, a video, F11) goes to Cinema, and back to its zone
   when it leaves fullscreen.
 
@@ -530,6 +534,31 @@ Closing the window a zone shows brings back the one it showed before, so
 closing a page you just opened returns to the page it came from. When the
 focused window closes, the keyboard goes to the window now showing in its
 zone, else to the window in front.
+
+### Drop-down terminals
+
+An app can have a drop-down terminal over it while it is in Cinema, so you
+can type to something (a session, a shell) without leaving a fullscreen
+game. It is off for every app until it is given one with `solactl dropdown
+set <app-id> --command …` ([solactl](solactl.md#dropdown)); Settings has
+no page for it.
+
+- While a window of that app is in Cinema, its key (Super+J unless set
+  otherwise) brings the terminal down across the top of the screen, 40 %
+  of its height unless set otherwise, over the app and letting it show
+  through. It runs the app's command, started afresh each time.
+- It has the keyboard while it is down, and keeps it when the pointer
+  moves over the app; a click on the app gives the app the keyboard, and a
+  click on the terminal takes it back. Super+V pastes and Super+C copies
+  the selection.
+- The same key sends it away, ending its command, and the keyboard goes
+  back to the app. The command ending (`exit`, Ctrl+D) does the same, and
+  so does the app leaving Cinema.
+- The app stays fullscreen the whole time, but it does lose the keyboard:
+  a game may turn its sound down or slow its frame rate while the terminal
+  is down, as it would for any other window.
+- Elsewhere the key is what it is in the app that has the keyboard (Super+J
+  is Projects' own drop-down there).
 
 ### Settings → Zones
 

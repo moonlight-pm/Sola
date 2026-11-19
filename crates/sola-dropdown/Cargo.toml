@@ -1,0 +1,20 @@
+[package]
+name = "sola-dropdown"
+version.workspace = true
+edition.workspace = true
+
+# The drop-down terminal over an app that fills the screen
+# (`Topic::DropDown`): the shell starts it with the app's key.
+
+[[bin]]
+name = "sola-dropdown"
+path = "src/main.rs"
+
+[dependencies]
+sola-kit = { path = "../sola-kit" }
+sola-bus = { path = "../sola-bus" }
+sola-core = { path = "../sola-core" }
+sola-terminal = { path = "../sola-terminal" }
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tokio", "wayland", "advanced", "canvas"] }
+alacritty_terminal = "=0.26.0"
+tracing = "0.1"

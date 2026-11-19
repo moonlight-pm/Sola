@@ -37,6 +37,10 @@ solactl emit KIND PAYLOAD
 solactl open TARGET
 solactl background set IMAGE
 solactl background clear
+solactl badge set ID reload|restart [--corner CORNER] [--offset X,Y]
+solactl badge clear ID
+solactl dropdown set APP_ID --command CMD [--height PERCENT] [--key CHORD]
+solactl dropdown clear APP_ID
 solactl media play-pause|next|prev|mute|vol-up|vol-down
 solactl help [COMMAND…]
 ```
@@ -46,7 +50,7 @@ solactl help [COMMAND…]
 | `compositor`, `desk` | Call plane; flags compiled into `solactl` | `sola-call` and the owner; `--help` needs nothing |
 | `projects`, `browser`, `bots`, `design`, `vault`, any other name | Call plane; flags read from the owner's advertised methods | `sola-call` and the owner, also for help |
 | `mcp` | Call plane | `sola-call`; tools appear as owners do |
-| `emit`, `background` | Bus | `sola-bus` (the picture is drawn by `sola-river`) |
+| `emit`, `background`, `badge`, `dropdown` | Bus | `sola-bus` (the picture and the badges are drawn by `sola-river`; drop-downs are the Shell's) |
 | `logs` | Files in Sola's log directory | nothing |
 | `open` | Opens a link or a file with the app Sola keeps for it, as `xdg-open` does: its `open` call, or the session starts it first | `sola-call`; the bus to start an app |
 | `media` | Session D-Bus (MPRIS) and `wpctl` | a player, PipeWire |
@@ -1229,6 +1233,51 @@ ground. A file that cannot be read, or no bus connection, is status 3; a
 picture that will not decode is logged by `sola-river` and the ground stays
 as it was. Paint's **File → Set as Background** does the same for the
 image in front.
+
+### badge
+
+```text
+solactl badge set ID reload|restart [--corner CORNER] [--offset X,Y]
+solactl badge clear ID
+```
+
+`set` puts badge `ID` in a corner of the screen, shown while a window fills
+the screen (a game in Cinema): `reload` is ↻, `restart` is ⏻
+([Compositor → Badges](compositor.md#badges)). `--corner` is `top-left`
+(the default), `top-right`, `bottom-left` or `bottom-right`; `--offset`
+is how far in from that corner the badge's own corner sits, across then
+down (or up), in logical pixels (`4,4` by default). Setting it again
+replaces it, place and all. `clear` takes it away. A badge stays until it is cleared, through
+restarts of `sola-river`, but not through a reboot. No bus connection is
+status 3.
+
+```text
+solactl badge set halo reload
+solactl badge set halo restart --offset 112,7
+solactl badge clear halo
+```
+
+### dropdown
+
+```text
+solactl dropdown set APP_ID --command CMD [--height PERCENT] [--key CHORD]
+solactl dropdown clear APP_ID
+```
+
+`set` gives the app `APP_ID` a drop-down terminal
+([Shell → Drop-down terminals](sola-shell.md#drop-down-terminals)): while
+one of its windows is in Cinema, `CHORD` (`super+j` by default; the same
+names as `compositor input key`) brings a terminal running `CMD` (with
+`sh -c`) down across the top of the screen, `PERCENT` of its height (40 by
+default, 10–100), and sends it away again. Setting it again replaces it.
+`clear` takes it away. A Steam game under Proton has the app id
+`steam_app_<number>`. No bus connection is status 3.
+
+```text
+solactl dropdown set steam_app_2286654072 \
+  --command 'tmux -L sola-ws attach-session -t =sws-ws-main-6'
+solactl dropdown clear steam_app_2286654072
+```
 
 ### media
 
