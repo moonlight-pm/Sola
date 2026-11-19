@@ -11,10 +11,6 @@ const RIGHT: Zone = Zone::Grid(2);
 /// A fresh desk's workspace.
 const MAIN: usize = 0;
 
-fn none(_: &str) -> bool {
-    false
-}
-
 /// `zone`'s tabs on the showing workspace, in bar order.
 fn ids(s: &Stacks, zone: Zone) -> Vec<u32> {
     s.bar()
@@ -69,21 +65,21 @@ fn full_and_the_halves_take_turns() {
     }
     s.move_to(2, LEFT);
     // A lone half keeps its half; Full is off screen but keeps its tab.
-    assert_eq!(s.on_screen(&none), vec![LEFT]);
+    assert_eq!(s.on_screen(), vec![LEFT]);
     assert_eq!(s.shown(FULL), Some(3));
     s.move_to(1, RIGHT);
-    assert_eq!(s.on_screen(&none), vec![LEFT, RIGHT]);
+    assert_eq!(s.on_screen(), vec![LEFT, RIGHT]);
     // Focus never switches; showing a tab does.
     s.focus(3);
-    assert_eq!(s.on_screen(&none), vec![LEFT, RIGHT]);
+    assert_eq!(s.on_screen(), vec![LEFT, RIGHT]);
     s.show(3);
-    assert_eq!(s.on_screen(&none), vec![FULL]);
-    assert_eq!(s.front(&none), Some(3));
+    assert_eq!(s.on_screen(), vec![FULL]);
+    assert_eq!(s.front(), Some(3));
     // While Full is up, new windows join it.
     assert_eq!(s.place(4, "app", "app", false, false, t).zone, FULL);
     s.show(1);
-    assert_eq!(s.on_screen(&none), vec![LEFT, RIGHT]);
-    assert_eq!(s.front(&none), Some(1));
+    assert_eq!(s.on_screen(), vec![LEFT, RIGHT]);
+    assert_eq!(s.front(), Some(1));
     // With the halves up, new windows join the last focused half.
     assert_eq!(s.place(5, "app", "app", false, false, t).zone, RIGHT);
 }
@@ -96,24 +92,24 @@ fn an_empty_side_gives_the_screen_to_the_other() {
     s.place(2, "app", "app", false, false, t);
     s.move_to(2, LEFT);
     s.show(1);
-    assert_eq!(s.on_screen(&none), vec![FULL]);
+    assert_eq!(s.on_screen(), vec![FULL]);
     s.remove(1, t);
-    assert_eq!(s.on_screen(&none), vec![LEFT]);
-    assert_eq!(s.front(&none), Some(2));
+    assert_eq!(s.on_screen(), vec![LEFT]);
+    assert_eq!(s.front(), Some(2));
 
     s.place(3, "app", "app", false, false, t);
     s.move_to(3, FULL);
     s.show(2);
     s.remove(2, t);
-    assert_eq!(s.on_screen(&none), vec![FULL]);
-    // A hidden app's tab puts nothing on screen either.
-    let hide = |a: &str| a == "app";
-    assert_eq!(s.on_screen(&hide), Vec::<Zone>::new());
-    assert_eq!(s.front(&hide), None);
+    assert_eq!(s.on_screen(), vec![FULL]);
+    // A hidden tab puts nothing on screen either.
+    s.hide(3);
+    assert_eq!(s.on_screen(), Vec::<Zone>::new());
+    assert_eq!(s.front(), None);
 }
 
 #[test]
-fn a_window_hidden_alone_gives_way_until_shown() {
+fn a_hidden_window_gives_way_until_shown() {
     let t = Instant::now();
     let mut s = Stacks::new();
     for w in 1..=2 {
@@ -124,15 +120,15 @@ fn a_window_hidden_alone_gives_way_until_shown() {
     assert!(s.hide(2));
     assert!(!s.hide(2), "hidden already");
     assert!(s.is_hidden(2));
-    // Its row stays; its zone shows its other tab, its app is not hidden.
+    // Its row stays; its zone shows its other tab.
     assert_eq!(ids(&s, FULL), vec![1, 2]);
-    assert_eq!(s.visible_shown(FULL, &none), Some(1));
+    assert_eq!(s.visible_shown(FULL), Some(1));
     s.hide(1);
-    assert_eq!(s.on_screen(&none), Vec::<Zone>::new());
+    assert_eq!(s.on_screen(), Vec::<Zone>::new());
     // Showing it brings it back.
     s.show(2);
     assert!(!s.is_hidden(2));
-    assert_eq!(s.visible_shown(FULL, &none), Some(2));
+    assert_eq!(s.visible_shown(FULL), Some(2));
     // A float too; a dialog goes with its parent.
     s.set_parent(4, 3);
     assert!(s.hide(4));
@@ -527,7 +523,7 @@ fn reordering_a_row_keeps_its_zone_and_what_shows() {
     assert_eq!(bar(&s), vec![4, 3, 1, 2]);
     assert_eq!(ids(&s, LEFT), vec![3, 1]);
     assert_eq!(s.shown(LEFT), Some(1));
-    assert_eq!(s.on_screen(&none), vec![LEFT, RIGHT]);
+    assert_eq!(s.on_screen(), vec![LEFT, RIGHT]);
     // To the end; onto itself or where it is, nothing moves.
     assert!(s.reorder(4, None));
     assert_eq!(bar(&s), vec![3, 1, 2, 4]);
@@ -603,16 +599,16 @@ fn super_backtick_steps_through_the_bar_whatever_the_zones() {
 }
 
 #[test]
-fn hidden_apps_give_way() {
+fn hidden_windows_give_way() {
     let t = Instant::now();
     let mut s = Stacks::new();
     s.place(1, "term", "term", false, false, t);
     s.place(2, "mail", "mail", false, false, t);
-    let hide_mail = |a: &str| a == "mail";
-    assert_eq!(s.visible_shown(FULL, &hide_mail), Some(1));
-    assert_eq!(s.on_screen(&none), vec![FULL]);
+    s.hide(2);
+    assert_eq!(s.visible_shown(FULL), Some(1));
+    assert_eq!(s.on_screen(), vec![FULL]);
     s.move_to(1, RIGHT);
-    assert_eq!(s.on_screen(&hide_mail), vec![RIGHT]);
+    assert_eq!(s.on_screen(), vec![RIGHT]);
 }
 
 #[test]
@@ -623,16 +619,16 @@ fn cinema_is_a_zone_that_takes_the_whole_screen() {
     s.place(2, "game", "game", false, false, t);
     s.move_to(1, LEFT);
     s.move_to(2, RIGHT);
-    assert_eq!(s.on_screen(&none), vec![LEFT, RIGHT]);
+    assert_eq!(s.on_screen(), vec![LEFT, RIGHT]);
     // Cinema covers everything: it alone is on screen.
     assert!(s.move_to(2, Zone::Cinema));
-    assert_eq!(s.on_screen(&none), vec![Zone::Cinema]);
-    assert_eq!(s.cinema_up(&none), Some(2));
+    assert_eq!(s.on_screen(), vec![Zone::Cinema]);
+    assert_eq!(s.cinema_up(), Some(2));
     assert_eq!(s.cinema_return(2), RIGHT);
     // Showing another tab takes Cinema off; nothing toggles.
     s.show(1);
-    assert_eq!(s.on_screen(&none), vec![LEFT]);
-    assert_eq!(s.cinema_up(&none), None);
+    assert_eq!(s.on_screen(), vec![LEFT]);
+    assert_eq!(s.cinema_up(), None);
     assert_eq!(s.zone_of(2), Some(Zone::Cinema));
 }
 
@@ -646,7 +642,7 @@ fn a_window_opened_while_cinema_is_up_goes_to_full() {
     s.move_to(2, Zone::Cinema);
     s.focus(2);
     assert_eq!(s.place(3, "mail", "mail", false, false, t).zone, FULL);
-    assert_eq!(s.on_screen(&none), vec![FULL]);
+    assert_eq!(s.on_screen(), vec![FULL]);
 }
 
 #[test]
@@ -671,10 +667,10 @@ fn overlapping_grid_zones_take_turns() {
     }
     s.show(1);
     s.show(4);
-    assert_eq!(s.on_screen(&none), vec![Zone::Grid(1), Zone::Grid(4)]);
+    assert_eq!(s.on_screen(), vec![Zone::Grid(1), Zone::Grid(4)]);
     // Picking column 2 takes the wide zone off and brings column 3 back.
     s.show(2);
-    assert_eq!(s.on_screen(&none), vec![Zone::Grid(1), Zone::Grid(2), Zone::Grid(3)]);
+    assert_eq!(s.on_screen(), vec![Zone::Grid(1), Zone::Grid(2), Zone::Grid(3)]);
 }
 
 #[test]
@@ -778,7 +774,7 @@ fn sending_a_window_keeps_its_zone_and_shows_it_there() {
     s.show_workspace(MAIN);
     assert!(s.send(1, mail));
     s.show_workspace(mail);
-    assert_eq!(s.on_screen(&none), vec![FULL]);
+    assert_eq!(s.on_screen(), vec![FULL]);
 }
 
 #[test]
@@ -856,9 +852,9 @@ fn the_saved_layout_remembers_which_side_is_up() {
     for (w, app) in [(1, "browser"), (2, "term"), (3, "mail"), (4, "calendar")] {
         s.place(w, app, app, false, true, t);
     }
-    assert_eq!(s.on_screen(&none), vec![LEFT]);
+    assert_eq!(s.on_screen(), vec![LEFT]);
     s.show_workspace(MAIN + 1);
-    assert_eq!(s.on_screen(&none), vec![FULL]);
+    assert_eq!(s.on_screen(), vec![FULL]);
     s.show_workspace(MAIN);
     // An older file's `full` comes back as the workspace's pick order.
     layout.picks = vec![sola_bus::topics::WorkspacePicks {

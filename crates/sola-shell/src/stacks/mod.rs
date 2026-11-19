@@ -86,8 +86,8 @@ pub struct Stacks {
     /// Windows on every workspace: a row on each, in one zone, with each
     /// workspace's own order and what it shows.
     pinned: HashSet<u32>,
-    /// Windows taken off screen alone (their titlebar's yellow light, not
-    /// their app's Hide): their rows stay; [`Self::show`] brings one back.
+    /// Windows taken off screen (Hide: Super+H, their titlebar's yellow
+    /// light): their rows stay; [`Self::show`] brings one back.
     hidden: HashSet<u32>,
     /// child → parent.
     parents: HashMap<u32, u32>,
@@ -468,7 +468,7 @@ impl Stacks {
         self.pinned.contains(&window_id)
     }
 
-    /// Whether `window_id` (a dialog: its parent) is hidden alone.
+    /// Whether `window_id` (a dialog: its parent) is hidden.
     pub fn is_hidden(&self, window_id: u32) -> bool {
         let window_id = self.parent_of(window_id).unwrap_or(window_id);
         self.hidden.contains(&window_id)
@@ -869,16 +869,15 @@ impl Stacks {
         &self.desks[self.showing].float_z
     }
 
-    /// Whether a tab stays off screen: its app is `hidden` (Hide), or it
-    /// is hidden alone.
-    fn off<'a>(&'a self, hidden: &'a dyn Fn(&str) -> bool) -> impl Fn(&Tab) -> bool + 'a {
-        move |t| hidden(&t.app_id) || self.hidden.contains(&t.window_id)
+    /// Whether a tab stays off screen: it is hidden.
+    fn off(&self) -> impl Fn(&Tab) -> bool + '_ {
+        move |t| self.hidden.contains(&t.window_id)
     }
 
     /// The Cinema tab on screen on the showing workspace, if Cinema is up.
-    pub fn cinema_up(&self, hidden: &dyn Fn(&str) -> bool) -> Option<u32> {
+    pub fn cinema_up(&self) -> Option<u32> {
         let desk = &self.desks[self.showing];
-        let off = self.off(hidden);
+        let off = self.off();
         desk.on_screen(&self.layout, &off)
             .contains(&Zone::Cinema)
             .then(|| desk.visible_shown(Zone::Cinema, &off))
@@ -886,23 +885,22 @@ impl Stacks {
     }
 
     /// What a tiled zone of the showing workspace puts on screen: its
-    /// shown tab, or, when that tab is hidden (its app's Hide, or alone),
-    /// the nearest tab that is not.
-    pub fn visible_shown(&self, zone: Zone, hidden: &dyn Fn(&str) -> bool) -> Option<u32> {
-        self.desks[self.showing].visible_shown(zone, &self.off(hidden))
+    /// shown tab, or, when that tab is hidden, the nearest tab that is not.
+    pub fn visible_shown(&self, zone: Zone) -> Option<u32> {
+        self.desks[self.showing].visible_shown(zone, &self.off())
     }
 
     /// The tiled zones of the showing workspace on screen
     /// ([`Desk::on_screen`]).
-    pub fn on_screen(&self, hidden: &dyn Fn(&str) -> bool) -> Vec<Zone> {
-        self.desks[self.showing].on_screen(&self.layout, &self.off(hidden))
+    pub fn on_screen(&self) -> Vec<Zone> {
+        self.desks[self.showing].on_screen(&self.layout, &self.off())
     }
 
     /// Where focus belongs on the showing workspace when the focused tab
     /// left the screen: the last looked-at zone's tab, else the first on
     /// screen's.
-    pub fn front(&self, hidden: &dyn Fn(&str) -> bool) -> Option<u32> {
-        self.desks[self.showing].front(&self.layout, &self.off(hidden))
+    pub fn front(&self) -> Option<u32> {
+        self.desks[self.showing].front(&self.layout, &self.off())
     }
 
     // ---------------------------------------------------------------------

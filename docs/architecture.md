@@ -412,12 +412,14 @@ bus: unassigned windows **default-float** (client size +
 `WindowPlace.floating`); saved zones restore frames; Meta+numpad snaps
 assign zones.
 
-**Hide (Super+H):** the hidden set (`$XDG_RUNTIME_DIR/sola/shell/hidden.json`, kept while logged in) omits that app’s surfaces from
-`Topic::Composition` (River `hide` — not send-to-back). Restore: a tab bar
-row or Super+Backtick (showing a tab unhides its app), launcher on an already-running hidden app
-(unhide + raise, no second spawn), or any `raise_app` path (OpenUrl, mail
-unread, notification click). Last window of a hidden app drops it
-from the set so a later map is not stuck hidden. No menubar chip.
+**Hide (Super+H, the yellow light, Window → Hide):** the tab model's hidden
+set (`Stacks::hide`, in memory: a shell restart shows them again) omits
+that window and its dialogs from `Topic::Composition` (River `hide` — not
+send-to-back); its zone shows its next tab. Restore: `Stacks::show` — a
+tab bar row, Super+Backtick, or any `raise_app` path when the hidden one
+is the app's last used window (launcher, OpenUrl, mail unread,
+notification click). The app's other windows, and new ones, are not
+touched. No menubar chip.
 
 **Shell re-exec z-order:** sola-shell rebuilds MRU from window-id order, which
 would shuffle apps. River keeps the last relative stack when only the
