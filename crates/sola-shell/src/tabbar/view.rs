@@ -49,7 +49,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         // A dialog's focus is its tab's.
         focused: shell
             .focused_window_id
-            .map(|w| shell.tabs.parent_of(w).unwrap_or(w)),
+            .map(|w| shell.tabs.tab_of(w)),
     };
     let ghost = shell.launch_ghost();
     // A kept app starting turns in its own row, not a ghost row.

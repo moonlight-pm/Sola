@@ -464,13 +464,13 @@ impl Stacks {
 
     /// Whether `window_id` is on every workspace (a dialog: its parent).
     pub fn is_pinned(&self, window_id: u32) -> bool {
-        let window_id = self.parent_of(window_id).unwrap_or(window_id);
+        let window_id = self.tab_of(window_id);
         self.pinned.contains(&window_id)
     }
 
     /// Whether `window_id` (a dialog: its parent) is hidden.
     pub fn is_hidden(&self, window_id: u32) -> bool {
-        let window_id = self.parent_of(window_id).unwrap_or(window_id);
+        let window_id = self.tab_of(window_id);
         self.hidden.contains(&window_id)
     }
 
@@ -478,7 +478,7 @@ impl Stacks {
     /// Its zone shows its next tab, or gives way. False when it is not
     /// placed or hidden already.
     pub fn hide(&mut self, window_id: u32) -> bool {
-        let window_id = self.parent_of(window_id).unwrap_or(window_id);
+        let window_id = self.tab_of(window_id);
         self.desk_of(window_id).is_some() && self.hidden.insert(window_id)
     }
 
@@ -487,7 +487,7 @@ impl Stacks {
     /// showing workspace alone. Returns whether it is pinned now, `None` when
     /// it is not placed.
     pub fn toggle_pin(&mut self, window_id: u32) -> Option<bool> {
-        let window_id = self.parent_of(window_id).unwrap_or(window_id);
+        let window_id = self.tab_of(window_id);
         let here = self.desk_of(window_id)?;
         if self.pinned.remove(&window_id) {
             for (i, desk) in self.desks.iter_mut().enumerate() {
@@ -680,6 +680,20 @@ impl Stacks {
         self.parents.get(&child).copied()
     }
 
+    /// The tab `window_id` belongs to: itself, or for a dialog the window
+    /// at the top of its parents (a dialog can open a dialog of its own).
+    pub fn tab_of(&self, window_id: u32) -> u32 {
+        let mut w = window_id;
+        // No longer than the map: a loop of parents ends somewhere in it.
+        for _ in 0..=self.parents.len() {
+            match self.parents.get(&w) {
+                Some(&p) => w = p,
+                None => break,
+            }
+        }
+        w
+    }
+
     /// Dialogs of `parent`, in the order they arrived.
     pub fn children_of(&self, parent: u32) -> Vec<u32> {
         let mut kids: Vec<u32> = self
@@ -701,7 +715,7 @@ impl Stacks {
     /// picked, so it comes on screen over whatever overlaps it. Returns
     /// false when it is not placed.
     pub fn show(&mut self, window_id: u32) -> bool {
-        let window_id = self.parent_of(window_id).unwrap_or(window_id);
+        let window_id = self.tab_of(window_id);
         self.hidden.remove(&window_id);
         let Some(d) = self.desk_of(window_id) else {
             return false;
@@ -725,7 +739,7 @@ impl Stacks {
     /// from now on. Focus never changes what is on screen; only showing a
     /// tab does.
     pub fn focus(&mut self, window_id: u32) {
-        let window_id = self.parent_of(window_id).unwrap_or(window_id);
+        let window_id = self.tab_of(window_id);
         let Some(d) = self.desk_of(window_id) else {
             return;
         };
@@ -799,7 +813,7 @@ impl Stacks {
 
     /// [`Self::step`] through the tabs of `from`'s app only (Super+\`).
     pub fn step_app(&self, from: Option<u32>, back: bool) -> Option<u32> {
-        let from = from.map(|w| self.parent_of(w).unwrap_or(w));
+        let from = from.map(|w| self.tab_of(w));
         let app = from.and_then(|w| self.desks[self.showing].tab(w))?.app_id.clone();
         self.step_among(from, back, &|t| t.app_id == app)
     }
@@ -812,7 +826,7 @@ impl Stacks {
         among: &dyn Fn(&Tab) -> bool,
     ) -> Option<u32> {
         let tabs: Vec<&Tab> = self.desks[self.showing].bar.tabs().filter(|t| among(t)).collect();
-        let from = from.map(|w| self.parent_of(w).unwrap_or(w));
+        let from = from.map(|w| self.tab_of(w));
         let here = from.and_then(|w| tabs.iter().position(|t| t.window_id == w));
         let n = tabs.len();
         let next = match here {
@@ -927,7 +941,7 @@ impl Stacks {
     /// The index of the workspace `window_id` is on (a dialog: its
     /// parent's).
     pub fn desk_of(&self, window_id: u32) -> Option<usize> {
-        let window_id = self.parent_of(window_id).unwrap_or(window_id);
+        let window_id = self.tab_of(window_id);
         // A pinned window is on every workspace, so on the one showing.
         if self.desks[self.showing].tab(window_id).is_some() {
             return Some(self.showing);

@@ -35,7 +35,7 @@ impl Shell {
     /// An app asked to enter or leave fullscreen (sola-river granted it
     /// already): its tab goes to Cinema, or back to the zone it came from.
     pub(super) fn on_fullscreen_request(&mut self, r: FullscreenRequest) {
-        let wid = self.tabs.parent_of(r.window_id).unwrap_or(r.window_id);
+        let wid = self.tabs.tab_of(r.window_id);
         let Some(zone) = self.tabs.zone_of(wid) else {
             // Asked as it mapped (Wine, SDL), before `Windows` names it.
             if r.fullscreen {

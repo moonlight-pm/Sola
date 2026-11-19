@@ -55,7 +55,7 @@ impl Shell {
             }
         }
         let w = self.focused_window_id?;
-        let w = self.tabs.parent_of(w).unwrap_or(w);
+        let w = self.tabs.tab_of(w);
         let (x, y, width, height) = self.place_of(w)?;
         Some((self.tabs.zone_of(w)?, Some(w), (x + width / 2, y + height / 2)))
     }

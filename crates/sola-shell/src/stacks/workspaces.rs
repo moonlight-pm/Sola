@@ -88,7 +88,7 @@ impl Stacks {
     /// A pinned window is unpinned: that workspace keeps its row, and it is
     /// gone from the rest.
     pub fn send(&mut self, window_id: u32, index: usize) -> bool {
-        let window_id = self.parent_of(window_id).unwrap_or(window_id);
+        let window_id = self.tab_of(window_id);
         if index >= self.desks.len() {
             return false;
         }
