@@ -2,7 +2,7 @@
 
 **Started:** 2026-11-16, on Joshua's word ("All this is good -- go ahead").
 **Branch:** `signal`, merged to master 2026-11-16 (Joshua: "apply it and merge
-to master"). **On novus:** `pkg:sola-signal` 8ba6e890edff from next@5d1130db, `pkg:sola`
+to master"). **On novus:** `pkg:sola-signal` edf147c4ff5d from next@2a11c318, `pkg:sola`
 b5951e0d23dd from next@088ce181 (the launcher's "Signal"). Not released.
 **While Joshua tries it (2026-11-16, his standing word):** a fix that moves
 only `pkg:sola-signal` is applied from `next` and merged to master without
@@ -118,6 +118,29 @@ leaves when there is a connection, across restarts.
   alone: the storage service is read, never written, so the phone does not
   see it (a nickname set on the phone still arrives as the contact name).
   Tried on a private desk. Applied (8ba6e890edff).
+- 2026-11-19 (Joshua: "some of my sent messages just say 'Sending...'
+  even after a while"; they were not on his phone): they had not gone. The
+  log said `sending: transport error: unexpected gRPC status: Unknown`
+  over and over (three spells in two days, each ended by the receiving
+  socket happening to close). libsignal sends over gRPC on the HTTP/2
+  connection the websocket shares, and counts a status it cannot read as a
+  disconnection; we took that for "no connection" and waited for one,
+  while the receiving socket stayed up, so nothing was ever opened again
+  and the whole outbox stood behind the first row. Now a send the
+  connection did not carry (`Failure::Dropped`: a disconnection, or no
+  answer in 30 s; libsignal sets no limit) closes both connections and
+  opens new ones (after 2, 5, 15 s); what is only put off is tried again
+  on a timer; and a row that has failed four times on connections that
+  were up is given up: a message says "Not sent" with Try Again, and what
+  waits behind it goes. The log names the way (sealed, signed in), says
+  when the connection that is not signed in closes, and keeps libsignal's
+  own request lines (`libsignal_net_chat=debug`, set in `main` unless
+  `RUST_LOG` is). `status` says how much waits to be sent. Why the server
+  (or the gRPC layer) answers so is not known; the next spell's log should
+  say. The reconnect is not tried against Signal: unit test for the
+  classing only. Applied (edf147c4ff5d): at the
+  restart the six rows that waited (two messages) went, sealed, on the new
+  connection.
 
 ## Not built
 

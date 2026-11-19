@@ -834,6 +834,14 @@ impl Store {
         Ok(rows)
     }
 
+    /// How much waits in the outbox, how much of it is messages, and when
+    /// the oldest was put there.
+    pub fn waiting(&self) -> Result<(u32, u32, Option<u64>)> {
+        Ok(self.db().query_row("SELECT count(*), count(message), min(timestamp) FROM outbox", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get::<_, Option<i64>>(2)?.map(|at| at as u64)))
+        })?)
+    }
+
     pub fn unread_total(&self) -> Result<u32> {
         Ok(self.db().query_row(
             "SELECT count(*) FROM messages m JOIN conversations c ON c.id = m.conversation

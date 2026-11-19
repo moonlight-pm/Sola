@@ -23,7 +23,17 @@ use crate::store::Store;
 
 const USAGE: &str = "usage: sola-signal [link [device name] | status | selftest | run [seconds] | demo]";
 
+/// What is logged unless `RUST_LOG` says: the core's own choice, and what
+/// libsignal says became of each request (with why one failed), which is
+/// how a send that did not go is understood afterwards.
+const LOGGED: &str = "sola_signal=info,sola_core=info,sola_bus=info,sola_kit=info,sola_call=info,sola_open=info,\
+                      sola_assets=info,libsignal_net_chat=debug";
+
 fn main() -> std::process::ExitCode {
+    if std::env::var_os("RUST_LOG").is_none() {
+        // SAFETY: nothing else runs yet.
+        unsafe { std::env::set_var("RUST_LOG", LOGGED) };
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
         return window();
@@ -201,6 +211,13 @@ fn status(store: &Store) -> Result<()> {
     let keyed = people.iter().filter(|person| person.profile_key.is_some()).count();
     println!("people: {} ({named} with a name, {keyed} with a profile key)", people.len());
     println!("conversations shown: {}, unread messages: {}", store.chats()?.len(), store.unread_total()?);
+    match store.waiting()? {
+        (waiting, messages, Some(oldest)) => println!(
+            "waiting to be sent: {waiting} ({messages} of them messages), the oldest for {} minutes",
+            store::now().saturating_sub(oldest) / 60_000,
+        ),
+        _ => println!("waiting to be sent: nothing"),
+    }
     Ok(())
 }
 
