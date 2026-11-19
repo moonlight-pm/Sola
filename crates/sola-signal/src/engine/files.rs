@@ -107,7 +107,7 @@ pub async fn upload(shared: &Shared, attachment: &Attachment) -> Result<Attachme
     let form = match net::request(&wire.chat, ::http::Method::GET, &ask, None, None).await {
         Ok(response) => response,
         Err(e @ net::Refused::Status { .. }) => return Err(never(e.into())),
-        Err(e) => return Err(Failure::Later(e.into())),
+        Err(e) => return Err(Failure::Dropped(e.into())),
     };
     let form: Form = serde_json::from_slice(form.body.as_deref().unwrap_or_default()).context("upload form").map_err(never)?;
 
