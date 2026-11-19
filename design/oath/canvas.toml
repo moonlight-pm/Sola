@@ -177,3 +177,125 @@ text = "This state is invented; novus has no unpushed build today. Oath records 
 board = "sheet-openssl"
 at = "#sec-security"
 text = "Severity, component and fixed-in are not in Oath's advisory file today, only id, url and summary."
+
+# Machines (2026-11-13): every Oath machine in the consort, from oath-bus's
+# socket (consort.js). novus's facts are real; the other five machines are
+# made up around their real hardware, and wear the sample tag.
+
+[[artboard]]
+id = "machines-rows"
+src = "app.html?view=machines&mt=rows&m=aulos"
+x = 0
+y = 7200
+width = 2420
+height = "auto"
+title = "Machines / Rows"
+
+[[artboard]]
+id = "machines-wall"
+src = "app.html?view=machines&mt=wall&m=dulcia&mopen=stands,services"
+x = 2620
+y = 7200
+width = 2420
+height = "auto"
+title = "Machines / Wall"
+
+[[artboard]]
+id = "machines-across"
+src = "app.html?view=machines&mt=across"
+x = 5240
+y = 7200
+width = 2420
+height = "auto"
+title = "Machines / Packages across"
+
+[[artboard]]
+id = "machines-ask"
+src = "app.html?view=machines&mt=rows&m=none&ask=1"
+x = 7860
+y = 7200
+width = 2420
+height = "auto"
+title = "Machines / Asking to join"
+
+[[artboard]]
+id = "machine-novus"
+src = "app.html?msheet=1&m=novus&mopen=stands,procs,load"
+x = 0
+y = 9700
+width = 760
+height = "auto"
+title = "Machine / Here"
+
+[[artboard]]
+id = "machine-koeurax"
+src = "app.html?msheet=1&m=koeurax&mopen=stands,update,pkgs"
+x = 840
+y = 9700
+width = 760
+height = "auto"
+title = "Machine / Away"
+
+[[artboard]]
+id = "machines-alone"
+src = "app.html?view=machines&alone=1"
+x = 1680
+y = 9700
+width = 2420
+height = "auto"
+title = "Machines / No consort here"
+
+[[section]]
+title = "Every machine, two ways"
+boards = ["machines-rows", "machines-wall"]
+note = "Rows read like Packages: a sentence, then a table that goes quiet where a machine agrees. Wall gives each machine a card of its own: more to watch, less to compare. Pick one."
+
+[[section]]
+title = "Packages across machines"
+boards = ["machines-across"]
+note = "Only packages that differ somewhere. A cell is quiet when that machine runs the newest build."
+
+[[section]]
+title = "Joining"
+boards = ["machines-ask"]
+note = "Not for the first version, which only looks. Shown so the codes have a place when you want it."
+
+[[section]]
+title = "One machine, and none"
+boards = ["machine-novus", "machine-koeurax", "machines-alone"]
+note = "The sheet folds like a package's. novus shows No consort here until svc:oath-bus runs on it."
+
+[[link]]
+from = "machines-rows"
+to = "machine-novus"
+label = "the sheet, for any machine"
+
+[[note]]
+board = "machines-rows"
+at = "#msummary"
+text = "A sentence first, as in Packages: what is down, what went away, what can move. If it says all current, you are done."
+
+[[note]]
+board = "machines-rows"
+at = "#mtable"
+text = "Load is the last 12 minutes: the app keeps each load record (every 15 s) while it is open. oath-bus sends only the newest."
+
+[[note]]
+board = "machines-rows"
+at = "#lately"
+text = "Lately is what changed while Oath watched, plus each record's time when it opens. Nothing keeps it after the app closes."
+
+[[note]]
+board = "machines-across"
+at = "#across"
+text = "Newest is the head where there is one, else the release's pin. Only presence and hash come from each machine; overlays and their source are in the records too."
+
+[[note]]
+board = "machines-ask"
+at = "#ask"
+text = "Admit would run sudo oath consort admit with the code, as Add runs sudo oath add. oath consort never prints the code; this shows it so you can compare it with the joining machine's screen."
+
+[[note]]
+board = "machine-novus"
+at = "#mverdict"
+text = "Real: novus's services, processes and load as oath-bus gathers them, read 2026-11-13. Its board says System Product Name, so the line leaves the product out."

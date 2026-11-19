@@ -3,6 +3,7 @@
 // the state a board opens in:
 //   view=list|map|tree  take=strata|weight (map)
 //   pkg=<name>  filter=<standing>  open=<sections>  sheet=1 (the sheet alone)  bare=1 (the tree alone)
+// Machines (view=machines) is machines.js, with its own parameters.
 
 const C = window.CATALOG, PK = C.pkgs, SMP = window.SAMPLES;
 const q = new URLSearchParams(location.search);
@@ -88,6 +89,12 @@ const S = {
   bare: q.get('bare') === '1',
   disk: q.get('size') !== 'live',
   trail: [],
+  mt: q.get('mt') || 'rows',
+  m: q.get('m') === 'none' ? null : (q.get('m') || 'novus'),
+  mopen: new Set((q.get('mopen') || 'stands,update,services').split(',')),
+  msheet: q.get('msheet') === '1',
+  ask: q.get('ask') === '1',
+  alone: q.get('alone') === '1',
 };
 const root = document.getElementById('root');
 const ic = (d, s = 15) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
@@ -114,12 +121,12 @@ const FILTERS = [
 
 // ── Sidebar ────────────────────────────────────────────────────
 function side() {
-  const nav = [['list', 'Packages', I.list], ['map', 'Map', I.map], ['tree', 'Tree', I.tree]];
+  const nav = [['list', 'Packages', I.list], ['map', 'Map', I.map], ['tree', 'Tree', I.tree], ['machines', 'Machines', MV.SERVER]];
   return `<nav class="side">
     <div class="side__group">${nav.map(([v, l, d]) => `<button class="si ${S.view === v ? 'on' : ''}" data-view="${v}">${ic(d)}<span>${l}</span></button>`).join('')}</div>
-    <div class="side__group"><div class="side__cap">Standing</div>
+    ${S.view === 'machines' ? MV.side() : `<div class="side__group"><div class="side__cap">Standing</div>
       ${FILTERS.map(([k, l, f, m]) => `<button class="si ${S.view === 'list' && S.filter === k ? 'on' : ''}" data-filter="${k}">${m ? `<span class="mk mk--${m}"></span>` : '<span class="mk mk--current"></span>'}<span>${l}</span><span class="n">${count(f)}</span></button>`).join('')}
-    </div>
+    </div>`}
     <div class="side__foot">Origin ${C.origin}<br>Read ${C.at}</div>
   </nav>`;
 }
@@ -508,12 +515,18 @@ function drawWeight(id) {
 
 // ── Render ─────────────────────────────────────────────────────
 function titlebar() {
-  const titles = { list: 'Packages', map: 'Map', tree: S.sel };
+  const titles = { list: 'Packages', map: 'Map', tree: S.sel, machines: MV.title() };
   return `<header class="tb"><span class="tb__dot"></span><b>Oath</b><span>Packages</span><span>View</span><span>Window</span><span class="tb__title">${titles[S.view]} · novus</span></header>`;
 }
 function render() {
   const p = PK[S.sel] || PK.sola;
-  if (S.sheet) {
+  const m = S.m && MV.get(S.m);
+  if (S.msheet) {
+    root.innerHTML = MV.sheet(m, true);
+  } else if (S.view === 'machines') {
+    const withSheet = m && S.mt !== 'across' && !S.alone;
+    root.innerHTML = `<div class="win win--auto">${titlebar()}<div class="body ${withSheet ? 'body--list' : 'body--map'}">${side()}${MV.main()}${withSheet ? MV.sheet(m) : ''}</div></div>`;
+  } else if (S.sheet) {
     root.innerHTML = sheet(p, true);
   } else if (S.bare) {
     root.innerHTML = treeView(true);
@@ -540,13 +553,16 @@ function repaintMap() {
   after();
 }
 root.addEventListener('click', e => {
-  const t = e.target.closest('[data-view],[data-filter],[data-fam],[data-sec],[data-map],[data-disk],[data-pkg]');
+  const t = e.target.closest('[data-view],[data-filter],[data-fam],[data-sec],[data-map],[data-disk],[data-pkg],[data-m],[data-mt],[data-msec]');
   if (!t) {
     if (S.view === 'map' && e.target.closest('#stage') && !e.target.closest('#map-card')) { S.sel = null; repaintMap(); }
     return;
   }
   const d = t.dataset;
   if (d.view) { S.view = d.view; S.sheet = false; S.bare = false; if (d.view !== 'map') S.sel ||= 'sola'; render(); return; }
+  if (d.m) { S.view = 'machines'; S.m = d.m; S.msheet = false; if (S.mt === 'across') S.mt = 'rows'; render(); return; }
+  if (d.mt) { S.mt = d.mt; render(); return; }
+  if (d.msec) { S.mopen.has(d.msec) ? S.mopen.delete(d.msec) : S.mopen.add(d.msec); render(); return; }
   if (d.filter) { S.filter = d.filter; S.view = 'list'; S.sel ||= 'sola'; render(); return; }
   if (d.fam) { S.fams.has(d.fam) ? S.fams.delete(d.fam) : S.fams.add(d.fam); render(); return; }
   if (d.sec) { S.open.has(d.sec) ? S.open.delete(d.sec) : S.open.add(d.sec); render(); return; }
