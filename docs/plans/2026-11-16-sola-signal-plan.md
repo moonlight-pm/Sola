@@ -2,7 +2,7 @@
 
 **Started:** 2026-11-16, on Joshua's word ("All this is good -- go ahead").
 **Branch:** `signal`, merged to master 2026-11-16 (Joshua: "apply it and merge
-to master"). **On novus:** `pkg:sola-signal` 8ba6e890edff from next@5d1130db, `pkg:sola`
+to master"). **On novus:** `pkg:sola-signal` edf147c4ff5d from next@2a11c318, `pkg:sola`
 b5951e0d23dd from next@088ce181 (the launcher's "Signal"). Not released.
 **While Joshua tries it (2026-11-16, his standing word):** a fix that moves
 only `pkg:sola-signal` is applied from `next` and merged to master without
@@ -138,7 +138,9 @@ leaves when there is a connection, across restarts.
   `RUST_LOG` is). `status` says how much waits to be sent. Why the server
   (or the gRPC layer) answers so is not known; the next spell's log should
   say. The reconnect is not tried against Signal: unit test for the
-  classing only. SENDING_APPLIED
+  classing only. Applied (edf147c4ff5d): at the
+  restart the six rows that waited (two messages) went, sealed, on the new
+  connection.
 
 ## Not built
 
