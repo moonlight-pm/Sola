@@ -2,6 +2,8 @@
 //! pictures wait, raised slowly when they do not and the screen uses it.
 //! Each step is taken on an ack; the intervals below pace that control loop,
 //! and nothing waits on them.
+//!
+//! Self-contained: the Mac agent includes this file.
 
 /// The bitrate at the start, and the most it goes to: the LAN is the usual
 /// case, and the first picture should be sharp.

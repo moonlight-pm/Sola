@@ -9,6 +9,8 @@
 //! a slow link look slower still. The gate keeps such a stretch short. The
 //! key picture itself says what the way carries: hundreds of kilobytes cross
 //! at about its speed.
+//!
+//! Self-contained (only `super::rate`): the Mac agent includes this file.
 
 use std::collections::VecDeque;
 use std::sync::OnceLock;

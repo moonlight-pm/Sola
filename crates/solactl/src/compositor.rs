@@ -273,7 +273,7 @@ fn drag(
     call("input.release", at(to.0, to.1))
 }
 
-fn parse_chord(s: &str) -> Result<KeyChord, String> {
+pub(crate) fn parse_chord(s: &str) -> Result<KeyChord, String> {
     let parts: Vec<&str> = s.split('+').map(str::trim).collect();
     if parts.is_empty() {
         return Err("empty chord".into());

@@ -65,7 +65,10 @@ impl Shell {
         if cinema != self.cinema_shown {
             tracing::info!(?cinema, "cinema on screen");
             self.cinema_shown = cinema;
+            self.drop_down_on_cinema(cinema);
             self.emit_all_frames();
+            // A drop-down's key is grabbed only while its app is in Cinema.
+            self.emit_registered_chords();
         }
     }
 }

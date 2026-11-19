@@ -9692,6 +9692,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sola-dropdown"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "iced",
+ "sola-bus",
+ "sola-core",
+ "sola-kit",
+ "sola-terminal",
+ "tracing",
+]
+
+[[package]]
 name = "sola-editor"
 version = "0.1.0"
 dependencies = [
@@ -9766,6 +9779,7 @@ dependencies = [
  "clap",
  "getrandom 0.2.17",
  "libc",
+ "libloading 0.8.9",
  "rustix 1.1.4",
  "serde",
  "snow",

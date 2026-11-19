@@ -1,11 +1,12 @@
 //! The two streams to the host, on their own threads. The video thread
 //! connects, decodes as pictures arrive, and connects again when the host
-//! goes away; the writer thread lives across connections.
+//! goes away; the writer thread lives across connections. They all end when
+//! the [`Running`] goes (its window closed).
 
 use std::io;
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, SocketAddr, TcpStream, ToSocketAddrs};
 use std::os::fd::AsRawFd;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -14,7 +15,7 @@ use std::time::{Duration, Instant};
 use sola_kvm::clip;
 use sola_kvm::link::{self, Conn, Keys};
 use sola_kvm::protocol::{self, Packet};
-use sola_kvm::view_wire::{Down, MAX_CLIPBOARD, MAX_FRAME, PORT_OFFSET, Size, Stream, Up};
+use sola_kvm::view_wire::{self, Down, MAX_CLIPBOARD, MAX_FRAME, PORT_OFFSET, Size, Up};
 use tracing::{debug, info, warn};
 
 use crate::decode::Decoder;
@@ -51,6 +52,8 @@ pub enum Event {
     CanMirror(bool),
     /// Whether the pictures from here on are the host's own screen.
     Mirroring(bool),
+    /// Whether the host can make a screen of the window's size.
+    CanExtend(bool),
     Lost(String),
     /// The host will not send a picture; trying again will not help.
     Refused(String),
@@ -83,6 +86,26 @@ enum ClipJob {
 
 type Link = Arc<Mutex<Option<(TcpStream, Conn)>>>;
 
+/// The link's threads, until this is dropped: then the video thread stops
+/// connecting, both streams are shut, and the others end with them.
+pub struct Running {
+    stop: Arc<AtomicBool>,
+    video: Arc<Mutex<Option<TcpStream>>>,
+    link: Link,
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(tcp) = lock(&self.video).take() {
+            let _ = tcp.shutdown(Shutdown::Both);
+        }
+        if let Some((tcp, _)) = lock(&self.link).take() {
+            let _ = tcp.shutdown(Shutdown::Both);
+        }
+    }
+}
+
 /// `--measure --link <mbps>`: pictures read no faster than a link this fast
 /// carries them, so the host meets a slower way than the real one. It
 /// stands in for the link; nothing else waits on it.
@@ -107,11 +130,23 @@ impl Throttle {
     }
 }
 
-pub fn start(host: String, kvm_port: u16, pictures: Arc<Pictures>, events: Tell, mut throttle: Option<Throttle>) {
+pub fn start(
+    host: String,
+    kvm_port: u16,
+    pictures: Arc<Pictures>,
+    events: Tell,
+    mut throttle: Option<Throttle>,
+) -> Running {
     let (tx, rx) = mpsc::channel();
     events(Event::Ready(tx.clone()));
     let link: Link = Arc::default();
     let writer = Arc::clone(&link);
+    let running = Running {
+        stop: Arc::default(),
+        video: Arc::default(),
+        link: Arc::clone(&link),
+    };
+    let (stop, video) = (Arc::clone(&running.stop), Arc::clone(&running.video));
     let (clip_tx, clip_rx) = mpsc::channel();
     let (to_writer, to_video) = (clip_tx.clone(), clip_tx);
     let outgoing = tx.clone();
@@ -126,10 +161,32 @@ pub fn start(host: String, kvm_port: u16, pictures: Arc<Pictures>, events: Tell,
         .and_then(|_| {
             thread::Builder::new()
                 .name("kvm-view-video".into())
-                .spawn(move || video_loop(&host, kvm_port, &pictures, &events, &link, &tx, &to_video, &mut throttle))
+                .spawn(move || {
+                    let stream = Stream {
+                        link,
+                        video,
+                        stop,
+                    };
+                    video_loop(&host, kvm_port, &pictures, &events, &stream, &tx, &to_video, &mut throttle);
+                })
         });
     if let Err(e) = spawned {
         warn!(%e, "remote view: could not start its threads");
+    }
+    running
+}
+
+/// The video thread's side of [`Running`].
+struct Stream {
+    link: Link,
+    /// The video stream, to shut from [`Running`].
+    video: Arc<Mutex<Option<TcpStream>>>,
+    stop: Arc<AtomicBool>,
+}
+
+impl Stream {
+    fn stopped(&self) -> bool {
+        self.stop.load(Ordering::Relaxed)
     }
 }
 
@@ -138,7 +195,7 @@ fn video_loop(
     kvm_port: u16,
     pictures: &Arc<Pictures>,
     events: &Tell,
-    link: &Link,
+    stream: &Stream,
     outgoing: &Sender<Outgoing>,
     clip: &Sender<ClipJob>,
     throttle: &mut Option<Throttle>,
@@ -156,17 +213,19 @@ fn video_loop(
             return;
         }
     };
-    loop {
-        match session(host, kvm_port, &keys, pictures, events, link, outgoing, clip, throttle) {
+    while !stream.stopped() {
+        match session(host, kvm_port, &keys, pictures, events, stream, outgoing, clip, throttle) {
             Ok(Stop::Refused) => return,
+            Err(_) if stream.stopped() => break,
             Err(e) => {
                 info!(host, error = %e, "remote view: connection lost");
                 events(Event::Lost(e.to_string()));
             }
         }
-        lock(link).take();
+        lock(&stream.link).take();
         thread::sleep(RECONNECT);
     }
+    info!(host, "remote view: the window closed; disconnected");
 }
 
 enum Stop {
@@ -179,19 +238,24 @@ fn session(
     keys: &Keys,
     pictures: &Arc<Pictures>,
     events: &Tell,
-    link: &Link,
+    stream: &Stream,
     outgoing: &Sender<Outgoing>,
     clip: &Sender<ClipJob>,
     throttle: &mut Option<Throttle>,
 ) -> io::Result<Stop> {
     let addr = resolve(host, kvm_port + PORT_OFFSET)?;
     // Input first, with the size, so the host's first picture is at it.
-    *lock(link) = Some(connect(addr, keys, Stream::Input)?);
+    *lock(&stream.link) = Some(connect(addr, keys, view_wire::Stream::Input)?);
     let _ = outgoing.send(Outgoing::Mirror(pictures.mirror.load(Ordering::Relaxed)));
     if let Some(size) = pictures.wanted() {
         let _ = outgoing.send(Outgoing::Size(size));
     }
-    let (mut tcp, mut conn) = connect(addr, keys, Stream::Video)?;
+    let (mut tcp, mut conn) = connect(addr, keys, view_wire::Stream::Video)?;
+    *lock(&stream.video) = Some(tcp.try_clone()?);
+    // Dropped while connecting: nothing shut this one.
+    if stream.stopped() {
+        return Err(io::Error::other("the window closed"));
+    }
     let mut decoder = None;
     info!(%addr, "remote view: connected");
     loop {
@@ -219,6 +283,7 @@ fn session(
             }
             Down::CanMirror(can) => events(Event::CanMirror(can)),
             Down::Mirroring(mirroring) => events(Event::Mirroring(mirroring)),
+            Down::CanExtend(can) => events(Event::CanExtend(can)),
             Down::Cursor(cursor) => {
                 debug!(
                     width = cursor.width,
@@ -274,7 +339,7 @@ fn resolve(host: &str, port: u16) -> io::Result<SocketAddr> {
         .ok_or_else(|| invalid(format!("{host} has no address")))
 }
 
-fn connect(addr: SocketAddr, keys: &Keys, stream: Stream) -> io::Result<(TcpStream, Conn)> {
+fn connect(addr: SocketAddr, keys: &Keys, stream: view_wire::Stream) -> io::Result<(TcpStream, Conn)> {
     let mut tcp = TcpStream::connect_timeout(&addr, CONNECT)?;
     tcp.set_nodelay(true)?;
     keepalive(&tcp);

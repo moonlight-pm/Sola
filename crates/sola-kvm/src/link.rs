@@ -69,7 +69,9 @@ impl std::fmt::Debug for Keys {
 }
 
 /// `$XDG_CONFIG_HOME/sola-kvm` or `~/.config/sola-kvm`: `key` (this
-/// machine's private key, its owner's alone), `key.pub`, and `peer.pub`.
+/// machine's private key, its owner's alone), `key.pub`, `peer.pub` (the
+/// input peer's), `view/<host>.pub` (machines this one views) and
+/// `viewers/<name>.pub` (machines that may view this one).
 pub fn dir() -> PathBuf {
     std::env::var_os("XDG_CONFIG_HOME")
         .filter(|d| !d.is_empty())
@@ -132,6 +134,40 @@ pub fn save_view_peer(dir: &Path, host: &str, peer: &[u8; 32]) -> io::Result<()>
     write_key(&view_peer_path(dir, host)?, peer, 0o644)
 }
 
+/// Forget the key of `host`, a machine this one views; `false` when there
+/// was none.
+pub fn forget_view_peer(dir: &Path, host: &str) -> io::Result<bool> {
+    match std::fs::remove_file(view_peer_path(dir, host)?) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Keep `key` as the key of `name`, a machine that may view this one's
+/// screen. A host takes several viewers; the input peer is apart.
+pub fn save_viewer(dir: &Path, name: &str, key: &[u8; 32]) -> io::Result<()> {
+    write_key(&named_path(&dir.join("viewers"), name)?, key, 0o644)
+}
+
+/// The keys of the machines that may view this one, read as a viewer
+/// connects: a new pairing needs no restart.
+pub fn viewer_keys(dir: &Path) -> io::Result<Vec<[u8; 32]>> {
+    let entries = match std::fs::read_dir(dir.join("viewers")) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut keys = Vec::new();
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().is_some_and(|e| e == "pub") {
+            keys.extend(read_key(&path)?);
+        }
+    }
+    Ok(keys)
+}
+
 /// The keys for viewing `host`; `None` until `sola-kvm pair <host> --view`.
 pub fn load_view(dir: &Path, host: &str) -> io::Result<Option<Keys>> {
     let (Some((private, public)), Some(peer)) =
@@ -161,10 +197,14 @@ pub fn view_hosts(dir: &Path) -> io::Result<Vec<String>> {
 }
 
 fn view_peer_path(dir: &Path, host: &str) -> io::Result<PathBuf> {
-    if host.is_empty() || host.contains(['/', '\\']) || host.starts_with('.') {
-        return Err(bad(format!("{host:?} is not a host name")));
+    named_path(&dir.join("view"), host)
+}
+
+fn named_path(dir: &Path, name: &str) -> io::Result<PathBuf> {
+    if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') {
+        return Err(bad(format!("{name:?} is not a host name")));
     }
-    Ok(dir.join("view").join(format!("{host}.pub")))
+    Ok(dir.join(format!("{name}.pub")))
 }
 
 /// The pairing; `None` when this machine is not paired. Files that are not
@@ -416,7 +456,7 @@ impl Responder {
             return Err(Dropped::Short);
         }
         let sender = u32_at(bytes, HEADER);
-        let mut hs = responder(&self.keys).map_err(|_| Dropped::Forged)?;
+        let mut hs = responder(&self.keys.private).map_err(|_| Dropped::Forged)?;
         let mut payload = [0u8; 64];
         let n = hs
             .read_message(&bytes[HEADER + 4..], &mut payload)
@@ -560,13 +600,19 @@ impl Conn {
     /// Run the handshake as the accepting side; a connection from any key
     /// but the peer's is refused.
     pub fn accept<S: Read + Write>(s: &mut S, keys: &Keys) -> io::Result<Self> {
-        let mut hs = responder(keys).map_err(noise_err)?;
+        Self::accept_from(s, &keys.private, &[keys.peer])
+    }
+
+    /// [`Self::accept`] for a machine with several paired ones (a host's
+    /// viewers): a connection from any key but theirs is refused.
+    pub fn accept_from<S: Read + Write>(s: &mut S, private: &[u8; 32], peers: &[[u8; 32]]) -> io::Result<Self> {
+        let mut hs = responder(private).map_err(noise_err)?;
         let first = read_record(s)?;
         let mut buf = vec![0u8; 256];
         hs.read_message(&first, &mut buf)
             .map_err(|_| bad("the handshake does not open (not paired with this machine)".into()))?;
-        if hs.get_remote_static() != Some(&keys.peer[..]) {
-            return Err(bad("a handshake from a key that is not the paired machine's".into()));
+        if !peers.iter().any(|peer| hs.get_remote_static() == Some(&peer[..])) {
+            return Err(bad("a handshake from a key that is not a paired machine's".into()));
         }
         let n = hs.write_message(&[], &mut buf).map_err(noise_err)?;
         write_record(s, &buf[..n])?;
@@ -669,10 +715,8 @@ fn initiator(keys: &Keys) -> Result<HandshakeState, snow::Error> {
         .build_initiator()
 }
 
-fn responder(keys: &Keys) -> Result<HandshakeState, snow::Error> {
-    snow::Builder::new(params())
-        .local_private_key(&keys.private)?
-        .build_responder()
+fn responder(private: &[u8; 32]) -> Result<HandshakeState, snow::Error> {
+    snow::Builder::new(params()).local_private_key(private)?.build_responder()
 }
 
 fn random_u32() -> u32 {
@@ -849,6 +893,42 @@ mod tests {
         let peer = std::thread::spawn(move || Conn::accept(&mut b, &s).is_err());
         let _ = Conn::connect(&mut a, &x);
         assert!(peer.join().unwrap(), "a stranger's connection is refused");
+    }
+
+    #[test]
+    fn a_host_takes_any_of_its_viewers_and_no_one_else() {
+        use std::os::unix::net::UnixStream;
+        let (host, viewer, stranger) = pair();
+        let (private, public) = new_pair().unwrap();
+        let other = Keys { private, public, peer: host.public };
+        let viewers = [[7; 32], viewer.public, other.public];
+        for (keys, taken) in [(viewer.clone(), true), (other, true), (stranger, false)] {
+            let (mut a, mut b) = UnixStream::pair().unwrap();
+            let private = host.private;
+            let accepted = std::thread::spawn(move || Conn::accept_from(&mut b, &private, &viewers).is_ok());
+            let keys = Keys { peer: host.public, ..keys };
+            let _ = Conn::connect(&mut a, &keys);
+            assert_eq!(accepted.join().unwrap(), taken);
+        }
+    }
+
+    #[test]
+    fn viewers_are_kept_by_name_and_forgotten_by_host() {
+        let dir = std::env::temp_dir().join(format!("sola-kvm-viewers-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(viewer_keys(&dir).unwrap().is_empty());
+        save_viewer(&dir, "novus", &[1; 32]).unwrap();
+        save_viewer(&dir, "canto", &[2; 32]).unwrap();
+        save_viewer(&dir, "novus", &[3; 32]).unwrap();
+        let mut keys = viewer_keys(&dir).unwrap();
+        keys.sort();
+        assert_eq!(keys, [[2; 32], [3; 32]]);
+        assert!(save_viewer(&dir, "../peer", &[4; 32]).is_err());
+        save_view_peer(&dir, "ember", &[5; 32]).unwrap();
+        assert!(forget_view_peer(&dir, "ember").unwrap());
+        assert!(!forget_view_peer(&dir, "ember").unwrap());
+        assert!(view_hosts(&dir).unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -9,7 +9,7 @@ use iced::widget::shader::{self, Action, Viewport};
 use iced::{Event, Point, Rectangle, Size, mouse};
 use sola_kvm::protocol::Packet;
 
-use crate::app::Msg;
+use crate::session::Msg;
 use crate::fit::{fit, to_points};
 use crate::pictures::{Frame, Pictures};
 use crate::pointer::Pointer;
@@ -38,10 +38,9 @@ impl Picture {
     }
 }
 
-/// A wheel turn in detents for the Mac agent. Winit's signs, sent as they
-/// are, scrolled the Mac backwards on both axes, so both are negated. The
-/// agent's own signs are left as they are for the input path. A Linux host
-/// will need checking: its injector reads the wire's signs differently.
+/// A wheel turn in detents. Winit's signs, sent as they are, scrolled the
+/// Mac backwards on both axes, so both are negated: the other way round
+/// from the wire's own (the KVM server's), which a Linux host turns back.
 fn wheel_detents(delta: mouse::ScrollDelta) -> (f32, f32) {
     match delta {
         mouse::ScrollDelta::Lines { x, y } => (-x, -y),

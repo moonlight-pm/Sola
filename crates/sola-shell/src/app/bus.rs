@@ -63,6 +63,11 @@ impl Shell {
                 self.on_kept_apps(message.sticky.then_some(k));
                 Task::none()
             }
+            Topic::DropDown(d) => {
+                let app_id = d.app_id.clone();
+                self.on_drop_down(&app_id, message.sticky.then_some(d));
+                Task::none()
+            }
             Topic::FullscreenRequest(r) => {
                 self.on_fullscreen_request(r);
                 Task::none()
@@ -389,6 +394,8 @@ impl Shell {
                 .insert((w.app_id.clone(), w.title.clone()), w.window_id);
         }
         self.known_windows = windows;
+        // The drop-down's window closed: the keyboard goes back under it.
+        let drop_refocus = self.drop_down_closed(&removed_wids);
 
         // Closed tabs leave their zones; each zone whose shown tab closed
         // shows its next one. A place waits a moment for a restarting app.
@@ -431,7 +438,15 @@ impl Shell {
         let mut take_focus: Option<(u32, String)> = None;
         let mut first_shown: Option<(u32, String)> = None;
         let mut placed_any = false;
+        let mut focus_drop = None;
         for (wid, app_id) in &added {
+            // A drop-down goes over its app, not in a zone.
+            if Self::is_drop_down_app(app_id) {
+                if self.drop_down_mapped(*wid) {
+                    focus_drop = Some(*wid);
+                }
+                continue;
+            }
             let asked_fullscreen = self.pending_fullscreen.remove(wid);
             if let Some(parent) = self.pending_parents.remove(wid) {
                 self.tabs.set_parent(*wid, parent);
@@ -480,7 +495,7 @@ impl Shell {
         // Every known app is in MRU at least at the least-recent end, so
         // Super+Tab is complete.
         for w in &self.known_windows {
-            if w.app_id == Self::APP_ID {
+            if w.app_id == Self::APP_ID || Self::is_drop_down_app(&w.app_id) {
                 continue;
             }
             if !self.mru_apps.iter().any(|m| m == &w.app_id) {
@@ -547,6 +562,16 @@ impl Shell {
         self.emit_all_frames();
 
         self.emit_composition();
+
+        // After the composition that puts it over the app, so sola-river
+        // keeps the app fullscreen as the keyboard moves to it.
+        if let Some(wid) = focus_drop {
+            self.focus_drop_down(wid);
+        } else if let Some(over) = drop_refocus {
+            if let Some(app) = self.app_id_for_window(over) {
+                self.focus_window(over, &app);
+            }
+        }
 
         // Always re-emit registered chords. At fresh boot, the shell sees
         // only the menubar, so no other path has emitted them yet — and
@@ -1236,6 +1261,11 @@ impl Shell {
             self.emit_registered_chords();
         }
 
+        // A drop-down's key, while its app is in Cinema.
+        if let Some(task) = self.drop_down_chord(&chord) {
+            return task;
+        }
+
         if let Some(act) = act {
             tracing::info!(?act, "system key");
             return self.run_act(act);
@@ -1314,6 +1344,11 @@ impl Shell {
             tracing::debug!(window_id = e.window_id, "FFM enter shell — cancel dwell");
             return Task::none();
         }
+        // A drop-down keeps the keyboard while it is down: the pointer over
+        // the app under it takes none (a click does).
+        if self.drop_down_is_down() {
+            return Task::none();
+        }
 
         // Composition-hidden surfaces are River-hidden; ignore stray enter.
         if self.tabs.is_hidden(e.window_id) {
@@ -1367,6 +1402,16 @@ impl Shell {
             .iter()
             .any(|w| w.window_id == e.window_id);
         if !is_app_window {
+            return;
+        }
+        // A click on the drop-down gives it the keyboard back; it has no
+        // place to raise to.
+        if self
+            .app_id_for_window(e.window_id)
+            .is_some_and(|app| Self::is_drop_down_app(&app))
+        {
+            self.focus_drop_down(e.window_id);
+            self.emit_registered_chords();
             return;
         }
         // The press that hid it (its yellow light), come in after the hide.

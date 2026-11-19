@@ -75,27 +75,35 @@ enum Command {
     /// Pair this machine (the server) with its peer by public key, as SSH
     /// swaps host keys: each keeps its own key pair and the other's public
     /// key, swapped over ssh. From then on each side takes only the other's
-    /// input and clipboard, and neither starts unpaired. Restart sola-kvm on
-    /// both after.
+    /// input and clipboard. An unpaired server waits for a pairing, so
+    /// nothing needs a restart here; restart the Mac agent after.
     Pair {
         /// The peer's ssh host (default: the config's peer host).
         peer: Option<String>,
-        /// The KVM binary to run on the peer (`sola-kvm-mac` on a Mac).
-        #[arg(long, default_value = "sola-kvm")]
-        remote_bin: String,
+        /// The KVM binary to run on the peer (default: `sola-kvm`, or the
+        /// agent's app on a Mac, which `uname` tells).
+        #[arg(long)]
+        remote_bin: Option<String>,
         /// Read the other machine's public key on stdin, keep it, and print
         /// this machine's (what `pair` runs on the peer; also pairs by hand).
         #[arg(long, conflicts_with_all = ["peer", "forget", "public"])]
         accept: bool,
+        /// With --accept: keep the key as NAME's, a machine that may view
+        /// this one's screen, beside any others (what `pair <host> --view`
+        /// runs on a Linux host).
+        #[arg(long, requires = "accept", value_name = "NAME")]
+        viewer: Option<String>,
         /// Print this machine's public key (made the first time).
         #[arg(long, conflicts_with_all = ["peer", "forget"])]
         public: bool,
-        /// Forget the peer's key: unpaired, and sola-kvm will not start.
-        #[arg(long, conflicts_with = "peer")]
+        /// Forget the peer's key: unpaired, and sola-kvm sends and takes
+        /// nothing. With --view and a host, forget only that host's viewing
+        /// key.
+        #[arg(long)]
         forget: bool,
         /// Pair to view this host's screen (`sola-kvm view <host>`), beside
         /// whatever the input peer is. Needs the host named.
-        #[arg(long, requires = "peer", conflicts_with_all = ["accept", "public", "forget"])]
+        #[arg(long, requires = "peer", conflicts_with_all = ["accept", "public"])]
         view: bool,
     },
 
@@ -137,10 +145,22 @@ fn main() {
             peer,
             remote_bin,
             accept,
+            viewer,
             public,
             forget,
             view,
-        }) => cmd_pair(&config_path, peer, &remote_bin, accept, public, forget, view),
+        }) => cmd_pair(
+            &config_path,
+            Pairing {
+                peer,
+                remote_bin,
+                accept,
+                viewer,
+                public,
+                forget,
+                view,
+            },
+        ),
         Some(Command::View { host }) => cmd_view(&host),
     }
 }
@@ -161,6 +181,15 @@ fn cmd_view(host: &str) {
 /// The pairing. Unpaired, or keys that cannot be read, stop the process:
 /// sola-kvm sends and takes only the paired machine's traffic.
 fn paired() -> Keys {
+    pairing().unwrap_or_else(|| {
+        error!("not paired, not starting: run `sola-kvm pair <peer>` on the server");
+        std::process::exit(1);
+    })
+}
+
+/// The pairing, `None` before one. Keys that cannot be read stop the
+/// process.
+fn pairing() -> Option<Keys> {
     let dir = link::dir();
     match link::load(&dir) {
         Ok(Some(keys)) => {
@@ -168,12 +197,9 @@ fn paired() -> Keys {
                 peer = %link::hex(&keys.peer),
                 "paired: input and clipboard go only to and from the paired machine"
             );
-            keys
+            Some(keys)
         }
-        Ok(None) => {
-            error!("not paired, not starting: run `sola-kvm pair <peer>` on the server");
-            std::process::exit(1);
-        }
+        Ok(None) => None,
         Err(e) => {
             error!(dir = %dir.display(), "pairing unreadable, not starting: {e}");
             std::process::exit(1);
@@ -181,20 +207,65 @@ fn paired() -> Keys {
     }
 }
 
-fn cmd_pair(
-    path: &PathBuf,
+/// The Mac agent, where its installer puts it.
+const MAC_AGENT: &str = "/Applications/SolaKvmMac.app/Contents/MacOS/sola-kvm-mac";
+
+/// What `sola-kvm pair` was asked.
+struct Pairing {
     peer: Option<String>,
-    remote_bin: &str,
+    remote_bin: Option<String>,
     accept: bool,
+    viewer: Option<String>,
     public: bool,
     forget: bool,
     view: bool,
-) {
+}
+
+/// The KVM binary on `host`: the agent's app on a Mac, else `sola-kvm`.
+/// `Err` is ssh's own words when it cannot reach the host.
+fn remote_bin_on(host: &str) -> Result<String, String> {
+    let out = std::process::Command::new("ssh")
+        .args(["-o", "BatchMode=yes", host, "uname", "-s"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("ssh {host}: {e}"))?;
+    if !out.status.success() {
+        let said = String::from_utf8_lossy(&out.stderr);
+        let said = said.lines().map(str::trim).rfind(|l| !l.is_empty()).unwrap_or("no answer");
+        return Err(format!("{host} cannot be reached over ssh: {}", said.trim_start_matches("ssh: ")));
+    }
+    Ok(match String::from_utf8_lossy(&out.stdout).trim() {
+        "Darwin" => MAC_AGENT.into(),
+        _ => "sola-kvm".into(),
+    })
+}
+
+fn cmd_pair(path: &PathBuf, pairing: Pairing) {
+    let Pairing {
+        peer,
+        remote_bin,
+        accept,
+        viewer,
+        public,
+        forget,
+        view,
+    } = pairing;
     let dir = link::dir();
     let fail = |msg: String| -> ! {
         eprintln!("sola-kvm pair: {msg}");
         std::process::exit(1);
     };
+    if let (true, true, Some(host)) = (forget, view, &peer) {
+        match link::forget_view_peer(&dir, host) {
+            Ok(true) => println!("Forgot {host}: this machine no longer views it."),
+            Ok(false) => println!("{host} was not paired for viewing."),
+            Err(e) => fail(format!("forget {host} in {}: {e}", dir.display())),
+        }
+        return;
+    }
+    if forget && peer.is_some() {
+        fail("name a host to forget only with --view; the input peer is forgotten with --forget alone".into());
+    }
     if forget {
         match link::forget_peer(&dir) {
             Ok(true) => println!("Unpaired: forgot the peer's key. sola-kvm will not start until paired again."),
@@ -219,17 +290,37 @@ fn cmd_pair(
         let Some(theirs) = link::parse_hex(&line) else {
             fail("stdin is not a public key (64 hex digits)".into());
         };
-        if let Err(e) = link::save_peer(&dir, &theirs) {
-            fail(format!("save the peer's key in {}: {e}", dir.display()));
+        let saved = match &viewer {
+            Some(name) => link::save_viewer(&dir, name, &theirs),
+            None => link::save_peer(&dir, &theirs),
+        };
+        if let Err(e) = saved {
+            fail(format!("save the other machine's key in {}: {e}", dir.display()));
         }
         println!("{}", link::hex(&own));
-        eprintln!("Paired with {}.", link::hex(&theirs));
+        match &viewer {
+            Some(name) => eprintln!("{name} may view this machine's screen ({}).", link::hex(&theirs)),
+            None => eprintln!("Paired with {}.", link::hex(&theirs)),
+        }
         return;
     }
     let host = peer.unwrap_or_else(|| load(path).peer.host);
+    let remote_bin = match remote_bin {
+        Some(bin) => bin,
+        None => remote_bin_on(&host).unwrap_or_else(|why| fail(why)),
+    };
+    // The Mac agent keeps one key for input and viewing; sola-kvm keeps a
+    // viewer's beside its input peer's.
+    let on_mac = remote_bin.ends_with("sola-kvm-mac");
+    let mut accept_args = vec![remote_bin.as_str(), "pair", "--accept"];
+    let this_host = sola_core::window_label::this_host();
+    if view && !on_mac {
+        accept_args.extend(["--viewer", this_host]);
+    }
     // The peer first: it keeps this machine's key and answers with its own.
     let mut child = std::process::Command::new("ssh")
-        .args(["-o", "BatchMode=yes", &host, remote_bin, "pair", "--accept"])
+        .args(["-o", "BatchMode=yes", &host])
+        .args(&accept_args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -246,7 +337,8 @@ fn cmd_pair(
         .unwrap_or_else(|e| fail(format!("ssh {host}: {e}")));
     if !out.status.success() {
         fail(format!(
-            "`{remote_bin} pair --accept` on {host} failed ({}); nothing changed here",
+            "`{}` on {host} failed ({}); nothing changed here",
+            accept_args.join(" "),
             out.status
         ));
     }
@@ -265,12 +357,17 @@ fn cmd_pair(
             dir.display()
         ));
     }
+    let then = match (view, on_mac) {
+        (_, true) => format!("Restart the agent on {host} (it reads the keys when it starts)."),
+        (true, false) => format!("{host} takes this machine's view from now on: sola-kvm view {host}"),
+        (false, false) => format!(
+            "sola-kvm starts by itself on each side that was waiting for a pairing; restart one that ran with other keys (on {host}, its listen)."
+        ),
+    };
     println!(
-        "Paired with {host}.\n  this machine: {}\n  {host}: {}\n\
-         Restart sola-kvm on {} (it reads the keys when it starts).",
+        "Paired with {host}.\n  this machine: {}\n  {host}: {}\n{then}",
         link::hex(&own),
         link::hex(&theirs),
-        if view { host.as_str() } else { "both machines" }
     );
 }
 
@@ -359,19 +456,61 @@ fn cmd_server(path: &PathBuf, input: &str) {
             std::process::exit(2);
         }
     };
-    if let Err(e) = run::run_server(&cfg, backend, paired()) {
+    serve_view(cfg.peer.port);
+    if let Err(e) = run::run_server(&cfg, backend, paired_or_wait()) {
         error!("{e}");
         std::process::exit(1);
     }
 }
 
+/// The pairing; unpaired, input sharing waits for one rather than exit and
+/// be restarted: a machine that is only viewed never has one.
+fn paired_or_wait() -> Keys {
+    pairing().unwrap_or_else(|| {
+        info!("no input peer: input sharing waits for `sola-kvm pair <peer>`");
+        let dir = link::dir();
+        if let Err(e) = sola_kvm::wait::until(&dir, || matches!(link::load(&dir), Ok(Some(_)))) {
+            error!(dir = %dir.display(), "cannot wait for a pairing: {e}");
+            std::process::exit(1);
+        }
+        paired()
+    })
+}
+
+/// This machine's screen to the machines paired to view it, once one is
+/// (`sola-kvm pair <this host> --view` from the viewer).
+fn serve_view(kvm_port: u16) {
+    let spawned = thread::Builder::new().name("kvm-view-wait".into()).spawn(move || {
+        let dir = link::dir();
+        let paired = || link::viewer_keys(&dir).is_ok_and(|keys| !keys.is_empty());
+        if !paired() {
+            info!("no viewer paired: this screen is shown once one is");
+        }
+        if let Err(e) = sola_kvm::wait::until(&dir, paired) {
+            error!(dir = %dir.display(), "remote view: cannot wait for a viewer's pairing: {e}");
+            return;
+        }
+        if let Err(e) = sola_kvm::host::spawn(kvm_port) {
+            error!("remote view: cannot listen: {e}");
+        }
+    });
+    if let Err(e) = spawned {
+        error!("remote view: cannot start: {e}");
+    }
+}
+
 fn cmd_listen(path: &PathBuf, bind: Option<String>, dump: bool) {
     let cfg = load(path);
-    let keys = paired();
     let addr = bind.unwrap_or_else(|| format!("0.0.0.0:{}", cfg.peer.port));
     let result = if dump {
-        sola_kvm::inject::run_dump(&addr, keys)
+        sola_kvm::inject::run_dump(&addr, paired())
     } else {
+        // A Linux peer is viewed as a Mac's agent is: its screen goes to
+        // the machines paired to view it, beside the input it takes.
+        sola_core::env::activate_wayland_session(30_000);
+        let port = addr.rsplit_once(':').and_then(|(_, port)| port.parse().ok());
+        serve_view(port.unwrap_or(cfg.peer.port));
+        let keys = paired_or_wait();
         let clip = if cfg.clipboard.enable {
             Some(sola_kvm::clip::ClipConfig {
                 peer_host: cfg.peer.host.clone(),

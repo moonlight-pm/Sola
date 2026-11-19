@@ -101,6 +101,7 @@ crates/
   sola-oath/           # Oath: the package ecosystem app (`oath --json`); own pkg:sola-oath
   sola-shell/          # Desktop shell — launcher, tab bar, menubar, zoning
   sola-terminal/       # Untitled-shell terminal (alacritty grid + iced); also a lib
+  sola-dropdown/       # Drop-down terminal the shell starts over a fullscreen app
   sola-projects/       # Projects: a window per session (any computer's) + agent-aware PTYs
   sola-mail/           # Kit-native mail client
   sola-calendar/       # Kit-native calendar (local, Google, iCloud)

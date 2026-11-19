@@ -6,6 +6,7 @@
 pub mod capture;
 pub mod clip;
 pub mod config;
+pub mod host;
 pub mod inject;
 pub mod input;
 pub mod layout;
@@ -17,6 +18,7 @@ pub mod run;
 pub mod server;
 pub mod udp;
 pub mod view_wire;
+pub mod wait;
 
 pub use config::Config;
 pub use layout::{Align, Layout, Side};

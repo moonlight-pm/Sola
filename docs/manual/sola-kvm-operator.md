@@ -202,9 +202,10 @@ sola-kvm pair <mac-host> --remote-bin sola-kvm-mac   # a Mac peer
 It sends this machine's public key to the peer over ssh (`pair --accept`
 there), which keeps it and answers with its own, then keeps that here, and
 prints both. Without a peer, it uses `peer.host` from the config. If the
-peer cannot take the key, nothing changes here. Then restart sola-kvm on
-both machines (on Oath, `pkill -x sola-kvm`; PID 1 starts it again); each
-logs `paired` at start.
+peer cannot take the key, nothing changes here. An unpaired server or
+listener waits for its pairing and starts by itself; re-pairing one that
+runs, or the Mac agent, needs a restart (on Oath, `pkill -x sola-kvm`; PID 1
+starts it again). Each logs `paired` at start.
 
 Without ssh, pair by hand: `sola-kvm pair --public` prints a machine's
 public key, and `echo <the other's key> | sola-kvm pair --accept` keeps the
@@ -220,12 +221,14 @@ to move forward). The clipboard connection runs its own handshake, and the
 peer refuses a connection from any other key. Dropped input is logged at
 most every 10 s, with the sender's address.
 
-Neither side starts unpaired, and neither starts with keys it cannot read.
+Nothing is sent or taken unpaired: the server and `listen` wait for a
+pairing, and the Mac agent does not start. Neither starts with keys it cannot
+read.
 A machine paired by an older sola-kvm has a shared key,
 `~/.config/sola-kvm/pair.key`: it does not start until paired again, which
 removes that file. `sola-kvm pair --forget` (`sola-kvm-mac pair --forget`)
-forgets the other machine's key: that side does not start again until
-paired. Pair both sides from versions that pair by public key.
+forgets the other machine's key: that side sends and takes nothing until
+paired again. Pair both sides from versions that pair by public key.
 [Security](security.md) lists the desk's other ways in.
 
 ## Set up a Linux peer
@@ -268,46 +271,81 @@ sola-kvm send-test --to <peer-ip>:4242
 
 ## Remote Desktop
 
-Remote Desktop shows another machine's screen in a window here, driven from
-this keyboard and pointer. It is separate from sharing the keyboard and
-mouse: it has its own pairing and does not need the server running, so one
-machine can share input with one peer and view another.
+Remote Desktop shows other machines' screens in windows here, one window
+each, driven from this keyboard and pointer. It is separate from sharing the
+keyboard and mouse: it has its own pairing and does not need the server
+running, so one machine can share input with one peer and view others.
 
-The host is a Mac for now, and the machine viewing needs an NVIDIA GPU.
+A host is a Mac with the agent, or a Linux machine running Sola (on Oath,
+every desk runs `sola-kvm`). The machine viewing, and a Linux host, need an
+NVIDIA GPU.
 
-To set it up, install the Mac agent (above), then on the viewing machine:
+### Connections
+
+Open **Remote Desktop** from the launcher: the Connections window lists the
+machines this one is paired to view. Type to find one; Enter or a click opens
+its window (or brings it up if it is open), and the list closes. **Remote
+Desktop → Connections** brings it back. Several machines can be open at once.
+
+To add one, type its name as ssh knows it (ssh to it must work with keys,
+as `ssh koeurax` does) and pick **Pair with <name>**. That runs `sola-kvm
+pair <name> --view`, which asks the machine what it is: a Mac gets its key
+from the agent, a Linux machine keeps this one's among its viewers. Then the
+machine's window opens. If pairing fails, the reason is at the top of the
+list.
+
+With the list focused, **Connection → Forget <machine>** removes this
+machine's key for it. The other machine still knows this one's until it is
+paired again; nothing gets in without both.
+
+From a terminal:
 
 ```bash
-sola-kvm pair <mac-host> --view --remote-bin /Applications/SolaKvmMac.app/Contents/MacOS/sola-kvm-mac
+sola-kvm pair <host> --view            # a Linux host, or a Mac (found by itself)
+sola-kvm view <host>                   # open its window (in Remote Desktop, if it runs)
+sola-kvm pair <host> --view --forget   # forget it
 ```
 
-Restart the agent, connect once so macOS lists it, then turn on **Sola KVM
-Mac** in System Settings, Privacy & Security, Screen & System Audio
-Recording, and restart the agent again. macOS also asks whether the agent may
-capture the screen directly; choose Allow.
+### A Mac
 
-```bash
-sola-kvm view <mac-host>
-```
+Install the Mac agent (above) first. After pairing, restart the agent,
+connect once so macOS lists it, then turn on **Sola KVM Mac** in System
+Settings, Privacy & Security, Screen & System Audio Recording, and restart
+the agent again. macOS also asks whether the agent may capture the screen
+directly; choose Allow. If the agent is somewhere else, name it:
+`--remote-bin <path>`.
 
-Or open **Remote Desktop** from the launcher: with one machine paired it
-opens that one, and with none or several it says what to do.
+The Mac makes a screen the size of the window (**View → Extend**), or shows
+its own (**View → Mirror**); the choice is kept for each Mac.
 
-While the window has the keyboard, every key goes to the Mac, and Super acts
-as Cmd. **Ctrl+Alt+Esc** gives the keyboard and pointer back to Sola, and a
-click on the picture takes them again. Clicking another window also gives
-Sola its shortcuts back.
+### A Linux machine
 
-The Mac listens on TCP 4243 (the KVM port plus one) and only starts capturing
-when a viewer connects. Only the paired machine's key gets in, and the traffic
-is encrypted. If the connection drops, the window connects again by itself.
+Nothing to install: `sola-kvm` (the server, or `listen` on an input peer)
+serves the screen once a viewer is paired,
+and reads each viewer's key as it connects, so no restart is needed. It
+shows the machine's own screen at its own size (Extend is greyed out), with
+its pointer, and sends nothing while the screen is still. A screen that
+changes size comes through at the new size.
 
-Copied text follows the window: what you copied here reaches the Mac when
-the window takes the keyboard, and what you copied on the Mac comes back when
-it lets go. Text only: a picture copied on either side stays there.
+### Using it
 
-It shows the Mac's main display, one viewer at a time, with no sound. To move its window to another workspace while it has the
-keyboard, use the titlebar's **Window** menu.
+While a machine's window has the keyboard, every key goes to it, and Super
+acts as Cmd on a Mac. **Ctrl+Alt+Esc** gives the keyboard and pointer back
+to Sola, and a click on the picture takes them again. Clicking another
+window also gives Sola its shortcuts back.
+
+The host listens on TCP 4243 (the KVM port plus one) and only starts
+capturing when a viewer connects. Only paired machines' keys get in, and
+the traffic is encrypted. If the connection drops, the window connects
+again by itself. Closing the window ends the connection.
+
+Copied text follows the window: what you copied here reaches the host when
+the window takes the keyboard, and what you copied there comes back when it
+lets go. Text only: a picture copied on either side stays there.
+
+Each host shows its main screen, to one viewer at a time (a second viewer
+takes over), with no sound. To move a window to another workspace while it
+has the keyboard, use the titlebar's **Window** menu.
 
 ## How it works
 
