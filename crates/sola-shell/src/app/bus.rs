@@ -146,12 +146,12 @@ impl Shell {
                 Task::none()
             }
             Topic::ShowWindow(wid) => {
-                self.activate_window(wid);
+                self.raise_window_from_click(wid);
                 Task::none()
             }
             Topic::ShowTab(s) => {
                 match self.pairing.window_of(&s.key) {
-                    Some(wid) => self.activate_window(wid),
+                    Some(wid) => self.raise_window_from_click(wid),
                     None => tracing::debug!(key = %s.key, "ShowTab: no window"),
                 }
                 Task::none()
@@ -372,7 +372,7 @@ impl Shell {
             .map(|w| (w.window_id, w.app_id.clone()))
             .collect();
 
-        // Apps whose last window closed (MRU / hidden cleanup).
+        // Apps whose last window closed (MRU cleanup).
         let new_app_ids: HashSet<&str> = windows
             .iter()
             .filter(|w| w.app_id != Self::APP_ID)
@@ -417,11 +417,6 @@ impl Shell {
             self.mru_window_by_app.remove(id);
             if self.focused_app_id.as_deref() == Some(id.as_str()) {
                 self.focused_app_id = None;
-            }
-            // Last surface gone — drop AppHidden so a later map of this
-            // app_id is not stuck hidden (Super+H).
-            if self.is_app_hidden(id) {
-                self.retract_app_hidden(id);
             }
         }
         if focused_closed {
@@ -591,13 +586,12 @@ impl Shell {
     /// what that tiled zone shows now, else the tab focus belongs on, else
     /// the showing workspace's most recently used window.
     pub(super) fn next_focus(&self, zone: Option<Zone>) -> Option<u32> {
-        let hidden = |app: &str| self.is_app_hidden(app);
         let tiled = zone.filter(|z| *z != Zone::Float);
         tiled
-            .filter(|z| self.tabs.on_screen(&hidden).contains(z))
-            .and_then(|z| self.tabs.visible_shown(z, &hidden))
-            .or_else(|| tiled.and_then(|_| self.tabs.front(&hidden)))
-            .or_else(|| self.mru_window_on_showing(None))
+            .filter(|z| self.tabs.on_screen().contains(z))
+            .and_then(|z| self.tabs.visible_shown(z))
+            .or_else(|| tiled.and_then(|_| self.tabs.front()))
+            .or_else(|| self.mru_window_on_showing())
     }
 
     pub(super) fn focus_window(&mut self, wid: u32, app_id: &str) {
@@ -788,11 +782,10 @@ impl Shell {
         let Some(zone) = self.tabs.zone_of(tab).filter(|z| *z != Zone::Float) else {
             return;
         };
-        let hidden = |app: &str| self.is_app_hidden(app);
-        let shown = if self.tabs.on_screen(&hidden).contains(&zone) {
-            self.tabs.visible_shown(zone, &hidden)
+        let shown = if self.tabs.on_screen().contains(&zone) {
+            self.tabs.visible_shown(zone)
         } else {
-            self.tabs.front(&hidden)
+            self.tabs.front()
         };
         let Some(shown) = shown else {
             return;
@@ -854,12 +847,6 @@ impl Shell {
     /// never-raised external windows from living in the "not in MRU" bucket.
     /// It never moves an already-listed app forward (that is raise-only).
     fn apply_focus(&mut self, app_id: &str, bump_mru: bool) {
-        // Composition-hidden apps are not on screen; focusing them would
-        // route keys to a River-hidden surface. Unhide first (raise_app).
-        if self.is_app_hidden(app_id) {
-            tracing::debug!(%app_id, "apply_focus: skip hidden app");
-            return;
-        }
         let app_changed = self.focused_app_id.as_deref() != Some(app_id);
         self.focused_app_id = Some(app_id.to_string());
         // You are in it: its news is seen.
@@ -926,14 +913,10 @@ impl Shell {
         self.sync_focus_pinned();
     }
 
-    /// Raise `app_id` as if the user clicked it (MRU + composition + seat).
-    /// Unhides a Super+H / AppHidden app first. No-op when that app has no
-    /// mapped window yet.
+    /// Raise `app_id` as if the user clicked it (MRU + composition + seat):
+    /// its last used window, shown again if it was hidden. No-op when that
+    /// app has no mapped window yet.
     pub(crate) fn raise_app(&mut self, app_id: &str) {
-        if self.is_app_hidden(app_id) {
-            self.unhide_app(app_id);
-            return;
-        }
         let recent = self
             .mru_window_by_app
             .get(app_id)
@@ -951,21 +934,9 @@ impl Shell {
         self.raise_window_from_click(window_id);
     }
 
-    /// Show `window_id` in its zone and focus it: a tab bar row, Super+`.
-    /// Unhides a Super+H'd app first.
-    pub(crate) fn activate_window(&mut self, window_id: u32) {
-        let Some(app_id) = self.app_id_for_window(window_id) else {
-            return;
-        };
-        if self.is_app_hidden(&app_id) {
-            self.retract_app_hidden(&app_id);
-            self.emit_all_frames();
-        }
-        self.raise_window_from_click(window_id);
-    }
-
-    /// Click activation: show the window in its zone (raise, for a float),
-    /// focus it, and re-stack.
+    /// Show `window_id` in its zone (raise it, for a float; hidden, it
+    /// comes back) and focus it, and re-stack: a click, a tab bar row,
+    /// Super+`.
     pub(crate) fn raise_window_from_click(&mut self, window_id: u32) {
         let Some(app_id) = self.app_id_for_window(window_id) else {
             return;
@@ -1153,7 +1124,7 @@ impl Shell {
                 Task::none()
             }
             Act::Hide => {
-                self.hide_focused_app();
+                self.hide_focused_window();
                 Task::none()
             }
             Act::NextTab => Task::done(Msg::CycleApp { back: false }),
@@ -1380,11 +1351,7 @@ impl Shell {
         }
 
         // Composition-hidden surfaces are River-hidden; ignore stray enter.
-        if self.tabs.is_hidden(e.window_id)
-            || self
-                .app_id_for_window(e.window_id)
-                .is_some_and(|id| self.is_app_hidden(&id))
-        {
+        if self.tabs.is_hidden(e.window_id) {
             return Task::none();
         }
 

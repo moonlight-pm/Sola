@@ -1,10 +1,7 @@
 //! What only the shell reads back, in its own files rather than on the bus
-//! (`docs/specs/2026-11-10-bus-state-design.md`): the tab bar's places,
-//! each floating app's rectangle, and the apps hidden with Super+H.
-//!
-//! The first two are kept across reboots; hidden apps only while logged in
-//! (they came back after a desk restart when the bus held them). The bus's
-//! old copies are read until the shell has saved its own.
+//! (`docs/specs/2026-11-10-bus-state-design.md`): the tab bar's places
+//! and each floating app's rectangle, kept across reboots. The bus's old
+//! copies are read until the shell has saved its own.
 
 use std::collections::HashMap;
 
@@ -14,7 +11,6 @@ use sola_core::state_file::StateFile;
 pub struct ShellFiles {
     tabs: StateFile,
     floats: StateFile,
-    hidden: StateFile,
 }
 
 impl ShellFiles {
@@ -22,7 +18,6 @@ impl ShellFiles {
         Self {
             tabs: StateFile::new("shell", "tabs.json"),
             floats: StateFile::new("shell", "floats.json"),
-            hidden: StateFile::runtime("shell", "hidden.json"),
         }
     }
 
@@ -51,14 +46,5 @@ impl ShellFiles {
         let mut list: Vec<&FloatGeometry> = floats.values().collect();
         list.sort_by(|a, b| a.app_id.cmp(&b.app_id));
         self.floats.save(&list);
-    }
-
-    /// Hidden apps: lowercased app id → the app id as given.
-    pub fn hidden(&self) -> HashMap<String, String> {
-        self.hidden.load().unwrap_or_default()
-    }
-
-    pub fn save_hidden(&self, hidden: &HashMap<String, String>) {
-        self.hidden.save(hidden);
     }
 }

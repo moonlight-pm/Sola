@@ -159,7 +159,7 @@ windows, least recently raised first; any window the bar has not placed;
 then the open overlays. While a Cinema tab is on screen it is the whole
 stack (with its dialogs), under the overlays you open; notices wait. It lists only the showing
 workspace. Every other window (a tab its zone is not showing, a window on
-another workspace, an app hidden with Super+H) is left out, so the
+another workspace, a window hidden with Super+H) is left out, so the
 compositor hides it and it keeps running. [Shell](sola-shell.md) describes
 the bar and workspaces.
 
@@ -367,12 +367,11 @@ invisible behind its dead predecessor's surfaces.
 
 ### Hide
 
-Super+H hides the focused application without closing it. The shell
-records it in its runtime file, `$XDG_RUNTIME_DIR/sola/shell/hidden.json` (kept while
-you are logged in, gone at reboot), and leaves its windows out of `Composition`, so
-`sola-river` hides them; in a tiled zone, another of the zone's tabs shows
-instead. [Shell § Hide](sola-shell.md#hide) describes how to bring them
-back.
+Super+H hides the focused window without closing it. The shell leaves
+it (and its dialogs) out of `Composition`, so `sola-river` hides it; in a
+tiled zone, another of the zone's tabs shows instead. The shell keeps
+which windows are hidden in memory, so a shell restart shows them again.
+[Shell § Hide](sola-shell.md#hide) describes how to bring one back.
 
 ## The background picture
 

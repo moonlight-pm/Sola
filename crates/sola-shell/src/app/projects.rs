@@ -67,9 +67,6 @@ impl Shell {
         };
         let (command, label) = (app.command.clone(), app.label.clone());
         if self.app_running(app_id) {
-            if self.is_app_hidden(app_id) {
-                self.unhide_app(app_id);
-            }
             return iced::Task::batch([close, ask_navigate(label, owner, Duration::ZERO)]);
         }
         with_bus(|bus| {

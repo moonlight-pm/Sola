@@ -131,12 +131,12 @@ where
             }
             FieldOp::Copy if !self.is_secure => {
                 if let Some(text) = selected {
-                    copy(text, clipboard);
+                    desk_menu::copy_in(text, clipboard);
                 }
             }
             FieldOp::Cut if !self.is_secure => {
                 if let (Some(on_input), Some(text)) = (&self.on_input, selected) {
-                    copy(text, clipboard);
+                    desk_menu::copy_in(text, clipboard);
                     let value = state.history.edit(
                         Step::Own,
                         &mut self.value,
@@ -165,7 +165,7 @@ where
                     changed = Some(on_input(value));
                 }
             }
-            FieldOp::Copy | FieldOp::Cut => {}
+            FieldOp::Copy | FieldOp::Cut | FieldOp::Action(_) => {}
         }
         if let Some(message) = changed {
             shell.publish(message);
@@ -183,14 +183,5 @@ where
             focus.updated_at = Instant::now();
         }
         shell.request_redraw();
-    }
-}
-
-/// Put `text` on the clipboard from the compositor's side (the window may
-/// not have had the keyboard back yet); iced's clipboard if that fails.
-fn copy(text: String, clipboard: &mut dyn Clipboard) {
-    if let Err(e) = crate::clipboard::write_text(text.clone()) {
-        tracing::debug!(%e, "desk menu: data-control copy failed; using the window's clipboard");
-        clipboard.write(clipboard::Kind::Standard, text);
     }
 }

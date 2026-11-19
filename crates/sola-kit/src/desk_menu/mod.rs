@@ -8,9 +8,10 @@
 //! process ([`pick_of`]): one of the app's rows, an Edit row, a vault
 //! value to [`redeem`] and insert, or nothing.
 //!
-//! A kit text input opens and answers its own menu ([`field`]), so every
-//! kit app's fields have it without app code; an app adds rows only for
-//! its own surfaces (a page, a terminal).
+//! A kit text input and a kit letter (`prose`) open and answer their own
+//! menus ([`field`]), so every kit app's fields and letters have it
+//! without app code; an app adds rows only for its own surfaces (a page,
+//! a terminal).
 
 pub(crate) mod field;
 
@@ -173,6 +174,14 @@ pub fn copy<T>(text: String) -> Task<T> {
             tracing::debug!(%e, "desk menu: data-control copy failed; using the window's clipboard");
             iced::clipboard::write(text)
         }
+    }
+}
+
+/// [`copy`] for a widget's own desk menu, inside its `update`.
+pub(crate) fn copy_in(text: String, clipboard: &mut dyn iced_core::clipboard::Clipboard) {
+    if let Err(e) = crate::clipboard::write_text(text.clone()) {
+        tracing::debug!(%e, "desk menu: data-control copy failed; using the window's clipboard");
+        clipboard.write(iced_core::clipboard::Kind::Standard, text);
     }
 }
 

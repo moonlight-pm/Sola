@@ -156,7 +156,7 @@ fn moving_a_pinned_window_moves_it_everywhere_and_raises_it_only_here() {
     assert_eq!(s.bar().iter().find(|t| t.window_id == 1).map(|t| t.zone), Some(LEFT));
     // Mail's Full goes on showing its own.
     assert_eq!(s.shown(FULL), Some(2));
-    assert_eq!(s.on_screen(&|_| false), vec![FULL]);
+    assert_eq!(s.on_screen(), vec![FULL]);
 }
 
 #[test]

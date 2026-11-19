@@ -44,9 +44,8 @@ use crate::app::{Msg, Shell};
 use crate::stacks::{Block, Tab, grouped};
 
 pub fn view(shell: &Shell) -> Element<'_, Msg> {
-    let hidden = |app: &str| shell.is_app_hidden(app);
     let now = Now {
-        on_screen: shell.tabs.on_screen(&hidden),
+        on_screen: shell.tabs.on_screen(),
         // A dialog's focus is its tab's.
         focused: shell
             .focused_window_id
@@ -83,7 +82,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
         }
         match block {
             Block::Kept { app, .. } => loose.push(kept_row(shell, app, starting == Some(app))),
-            Block::Loose(t) => loose.push(tab_row(shell, &now, t, false)),
+            Block::Loose(t) => loose.push(tab_row(shell, &now, t)),
             Block::Group { app, tabs, .. } => {
                 if !loose.is_empty() {
                     sections.push(SidebarSection::unlabeled(std::mem::take(&mut loose)));
@@ -92,7 +91,7 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
                 let mut items: Vec<SidebarItem<'_, Msg>> = if folded {
                     Vec::new()
                 } else {
-                    tabs.iter().map(|t| tab_row(shell, &now, t, true)).collect()
+                    tabs.iter().map(|t| tab_row(shell, &now, t)).collect()
                 };
                 if let Some((ghost_at, label, _)) = ghost_group.filter(|(_, _, g)| g == app) {
                     let i = ghost_at.saturating_sub(at).min(items.len());
@@ -130,7 +129,6 @@ pub fn view(shell: &Shell) -> Element<'_, Msg> {
 /// An app's group: its name as a caption, its rows one step in. A click
 /// on the name folds it; folded, the caption stands for its rows: how many,
 /// the loudest of their marks, and bright while one of them has focus.
-/// Super+H says "hidden" here once, not on each row.
 fn group_section<'a>(
     shell: &'a Shell,
     now: &Now,
@@ -142,7 +140,7 @@ fn group_section<'a>(
     let loudest = [Activity::Waiting, Activity::Working]
         .into_iter()
         .find(|a| activity.contains(a));
-    let mut section = SidebarSection::new(app_label(shell, app), items)
+    SidebarSection::new(app_label(shell, app), items)
         .id(group_row_id(shell.tabs.showing_id(), app))
         .caption()
         .foldable(CaptionFold {
@@ -150,11 +148,7 @@ fn group_section<'a>(
             count: tabs.len(),
             mark: mark(loudest),
             current: tabs.iter().any(|t| now.focused == Some(t.window_id)),
-        });
-    if shell.is_app_hidden(app) {
-        section = section.note("hidden");
-    }
-    section
+        })
 }
 
 /// What every row reads: the zones on screen, the focused tab.
@@ -163,10 +157,8 @@ struct Now {
     focused: Option<u32>,
 }
 
-/// A window's row. A grouped one leaves its app's "hidden" to its group's
-/// header; a window hidden alone says so on its own row.
-fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab, in_group: bool) -> SidebarItem<'a, Msg> {
-    let hidden = |app: &str| shell.is_app_hidden(app);
+/// A window's row; a hidden window's says so.
+fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab) -> SidebarItem<'a, Msg> {
     let title = shell
         .known_windows
         .iter()
@@ -196,7 +188,7 @@ fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab, in_group: bool) -> SidebarI
     let (current, showing) = if t.zone == Zone::Float {
         (shell.focused_window_id == Some(t.window_id), true)
     } else {
-        let zone_shows = shell.tabs.visible_shown(t.zone, &hidden);
+        let zone_shows = shell.tabs.visible_shown(t.zone);
         (zone_shows == Some(t.window_id), now.on_screen.contains(&t.zone))
     };
     let has_focus = now.focused == Some(t.window_id);
@@ -219,7 +211,7 @@ fn tab_row<'a>(shell: &'a Shell, now: &Now, t: &Tab, in_group: bool) -> SidebarI
             item = item.detail(session);
         }
     }
-    if (hidden(&t.app_id) && !in_group) || shell.tabs.is_hidden(t.window_id) {
+    if shell.tabs.is_hidden(t.window_id) {
         item = item.secondary("hidden");
     }
     item

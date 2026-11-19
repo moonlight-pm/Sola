@@ -72,7 +72,9 @@ mailbox and its unread (`Inbox · 12 unread`), or the search.
   **Reply**, **Reply All**, **Forward**; Archive, Junk, and Trash (and
   **Move to Inbox** in Junk, Trash, and Archive) as icons; Mark as read or
   unread and Flag at the right. In Drafts, **Edit Draft** takes the
-  replies' place. Links open in Browser. Attached files have **Open** and
+  replies' place. Links open in Browser; right-click one for **Open
+  Link** and **Copy Link**, and anywhere in the letter for **Copy** (the
+  selection) and **Select All**. Attached files have **Open** and
   **Save**: pictures open in Paint, `.ics` invites in Calendar (as a new
   event you file in one of your calendars), everything else in Browser.
 - **HTML letters** are drawn by Mail itself, safely: paragraphs and line
