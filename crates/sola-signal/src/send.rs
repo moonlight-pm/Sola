@@ -55,8 +55,10 @@ type Outbound = SingleOutboundUnsealedMessage<CiphertextMessage>;
 /// Why something was not sent.
 #[derive(Debug)]
 pub enum Failure {
-    /// The connection: it is worth trying again once there is one.
+    /// Not now: it is worth trying again in a while.
     Later(anyhow::Error),
+    /// The connection did not carry it: it is worth trying on a new one.
+    Dropped(anyhow::Error),
     /// It will not go however often it is tried.
     Never(anyhow::Error),
 }
@@ -64,7 +66,7 @@ pub enum Failure {
 impl std::fmt::Display for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Failure::Later(e) | Failure::Never(e) => write!(f, "{e:#}"),
+            Failure::Later(e) | Failure::Dropped(e) | Failure::Never(e) => write!(f, "{e:#}"),
         }
     }
 }
@@ -73,13 +75,22 @@ fn never(e: anyhow::Error) -> Failure {
     Failure::Never(e)
 }
 
-fn classify<E: std::fmt::Display>(e: RequestError<E>) -> Failure {
-    let later = matches!(
-        e,
-        RequestError::Timeout | RequestError::Disconnected(_) | RequestError::RetryLater(_) | RequestError::ServerSideError
-    );
-    let e = anyhow!("sending: {e}");
-    if later { Failure::Later(e) } else { Failure::Never(e) }
+/// `how` is the way it went: sealed, or signed in. libsignal counts an
+/// answer it cannot read among the disconnections: the connection is to be
+/// given up, though the one that receives may still be up.
+fn classify<E: std::fmt::Display>(how: &str, e: RequestError<E>) -> Failure {
+    let said = anyhow!("sending {how}: {e}");
+    match e {
+        RequestError::Timeout | RequestError::Disconnected(_) => Failure::Dropped(said),
+        RequestError::RetryLater(_) | RequestError::ServerSideError => Failure::Later(said),
+        _ => Failure::Never(said),
+    }
+}
+
+/// A send's answer, if it comes in the time a request is allowed: libsignal
+/// sets no limit of its own, and a send must not wait for ever.
+async fn answered<T, E>(sent: impl Future<Output = Result<T, RequestError<E>>>) -> Result<T, RequestError<E>> {
+    tokio::time::timeout(net::REQUEST_TIMEOUT, sent).await.unwrap_or(Err(RequestError::Timeout))
 }
 
 /// What a sealed send needs beside the recipient's access key: the
@@ -199,11 +210,11 @@ impl<'a> Sender<'a> {
         let chat: &Auth<ChatConnection> = self.chat.into();
         let timestamp = Timestamp::from_epoch_millis(options.timestamp);
         let sent = if ours {
-            chat.send_sync_message(timestamp, messages, options.urgent)
+            answered(chat.send_sync_message(timestamp, messages, options.urgent))
                 .await
                 .map_err(|e| e.flat_map_other(|e| RequestError::Other(UnsealedSendFailure::MismatchedDevices(e))))
         } else {
-            chat.send_message(to, timestamp, messages, false, options.urgent).await
+            answered(chat.send_message(to, timestamp, messages, false, options.urgent)).await
         };
         match sent {
             Ok(()) => Ok(Outcome::Done),
@@ -211,7 +222,7 @@ impl<'a> Sender<'a> {
             Err(RequestError::Other(UnsealedSendFailure::ServiceIdNotFound)) => {
                 Err(never(anyhow!("{} is not a Signal account", to.service_id_string())))
             }
-            Err(e) => Err(classify(e)),
+            Err(e) => Err(classify("signed in", e)),
         }
     }
 
@@ -248,21 +259,21 @@ impl<'a> Sender<'a> {
         let chat: &Unauth<ChatConnection> = sealed.chat.into();
         let auth = UserBasedSendAuthorization::User(UserBasedAuthorization::AccessKey(access_key));
         let timestamp = Timestamp::from_epoch_millis(options.timestamp);
-        match chat.send_message(to, timestamp, wrapped, auth, false, options.urgent).await {
+        match answered(chat.send_message(to, timestamp, wrapped, auth, false, options.urgent)).await {
             Ok(()) => Ok(Outcome::Done),
             Err(RequestError::Other(SealedSendFailure::MismatchedDevices(wrong))) => Ok(Outcome::Wrong(wrong)),
             Err(RequestError::Other(SealedSendFailure::Unauthorized)) => Ok(Outcome::NotAllowed),
             Err(RequestError::Other(SealedSendFailure::ServiceIdNotFound)) => {
                 Err(never(anyhow!("{} is not a Signal account", to.service_id_string())))
             }
-            Err(e) => match classify(e) {
-                later @ Failure::Later(_) => Err(later),
+            Err(e) => match classify("sealed", e) {
                 // Whatever else the sealed way is refused for, the signed-in
                 // way may still take it.
                 Failure::Never(e) => {
                     tracing::warn!("a sealed send was refused; sending signed in: {e:#}");
                     Ok(Outcome::NotAllowed)
                 }
+                wait => Err(wait),
             },
         }
     }
@@ -285,7 +296,7 @@ impl<'a> Sender<'a> {
                 return Err(never(anyhow!("{} is not a Signal account", to.service_id_string())));
             }
             Err(e @ net::Refused::Status { .. }) => return Err(never(e.into())),
-            Err(e) => return Err(Failure::Later(e.into())),
+            Err(e) => return Err(Failure::Dropped(e.into())),
         };
         let keys: Keys = serde_json::from_slice(response.body.as_deref().unwrap_or_default())
             .context("pre-keys")
@@ -470,6 +481,17 @@ mod tests {
     use crate::proto::DataMessage;
     use crate::account::IdentityKeys;
     use crate::link::first_pre_keys;
+
+    #[test]
+    fn what_the_connection_did_not_carry_is_for_a_new_one() {
+        use libsignal_net_chat::api::DisconnectedError;
+        type E = RequestError<std::convert::Infallible>;
+        let unread = DisconnectedError::Transport { log_safe: "unexpected gRPC status: Unknown".into() };
+        assert!(matches!(classify("sealed", E::Disconnected(unread)), Failure::Dropped(_)));
+        assert!(matches!(classify("sealed", E::Timeout), Failure::Dropped(_)));
+        assert!(matches!(classify("sealed", E::ServerSideError), Failure::Later(_)));
+        assert!(matches!(classify("sealed", E::Unexpected { log_safe: "odd".into() }), Failure::Never(_)));
+    }
 
     #[test]
     fn padding_ends_one_short_of_a_block() {

@@ -45,6 +45,11 @@ use jobs::Job;
 /// Seconds before connecting again, by failed attempt.
 const BACKOFF: &[u64] = &[2, 5, 15, 30, 60, 120];
 
+/// How often one thing is tried on connections that are up before it is
+/// given up: a message then says it was not sent, and what waits behind it
+/// goes.
+const TRIES: usize = 4;
+
 /// What the window asks of the engine.
 #[derive(Debug)]
 pub enum Command {
@@ -96,6 +101,8 @@ enum Input {
     Server(u64, ServerEvent),
     Up(u64, std::result::Result<Box<Wire>, ConnectError>),
     Reconnect(u64),
+    /// The wait before sending again is over.
+    Settle,
     LinkCode(String),
     Linked(Result<Box<Linked>>),
     /// A job's result is in the store.
@@ -177,6 +184,11 @@ struct Engine {
     linking: bool,
     /// What the socket said before the connections were both up.
     early: Vec<ServerEvent>,
+    /// The outbox's oldest row, and how often it has failed on a
+    /// connection that was up.
+    stuck: Option<(Id, usize)>,
+    /// Nothing is sent before this: the wait after a send was put off.
+    hold: Option<tokio::time::Instant>,
 }
 
 impl Engine {
@@ -201,6 +213,8 @@ impl Engine {
             owed: Vec::new(),
             linking: false,
             early: Vec::new(),
+            stuck: None,
+            hold: None,
         })
     }
 
@@ -290,7 +304,13 @@ impl Engine {
             });
             let wire = async {
                 let chat = net.connect(net::CHAT_WEBSOCKET_PATH, Some(net::sign_in(&account)), listener, "chat").await?;
-                let unauth = net.connect(net::CHAT_WEBSOCKET_PATH, None, Box::new(|_| {}), "unauth").await?;
+                // Sealed sends go on this one; when it closes is worth knowing.
+                let closed = Box::new(|e| {
+                    if let Ok(ServerEvent::Stopped(cause)) = ServerEvent::try_from(e) {
+                        tracing::info!(?cause, "the connection that is not signed in closed");
+                    }
+                });
+                let unauth = net.connect(net::CHAT_WEBSOCKET_PATH, None, closed, "unauth").await?;
                 let certificate = match certificate(&chat).await {
                     Ok(certificate) => Some(certificate),
                     Err(e) => {
@@ -308,11 +328,27 @@ impl Engine {
     fn connect_later(&mut self) {
         let wait = BACKOFF[self.failed.min(BACKOFF.len() - 1)];
         self.failed += 1;
+        self.connect_after(wait);
+    }
+
+    fn connect_after(&mut self, seconds: u64) {
         let (epoch, inputs) = (self.epoch, self.inputs.clone());
         tokio::task::spawn_local(async move {
-            tokio::time::sleep(Duration::from_secs(wait)).await;
+            tokio::time::sleep(Duration::from_secs(seconds)).await;
             let _ = inputs.send(Input::Reconnect(epoch));
         });
+    }
+
+    /// Close both connections. The count moves on, so that what the closed
+    /// ones still say is not heard.
+    async fn hang_up(&mut self, why: &str) {
+        self.epoch += 1;
+        let wire = self.shared.wire.borrow_mut().take();
+        if let Some(wire) = wire {
+            wire.chat.disconnect().await;
+            wire.unauth.disconnect().await;
+        }
+        (self.emit)(Event::Offline(why.into()));
     }
 
     async fn handle(&mut self, input: Input) -> Result<()> {
@@ -337,6 +373,8 @@ impl Engine {
                 }
                 Ok(())
             }
+            // The loop sends what waits once this is handled.
+            Input::Settle => Ok(()),
             Input::LinkCode(url) => {
                 (self.emit)(Event::LinkCode(url));
                 Ok(())
@@ -564,29 +602,74 @@ impl Engine {
         fresh
     }
 
-    /// Send what is in the outbox, oldest first, until something has to wait
-    /// for a connection.
+    /// Send what is in the outbox, oldest first, until something has to
+    /// wait. What fails on a connection that is up is tried again, on a new
+    /// connection if this one did not carry it, and given up after `TRIES`.
     async fn drain(&mut self) -> Result<()> {
+        if self.hold.is_some_and(|until| tokio::time::Instant::now() < until) {
+            return Ok(());
+        }
+        self.hold = None;
         let mut after = 0;
         while let Some(item) = self.store().next_outgoing(after)? {
             after = item.id;
             match self.send_item(&item).await {
-                Ok(()) => self.store().sent(item.id)?,
-                Err(Failure::Later(e)) => {
-                    tracing::info!("sending waits for a connection: {e:#}");
-                    break;
+                Ok(()) => {
+                    self.stuck = None;
+                    self.store().sent(item.id)?;
                 }
                 Err(Failure::Never(e)) => {
                     tracing::warn!("not sent: {e:#}");
-                    self.store().sent(item.id)?;
-                    if let Some(message) = item.message {
-                        self.store().raise_status(message, Status::Failed)?;
+                    self.give_up(&item)?;
+                }
+                Err(wait) if self.wire().is_none() => {
+                    tracing::info!("sending waits for a connection: {wait}");
+                    break;
+                }
+                Err(wait) => {
+                    let tries = match self.stuck {
+                        Some((id, tries)) if id == item.id => tries + 1,
+                        _ => 1,
+                    };
+                    self.stuck = Some((item.id, tries));
+                    if tries >= TRIES {
+                        tracing::warn!(tries, "not sent, and given up: {wait}");
+                        self.give_up(&item)?;
+                    } else {
+                        let seconds = BACKOFF[(tries - 1).min(BACKOFF.len() - 1)];
+                        match wait {
+                            Failure::Dropped(e) => {
+                                tracing::warn!(tries, "the connection did not carry what was sent; opening another: {e:#}");
+                                self.hang_up("a send was not carried").await;
+                                self.connect_after(seconds);
+                            }
+                            wait => {
+                                tracing::info!(tries, "sending is put off: {wait}");
+                                self.hold = Some(tokio::time::Instant::now() + Duration::from_secs(seconds));
+                                let inputs = self.inputs.clone();
+                                tokio::task::spawn_local(async move {
+                                    tokio::time::sleep(Duration::from_secs(seconds)).await;
+                                    let _ = inputs.send(Input::Settle);
+                                });
+                            }
+                        }
+                        break;
                     }
                 }
             }
             if let Some(conversation) = item.conversation {
                 (self.emit)(Event::Changed(conversation));
             }
+        }
+        Ok(())
+    }
+
+    /// Take out of the outbox what will not go; a message says so.
+    fn give_up(&mut self, item: &Outgoing) -> Result<()> {
+        self.stuck = None;
+        self.store().sent(item.id)?;
+        if let Some(message) = item.message {
+            self.store().raise_status(message, Status::Failed)?;
         }
         Ok(())
     }
@@ -635,11 +718,11 @@ impl Engine {
             let group = group.as_ref().map(|g| g.as_slice());
             match self.send_to(*target, &content, item.timestamp, item.urgent, hint, group).await {
                 Ok(done) => delivered.push(done),
-                Err(Failure::Later(e)) => return Err(Failure::Later(e)),
                 Err(Failure::Never(e)) => {
                     tracing::warn!("not sent to one recipient: {e:#}");
                     refused = Some(e);
                 }
+                Err(wait) => return Err(wait),
             }
         }
         if delivered.is_empty()
