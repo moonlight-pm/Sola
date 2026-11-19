@@ -35,7 +35,7 @@ system key.
 | Super+Space | Open the launcher |
 | Super+K | Keyboard shortcuts overlay (press again to close) |
 | Super+Q | Quit the focused app: every window of it. One that isn't Sola's quits whole ([Session manager](session.md#applications-that-arent-solas)) |
-| Super+H | Hide the focused app |
+| Super+H | Hide the focused window ([Hide](#hide)) |
 | Super+L | Lock the screen (needs a password: [Security](security.md#locking)) |
 | Super+CapsLock | Show the next window in the zone under the pointer (Super+Shift+CapsLock: the previous) |
 | Super+Backtick | Show the focused app's next window on this workspace (Super+Shift+Backtick: the previous) |
@@ -315,9 +315,8 @@ computer as a chip in its prompt color.
   screen, and in full ink without the lift while it is not (Full while the
   halves are up, or the halves while Full is).
 - **Windows behind** are muted.
-- **An app hidden** with Super+H says *hidden* on its rows (beside its
-  group's name, for a group); a window hidden alone (its yellow light)
-  says so on its own row.
+- **A hidden window** (Super+H, or its yellow light) says *hidden* on
+  its row.
 - **Activity**: a window that is working shows a turning ring in place of
   its icon, and one waiting on a decision a diamond, so the title does not
   move. Projects marks each session's window by its session, and Design
@@ -325,7 +324,7 @@ computer as a chip in its prompt color.
   in one of its canvases.
 
 Click a row to show its window in its zone and focus it (its workspace
-and zone come on screen with it, and a hidden app or window comes back). Hovering a
+and zone come on screen with it, and a hidden window comes back). Hovering a
 row shows a red close dot: it closes that window as the window's own
 close dot would. Drag a row to move it in the list; the window stays in
 its zone and nothing on screen changes. A row in a group moves only
@@ -586,10 +585,9 @@ and the window's title at the right. The lights are coloured on the focused
 window and grey on the others:
 
 - **Red** closes the window.
-- **Yellow** hides that window alone. Its row stays in the tab bar, marked
-  *hidden*; its zone shows its next window. Click the row (or step to it
-  with Super+Backtick, or open its app from the launcher) and it comes
-  back. **Hide** (Super+H) still hides the whole app.
+- **Yellow** hides that window, as Super+H does ([Hide](#hide)). Its row
+  stays in the tab bar, marked *hidden*; its zone shows its next window.
+  Click the row (or step to it with Super+Backtick) and it comes back.
 - **Green** opens a sheet under it with a little drawing of the screen for
   each zone of your layout ([Zones](#zones)), then Full, Cinema and Float.
   Pick one, by mouse or with the arrows and Return, and the window moves
@@ -744,8 +742,7 @@ screen's 10 px edge.
 Super+Space opens the launcher; type to filter the apps and press Enter
 (or click) to open one. An app that is already running comes forward
 instead of starting again: its last used window is shown in its zone, on
-its workspace, and takes the keyboard. A hidden app is shown again rather
-than started twice. **Terminal** always opens a new tab, in a window of
+its workspace, and takes the keyboard, hidden or not. **Terminal** always opens a new tab, in a window of
 its own, right after the focused window, **Editor** a new empty file, and a
 web app opens another window. **Projects** and **Browser** ask
 first (below). Escape closes the launcher; so does a click outside the
@@ -784,17 +781,23 @@ an address or what to search for, as in the browser's location bar.
 
 ## Hide
 
-Super+H does not close the app. Every window of the focused app drops off
-the screen (the compositor stops drawing it) and the keyboard goes to the
-most recent window on the workspace; a zone showing one of its windows
-shows its next window instead. The process keeps running.
+Super+H (or the window's yellow light, or **Hide** in the Window menu)
+takes the focused window off the screen without closing it: the
+compositor stops drawing it and the app keeps running. Its row stays in
+the bar, marked *hidden*; its zone shows its next window, or gives its
+room away, and the keyboard goes to what shows there. The app's other
+windows stay on screen, and a window it opens later shows as any new
+window does (a link from Mail opens in Browser even with a Browser window
+hidden).
 
-To bring it back: click one of its rows in the bar (or reach it with
-Super+Backtick), or pick it in the launcher. Clicking one of its
-notifications or its icon in the top row, or an event in the clock's panel, brings it
-back too, and so does the app showing one of its own windows.
+To bring it back: click its row in the bar (or reach it with
+Super+Backtick). Anything that brings its app forward on its last used
+window brings it back when that is the hidden one: picking the app in the
+launcher, clicking one of its notifications or its icon in the top row,
+or an event in the clock's panel.
 
-Hiding the last app on screen leaves the top row, the bar and the ground.
+Hiding the last window on screen leaves the top row, the bar and the
+ground.
 
 ## Notifications
 
@@ -875,7 +878,7 @@ mostly in sight) holds the fade where it is until it stops.
 
 ## Limits
 
-- Hide works per app: every window of the app goes.
+- A hidden window shows again when the shell restarts (a desk restart).
 - There is one output layout: Full and two equal halves.
 - The Window menu and the shortcuts overlay also list **Top**,
   **Bottom**, **Top Middle**, **Full Middle**, **Bottom Middle** and

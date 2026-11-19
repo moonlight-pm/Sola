@@ -421,7 +421,7 @@ pub struct Shell {
     pub places: crate::place::PlaceState,
     /// Workspace focus memory, what was published, a rename in progress.
     pub workspace: workspaces::WorkspaceState,
-    /// The shell's own files (tab places, floats, hidden apps); `None` in
+    /// The shell's own files (tab places, floats); `None` in
     /// tests, which save nothing.
     files: Option<crate::saved_state::ShellFiles>,
     /// Last `TabLayout` saved; skip identical saves.
@@ -477,11 +477,6 @@ pub struct Shell {
 
     // Application catalog (built-ins + user entries from Topic::Application)
     pub applications: ApplicationsConfig,
-
-    /// Apps omitted from composition (River `hide`). Keyed lowercased for
-    /// case-insensitive match; value is the original app_id for AppHidden
-    /// retract. Kept in the shell's runtime file (`crate::saved_state`).
-    pub hidden_apps: HashMap<String, String>,
 
     // Menu cache (built up from Topic::SetAppMenu replays)
     pub menus: MenuCache,
@@ -650,7 +645,6 @@ impl Shell {
             applications: ApplicationsConfig {
                 apps: crate::builtins::builtin_apps(),
             },
-            hidden_apps: HashMap::new(),
             menus: MenuCache::new(),
             output_size: None,
             menu_open: false,
@@ -722,37 +716,6 @@ impl Shell {
         self.window_id_by_key
             .get(&(app_id.to_string(), title.to_string()))
             .copied()
-    }
-
-    /// True when this app_id is hidden (Super+H; case-insensitive).
-    pub fn is_app_hidden(&self, app_id: &str) -> bool {
-        self.hidden_apps.contains_key(&app_id.to_ascii_lowercase())
-    }
-
-    /// Show an app again without raising it. Used when the app's last
-    /// surface is gone so a later map of the same app_id is not stuck hidden.
-    pub fn retract_app_hidden(&mut self, app_id: &str) {
-        if self.hidden_apps.remove(&app_id.to_ascii_lowercase()).is_some() {
-            self.hidden_changed();
-        }
-    }
-
-    /// Retract AppHidden and raise a live window of that app (composition +
-    /// seat). No-op raise when no surface exists; the sticky is still cleared.
-    pub fn unhide_app(&mut self, app_id: &str) {
-        let key = app_id.to_ascii_lowercase();
-        let original = self
-            .hidden_apps
-            .remove(&key)
-            .unwrap_or_else(|| app_id.to_string());
-        self.hidden_changed();
-        let raise_id = self
-            .known_windows
-            .iter()
-            .find(|w| w.app_id.eq_ignore_ascii_case(&original))
-            .map(|w| w.app_id.clone())
-            .unwrap_or(original);
-        self.raise_app(&raise_id);
     }
 
     /// Focused app menus plus a Window menu if the app did not publish one.
@@ -857,15 +820,14 @@ impl Shell {
         self.last_tab_layout = Some(layout);
     }
 
-    /// Take what the shell saved: its tab places, floats' rectangles and
-    /// hidden apps. At boot, before any window, so each window takes its
-    /// saved place as it comes.
+    /// Take what the shell saved: its tab places and floats' rectangles.
+    /// At boot, before any window, so each window takes its saved place as
+    /// it comes.
     fn load_saved(&mut self, files: crate::saved_state::ShellFiles) {
         if let Some(layout) = files.tabs() {
             self.take_tab_layout(layout);
         }
         self.zoning.float_geometry = files.floats();
-        self.hidden_apps = files.hidden();
         self.files = Some(files);
     }
 
@@ -881,16 +843,6 @@ impl Shell {
         if let Some(files) = &self.files {
             files.save_floats(&self.zoning.float_geometry);
         }
-    }
-
-    /// Save the hidden apps, and show the desk without (or with) them: a
-    /// zone whose tabs are all hidden gives its width away.
-    fn hidden_changed(&mut self) {
-        if let Some(files) = &self.files {
-            files.save_hidden(&self.hidden_apps);
-        }
-        self.emit_all_frames();
-        self.emit_composition();
     }
 
     fn open_tabbar(&mut self) -> iced::Task<Msg> {
@@ -911,7 +863,7 @@ impl Shell {
         match ev {
             SidebarEvent::Activate { id } => {
                 if let Some(wid) = window_of_row(&id) {
-                    self.activate_window(wid);
+                    self.raise_window_from_click(wid);
                 }
                 if let Some(crate::stacks::BlockId::Kept(app)) = block_of_row(&id) {
                     return self.open_kept(&app);
@@ -950,10 +902,6 @@ impl Shell {
     fn handle_window_action(&mut self, action: sola_kit::WindowAction) -> iced::Task<Msg> {
         match action {
             sola_kit::WindowAction::Hide => {
-                self.hide_focused_app();
-                iced::Task::none()
-            }
-            sola_kit::WindowAction::HideWindow => {
                 self.hide_focused_window();
                 iced::Task::none()
             }
@@ -987,42 +935,10 @@ impl Shell {
         }
     }
 
-    /// Super+H: omit the focused app from composition (River `hide`).
-    /// Focuses the next visible MRU app. Does not hide the shell.
-    pub fn hide_focused_app(&mut self) {
-        let Some(app_id) = self.focused_app_id.clone() else {
-            return;
-        };
-        if app_id == Self::APP_ID || self.is_app_hidden(&app_id) {
-            return;
-        }
-        tracing::info!(app_id = %app_id, "Super+H — hide focused app");
-        self.pending_focus_generation = self.pending_focus_generation.wrapping_add(1);
-        self.hidden_apps
-            .insert(app_id.to_ascii_lowercase(), app_id.clone());
-        self.hidden_changed();
-        if self.pointer_window_id.is_some_and(|wid| {
-            self.known_windows
-                .iter()
-                .any(|w| w.window_id == wid && w.app_id.eq_ignore_ascii_case(&app_id))
-        }) {
-            self.pointer_window_id = None;
-        }
-        // The next window on this workspace; never another workspace's.
-        if let Some(next) = self.mru_window_on_showing(Some(&app_id)) {
-            self.raise_window_from_click(next);
-        } else {
-            self.focused_app_id = None;
-            self.focused_window_id = None;
-            self.emit_registered_chords();
-            self.emit_composition();
-        }
-    }
-
-    /// The titlebar's yellow light: take the focused window off screen
-    /// alone. Its row stays in the bar, marked hidden, until it is shown
-    /// again (its row, Super+\`, its app from the launcher). Its zone shows
-    /// its next tab, or gives way; focus goes to what shows there.
+    /// Hide (Super+H, the titlebar's yellow light): take the focused window
+    /// off screen. Its row stays in the bar, marked hidden, until it is
+    /// shown again (its row, Super+\`, its app from the launcher). Its zone
+    /// shows its next tab, or gives way; focus goes to what shows there.
     pub fn hide_focused_window(&mut self) {
         let Some(wid) = self.focused_window_id else {
             return;
@@ -1054,26 +970,6 @@ impl Shell {
             }
         }
         self.emit_composition();
-    }
-
-    /// Catalog / window app_id of a composition-hidden mapped app matching
-    /// `catalog_id`, if any. Launcher uses this to unhide instead of spawn.
-    pub fn mapped_hidden_app_id(&self, catalog_id: &str) -> Option<String> {
-        if self.is_app_hidden(catalog_id) {
-            return Some(
-                self.hidden_apps
-                    .get(&catalog_id.to_ascii_lowercase())
-                    .cloned()
-                    .unwrap_or_else(|| catalog_id.to_string()),
-            );
-        }
-        self.known_windows.iter().find_map(|w| {
-            if self.matches_pending_app(&w.app_id, catalog_id) && self.is_app_hidden(&w.app_id) {
-                Some(w.app_id.clone())
-            } else {
-                None
-            }
-        })
     }
 
     pub fn mail_is_mapped(&self) -> bool {
@@ -1143,9 +1039,6 @@ impl Shell {
         let mut opening = iced::Task::none();
         let wanted = (!id.is_empty()).then_some(id);
         if self.calendar_is_mapped() {
-            if self.is_app_hidden(CALENDAR_APP) {
-                self.unhide_app(CALENDAR_APP);
-            }
             self.raise_app(CALENDAR_APP);
             if let Some(id) = wanted {
                 emit_calendar_event(id);
@@ -1188,9 +1081,6 @@ impl Shell {
         let Some(n) = self.notify.take(id) else {
             return iced::Task::none();
         };
-        if self.is_app_hidden(&n.app_id) {
-            self.unhide_app(&n.app_id);
-        }
         self.raise_app(&n.app_id);
         self.notify.put_out(&n.app_id);
         with_bus(|bus| {
@@ -1527,7 +1417,7 @@ impl Shell {
 
     /// Emit LaunchApp for `app_id`, show the opening ghost, close launcher.
     /// A running app comes forward instead of starting again (Browser and
-    /// Terminal open a new window); a composition-hidden one is unhidden.
+    /// Terminal open a new window), hidden or not.
     fn launch_from_launcher(&mut self, app_id: Option<&str>) -> iced::Task<Msg> {
         // Projects and Design open a window to pick a project in, not
         // another of themselves.
@@ -1542,17 +1432,11 @@ impl Shell {
         }
         let mut opening = iced::Task::none();
         if let Some(id) = app_id {
-            if let Some(hidden) = self.mapped_hidden_app_id(id) {
-                self.launcher.active = false;
-                self.unhide_app(&hidden);
-                self.emit_registered_chords();
-                return iced::Task::none();
-            }
             if let Some(wid) = self.window_to_raise(id) {
                 self.launcher.active = false;
                 self.emit_composition();
                 self.emit_registered_chords();
-                self.activate_window(wid);
+                self.raise_window_from_click(wid);
                 return iced::Task::none();
             }
             if let Some(app) = self.applications.get(id) {
@@ -1652,8 +1536,7 @@ impl Shell {
     /// Build the composition list (bottom to top). See [`Self::emit_composition`].
     fn build_composition_entries(&self) -> Vec<CompositionEntry> {
         let mut order: Vec<u32> = Vec::new();
-        let hidden = |app: &str| self.is_app_hidden(app);
-        let cinema = self.tabs.cinema_up(&hidden);
+        let cinema = self.tabs.cinema_up();
 
         if let Some(wid) = cinema {
             // Cinema on screen: its tab (with its dialogs) is all that is
@@ -1720,14 +1603,13 @@ impl Shell {
                 order.push(wid);
             }
         }
-        let hidden = |app: &str| self.is_app_hidden(app);
-        for zone in self.tabs.on_screen(&hidden) {
-            if let Some(wid) = self.tabs.visible_shown(zone, &hidden) {
+        for zone in self.tabs.on_screen() {
+            if let Some(wid) = self.tabs.visible_shown(zone) {
                 self.push_with_dialogs(order, wid);
             }
         }
         for &wid in self.tabs.float_order() {
-            if !self.window_hidden(wid) {
+            if !self.tabs.is_hidden(wid) {
                 self.push_with_dialogs(order, wid);
             }
         }
@@ -1736,7 +1618,6 @@ impl Shell {
                 || Self::is_drop_down_app(&w.app_id)
                 || order.contains(&w.window_id)
                 || self.tabs.zone_of(w.window_id).is_some()
-                || self.is_app_hidden(&w.app_id)
             {
                 continue;
             }
@@ -1752,27 +1633,17 @@ impl Shell {
 
     /// `wid`, then its dialogs, unless it is hidden.
     fn push_with_dialogs(&self, order: &mut Vec<u32>, wid: u32) {
-        if self.window_hidden(wid) {
+        if self.tabs.is_hidden(wid) {
             return;
         }
         order.push(wid);
         for child in self.tabs.children_of(wid) {
-            if !self.window_hidden(child)
+            if !self.tabs.is_hidden(child)
                 && self.known_windows.iter().any(|w| w.window_id == child)
             {
                 order.push(child);
             }
         }
-    }
-
-    /// Hidden alone (its yellow light), or with its app (Hide).
-    fn window_hidden(&self, wid: u32) -> bool {
-        self.tabs.is_hidden(wid)
-            || self
-                .known_windows
-                .iter()
-                .find(|w| w.window_id == wid)
-                .is_some_and(|w| self.is_app_hidden(&w.app_id))
     }
 
     /// Build the composition list (bottom to top) and emit Topic::Composition.
@@ -3271,7 +3142,7 @@ impl Shell {
                 iced::Task::none()
             }
             Msg::ShowTab(wid) => {
-                self.activate_window(wid);
+                self.raise_window_from_click(wid);
                 iced::Task::none()
             }
             Msg::TabBar(m) => match self.tabbar.gestures.update(m) {
@@ -3428,7 +3299,6 @@ mod pending_launch_tests {
             applications: ApplicationsConfig {
                 apps: crate::builtins::builtin_apps(),
             },
-            hidden_apps: HashMap::new(),
             menus: MenuCache::new(),
             output_size: None,
             menu_open: false,
@@ -4134,7 +4004,6 @@ mod hide_tests {
             applications: ApplicationsConfig {
                 apps: crate::builtins::builtin_apps(),
             },
-            hidden_apps: HashMap::new(),
             menus: MenuCache::new(),
             output_size: None,
             menu_open: false,
@@ -4394,24 +4263,7 @@ mod hide_tests {
     }
 
     #[test]
-    fn hide_omits_app_from_composition_and_focuses_next() {
-        let mut shell = desktop();
-        assert_eq!(composed_apps(&shell), vec![1, 2, 3]); // menubar, terminal (Left), browser (Right)
-
-        shell.hide_focused_app();
-
-        assert!(shell.is_app_hidden("sola-terminal"));
-        assert_eq!(shell.focused_app_id.as_deref(), Some("sola-browser"));
-        assert_eq!(shell.focused_window_id, Some(3));
-        assert_eq!(composed_apps(&shell), vec![1, 3]); // terminal omitted
-        assert_eq!(
-            shell.mapped_hidden_app_id("sola-terminal").as_deref(),
-            Some("sola-terminal")
-        );
-    }
-
-    #[test]
-    fn hide_window_takes_that_window_alone() {
+    fn hide_takes_the_focused_window_alone() {
         let mut shell = test_shell(
             vec![
                 win(1, Shell::APP_ID, "menubar"),
@@ -4427,7 +4279,7 @@ mod hide_tests {
         shell.hide_focused_window();
 
         assert!(shell.tabs.is_hidden(2));
-        assert!(!shell.is_app_hidden("sola-terminal"));
+        assert!(!shell.tabs.is_hidden(4), "its app's other window stays");
         assert_eq!(shell.focused_window_id, Some(4), "its zone's other tab");
         assert_eq!(composed_apps(&shell), vec![1, 4, 3]);
 
@@ -4436,7 +4288,7 @@ mod hide_tests {
         assert!(shell.tabs.is_hidden(2));
 
         // Its row brings it back.
-        shell.activate_window(2);
+        shell.raise_window_from_click(2);
         assert!(!shell.tabs.is_hidden(2));
         assert_eq!(shell.focused_window_id, Some(2));
         assert_eq!(composed_apps(&shell), vec![1, 2, 3]);
@@ -4458,14 +4310,13 @@ mod hide_tests {
             Some(Shell::APP_ID),
             &[],
         );
-        shell.hide_focused_app();
-        assert!(!shell.is_app_hidden(Shell::APP_ID));
+        shell.hide_focused_window();
         assert_eq!(shell.focused_app_id.as_deref(), Some(Shell::APP_ID));
         assert_eq!(composed_apps(&shell), vec![1]);
     }
 
     #[test]
-    fn hide_last_app_clears_focus() {
+    fn hide_the_last_window_clears_focus() {
         let mut shell = test_shell(
             vec![
                 win(1, Shell::APP_ID, "menubar"),
@@ -4474,36 +4325,24 @@ mod hide_tests {
             Some("sola-terminal"),
             &["sola-terminal"],
         );
-        shell.hide_focused_app();
-        assert!(shell.is_app_hidden("sola-terminal"));
+        shell.hide_focused_window();
+        assert!(shell.tabs.is_hidden(2));
         assert!(shell.focused_app_id.is_none());
         assert!(shell.focused_window_id.is_none());
         assert_eq!(composed_apps(&shell), vec![1]);
     }
 
     #[test]
-    fn unhide_restores_composition_and_focus() {
+    fn raise_app_shows_its_hidden_window() {
         let mut shell = desktop();
-        shell.hide_focused_app();
-        assert!(shell.is_app_hidden("sola-terminal"));
-
-        shell.unhide_app("sola-terminal");
-
-        assert!(!shell.is_app_hidden("sola-terminal"));
-        assert_eq!(shell.focused_app_id.as_deref(), Some("sola-terminal"));
-        assert_eq!(composed_apps(&shell), vec![1, 2, 3], "terminal is back in its zone");
-    }
-
-    #[test]
-    fn raise_app_unhides() {
-        let mut shell = desktop();
-        shell.hide_focused_app();
-        assert!(shell.is_app_hidden("sola-terminal"));
+        shell.hide_focused_window();
+        assert!(shell.tabs.is_hidden(2));
 
         shell.raise_app("sola-terminal");
 
-        assert!(!shell.is_app_hidden("sola-terminal"));
+        assert!(!shell.tabs.is_hidden(2));
         assert_eq!(shell.focused_app_id.as_deref(), Some("sola-terminal"));
+        assert_eq!(composed_apps(&shell), vec![1, 2, 3], "terminal is back in its zone");
     }
 
     #[test]

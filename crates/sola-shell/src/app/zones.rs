@@ -61,10 +61,7 @@ impl Shell {
     /// again, so only the Cinema tab on screen is in the compositor's
     /// fullscreen (the rest of Cinema's tabs keep the output's size).
     pub(super) fn sync_cinema_shown(&mut self) {
-        let cinema = {
-            let hidden = |app: &str| self.is_app_hidden(app);
-            self.tabs.cinema_up(&hidden)
-        };
+        let cinema = self.tabs.cinema_up();
         if cinema != self.cinema_shown {
             tracing::info!(?cinema, "cinema on screen");
             self.cinema_shown = cinema;

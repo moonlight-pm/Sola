@@ -205,9 +205,8 @@ This is the main intentional break from macOS chrome.
 ### Implications for visual design
 
 - The stoplight is close (red), hide (yellow) and zone (green), 12 px
-  lights 8 px apart, 13 px in. Yellow hides that window alone (its row
-  stays in the tab bar; Super+H hides the whole app); green opens the
-  zone picker under it.
+  lights 8 px apart, 13 px in. Yellow hides that window, as Super+H does
+  (its row stays in the tab bar); green opens the zone picker under it.
 - Kit apps get the titlebar from the kit's window frame; they publish their
   menus and do not draw their own title row.
 - The tab bar (its focused row is the highlight pill) and the focused

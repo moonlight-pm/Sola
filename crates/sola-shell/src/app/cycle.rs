@@ -21,7 +21,7 @@ impl Shell {
         let from = self.focused_window_id;
         if let Some(next) = self.tabs.step_app(from, back) {
             tracing::info!(?from, to = next, back, "next window of the app");
-            self.activate_window(next);
+            self.raise_window_from_click(next);
         }
     }
 
@@ -41,7 +41,7 @@ impl Shell {
         });
         if let Some(next) = next {
             tracing::info!(?zone, ?spot, ?from, to = next, back, "next window in the zone here");
-            self.activate_window(next);
+            self.raise_window_from_click(next);
         }
     }
 
@@ -63,8 +63,7 @@ impl Shell {
     /// The window on screen at `point`: the top float there, else what the
     /// tiled zone on screen there shows.
     fn on_screen_at(&self, point: (i32, i32)) -> Option<u32> {
-        let hidden = |app: &str| self.is_app_hidden(app);
-        if let Some(cinema) = self.tabs.cinema_up(&hidden) {
+        if let Some(cinema) = self.tabs.cinema_up() {
             return Some(cinema);
         }
         let float = self
@@ -79,13 +78,13 @@ impl Shell {
         let (ow, oh) = self.zoning.output_size?;
         let layout = self.tabs.zone_layout();
         self.tabs
-            .on_screen(&hidden)
+            .on_screen()
             .into_iter()
             .find(|&z| {
                 let f = crate::zoning::tile_frame(0, layout, z, ow, oh);
                 contains((f.x, f.y, f.width, f.height), point)
             })
-            .and_then(|z| self.tabs.visible_shown(z, &hidden))
+            .and_then(|z| self.tabs.visible_shown(z))
     }
 
     /// Where `window_id`'s place is: its float's rectangle, the whole

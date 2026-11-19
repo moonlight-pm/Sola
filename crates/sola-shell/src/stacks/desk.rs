@@ -336,8 +336,7 @@ impl Desk {
     }
 
     /// What a tiled zone puts on screen: its shown tab, or, when that tab
-    /// is `hidden` (its app's Hide, or the window alone), the nearest tab
-    /// that is not.
+    /// is `hidden`, the nearest tab that is not.
     pub fn visible_shown(&self, zone: Zone, hidden: &dyn Fn(&Tab) -> bool) -> Option<u32> {
         let tabs: Vec<&Tab> = self.in_zone(zone).collect();
         let shown = self.column(zone).shown;
